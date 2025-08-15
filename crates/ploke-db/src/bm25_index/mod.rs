@@ -59,8 +59,7 @@ impl CodeTokenizer {
                         && ch.is_uppercase()
                         && next.map_or_else(|| false, |n| n.is_lowercase());
                     // Do not split at letter<->digit boundaries; keep tokens like "v2" intact.
-                    if (lower_to_upper || upper_seq_then_lower) && !cur.is_empty()
-                    {
+                    if (lower_to_upper || upper_seq_then_lower) && !cur.is_empty() {
                         parts.push(cur.to_lowercase());
                         cur.clear();
                     }
@@ -379,8 +378,8 @@ pub struct DocData {
     pub name: String,
 }
 
-impl From<(&EmbeddingData, &String)> for DocData {
-    fn from(value: (&EmbeddingData, &String)) -> Self {
+impl DocData {
+    pub fn from_embed_clone(value: (&EmbeddingData, &String)) -> Self {
         let token_length = CodeTokenizer::count_tokens_in_code(value.1);
         let tracking_hash = value.0.node_tracking_hash; // Use node tracking hash from EmbeddingData
         DocData {
@@ -397,27 +396,27 @@ impl From<(&EmbeddingData, &String)> for DocData {
 
 // ------------------------- BM25 Indexer -------------------------
 
-    /// In-memory BM25 indexer that uses bm25::Embedder + Scorer.
-    ///
-    /// Example:
-    /// ```
-    /// use ploke_db::bm25_index::{Bm25Indexer, DocData, DocMeta, CodeTokenizer};
-    /// use ploke_core::TrackingHash;
-    /// use uuid::Uuid;
-    ///
-    /// let mut idx = Bm25Indexer::new(10.0);
-    /// let id = Uuid::new_v4();
-    /// let snippet = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
-    /// let meta = DocMeta {
-    ///     token_length: CodeTokenizer::count_tokens_in_code(&snippet),
-    ///     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
-    /// };
-    /// let name = String::from("add_one");
-    /// let doc = DocData { id, meta, snippet, name };
-    /// idx.upsert_batch(std::iter::once(doc));
-    /// let res = idx.search("add_one", 5);
-    /// assert!(!res.is_empty());
-    /// ```
+/// In-memory BM25 indexer that uses bm25::Embedder + Scorer.
+///
+/// Example:
+/// ```
+/// use ploke_db::bm25_index::{Bm25Indexer, DocData, DocMeta, CodeTokenizer};
+/// use ploke_core::TrackingHash;
+/// use uuid::Uuid;
+///
+/// let mut idx = Bm25Indexer::new(10.0);
+/// let id = Uuid::new_v4();
+/// let snippet = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
+/// let meta = DocMeta {
+///     token_length: CodeTokenizer::count_tokens_in_code(&snippet),
+///     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+/// };
+/// let name = String::from("add_one");
+/// let doc = DocData { id, meta, snippet, name };
+/// idx.upsert_batch(std::iter::once(doc));
+/// let res = idx.search("add_one", 5);
+/// assert!(!res.is_empty());
+/// ```
 pub struct Bm25Indexer {
     embedder: bm25::Embedder<u32, CodeTokenizer>,
     scorer: Scorer<Uuid, u32>,
@@ -490,7 +489,13 @@ impl Bm25Indexer {
         // - test with and without the `combined = format!(...);`
         // - test accuracy with and without boost
         let inserted = batch.len();
-        for DocData { id, meta, snippet, name } in batch {
+        for DocData {
+            id,
+            meta,
+            snippet,
+            name,
+        } in batch
+        {
             // Boost the identifier by repeating it once before the snippet.
             // The tokenizer will split the identifier into subtokens.
             let combined = format!("{} {} {}", name, name, snippet);
@@ -514,7 +519,13 @@ impl Bm25Indexer {
     /// Returns the number of items indexed.
     pub fn upsert_batch(&mut self, batch: impl IntoIterator<Item = DocData>) -> usize {
         let mut inserted = 0;
-        for DocData { id, meta, snippet, name } in batch {
+        for DocData {
+            id,
+            meta,
+            snippet,
+            name,
+        } in batch
+        {
             let combined = format!("{} {} {}", name, name, snippet);
             let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
@@ -534,7 +545,12 @@ impl Bm25Indexer {
     ) -> Result<usize, DbError> {
         let mut inserted = 0;
         let new_iter = batch.into_iter().map(|d| {
-            let DocData { id, meta, snippet, name } = d;
+            let DocData {
+                id,
+                meta,
+                snippet,
+                name,
+            } = d;
             let combined = format!("{} {} {}", name, name, snippet);
             let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
@@ -802,7 +818,11 @@ fn hello() { println!(\"hi\"); }",
         let s = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
         let toks = t.tokenize(s);
         let count = CodeTokenizer::count_tokens_in_code(s);
-        assert_eq!(toks.len(), count, "tokenize() and count_tokens_in_code() should agree");
+        assert_eq!(
+            toks.len(),
+            count,
+            "tokenize() and count_tokens_in_code() should agree"
+        );
     }
 
     #[test]
@@ -821,13 +841,26 @@ fn hello() { println!(\"hi\"); }",
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s2.as_bytes())),
         };
         let docs = vec![
-            DocData { id: id1, meta: m1, snippet: s1.to_string(), name: String::from("first_token") },
-            DocData { id: id2, meta: m2, snippet: s2.to_string(), name: String::from("second_token_longer_name") },
+            DocData {
+                id: id1,
+                meta: m1,
+                snippet: s1.to_string(),
+                name: String::from("first_token"),
+            },
+            DocData {
+                id: id2,
+                meta: m2,
+                snippet: s2.to_string(),
+                name: String::from("second_token_longer_name"),
+            },
         ];
         idx.index_batch(docs);
         let expected = (m1.token_length as f32 + m2.token_length as f32) / 2.0;
         let got = idx.compute_avgdl_from_staged();
-        assert!((got - expected).abs() < f32::EPSILON, "avgdl mismatch: got {got}, expected {expected}");
+        assert!(
+            (got - expected).abs() < f32::EPSILON,
+            "avgdl mismatch: got {got}, expected {expected}"
+        );
     }
 
     #[tokio::test]
@@ -842,7 +875,12 @@ fn hello() { println!(\"hi\"); }",
             token_length: CodeTokenizer::count_tokens_in_code(&snippet),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
         };
-        let doc = DocData { id, meta, snippet: snippet.clone(), name: String::from("unique_xylophone_token") };
+        let doc = DocData {
+            id,
+            meta,
+            snippet: snippet.clone(),
+            name: String::from("unique_xylophone_token"),
+        };
 
         // Index
         tx.send(bm25_service::Bm25Cmd::IndexBatch { docs: vec![doc] })
