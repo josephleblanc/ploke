@@ -3,15 +3,11 @@ use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::Subs
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(not(test))]
 static TRACER_INIT: std::sync::Once = std::sync::Once::new();
 
-fn ensure_tracer_initialized() {
-    TRACER_INIT.call_once(|| {
-        // Best-effort initialise a global tracer; ignore if already set by tests.
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-        let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
-    });
-}
+#[cfg(test)]
+static _TRACE_MARKER: () = ();
 
 use ploke_core::EmbeddingData;
 use ploke_db::{
