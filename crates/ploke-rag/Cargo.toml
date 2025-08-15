@@ -22,3 +22,4 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 ploke-test-utils = { path = "../test-utils" }
 lazy_static = "1.5.0"
+criterion = { version = "0.5", features = ["async_tokio"] }
