@@ -258,6 +258,13 @@ mod tests {
     use uuid::Uuid;
 
     use crate::RagService;
+    use std::sync::Once;
+    static TEST_TRACING: Once = Once::new();
+    fn init_tracing_once() {
+        TEST_TRACING.call_once(|| {
+            ploke_test_utils::init_test_tracing(tracing::Level::INFO);
+        });
+    }
 
     lazy_static! {
         /// This test db is restored from the backup of an earlier parse of the `fixture_nodes`
@@ -317,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        init_tracing_once();
         let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
@@ -341,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bm25_rebuild() -> Result<(), Error> {
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        init_tracing_once();
         let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
@@ -356,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bm25_search_basic() -> Result<(), Error> {
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        init_tracing_once();
         let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
@@ -391,7 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_search() -> Result<(), Error> {
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        init_tracing_once();
         let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
