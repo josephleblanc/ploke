@@ -66,7 +66,9 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                     tracing::debug!("scored: {scored:?}");
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
-                    resp.send(results).expect("expecting return val");
+                    if resp.send(results).is_err() {
+                        tracing::warn!("BM25 search response receiver dropped before sending results");
+                    }
                 }
             }
         }

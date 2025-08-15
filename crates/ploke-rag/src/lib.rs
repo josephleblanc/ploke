@@ -54,7 +54,10 @@ impl From<RagError> for ploke_error::Error {
                 ))
             }
             RagError::Channel(msg) => ploke_error::Error::Internal(
-                ploke_error::internal::InternalError::InvalidState("Channel communication error"),
+                ploke_error::internal::InternalError::CompilerError(format!(
+                    "Channel communication error: {}",
+                    msg
+                )),
             ),
             RagError::Embed(msg) => {
                 ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
@@ -65,8 +68,18 @@ impl From<RagError> for ploke_error::Error {
     }
 }
 
-/// RAG orchestration service.
-/// Holds handles to the database, dense embedder, and BM25 service actor.
+ /// RAG orchestration service.
+ ///
+ /// This orchestrates hybrid search by combining:
+ /// - BM25 sparse search served by an in-memory actor
+ /// - Dense vector search served by the HNSW index in the database
+ ///
+ /// Notes:
+ /// - BM25 search will gracefully fall back to dense search if the BM25 index is empty,
+ ///   ensuring callers do not receive empty results due to indexing lag.
+ /// - Use `hybrid_search` to fuse the results via RRF for robust retrieval.
+ ///
+ /// See crate tests for end-to-end examples using a fixture database.
 #[derive(Debug)]
 pub struct RagService {
     db: Arc<Database>,
@@ -90,6 +103,9 @@ impl RagService {
     }
 
     /// Execute a BM25 search against the in-memory sparse index.
+    ///
+    /// If the BM25 index has not been populated yet (returns 0 results), this method
+    /// will gracefully fall back to dense search to ensure callers receive useful results.
     /// Returns a Vec of (document_id, score) pairs sorted by relevance.
     #[instrument(skip(self, query), fields(query_len = %query.len(), top_k = top_k))]
     pub async fn search_bm25(
@@ -105,12 +121,36 @@ impl RagService {
                 resp: tx,
             })
             .await
-            .map_err(|e| RagError::Channel(format!("failed to send BM25 search command: {}", e)))?;
+            .map_err(|e| {
+                RagError::Channel(format!(
+                    "failed to send BM25 search command (len={}, top_k={}): {}",
+                    query.len(),
+                    top_k,
+                    e
+                ))
+            })?;
 
-        let res = rx
-            .await
-            .map_err(|e| RagError::Channel(format!("BM25 search response channel closed: {}", e)))?;
-        debug!("BM25 search returned {} results", res.len());
+        let res = rx.await.map_err(|e| {
+            RagError::Channel(format!(
+                "BM25 search response channel closed (len={}, top_k={}): {}",
+                query.len(),
+                top_k,
+                e
+            ))
+        })?;
+        if res.is_empty() {
+            debug!("BM25 returned 0 results; falling back to dense search");
+            let dense_list = self.search(query, top_k).await.map_err(|e| {
+                RagError::Embed(format!(
+                    "dense search failed during BM25 fallback (len={}, top_k={}): {:?}",
+                    query.len(),
+                    top_k,
+                    e
+                ))
+            })?;
+            return Ok(dense_list);
+        }
+        debug!("BM25 search returning {} results", res.len());
         Ok(res)
     }
 
@@ -144,8 +184,9 @@ impl RagService {
             .next()
             .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
 
-        // Collect results from all node types
-        let mut all_results: Vec<(Uuid, f32)> = Vec::new();
+        // Collect results from all node types; pre-allocate to avoid reallocations
+        let mut all_results: Vec<(Uuid, f32)> =
+            Vec::with_capacity(NodeType::primary_nodes().len() * top_k);
 
         for node_type in NodeType::primary_nodes() {
             let args = SimilarArgs {
@@ -416,6 +457,32 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bm25_search_fallback() -> Result<(), Error> {
+        // Initialize tracing for the test
+        init_tracing_once();
+        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "use_all_const_static";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // Intentionally do not call bm25_rebuild or index anything; fallback should kick in.
+        let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
+        assert!(
+            !results.is_empty(),
+            "BM25 fallback returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = results.iter().map(|(id, _score)| *id).collect();
         fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }

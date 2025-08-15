@@ -21,6 +21,22 @@ pub const TOKENIZER_VERSION: &str = "code_version_v1";
 // ------------------------- Code-aware tokenizer -------------------------
 // Implements bm25::Tokenizer by producing a Vec<String> of tokens from code.
 #[derive(Default, Clone)]
+/// Tokenizer for source code that:
+/// - splits identifiers into subtokens (snake_case, camelCase, PascalCase, digits, acronyms)
+/// - includes words from comments (line and block)
+/// - treats non-alphanumeric symbols as separate tokens
+///
+/// Example:
+/// ```
+/// use ploke_db::bm25_index::CodeTokenizer;
+/// let src = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
+/// let t = CodeTokenizer::default();
+/// let toks = t.tokenize(src);
+/// assert!(toks.iter().any(|t| t == "docs"));
+/// assert!(toks.iter().any(|t| t == "parse"));
+/// assert!(toks.iter().any(|t| t == "json"));
+/// assert!(toks.iter().any(|t| t == "v2"));
+/// ```
 pub struct CodeTokenizer;
 
 impl CodeTokenizer {
@@ -146,6 +162,15 @@ impl CodeTokenizer {
     }
 
     /// Count tokens in the entire code string without allocating per-token Strings.
+    /// This is guaranteed to match the length of `tokenize()` for the same input.
+    /// ```
+    /// use ploke_db::bm25_index::CodeTokenizer;
+    /// let s = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
+    /// let t = CodeTokenizer::default();
+    /// let toks = t.tokenize(s);
+    /// let count = CodeTokenizer::count_tokens_in_code(s);
+    /// assert_eq!(toks.len(), count);
+    /// ```
     pub fn count_tokens_in_code(s: &str) -> usize {
         let bytes = s.as_bytes();
         let mut i = 0usize;
@@ -325,9 +350,7 @@ impl CodeTokenizer {
                 if cur_is_id {
                     push_cur(out, &mut cur, &mut cur_is_id);
                 }
-                let mut s = String::new();
-                s.push(ch);
-                out.push(s);
+                out.push(ch.to_string());
             }
         }
         push_cur(out, &mut cur, &mut cur_is_id);
@@ -372,7 +395,26 @@ impl From<(&EmbeddingData, &String)> for DocData {
 
 // ------------------------- BM25 Indexer -------------------------
 
-/// In-memory BM25 indexer that uses bm25::Embedder + Scorer.
+    /// In-memory BM25 indexer that uses bm25::Embedder + Scorer.
+    ///
+    /// Example:
+    /// ```
+    /// use ploke_db::bm25_index::{Bm25Indexer, DocData, DocMeta, CodeTokenizer};
+    /// use ploke_core::TrackingHash;
+    /// use uuid::Uuid;
+    ///
+    /// let mut idx = Bm25Indexer::new(10.0);
+    /// let id = Uuid::new_v4();
+    /// let snippet = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
+    /// let meta = DocMeta {
+    ///     token_length: CodeTokenizer::count_tokens_in_code(&snippet),
+    ///     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+    /// };
+    /// let doc = DocData { id, meta, snippet };
+    /// idx.upsert_batch(std::iter::once(doc));
+    /// let res = idx.search("add_one", 5);
+    /// assert!(!res.is_empty());
+    /// ```
 pub struct Bm25Indexer {
     embedder: bm25::Embedder<u32, CodeTokenizer>,
     scorer: Scorer<Uuid, u32>,
@@ -466,10 +508,10 @@ impl Bm25Indexer {
     pub fn upsert_batch(&mut self, batch: impl IntoIterator<Item = DocData>) -> usize {
         let mut inserted = 0;
         for DocData { id, meta, snippet } in batch {
-            // tracing::debug!("index_batch tokens: {:?}", tokens);
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
-            // Stage per-doc metadata for atomic Finalize
+            // Stage per-doc metadata for atomic Finalize and avgdl computation
+            self.staged_meta.insert(id, meta);
             inserted += 1;
         }
         inserted
