@@ -273,11 +273,11 @@ impl CodeTokenizer {
                     let next = chars.get(i + 1).copied();
                     let ch = chars[i];
                     let lower_to_upper = prev.is_lowercase() && ch.is_uppercase();
-                    let upper_seq_then_lower =
-                        prev.is_uppercase() && ch.is_uppercase() && next.map_or_else(|| false, |n| n.is_lowercase());
-                    let digit_boundary =
-                        (prev.is_ascii_digit() && !ch.is_ascii_digit())
-                            || (!prev.is_ascii_digit() && ch.is_ascii_digit());
+                    let upper_seq_then_lower = prev.is_uppercase()
+                        && ch.is_uppercase()
+                        && next.map_or_else(|| false, |n| n.is_lowercase());
+                    let digit_boundary = (prev.is_ascii_digit() && !ch.is_ascii_digit())
+                        || (!prev.is_ascii_digit() && ch.is_ascii_digit());
                     if (lower_to_upper || upper_seq_then_lower || digit_boundary) && part_len > 0 {
                         total += 1;
                         part_len = 0;
@@ -359,13 +359,14 @@ impl From<(&EmbeddingData, &String)> for DocData {
     fn from(value: (&EmbeddingData, &String)) -> Self {
         let token_length = CodeTokenizer::count_tokens_in_code(value.1);
         let tracking_hash = value.0.node_tracking_hash; // Use node tracking hash from EmbeddingData
-        DocData { 
+        DocData {
             id: value.0.id,
             snippet: value.1.clone(),
             meta: DocMeta {
                 token_length,
                 tracking_hash,
-            } }
+            },
+        }
     }
 }
 
@@ -384,7 +385,12 @@ impl Bm25Indexer {
     pub fn new(avgdl: f32) -> Self {
         let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
         let scorer = Scorer::<Uuid, u32>::new();
-        Self { embedder, scorer, staged_meta: HashMap::new(), version: TOKENIZER_VERSION}
+        Self {
+            embedder,
+            scorer,
+            staged_meta: HashMap::new(),
+            version: TOKENIZER_VERSION,
+        }
     }
 
     pub fn stage_doc_meta(&mut self, id: Uuid, meta: DocMeta) {
@@ -424,14 +430,19 @@ impl Bm25Indexer {
             scorer.upsert(&id, embedding);
         }
 
-        Self { embedder, scorer, staged_meta: HashMap::new(), version: TOKENIZER_VERSION}
+        Self {
+            embedder,
+            scorer,
+            staged_meta: HashMap::new(),
+            version: TOKENIZER_VERSION,
+        }
     }
 
     /// Index a batch of (uuid, snippet) pairs.
     /// Returns the number of items indexed.
     pub fn index_batch(&mut self, batch: Vec<DocData>) -> usize {
         let inserted = batch.len();
-        for DocData {id, meta, snippet} in batch {
+        for DocData { id, meta, snippet } in batch {
             let tokens = CodeTokenizer::tokens_from_code(&snippet);
             tracing::debug!("index_batch tokens: {:?}", tokens);
             let embedding = self.embedder.embed(&snippet);
@@ -454,7 +465,7 @@ impl Bm25Indexer {
     /// Returns the number of items indexed.
     pub fn upsert_batch(&mut self, batch: impl IntoIterator<Item = DocData>) -> usize {
         let mut inserted = 0;
-        for DocData {id, meta, snippet} in batch {
+        for DocData { id, meta, snippet } in batch {
             // tracing::debug!("index_batch tokens: {:?}", tokens);
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
@@ -467,22 +478,21 @@ impl Bm25Indexer {
     /// Index a batch of (uuid, snippet) pairs.
     /// Returns the number of items indexed.
     pub fn upsert_batch_with_cozo(
-        &mut self, 
+        &mut self,
         cozo: &Database,
         batch: impl IntoIterator<Item = DocData>,
-    ) -> Result< usize, DbError > {
+    ) -> Result<usize, DbError> {
         let mut inserted = 0;
         let new_iter = batch.into_iter().map(|d| {
-            let DocData {id, meta, snippet} = d;
+            let DocData { id, meta, snippet } = d;
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
             inserted += 1;
             (id, meta)
         });
         cozo.upsert_bm25_doc_meta_batch(new_iter)?;
-        Ok( inserted )
+        Ok(inserted)
     }
-
 
     ///// Index a batch and upsert document metadata into the provided Cozo client.
     ///// This demonstrates action (A): write doc metadata to Cozo while indexing.
@@ -560,6 +570,10 @@ impl Bm25Indexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{create_index_primary, DbError};
+    use lazy_static::lazy_static;
+    use ploke_error::Error as PlokeError;
+    use ploke_test_utils::workspace_root;
     use std::collections::HashMap;
 
     struct MockCozo {
@@ -574,6 +588,35 @@ mod tests {
         }
     }
 
+    lazy_static! {
+        /// This test db is restored from the backup of an earlier parse of the `fixture_nodes`
+        /// crate located in `tests/fixture_crates/fixture_nodes`, and has a decent sampling of all
+        /// rust code items. It provides a good target for other tests because it has already been
+        /// extensively tested in `syn_parser`, with each item individually verified to have all
+        /// fields correctly parsed for expected values.
+        ///
+        /// One "gotcha" of laoding the Cozo database is that the hnsw items are not retained
+        /// between backups, so they must be recalculated each time. However, by restoring the
+        /// backup database we do retain the dense vector embeddings, allowing our tests to be
+        /// significantly sped up by using a lazy loader here and making calls to the same backup.
+        ///
+        /// If needed, other tests can re-implement the load from this file, which may become a
+        /// factor for some tests that need to alter the database, but as long as things are
+        /// cleaned up afterwards it should be OK.
+        // TODO: Add a mutex guard to avoid cross-contamination of tests.
+        pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
+            let db = Database::init_with_schema()?;
+
+            let mut target_file = workspace_root();
+            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let prior_rels_vec = db.relations_vec()?;
+            db.import_from_backup(&target_file, &prior_rels_vec)
+                .map_err(DbError::from)
+                .map_err(ploke_error::Error::from)?;
+            create_index_primary(&db)?;
+            Ok(Arc::new( db ))
+        };
+    }
 
     #[test]
     fn tokenizer_splits_identifiers_and_comments() {
@@ -591,7 +634,7 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
 
     #[test]
     fn indexer_indexes_and_searches_basic() {
-        let mut idx = Bm25Indexer::new(10.0);
+        let idx = Bm25Indexer::new(10.0);
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
@@ -614,7 +657,7 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn scorer_scores_higher_for_matching_document() {
-        let mut idx = Bm25Indexer::new(10.0);
+        let idx = Bm25Indexer::new(10.0);
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn alpha() { println!(\"hello\"); }");
@@ -634,8 +677,8 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn index_batch_with_cozo_writes_doc_meta() {
-        let mut idx = Bm25Indexer::new(10.0);
-        let mut cozo = MockCozo::new();
+        let idx = Bm25Indexer::new(10.0);
+        let cozo = MockCozo::new();
         let id = Uuid::new_v4();
         let snippet = String::from(
             "/// docs
@@ -656,7 +699,7 @@ fn hello() { println!(\"hi\"); }",
         let id2 = Uuid::new_v4();
         let corpus: Vec<(Uuid, String)> = vec![
             (id1, String::from("fn a() {}")),
-            (id2, String::from("fn b() {}"))
+            (id2, String::from("fn b() {}")),
         ];
         // new_from_corpus takes ownership
         let idx = Bm25Indexer::new_from_corpus(corpus);
