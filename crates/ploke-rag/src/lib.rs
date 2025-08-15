@@ -1,20 +1,267 @@
-// ... existing code ...
+#![allow(unused_variables, unused_imports, dead_code)]
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use ploke_core::EmbeddingData;
+use ploke_db::{
+    bm25_index::bm25_service::{self, Bm25Cmd},
+    search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
+};
+use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
+use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
+
+#[derive(Error, Debug)]
+pub enum RagError {
+    #[error("Database error: {0}")]
+    Db(#[from] DbError),
+
+    #[error("Channel error: {0}")]
+    Channel(String),
+
+    #[error("Embedding error: {0}")]
+    Embed(String),
+}
+
+impl From<RagError> for ploke_error::Error {
+    fn from(value: RagError) -> ploke_error::Error {
+        match value {
+            RagError::Db(db_err) => {
+                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                    format!("DB error: {}", db_err),
+                ))
+            }
+            RagError::Channel(msg) => ploke_error::Error::Internal(
+                ploke_error::internal::InternalError::InvalidState("Channel communication error"),
+            ),
+            RagError::Embed(msg) => {
+                ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
+                    format!("Embedding error: {}", msg),
+                ))
+            }
+        }
+    }
+}
+
+/// RAG orchestration service.
+/// Holds handles to the database, dense embedder, and BM25 service actor.
+#[derive(Debug)]
+pub struct RagService {
+    db: Arc<Database>,
+    dense_embedder: Arc<EmbeddingProcessor>,
+    bm_embedder: mpsc::Sender<Bm25Cmd>,
+}
+
+impl RagService {
+    /// Construct a new RAG service, starting the BM25 service actor.
+    pub fn new(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingProcessor>,
+    ) -> Result<Self, RagError> {
+        let bm_embedder = bm25_service::start_default(db.clone())?;
+        Ok(Self {
+            db,
+            dense_embedder,
+            bm_embedder,
+        })
+    }
+
+    /// Execute a BM25 search against the in-memory sparse index.
+    /// Returns a Vec of (document_id, score) pairs sorted by relevance.
+    pub async fn search_bm25(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        let (tx, rx) = oneshot::channel();
+        self.bm_embedder
+            .send(Bm25Cmd::Search {
+                query: query.to_string(),
+                top_k,
+                resp: tx,
+            })
+            .await
+            .map_err(|e| RagError::Channel(format!("failed to send BM25 search command: {}", e)))?;
+
+        rx.await
+            .map_err(|e| RagError::Channel(format!("BM25 search response channel closed: {}", e)))
+    }
+
+    /// Trigger a rebuild of the BM25 sparse index.
+    /// For now, this is a fire-and-forget command to the BM25 service.
+    pub async fn bm25_rebuild(&self) -> Result<(), RagError> {
+        self.bm_embedder.send(Bm25Cmd::Rebuild).await.map_err(|e| {
+            RagError::Channel(format!("failed to send BM25 rebuild command: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Perform a dense search using the HNSW index in the database.
+    /// Returns a Vec of (snippet_id, score) pairs sorted by relevance.
+    pub async fn search(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<(Uuid, f32)>, ploke_error::Error> {
+        // Generate embedding for the query
+        let embeddings = self
+            .dense_embedder
+            .generate_embeddings(vec![query.to_string()])
+            .await?;
+
+        let query_embedding = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
+
+        // Collect results from all node types
+        let mut all_results: Vec<(Uuid, f32)> = Vec::new();
+
+        for node_type in NodeType::primary_nodes() {
+            let args = SimilarArgs {
+                db: &self.db,
+                vector_query: &query_embedding,
+                k: top_k,
+                ef: 10, // Default ef value
+                ty: node_type,
+                max_hits: top_k,
+                radius: 10.0, // Default radius value
+            };
+
+            let result = search_similar_args(args)?;
+
+            // Convert distance to similarity score (lower distance = higher similarity)
+            let typed_results: Vec<(Uuid, f32)> = result
+                .typed_data
+                .v
+                .into_iter()
+                .zip(result.dist.into_iter())
+                .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32))
+                .collect();
+
+            all_results.extend(typed_results);
+        }
+
+        // Sort by score (highest first) and take top_k
+        all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(top_k);
+
+        Ok(all_results)
+    }
+
+    /// Perform a hybrid search (BM25 + dense).
+    ///
+    /// Strict mode: if the dense search fails, propagate an error (do not silently fall back).
+    /// Runs BM25 and dense searches concurrently, fuses results using Reciprocal Rank Fusion (RRF),
+    /// and returns the top_k results ordered by fused score (higher = better).
+    pub async fn hybrid_search(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        // Kick off both searches concurrently.
+        let bm25_fut = self.search_bm25(query, top_k);
+        let dense_fut = self.search(query, top_k);
+
+        let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
+
+        // Propagate BM25 errors as-is.
+        let bm25_list = bm25_res?;
+
+        // Dense errors are mapped to RagError::Embed since we're in strict mode.
+        let dense_list =
+            dense_res.map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
+
+        // RRF fusion parameters
+        let rrf_k: f32 = 60.0;
+
+        // Accumulate fused scores using ranks (1-based)
+        let mut fused: HashMap<Uuid, f32> = HashMap::new();
+
+        for (i, (id, _score)) in bm25_list.iter().enumerate() {
+            let rank = (i + 1) as f32;
+            let add = 1.0_f32 / (rrf_k + rank);
+            *fused.entry(*id).or_insert(0.0) += add;
+        }
+
+        for (i, (id, _score)) in dense_list.iter().enumerate() {
+            let rank = (i + 1) as f32;
+            let add = 1.0_f32 / (rrf_k + rank);
+            *fused.entry(*id).or_insert(0.0) += add;
+        }
+
+        // Collect, sort by fused score descending, and take top_k
+        let mut out: Vec<(Uuid, f32)> = fused.into_iter().collect();
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(top_k);
+
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use itertools::Itertools;
+    use lazy_static::lazy_static;
+    use ploke_core::EmbeddingData;
+    use ploke_db::{create_index_primary, Database, NodeType};
+    use ploke_embed::{
+        indexer::{EmbeddingProcessor, EmbeddingSource},
+        local::{EmbeddingConfig, LocalEmbedder},
+    };
+    use ploke_error::Error;
+    use ploke_io::IoManagerHandle;
+    use ploke_test_utils::workspace_root;
+    use tracing::Level;
+    use uuid::Uuid;
+
+    use crate::RagService;
+
+    lazy_static! {
+        /// This test db is restored from the backup of an earlier parse of the `fixture_nodes`
+        /// crate located in `tests/fixture_crates/fixture_nodes`, and has a decent sampling of all
+        /// rust code items. It provides a good target for other tests because it has already been
+        /// extensively tested in `syn_parser`, with each item individually verified to have all
+        /// fields correctly parsed for expected values.
+        ///
+        /// One "gotcha" of laoding the Cozo database is that the hnsw items are not retained
+        /// between backups, so they must be recalculated each time. However, by restoring the
+        /// backup database we do retain the dense vector embeddings, allowing our tests to be
+        /// significantly sped up by using a lazy loader here and making calls to the same backup.
+        ///
+        /// If needed, other tests can re-implement the load from this file, which may become a
+        /// factor for some tests that need to alter the database, but as long as things are
+        /// cleaned up afterwards it should be OK.
+        // TODO: Add a mutex guard to avoid cross-contamination of tests.
+        pub static ref TEST_DB_NODES: Result<Arc< Database >, Error> = {
+            let db = Database::init_with_schema()?;
+
+            let mut target_file = workspace_root();
+            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let prior_rels_vec = db.relations_vec()?;
+            db.import_from_backup(&target_file, &prior_rels_vec)
+                .map_err(ploke_db::DbError::from)
+                .map_err(ploke_error::Error::from)?;
+            create_index_primary(&db)?;
+            Ok(Arc::new( db ))
+        };
+    }
+
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
         use tracing::{debug, info, instrument};
 
         // Initialize tracing for the test
-        ploke_test_utils::init_test_tracing(Level::TRACE);
+        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
         let span = tracing::span!(Level::DEBUG, "test_search", search_term = %search_term);
         let _enter = span.enter();
-        
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Incorrect setup of TEST_DB_NODES")
-            .clone();
-        debug!("Loaded test database with {} embedded nodes", db.count_pending_embeddings()?);
+
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
@@ -31,74 +278,6 @@
         
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
         debug!("Fetching nodes for IDs: {:?}", ordered_node_ids);
-        
-        // --- New Debug Verification ---
-        if !ordered_node_ids.is_empty() {
-            debug!("Verifying node IDs exist in database...");
-            let mut verify_params = BTreeMap::new();
-            let id_list: Vec<DataValue> = ordered_node_ids.iter().map(|id| DataValue::Uuid(UuidWrapper(*id))).collect();
-            verify_params.insert("ids".to_string(), DataValue::List(id_list));
-            
-            let verify_script = r#"
-                // Check if IDs exist in any primary node table at any time
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *function { id: input_id, name, at },
-                    ty = "function"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *struct { id: input_id, name, at },
-                    ty = "struct"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *enum { id: input_id, name, at },
-                    ty = "enum"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *trait_def { id: input_id, name, at },
-                    ty = "trait_def"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *impl_block { id: input_id, name, at },
-                    ty = "impl_block"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *module { id: input_id, name, at },
-                    ty = "module"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *const_static { id: input_id, name, at },
-                    ty = "const_static"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *type_alias { id: input_id, name, at },
-                    ty = "type_alias"
-                ?[id, name, ty, at] := 
-                    input_id in $ids,
-                    *macro_def { id: input_id, name, at },
-                    ty = "macro_def"
-            "#;
-            
-            match db.run_script(verify_script, verify_params, cozo::ScriptMutability::Immutable) {
-                Ok(named_rows) => {
-                    debug!("Verification query returned {} rows", named_rows.rows.len());
-                    if named_rows.rows.is_empty() {
-                        debug!("WARNING: None of the returned node IDs exist in any primary node table!");
-                    } else {
-                        for row in &named_rows.rows {
-                            if row.len() >= 4 {
-                                debug!("Found ID: {:?}, Name: {:?}, Type: {:?}, At: {:?}", 
-                                    row.get(0), row.get(1), row.get(2), row.get(3));
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Error running verification query: {:?}", e);
-                }
-            }
-        }
-        // --- End New Debug Verification ---
         
         // Add detailed tracing for the database query
         let span = tracing::span!(Level::DEBUG, "get_nodes_ordered", node_ids = ?ordered_node_ids);
