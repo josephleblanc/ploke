@@ -777,7 +777,6 @@ impl Database {
     batch[id, name, file_path, file_hash, hash, span, namespace, ordering] := 
         has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
-        is_root_module[mod_id],
         *module{{id: mod_id, tracking_hash: file_hash}},
         *file_mod {{ owner_id: mod_id, file_path, namespace }},
         target_ids[id, ordering]

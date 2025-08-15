@@ -126,7 +126,7 @@ impl RagService {
                 ef: 10, // Default ef value
                 ty: node_type,
                 max_hits: top_k,
-                radius: 1.0, // Default radius value
+                radius: 10.0, // Default radius value
             };
 
             let result = search_similar_args(args)?;
@@ -254,7 +254,7 @@ mod tests {
         use tracing::{debug, info, instrument};
 
         // Initialize tracing for the test
-        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        ploke_test_utils::init_test_tracing(Level::TRACE);
 
         let search_term = "use_all_const_static";
         let span = tracing::span!(Level::DEBUG, "test_search", search_term = %search_term);
