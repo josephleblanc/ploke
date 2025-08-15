@@ -67,9 +67,9 @@ pub fn hnsw_all_types(
     let mut results = Vec::new();
     use cozo::Vector;
     for row in result.rows.into_iter() {
-        tracing::info!("{:?}", row);
+        tracing::trace!("{:?}", row);
         let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::info!("{:?}", id);
+            tracing::trace!("{:?}", id);
             id
         } else {
             uuid::Uuid::max()
@@ -154,9 +154,9 @@ pub fn hnsw_of_type(
 
     let mut results = Vec::new();
     for row in result.rows {
-        tracing::info!("{:?}", row);
+        tracing::trace!("{:?}", row);
         let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::info!("{:?}", id);
+            tracing::trace!("{:?}", id);
             id
         } else {
             uuid::Uuid::max()
@@ -244,7 +244,7 @@ pub fn search_similar(
     script.push_str(rel);
     script.push_str(base_script_end);
 
-    tracing::info!("script for similarity search is: {}", script);
+    tracing::trace!("script for similarity search is: {}", script);
     let query_result = db
         .run_script(&script, params, cozo::ScriptMutability::Immutable)
         .inspect_err(|e| tracing::error!("{e}"))
@@ -253,7 +253,7 @@ pub fn search_similar(
     let less_flat_row = query_result.rows.first();
     let count_less_flat = query_result.rows.len();
     if let Some(lfr) = less_flat_row {
-        tracing::info!(
+        tracing::trace!(
             "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
             rel
         );
@@ -361,7 +361,7 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     script.push_str(&hnsw_script.into_iter().collect::<String>());
     script.push_str(limit_param);
 
-    tracing::info!("script for similarity search is: {}", script);
+    tracing::trace!("script for similarity search is: {}", script);
     let query_result = db
         .run_script(&script, params, cozo::ScriptMutability::Immutable)
         .inspect_err(|e| tracing::error!("{e}"))
@@ -370,14 +370,14 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     let less_flat_row = query_result.rows.first();
     let count_less_flat = query_result.rows.len();
     if let Some(lfr) = less_flat_row {
-        tracing::info!(
+        tracing::trace!(
             "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
             rel
         );
     }
     let mut dist_vec = Vec::new();
     if !query_result.rows.is_empty() {
-        tracing::info!("query_result.headers: {:?}", query_result.headers);
+        tracing::trace!("query_result.headers: {:?}", query_result.headers);
         let dist_idx = query_result
             .headers
             .iter()
@@ -441,9 +441,9 @@ pub fn search_similar_test(
 
     let mut results = Vec::new();
     for row in result.rows {
-        tracing::info!("{:?}", row);
+        tracing::trace!("{:?}", row);
         let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::info!("{:?}", id);
+            tracing::trace!("{:?}", id);
             id
         } else {
             uuid::Uuid::max()

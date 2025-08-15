@@ -12,7 +12,7 @@ use std::{
 
 use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
-use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd}, hnsw_all_types, CallbackManager, Database, DbError, NodeType};
+use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer}, hnsw_all_types, CallbackManager, Database, DbError, NodeType};
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
 use ploke_test_utils::{setup_db_full, setup_db_full_crate};
@@ -237,7 +237,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
     let counter = callback_manager.clone_counter();
 
-    let bm25_tx = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
+    let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
 
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
@@ -245,7 +245,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         Arc::new(embedding_processor),
         cancellation_token,
         batch_size,
-    ).with_bm25_tx(bm25_tx.clone());
+    ).with_bm25_tx(bm25_cmd.clone());
     let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
     let progress_tx_arc = Arc::new(progress_tx_nonarc);
     let (control_tx, control_rx) = mpsc::channel(4);
@@ -389,7 +389,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         let (tx, rx) = tokio::sync::oneshot::channel();
         let name_str = name.get_str().expect("name must be a string");
         tracing::info!("using bm25 to find name: {name_str}");
-        bm25_tx.send(Bm25Cmd::Search { 
+        bm25_cmd.send(Bm25Cmd::Search { 
             query: name_str.to_string(), 
             top_k: 2, 
             resp: tx 
@@ -495,13 +495,14 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
     let counter = callback_manager.clone_counter();
 
-    let idx_tag = IndexerTask::new(
+    let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
+    let mut idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
         Arc::new(embedding_processor),
         cancellation_token,
         batch_size,
-    );
+    ).with_bm25_tx(bm25_cmd.clone());
     let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
     let progress_tx_arc = Arc::new(progress_tx_nonarc);
     let (control_tx, control_rx) = mpsc::channel(4);

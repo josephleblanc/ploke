@@ -337,6 +337,7 @@ mod tests {
             }
         }
         
+        debug!("Loaded test database with {} embedded nodes", db.count_pending_embeddings()?);
         assert!(snippet_match.is_some(), "No snippet found containing '{}'", search_term);
         info!("Test completed successfully - found matching snippet for '{}'", search_term);
         Ok(())

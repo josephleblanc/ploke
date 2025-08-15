@@ -25,6 +25,7 @@ use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use llm::llm_manager;
 use parser::run_parse;
+use ploke_db::bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer};
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
@@ -113,6 +114,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let processor = config.load_embedding_processor()?;
     let proc_arc = Arc::new(processor);
+    let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)?;
 
     // TODO:
     // 1 Implement the cancellation token propagation in IndexerTask
@@ -123,8 +125,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         Arc::clone(&proc_arc), // Use configured processor
         CancellationToken::new().0,
         8,
-        // TODO: Add bm25_tx here
-    );
+    ).with_bm25_tx(bm25_cmd);
     let indexer_task = Arc::new(indexer_task);
 
     // Initialize RAG orchestration service (BM25 + dense handles)
