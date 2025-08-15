@@ -9,6 +9,19 @@ static TRACER_INIT: std::sync::Once = std::sync::Once::new();
 #[cfg(test)]
 static _TRACE_MARKER: () = ();
 
+#[cfg(not(test))]
+fn ensure_tracer_initialized() {
+    TRACER_INIT.call_once(|| {
+        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+        let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
+    });
+}
+
+#[cfg(test)]
+fn ensure_tracer_initialized() {
+    // Tests configure tracing themselves; no-op to avoid interfering with test harness.
+}
+
 use ploke_core::EmbeddingData;
 use ploke_db::{
     bm25_index::bm25_service::{self, Bm25Cmd},
