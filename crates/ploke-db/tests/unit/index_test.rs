@@ -1,22 +1,6 @@
-use std::sync::Arc;
-
+#![allow(clippy::type_complexity, dead_code)]
 use itertools::Itertools;
-use tracing::instrument;
 
-use ploke_db::{Database, DbError, NodeType};
-
-/// Index the vector database that has already been populated with vectors.
-#[instrument(skip_all, err)]
-pub async fn build_vector_index(
-    db: Arc<Database>,
-    ty: NodeType,
-    dim: usize,
-) -> Result<(), DbError> {
-    let lhs = "::hnsw";
-    let rhs = "";
-    // let script = format!("{}{}")
-    Ok(())
-}
 use cozo::*;
 use std::collections::HashMap;
 
