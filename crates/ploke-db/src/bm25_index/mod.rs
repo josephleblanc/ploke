@@ -29,6 +29,7 @@ pub const TOKENIZER_VERSION: &str = "code_version_v1";
 /// Example:
 /// ```
 /// use ploke_db::bm25_index::CodeTokenizer;
+/// use bm25::Tokenizer;
 /// let src = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
 /// let t = CodeTokenizer::default();
 /// let toks = t.tokenize(src);
@@ -165,6 +166,7 @@ impl CodeTokenizer {
     /// This is guaranteed to match the length of `tokenize()` for the same input.
     /// ```
     /// use ploke_db::bm25_index::CodeTokenizer;
+    /// use bm25::Tokenizer;
     /// let s = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
     /// let t = CodeTokenizer::default();
     /// let toks = t.tokenize(s);
@@ -486,6 +488,9 @@ impl Bm25Indexer {
     /// Index a batch of (uuid, snippet, name) items.
     /// Returns the number of items indexed.
     pub fn index_batch(&mut self, batch: Vec<DocData>) -> usize {
+        // TODO: Analyze the performance impact of this additional allocation.
+        // - test with and without the `combined = format!(...);`
+        // - test accuracy with and without boost
         let inserted = batch.len();
         for DocData { id, meta, snippet, name } in batch {
             // Boost the identifier by repeating it once before the snippet.
