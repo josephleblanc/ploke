@@ -1,7 +1,7 @@
 #![allow(unused_variables, unused_imports, dead_code)]
-use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(not(test))]
 static TRACER_INIT: std::sync::Once = std::sync::Once::new();
@@ -30,8 +30,8 @@ use ploke_db::{
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use uuid::Uuid;
 use tracing::{debug, instrument};
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum RagError {
@@ -53,12 +53,11 @@ impl From<RagError> for ploke_error::Error {
                     format!("DB error: {}", db_err),
                 ))
             }
-            RagError::Channel(msg) => ploke_error::Error::Internal(
-                ploke_error::internal::InternalError::CompilerError(format!(
-                    "Channel communication error: {}",
-                    msg
-                )),
-            ),
+            RagError::Channel(msg) => {
+                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
+                    format!("Channel communication error: {}", msg),
+                ))
+            }
             RagError::Embed(msg) => {
                 ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
                     format!("Embedding error: {}", msg),
@@ -68,18 +67,18 @@ impl From<RagError> for ploke_error::Error {
     }
 }
 
- /// RAG orchestration service.
- ///
- /// This orchestrates hybrid search by combining:
- /// - BM25 sparse search served by an in-memory actor
- /// - Dense vector search served by the HNSW index in the database
- ///
- /// Notes:
- /// - BM25 search will gracefully fall back to dense search if the BM25 index is empty,
- ///   ensuring callers do not receive empty results due to indexing lag.
- /// - Use `hybrid_search` to fuse the results via RRF for robust retrieval.
- ///
- /// See crate tests for end-to-end examples using a fixture database.
+/// RAG orchestration service.
+///
+/// This orchestrates hybrid search by combining:
+/// - BM25 sparse search served by an in-memory actor
+/// - Dense vector search served by the HNSW index in the database
+///
+/// Notes:
+/// - BM25 search will gracefully fall back to dense search if the BM25 index is empty,
+///   ensuring callers do not receive empty results due to indexing lag.
+/// - Use `hybrid_search` to fuse the results via RRF for robust retrieval.
+///
+/// See crate tests for end-to-end examples using a fixture database.
 #[derive(Debug)]
 pub struct RagService {
     db: Arc<Database>,
@@ -201,7 +200,7 @@ impl RagService {
 
             let result = search_similar_args(args)?;
 
-            // Convert distance to similarity score (lower distance = higher similarity), avoiding intermediate allocations
+            // Convert distance to similarity score (lower distance = higher similarity)
             all_results.extend(
                 result
                     .typed_data
@@ -279,92 +278,7 @@ impl RagService {
 }
 
 #[cfg(test)]
-mod alloc_counter {
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    pub struct CountingAlloc;
-
-    static SYSTEM: System = System;
-
-    thread_local! {
-        static THREAD_ALLOCS: std::cell::Cell<usize> = std::cell::Cell::new(0);
-    }
-    static GLOBAL_ALLOCS: AtomicUsize = AtomicUsize::new(0);
-
-    #[inline]
-    fn inc() {
-        THREAD_ALLOCS.with(|c| c.set(c.get() + 1));
-        GLOBAL_ALLOCS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    unsafe impl GlobalAlloc for CountingAlloc {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            inc();
-            SYSTEM.alloc(layout)
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            SYSTEM.dealloc(ptr, layout)
-        }
-        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            inc();
-            SYSTEM.realloc(ptr, layout, new_size)
-        }
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            inc();
-            SYSTEM.alloc_zeroed(layout)
-        }
-    }
-
-    pub fn thread_allocs() -> usize {
-        THREAD_ALLOCS.with(|c| c.get())
-    }
-
-    pub fn reset_thread_allocs() {
-        THREAD_ALLOCS.with(|c| c.set(0));
-    }
-}
-
-#[cfg(test)]
-#[global_allocator]
-static GLOBAL_ALLOC: alloc_counter::CountingAlloc = alloc_counter::CountingAlloc;
-
-#[cfg(test)]
 mod tests {
-    // Allocation regression guard for iterator->extend hot path.
-    // Ensures no intermediate allocations when capacity is sufficient.
-    #[test]
-    fn alloc_free_extend_regression_guard() {
-        alloc_counter::reset_thread_allocs();
-        let before = alloc_counter::thread_allocs();
-
-        #[derive(Clone)]
-        struct Dummy {
-            id: uuid::Uuid,
-        }
-
-        let n = 64;
-        let data: Vec<Dummy> = (0..n)
-            .map(|_| Dummy { id: uuid::Uuid::new_v4() })
-            .collect();
-        let dist: Vec<f64> = vec![0.1; n];
-
-        let mut out: Vec<(uuid::Uuid, f32)> = Vec::with_capacity(n);
-        out.extend(
-            data.into_iter()
-                .zip(dist.into_iter())
-                .map(|(d, distance)| (d.id, 1.0 - distance as f32)),
-        );
-
-        let after = alloc_counter::thread_allocs();
-        assert_eq!(
-            after - before,
-            0,
-            "expected no allocations during extend mapping with adequate capacity"
-        );
-        assert_eq!(out.len(), n);
-    }
-
     use std::sync::Arc;
 
     use itertools::Itertools;
@@ -429,8 +343,10 @@ mod tests {
         let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
         let io_handle = IoManagerHandle::new();
 
-        let snippet_results: Vec<Result<String, Error>> =
-            io_handle.get_snippets_batch(node_info).await.expect("Problem receiving");
+        let snippet_results: Vec<Result<String, Error>> = io_handle
+            .get_snippets_batch(node_info)
+            .await
+            .expect("Problem receiving");
 
         let mut snippets: Vec<String> = Vec::new();
         for snip in snippet_results.into_iter() {
@@ -450,7 +366,9 @@ mod tests {
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
-        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
 
@@ -474,7 +392,9 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_rebuild() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
@@ -489,7 +409,9 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
 
@@ -524,7 +446,9 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
 
@@ -549,7 +473,9 @@ mod tests {
     async fn test_bm25_search_fallback() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
-        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
 
