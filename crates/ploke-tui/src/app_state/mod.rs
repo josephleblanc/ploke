@@ -1477,6 +1477,19 @@ async fn wait_on_oneshot<T>(
     ControlFlow::Continue(())
 }
 
+macro_rules! sys_info_msg {
+    ($state:expr, $event_bus:expr, $content:expr) => {
+        add_msg_immediate(
+            $state,
+            $event_bus,
+            Uuid::new_v4(),
+            $content,
+            MessageKind::SysInfo,
+        )
+        .await
+    };
+}
+
 #[instrument(skip(state))]
 async fn add_msg_immediate(
     state: &Arc<AppState>,
