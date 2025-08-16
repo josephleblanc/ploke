@@ -1185,7 +1185,8 @@ impl App {
                         // Dispatch Hybrid search to state manager / RagService
                         self.send_cmd(StateCommand::HybridSearch { query, top_k });
                     }
-                    // NOTE: RagService/state_manager should emit results back to the UI via AppEvent or AddMessageImmediate.
+                    // NOTE: RagService/state_manager should emit results back to the UI via
+                    // AppEvent or AddMessageImmediate.
                 }
             }
             "preview" => {
