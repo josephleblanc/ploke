@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, time::Duration, sync::Arc};
 
 use tracing::instrument;
 
@@ -8,6 +8,8 @@ use crate::{
 };
 
 use super::*;
+
+use ploke_rag::{RagService, TokenBudget, RetrievalStrategy, RrfConfig, AssembledContext};
 
 // TODO: Get a real prompt.
 // - Probably there is tons of research online, check it out.
@@ -62,6 +64,7 @@ pub struct ContextManager {
     pub event_bus: Arc<EventBus>,
     pub code_map: HashMap<Uuid, CodeContext>,
     pub msg_map: HashMap<Uuid, Vec<Message>>,
+    pub rag: Option<Arc<RagService>>,
 }
 
 #[derive(Clone, Debug)]
@@ -147,6 +150,24 @@ impl ContextManager {
     }
 
     async fn try_construct_and_send_context(&mut self, id: Uuid) {
+        if self.rag.is_some() {
+            // Stage 3 path: we only require user/assistant messages; RAG will retrieve code.
+            if let Some((_, messages)) = self.msg_map.remove_entry(&id) {
+                tracing::debug!(
+                    "RAG-enabled: constructing context for parent_id: {} (messages only)",
+                    id
+                );
+                self.send_prompt_to_llm_via_rag(messages, id).await;
+            } else {
+                tracing::debug!(
+                    "RAG-enabled: waiting for messages for parent_id: {} (code_map ignored)",
+                    id
+                );
+            }
+            return;
+        }
+
+        // Legacy path: require both snippets and messages
         if self.code_map.contains_key(&id) && self.msg_map.contains_key(&id) {
             let context = self.code_map.remove_entry(&id);
             let messages = self.msg_map.remove_entry(&id);
@@ -171,6 +192,58 @@ impl ContextManager {
         }
     }
 
+    async fn send_prompt_to_llm_via_rag(
+        &mut self,
+        messages: Vec<Message>,
+        parent_id: Uuid,
+    ) {
+        // Extract the most recent non-empty user message as the query
+        let query = messages
+            .iter()
+            .rev()
+            .find(|m| m.kind == MessageKind::User && !m.content.is_empty())
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        // Reasonable defaults aligned with RAG_INTEGRATION_PLAN.md
+        let budget = TokenBudget {
+            max_total: 1024,
+            per_file_max: 512,
+            per_part_max: 256,
+            reserves: None,
+        };
+
+        let rag = match &self.rag {
+            Some(r) => Arc::clone(r),
+            None => {
+                tracing::warn!("RagService not configured; cannot assemble context via RAG");
+                return;
+            }
+        };
+
+        match rag
+            .get_context(
+                &query,
+                12,
+                budget,
+                RetrievalStrategy::Hybrid {
+                    rrf: RrfConfig::default(),
+                    mmr: None,
+                },
+            )
+            .await
+        {
+            Ok(ctx) => {
+                let prompt = self.construct_context_from_rag(ctx, messages, parent_id);
+                self.event_bus.send(AppEvent::Llm(prompt));
+                tracing::info!("LLM context (RAG) sent successfully via event bus");
+            }
+            Err(e) => {
+                tracing::error!("Failed to assemble context via RAG for parent_id {}: {:?}", parent_id, e);
+            }
+        }
+    }
+
     async fn send_prompt_to_llm(
         &mut self,
         context: CodeContext,
@@ -180,6 +253,42 @@ impl ContextManager {
         let prompt = self.construct_context(context, messages, parent_id);
         self.event_bus.send(AppEvent::Llm(prompt));
         tracing::info!("LLM context sent successfully via event bus");
+    }
+
+    fn construct_context_from_rag(
+        &self,
+        ctx: AssembledContext,
+        messages: Vec<Message>,
+        parent_id: Uuid,
+    ) -> llm::Event {
+        tracing::info!(
+            "constructing context (RAG) with {} parts and {} messages",
+            ctx.parts.len(),
+            messages.len()
+        );
+
+        let mut base: Vec<(MessageKind, String)> = Vec::from([
+            (MessageKind::System, String::from(PROMPT_HEADER)),
+            (MessageKind::System, String::from(PROMPT_CODE)),
+        ]);
+
+        // Add assembled context parts as system messages
+        for part in ctx.parts.iter() {
+            base.push((MessageKind::System, part.text.clone()));
+        }
+
+        // Add conversation messages
+        let msgs = messages
+            .into_iter()
+            .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
+            .inspect(|m| tracing::error!("m.content.is_empty() = {}", m.content.is_empty()))
+            .map(|msg| (msg.kind, msg.content));
+        base.extend(msgs);
+
+        llm::Event::PromptConstructed {
+            parent_id,
+            prompt: base,
+        }
     }
 
     fn construct_context(
@@ -230,6 +339,21 @@ impl ContextManager {
             event_bus,
             code_map: Default::default(),
             msg_map: Default::default(),
+            rag: None,
+        }
+    }
+
+    pub fn new_with_rag(
+        rag_event_rx: mpsc::Receiver<RagEvent>,
+        event_bus: Arc<EventBus>,
+        rag: Arc<RagService>,
+    ) -> Self {
+        Self {
+            rag_event_rx,
+            event_bus,
+            code_map: Default::default(),
+            msg_map: Default::default(),
+            rag: Some(rag),
         }
     }
 }
