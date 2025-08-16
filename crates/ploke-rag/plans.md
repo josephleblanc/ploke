@@ -282,3 +282,56 @@ Deliverables for Point 3
 - Quality: improved diversity and lower duplication vs. baseline; golden tests pass.
 - Performance: meets initial latency targets under fixture DB.
 - Observability: rich tracing fields present; errors informative and typed.
+
+---
+
+## Current implementation state (ready for ploke-tui integration)
+
+Status summary
+- BM25 client wrapper: Implemented in RagService
+  - bm25_status(), search_bm25(lenient with retry/backoff), search_bm25_strict(), bm25_rebuild(), bm25_save(), bm25_load()
+  - Client-side timeouts via tokio::time::timeout; retries on Building/Uninitialized per backoff.
+  - Error mapping: channel -> RagError::Channel; DB/actor -> RagError::Db; strict search violations -> RagError::Search.
+  - Tracing: spans annotate query_len, top_k, strict, timeout_ms, attempts, fallback_used, and result sizes.
+- Dense retrieval: Implemented using ploke-db HNSW helpers with configurable ef/radius/max_hits per NodeType.
+- Fusion: Implemented (normalize_scores, weighted RRF, MMR with cosine). Stable tie-breaking by UUID.
+- Context assembly: Implemented initial pipeline
+  - TokenBudget, TokenCounter (ApproxCharTokenizer), AssemblyPolicy, deterministic ordering.
+  - IO integration via IoManagerHandle::get_snippets_batch; dedup by UUID; trimming by budget.
+- Public API surface: RagService with get_context(query, top_k, budget, strategy) and hybrid_search.
+- Config: RagConfig with BM25 timeout/backoff, fusion defaults, per-type dense params, assembly policy, token counter, reranker hook.
+- Observability: Minimal default subscriber in non-test builds; tests can install their own subscriber.
+
+Gaps (acceptable for TUI integration)
+- Context assembly uses placeholder file_path (id://UUID) and does not stitch ranges. Good enough for initial UI flows.
+- MMR uses external embeddings map (currently empty in core path); diversity step is optional and can be disabled for now.
+- Persistence is sidecar-only (delegated to ploke-db); bm25_load triggers a rebuild (expected).
+
+Conclusion
+- We are ready to integrate with ploke-tui using the existing APIs. No blocking work remains for a basic end-to-end UI.
+
+Minimal file set to keep in chat for integration work (target < 5k tokens)
+- crates/ploke-rag/TUI_INTEGRATION_MIN.md  (new, concise integration guide + file list)
+- crates/ploke-rag/src/lib.rs              (re-exports and crate-level docs for types/APIs)
+- crates/ploke-rag/src/core/mod.rs         (RagService APIs to call from TUI)
+- crates/ploke-rag/src/error.rs            (RagError for error handling)
+
+Integration checklist for ploke-tui
+1) Instantiate RagService once and share it (Arc) across UI components:
+   - Use RagService::new_full(db, embedder, io, cfg) or RagService::new_with_io(...) with defaults.
+2) Execute retrieval:
+   - For suggestions/lint-like help: rag.hybrid_search(query, k) or rag.search_bm25(query, k).
+   - For prompt assembly: rag.get_context(query, k, TokenBudget { ... }, RetrievalStrategy::Hybrid { .. }).
+3) Handle errors:
+   - Use Result<T, RagError> or convert to ploke_error::Error via From<RagError>.
+4) Observe behavior:
+   - Initialize tracing subscriber in the TUI binary; RagService avoids double-registration.
+5) Optional persistence:
+   - Call rag.bm25_save/load on user action or app startup; treat load as a warm-start hint.
+
+Future improvements (post-integration)
+- Rich snippet metadata: real file paths, spans, stitching of contiguous ranges.
+- Background warm-up: optional bm25_rebuild on app start with readiness gating.
+- MMR with dynamic embeddings: hydrate missing vectors via db before selection.
+- Config surface in TUI: expose RRF/MMR/timeout toggles and budgets with presets.
+- Metrics: structured events wired into a metrics sink for latency/recall tracking.
