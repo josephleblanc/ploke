@@ -42,6 +42,7 @@ static HELP_COMMANDS: &str = r#"Available commands:
     bm25 load <path> - Load sparse index sidecar from file
     bm25 search <query> [top_k] - Search with BM25
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
+    preview [on|off|toggle] - Toggle context preview panel
     help - Show this help
 
     Keyboard shortcuts (Normal mode):
@@ -51,6 +52,7 @@ static HELP_COMMANDS: &str = r#"Available commands:
     m - Quick model selection
     ? - Show this help
     / - Quick hybrid search prompt
+    P - Toggle context preview
     j/↓ - Navigate down (selection)
     k/↑ - Navigate up (selection)
     J - Page down (scroll)
@@ -121,6 +123,7 @@ pub struct App {
     last_viewport_height: u16,
     last_chat_area: ratatui::layout::Rect,
     needs_redraw: bool,
+    show_context_preview: bool,
 }
 
 impl App {
@@ -162,6 +165,7 @@ impl App {
             last_viewport_height: 0,
             last_chat_area: ratatui::layout::Rect::default(),
             needs_redraw: true,
+            show_context_preview: false,
         }
     }
 
@@ -526,13 +530,16 @@ impl App {
         let input_area = main_layout[2];
         let status_area = main_layout[3];
 
-        // Split chat into conversation (left) and context preview (right)
-        let chat_columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-            .split(chat_area_full);
-        let chat_area = chat_columns[0];
-        let preview_area = chat_columns[1];
+        // Optionally split chat into conversation (left) and context preview (right)
+        let (chat_area, preview_area_opt) = if self.show_context_preview {
+            let chat_columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(chat_area_full);
+            (chat_columns[0], Some(chat_columns[1]))
+        } else {
+            (chat_area_full, None)
+        };
 
         // Remember conversation area for mouse hit-testing
         self.last_chat_area = chat_area;
@@ -623,9 +630,11 @@ impl App {
         );
 
         // Right-side context preview (placeholder until wired to Rag events)
-        let preview = Paragraph::new("Context Preview\nWaiting for results…")
-            .block(Block::bordered().title(" Context Preview "));
-        frame.render_widget(preview, preview_area);
+        if let Some(preview_area) = preview_area_opt {
+            let preview = Paragraph::new("Context Preview\nWaiting for results…")
+                .block(Block::bordered().title(" Context Preview "));
+            frame.render_widget(preview, preview_area);
+        }
 
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
@@ -1163,6 +1172,26 @@ impl App {
                     // NOTE: RagService/state_manager should emit results back to the UI via AppEvent or AddMessageImmediate.
                 }
             }
+            "preview" => {
+                self.show_context_preview = !self.show_context_preview;
+                self.needs_redraw = true;
+            }
+            cmd if cmd.starts_with("preview ") => {
+                let arg = cmd.trim_start_matches("preview ").trim();
+                match arg {
+                    "on" => self.show_context_preview = true,
+                    "off" => self.show_context_preview = false,
+                    "toggle" => self.show_context_preview = !self.show_context_preview,
+                    _ => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: "Usage: preview [on|off|toggle]".to_string(),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                }
+                self.needs_redraw = true;
+            }
             cmd => {
                 self.show_command_help();
                 tracing::warn!("Unknown command: {}", cmd);
@@ -1344,6 +1373,10 @@ impl App {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/help".to_string();
+            }
+            KeyCode::Char('P') => {
+                self.pending_char = None;
+                self.show_context_preview = !self.show_context_preview;
             }
             KeyCode::Char('i') => {
                 self.pending_char = None;
