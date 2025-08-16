@@ -3,6 +3,7 @@ pub mod message_item;
 
 use super::*;
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
@@ -36,6 +37,9 @@ static HELP_COMMANDS: &str = r#"Available commands:
     model list - List available models
     model <name> - Switch model
     bm25 rebuild - Rebuild sparse BM25 index
+    bm25 status - Show sparse BM25 index status
+    bm25 save <path> - Save sparse index sidecar to file
+    bm25 load <path> - Load sparse index sidecar from file
     bm25 search <query> [top_k] - Search with BM25 (hybrid wiring in progress)
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
     help - Show this help
@@ -1058,6 +1062,43 @@ impl App {
                     max_hits,
                     threshold
                 });
+            }
+            "bm25 status" => {
+                self.send_cmd(StateCommand::RagBm25Status);
+            }
+            cmd if cmd.starts_with("bm25 save ") => {
+                let path_str = cmd.trim_start_matches("bm25 save ").trim();
+                if path_str.is_empty() {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Usage: bm25 save <path>".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                } else {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Saving BM25 index sidecar to {}", path_str),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                    self.send_cmd(StateCommand::RagBm25Save { path: PathBuf::from(path_str) });
+                }
+            }
+            cmd if cmd.starts_with("bm25 load ") => {
+                let path_str = cmd.trim_start_matches("bm25 load ").trim();
+                if path_str.is_empty() {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Usage: bm25 load <path>".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                } else {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Loading BM25 index sidecar from {}", path_str),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                    self.send_cmd(StateCommand::RagBm25Load { path: PathBuf::from(path_str) });
+                }
             }
             cmd if cmd.starts_with("bm25 rebuild") => {
                 self.send_cmd(StateCommand::AddMessageImmediate {
