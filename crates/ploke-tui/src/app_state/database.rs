@@ -847,12 +847,11 @@ mod test {
         assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
-        let mut target_file = PathBuf::new();
-        {
+        let mut target_file = {
             let mut system_guard = state.system.write().await;
             system_guard.crate_focus = Some( workspace_root.join(workspace) );
-            target_file = system_guard.crate_focus.clone().expect("Crate focus not set");
-        }
+            system_guard.crate_focus.clone().expect("Crate focus not set")
+        };
         tracing::trace!("target_file before pushes:\n{}", target_file.display());
         target_file.push("src");
         target_file.push("main.rs");
