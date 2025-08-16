@@ -34,7 +34,7 @@ use tracing::{debug, instrument};
 use uuid::Uuid;
 
 pub mod fusion;
-pub use fusion::{normalize_scores, ScoreNorm};
+pub use fusion::{normalize_scores, ScoreNorm, RrfConfig, MmrConfig, Similarity, rrf_fuse, mmr_select};
 
 #[derive(Error, Debug)]
 pub enum RagError {
@@ -260,27 +260,9 @@ impl RagService {
         let dense_list =
             dense_res.map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
 
-        // RRF fusion parameters
-        let rrf_k: f32 = 60.0;
-
-        // Accumulate fused scores using ranks (1-based)
-        let mut fused: HashMap<Uuid, f32> = HashMap::new();
-
-        for (i, (id, _score)) in bm25_list.iter().enumerate() {
-            let rank = (i + 1) as f32;
-            let add = 1.0_f32 / (rrf_k + rank);
-            *fused.entry(*id).or_insert(0.0) += add;
-        }
-
-        for (i, (id, _score)) in dense_list.iter().enumerate() {
-            let rank = (i + 1) as f32;
-            let add = 1.0_f32 / (rrf_k + rank);
-            *fused.entry(*id).or_insert(0.0) += add;
-        }
-
-        // Collect, sort by fused score descending, and take top_k
-        let mut out: Vec<(Uuid, f32)> = fused.into_iter().collect();
-        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Fuse with configurable, weighted RRF and stable UUID tie-breaking.
+        let mut out: Vec<(Uuid, f32)> =
+            rrf_fuse(&bm25_list, &dense_list, &RrfConfig::default());
         out.truncate(top_k);
 
         debug!("Hybrid search returning {} fused results", out.len());
