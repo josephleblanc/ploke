@@ -542,6 +542,15 @@ pub async fn state_manager(
     event_bus: Arc<EventBus>,
     context_tx: mpsc::Sender<RagEvent>,
 ) {
+    let add_msg_shortcut = |msg: &str| {
+        add_msg_immediate(
+            &state,
+            &event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            MessageKind::SysInfo,
+        )
+    };
     while let Some(cmd) = cmd_rx.recv().await {
         // Update the span with the command discriminant
         let span = tracing::debug_span!(
@@ -690,6 +699,7 @@ pub async fn state_manager(
                     }
                 }
                 // let mut chat_guard = state.chat.0.write().await;
+                add_msg_shortcut("Indexing...").await;
                 add_msg_immediate(
                     &state,
                     &event_bus,
@@ -985,6 +995,7 @@ pub async fn state_manager(
                                 MessageKind::SysInfo,
                             )
                             .await;
+                            // TODO: Add a way to return the result of the rebuild with a timeout.
                         }
                         Err(e) => {
                             add_msg_immediate(
@@ -1475,47 +1486,6 @@ async fn wait_on_oneshot<T>(
         }
     }
     ControlFlow::Continue(())
-}
-
-/// Adds a system information message to the chat history.
-///
-/// This macro provides a concise way to add system info messages without having to
-/// manually create UUIDs or specify the message kind. It's particularly useful for
-/// status updates and operational messages.
-///
-/// # Arguments
-///
-/// * `$state` - Reference to the shared `AppState` instance
-/// * `$event_bus` - Reference to the `EventBus` for sending notifications
-/// * `$content` - The message content to display (can be a `String` or `&str`)
-///
-/// # Example
-///
-/// ```rust
-/// sys_info_msg!(&state, &event_bus, "Indexing completed successfully").await;
-/// ```
-///
-/// This is equivalent to:
-/// ```rust
-/// add_msg_immediate(
-///     &state,
-///     &event_bus,
-///     Uuid::new_v4(),
-///     "Indexing completed successfully".to_string(),
-///     MessageKind::SysInfo,
-/// ).await;
-/// ```
-macro_rules! sys_info_msg {
-    ($state:expr, $event_bus:expr, $content:expr) => {
-        add_msg_immediate(
-            $state,
-            $event_bus,
-            Uuid::new_v4(),
-            $content,
-            MessageKind::SysInfo,
-        )
-        .await
-    };
 }
 
 #[instrument(skip(state))]

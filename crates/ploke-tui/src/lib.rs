@@ -347,43 +347,6 @@ pub enum EventPriority {
     Background,
 }
 
-// Import the error handling traits
-
-// Implement the ResultExt trait for Results with ploke_error::Error
-// This implementation is only for Result<T, ploke_error::Error> to comply with orphan rule
-impl<T> ResultExt<ploke_error::Error> for Result<T, ploke_error::Error> {
-    fn emit_event(self, severity: ErrorSeverity) -> Result<T, ploke_error::Error> {
-        if let Err(ref e) = self {
-            let message = e.to_string();
-            tokio::spawn(async move {
-                emit_error_event(message, severity).await;
-            });
-        }
-        self
-    }
-
-    fn emit_warning(self) -> Result<T, ploke_error::Error> {
-        self.emit_event(ErrorSeverity::Warning)
-    }
-
-    fn emit_error(self) -> Result<T, ploke_error::Error> {
-        self.emit_event(ErrorSeverity::Error)
-    }
-
-    fn emit_fatal(self) -> Result<T, ploke_error::Error> {
-        self.emit_event(ErrorSeverity::Fatal)
-    }
-}
-
-impl ErrorExt for ploke_error::Error {
-    fn emit_event(&self, severity: ErrorSeverity) {
-        let message = self.to_string();
-        tokio::spawn(async move {
-            emit_error_event(message, severity).await;
-        });
-    }
-}
-
 #[derive(Debug)]
 pub struct EventBus {
     realtime_tx: broadcast::Sender<AppEvent>,

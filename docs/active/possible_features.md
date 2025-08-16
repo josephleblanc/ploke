@@ -1,5 +1,16 @@
 # Possible features
 
+## Simple
+Add a file-explorer side-panel. 
+- Selecting a file from teh side-panel and pressing a command key will:
+  - a. Filter nodes in the file from being returned by the RAG
+  - b. Filter returned RAG results to only come from the target file(s)
+  - c. Halve the relevance score for the RAG
+  - d. Boost the relevance score for the RAG
+  - e. Add the entire file to the context sent to the LLM
+
+Add a default file name for instructions for the LLM, similar to the AGENT.md for some editors.
+
 ## Code Context Map
 Crate a map that shows how the code snippets are connected in addition to
 providing code snippets relevant to the user query. The code-graph structure

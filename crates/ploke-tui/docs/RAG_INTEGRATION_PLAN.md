@@ -147,20 +147,21 @@ Bench:
 Stage 0 (Planning): This document.
 
 Stage 1 (Wire-in RagService correctly):
-- Change construction to RagService::new_full(db, embedder, io, cfg).
-- Store Some(Arc<RagService>) in AppState.rag; remove None-paths in downstream code or guard with clear fallbacks.
+- [x] Change construction to RagService::new_full(db, embedder, io, cfg).
+- [x] Store Some(Arc<RagService>) in AppState.rag; 
+- (ongoing) remove None-paths in downstream code or guard with clear fallbacks.
 
 Stage 2 (Commands and events):
-- Extend StateCommand and AppEvent (or RagEvent) for search/context/BM25.
-- Implement handlers in StateManager; route results via EventBus.
+- [x] Extend StateCommand and AppEvent (or RagEvent) for search/context/BM25.
+- [x] Implement handlers in StateManager; route results via EventBus.
 
 Stage 3 (ContextManager refactor):
-- Replace in-crate context building with rag.get_context.
-- Ensure llm_manager integration consumes ContextConstructed to build prompts.
+- [x] Replace in-crate context building with rag.get_context.
+- [x] Ensure llm_manager integration consumes ContextConstructed to build prompts.
 
 Stage 4 (UI polish):
 - Add modeless quick-search (hybrid) and context preview panes.
-- Expose BM25 status and lifecycle actions via commands.
+- [x] Expose BM25 status and lifecycle actions via commands.
 
 Stage 5 (Cleanup and parity):
 - Remove legacy RAG code paths in ploke-tui once parity verified.

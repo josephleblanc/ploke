@@ -124,7 +124,6 @@ pub struct App {
     last_chat_area: ratatui::layout::Rect,
     needs_redraw: bool,
     show_context_preview: bool,
-    context_preview: Option<String>,
 }
 
 impl App {
@@ -167,7 +166,6 @@ impl App {
             last_chat_area: ratatui::layout::Rect::default(),
             needs_redraw: true,
             show_context_preview: false,
-            context_preview: None,
         }
     }
 
@@ -341,24 +339,7 @@ impl App {
             // Application events
             Ok(app_event) = self.event_rx.recv() => {
                 match app_event {
-                    AppEvent::MessageUpdated(ev) => {
-                        // Keep UI list selection in sync
-                        self.sync_list_selection().await;
-
-                        // If the preview pane is enabled, try to populate it from the newly-updated message
-                        if self.show_context_preview {
-                            let chat_guard = self.state.chat.0.read().await;
-                            if let Some(msg) = chat_guard.messages.get(&ev.0) {
-                                // Only use system info messages as RAG previews (these are what the
-                                // state_manager uses to post BM25/hybrid/search summaries).
-                                if msg.kind == MessageKind::SysInfo {
-                                    self.context_preview = Some(msg.content.clone());
-                                }
-                            }
-                        }
-                    }
-                    AppEvent::UpdateFailed(_) => {
-                        // Still keep the selection in sync on update failures
+                    AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
                         self.sync_list_selection().await;
                     }
                     AppEvent::IndexingProgress(state)=>{
@@ -650,12 +631,7 @@ impl App {
 
         // Right-side context preview (placeholder until wired to Rag events)
         if let Some(preview_area) = preview_area_opt {
-            let preview_text = self
-                .context_preview
-                .as_deref()
-                .unwrap_or("Context Preview\nWaiting for results…");
-
-            let preview = Paragraph::new(preview_text)
+            let preview = Paragraph::new("Context Preview\nWaiting for results…")
                 .block(Block::bordered().title(" Context Preview "));
             frame.render_widget(preview, preview_area);
         }
