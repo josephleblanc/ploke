@@ -128,8 +128,13 @@ pub async fn try_main() -> color_eyre::Result<()> {
     ).with_bm25_tx(bm25_cmd);
     let indexer_task = Arc::new(indexer_task);
 
-    // Initialize RAG orchestration service (BM25 + dense handles)
-    let rag = match ploke_rag::RagService::new(db_handle.clone(), Arc::clone(&proc_arc)) {
+    // Initialize RAG orchestration service with full capabilities (BM25 + dense + IoManager)
+    let rag = match ploke_rag::RagService::new_full(
+        db_handle.clone(), 
+        Arc::clone(&proc_arc), 
+        io_handle.clone(),
+        ploke_rag::RagConfig::default()
+    ) {
         Ok(svc) => Some(Arc::new(svc)),
         Err(e) => {
             tracing::warn!("Failed to initialize RagService: {}", e);
