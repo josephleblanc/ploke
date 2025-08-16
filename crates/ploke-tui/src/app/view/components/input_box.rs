@@ -5,6 +5,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
 use ratatui::Frame;
 use textwrap;
 use crate::app::types::Mode;
+use crate::app::view::EventSubscriber;
+use crate::app::AppEvent;
 
 /// Encapsulates input box rendering and state (scroll, cursor).
 #[derive(Debug, Clone, Default)]
@@ -70,5 +72,11 @@ impl InputView {
 
     pub fn scroll_next(&mut self) {
         self.scrollstate.next();
+    }
+}
+
+impl EventSubscriber for InputView {
+    fn on_event(&mut self, _event: &AppEvent) {
+        // Currently no-op; placeholder for future input-related reactions to events.
     }
 }

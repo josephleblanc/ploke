@@ -3,6 +3,8 @@ use ratatui::Frame;
 
 use crate::app::message_item::{measure_messages, render_messages};
 use crate::app::types::RenderableMessage;
+use crate::app::view::EventSubscriber;
+use crate::app::AppEvent;
 
 /// Encapsulates conversation view state: scroll, auto-follow, and item heights.
 #[derive(Debug, Default, Clone)]
@@ -162,5 +164,20 @@ impl ConversationView {
 
     pub fn request_top(&mut self) {
         self.offset_y = 0;
+    }
+}
+
+impl EventSubscriber for ConversationView {
+    fn on_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::MessageUpdated(_) => {
+                // If we're auto-following the end and not in free-scrolling,
+                // request to follow new messages to the bottom on next prepare().
+                if self.auto_follow && !self.free_scrolling {
+                    self.request_bottom();
+                }
+            }
+            _ => {}
+        }
     }
 }

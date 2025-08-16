@@ -12,6 +12,9 @@ use super::utils::display_file_info;
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
+    // Forward to view components that subscribe to events
+    app.conversation.on_event(&app_event);
+    app.input_view.on_event(&app_event);
     match app_event {
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
