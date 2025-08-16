@@ -127,20 +127,21 @@ impl App {
                 let current_path = history_guard.get_full_path();
                 let current_id = history_guard.current;
 
-                // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
-                // Could it be made to?
-                let renderable_messages = current_path
-                    .iter()
-                    .map(|m| RenderableMessage {
+                // Iterator-based rendering (Phase 5): avoid materializing a Vec here.
+                let path_len = current_path.len();
+                let iter_factory = || {
+                    current_path.iter().map(|m| RenderableMessage {
                         id: m.id,
                         kind: m.kind,
                         content: m.content.clone(),
                     })
-                    .collect::<Vec<RenderableMessage>>();
+                };
                 drop(history_guard);
 
-                // Draw the UI with the prepared data.
-                terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
+                // Draw the UI with the prepared data using fresh iterators for measure and render.
+                terminal.draw(|frame| {
+                    self.draw(frame, iter_factory(), iter_factory(), path_len, current_id)
+                })?;
                 self.needs_redraw = false;
             }
 
@@ -278,7 +279,17 @@ impl App {
     }
 
     /// Renders the user interface.
-    fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
+    fn draw<I1, I2>(
+        &mut self,
+        frame: &mut Frame,
+        path_for_measure: I1,
+        path_for_render: I2,
+        path_len: usize,
+        current_id: Uuid,
+    ) where
+        I1: IntoIterator<Item = RenderableMessage>,
+        I2: IntoIterator<Item = RenderableMessage>,
+    {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
 
@@ -338,12 +349,24 @@ impl App {
         let selected_index_opt = self
             .list
             .selected()
-            .map(|i| i.min(path.len().saturating_sub(1)));
+            .map(|i| i.min(path_len.saturating_sub(1)));
 
         // Prepare and render conversation via ConversationView
-        self.conversation.prepare(path, conversation_width, viewport_height, selected_index_opt);
+        self.conversation.prepare(
+            path_for_measure,
+            path_len,
+            conversation_width,
+            viewport_height,
+            selected_index_opt,
+        );
         self.conversation.set_last_chat_area(chat_area);
-        self.conversation.render(frame, path, conversation_width, chat_area, selected_index_opt);
+        self.conversation.render(
+            frame,
+            path_for_render,
+            conversation_width,
+            chat_area,
+            selected_index_opt,
+        );
 
         // Right-side context preview (placeholder until wired to Rag events)
         if let Some(preview_area) = preview_area_opt {

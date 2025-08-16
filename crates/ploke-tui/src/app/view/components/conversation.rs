@@ -19,13 +19,17 @@ pub struct ConversationView {
 }
 
 impl ConversationView {
-    pub fn prepare(
+    pub fn prepare<I>(
         &mut self,
-        path: &[RenderableMessage],
+        path: I,
+        path_len: usize,
         conversation_width: u16,
         viewport_height: u16,
         selected_index_opt: Option<usize>,
-    ) {
+    )
+    where
+        I: IntoIterator<Item = RenderableMessage>,
+    {
         self.last_viewport_height = viewport_height;
 
         // 1) Measure
@@ -36,12 +40,12 @@ impl ConversationView {
         // 2) Decide/adjust offset using current metrics
         let max_offset = self.content_height.saturating_sub(viewport_height);
 
-        if path.is_empty() {
+        if path_len == 0 {
             self.offset_y = 0;
             self.auto_follow = true;
             self.free_scrolling = false;
         } else if let Some(selected_index) = selected_index_opt {
-            let is_last = selected_index + 1 == path.len();
+            let is_last = selected_index + 1 == path_len;
             if is_last {
                 if self.auto_follow && !self.free_scrolling {
                     self.offset_y = max_offset;
@@ -80,7 +84,7 @@ impl ConversationView {
         // 3) Auto-follow status
         if !self.free_scrolling {
             if let Some(selected_index) = selected_index_opt {
-                let is_last = selected_index + 1 == path.len();
+                let is_last = selected_index + 1 == path_len;
                 self.auto_follow = is_last || self.offset_y >= max_offset;
             } else {
                 self.auto_follow = self.offset_y >= max_offset;
@@ -88,14 +92,17 @@ impl ConversationView {
         }
     }
 
-    pub fn render(
+    pub fn render<I>(
         &self,
         frame: &mut Frame,
-        path: &[RenderableMessage],
+        path: I,
         conversation_width: u16,
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
-    ) {
+    )
+    where
+        I: IntoIterator<Item = RenderableMessage>,
+    {
         render_messages(
             frame,
             path,
