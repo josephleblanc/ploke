@@ -279,7 +279,7 @@ impl App {
     }
 
     /// Renders the user interface.
-    fn draw<I1, I2>(
+    fn draw<'a, I1, I2>(
         &mut self,
         frame: &mut Frame,
         path_for_measure: I1,
@@ -287,8 +287,8 @@ impl App {
         path_len: usize,
         current_id: Uuid,
     ) where
-        I1: IntoIterator<Item = RenderableMessage>,
-        I2: IntoIterator<Item = RenderableMessage>,
+        I1: IntoIterator<Item = RenderableMessage<'a>>,
+        I2: IntoIterator<Item = RenderableMessage<'a>>,
     {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
