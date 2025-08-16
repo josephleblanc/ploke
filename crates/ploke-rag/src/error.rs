@@ -12,7 +12,7 @@ pub enum RagError {
     #[error("Embedding error: {0}")]
     Embed(String),
 
-    #[error("Embedding error: {0}")]
+    #[error("Search error: {0}")]
     Search(String),
 }
 
@@ -36,7 +36,7 @@ impl From<RagError> for ploke_error::Error {
             }
             RagError::Search(msg) => {
                 ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
-                    format!("Embedding error: {}", msg),
+                    format!("Search error: {}", msg),
                 ))
             }
         }
