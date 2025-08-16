@@ -1390,7 +1390,7 @@ async fn embedding_search_similar(
     embeddings: Vec<f32>,
 ) -> color_eyre::Result<()> {
     let ty_embed_data =
-        search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function).emit_error()?;
+        search_similar(&state.db, embeddings, 100, 200, NodeType::Function).emit_error()?;
     tracing::info!("search_similar Success! with result {:?}", ty_embed_data);
 
     // Directly send snippets to RAG
