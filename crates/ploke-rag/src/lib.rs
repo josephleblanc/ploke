@@ -33,6 +33,9 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
+pub mod fusion;
+pub use fusion::{normalize_scores, ScoreNorm};
+
 #[derive(Error, Debug)]
 pub enum RagError {
     #[error("Database error: {0}")]
