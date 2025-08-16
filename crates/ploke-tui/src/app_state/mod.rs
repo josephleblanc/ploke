@@ -700,14 +700,6 @@ pub async fn state_manager(
                 }
                 // let mut chat_guard = state.chat.0.write().await;
                 add_msg_shortcut("Indexing...").await;
-                add_msg_immediate(
-                    &state,
-                    &event_bus,
-                    Uuid::new_v4(), // double check this is OK
-                    "Indexing...".to_string(),
-                    MessageKind::SysInfo,
-                )
-                .await;
                 let event_bus_clone = event_bus.clone();
                 // let progress_tx = Arc::clone(&event_bus.index_tx);
                 let progress_tx = Arc::clone(&event_bus.index_tx);
@@ -793,14 +785,8 @@ pub async fn state_manager(
             StateCommand::UpdateDatabase => {
                 let start = time::Instant::now();
                 let new_msg_id = Uuid::new_v4();
-                add_msg_immediate(
-                    &state,
-                    &event_bus,
-                    new_msg_id,
-                    "Indexing HNSW...".to_string(),
-                    MessageKind::SysInfo,
-                )
-                .await;
+
+                add_msg_shortcut("Indexing HNSW...").await;
                 // TODO: Decide if this needs to be replaced.
                 for ty in NodeType::primary_nodes() {
                     match create_index_warn(&state.db, ty) {
@@ -828,15 +814,8 @@ pub async fn state_manager(
                 }
                 let after = time::Instant::now();
                 let msg = format!("..finished in {}", after.duration_since(start).as_millis());
-                let second_new_message_id = Uuid::new_v4();
-                add_msg_immediate(
-                    &state,
-                    &event_bus,
-                    second_new_message_id,
-                    msg,
-                    MessageKind::SysInfo,
-                )
-                .await;
+
+                add_msg_shortcut(&msg).await;
             }
             StateCommand::EmbedMessage {
                 new_msg_id,
@@ -848,81 +827,36 @@ pub async fn state_manager(
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
-                    Ok(Some((_last_usr_msg_id, last_user_msg))) => {
-                        let query = last_user_msg;
-                        // Release the read lock before awaiting further ops
+                    Ok(Some((last_usr_msg_id, last_user_msg))) => {
+                        tracing::info!("Start embedding user message: {}", last_user_msg);
+                        let temp_embed = state
+                            .embedder
+                            .generate_embeddings(vec![last_user_msg])
+                            .await
+                            .expect("Error while generating embedding of user message");
+                        // drop guard after we are done with last_usr_message, which is consumed by
+                        // generate_embeddings
                         drop(chat_guard);
+                        let embeddings = temp_embed
+                            .into_iter()
+                            .next()
+                            .expect("No results from user message embedding generation");
+                        tracing::info!("Finish embedding user message");
 
                         tracing::info!("Waiting to finish processing updates to files, if any");
                         // Wait on the oneshot from `scan_for_change`, letting us know that the database
-                        // has been updated with any recent changes, if there were any.
+                        // has been updated with the embeddings from any recent changes, if there were any.
                         if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, scan_rx).await {
                             continue;
                         }
                         tracing::info!("Finished waiting on parsing target crate");
 
-                        if let Some(rag) = &state.rag {
-                            let top_k: usize = 12;
-                            match rag.hybrid_search(&query, top_k).await {
-                                Ok(results) => {
-                                    // Fetch snippets via IoManager for the retrieved IDs and forward to context manager
-                                    let ids: Vec<Uuid> = results.into_iter().map(|(id, _)| id).collect();
-                                    let snippets = state
-                                        .io_handle
-                                        .get_snippets_batch(ids)
-                                        .await
-                                        .unwrap_or_default()
-                                        .into_iter()
-                                        .filter_map(|r| r.ok())
-                                        .collect::<Vec<String>>();
-
-                                    if let Err(e) = context_tx
-                                        .send(RagEvent::ContextSnippets(new_msg_id, snippets))
-                                        .await
-                                    {
-                                        tracing::error!("Failed sending ContextSnippets: {}", e);
-                                    }
-
-                                    // Then trigger context construction with the correct parent ID
-                                    let messages: Vec<Message> =
-                                        state.chat.0.read().await.clone_current_path_conv();
-
-                                    if let Err(e) = context_tx
-                                        .send(RagEvent::UserMessages(new_msg_id, messages))
-                                        .await
-                                    {
-                                        tracing::error!("Failed sending UserMessages: {}", e);
-                                    }
-                                    if let Err(e) = context_tx
-                                        .send(RagEvent::ConstructContext(new_msg_id))
-                                        .await
-                                    {
-                                        tracing::error!("Failed sending ConstructContext: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Hybrid search failed: {}", e);
-                                    add_msg_immediate(
-                                        &state,
-                                        &event_bus,
-                                        Uuid::new_v4(),
-                                        format!("Hybrid search failed: {}", e),
-                                        MessageKind::SysInfo,
-                                    )
-                                    .await;
-                                }
-                            }
-                        } else {
-                            tracing::warn!("RAG service unavailable; skipping hybrid search in EmbedMessage");
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                "RAG service unavailable; cannot run hybrid search".to_string(),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
-                        }
+                        if let Err(e) =
+                            embedding_search_similar(&state, &context_tx, new_msg_id, embeddings)
+                                .await
+                        {
+                            tracing::error!("error during embedding search: {}", e);
+                        };
                     }
                     Ok(None) => {
                         tracing::warn!(
@@ -1031,37 +965,14 @@ pub async fn state_manager(
             StateCommand::Bm25Rebuild => {
                 if let Some(rag) = &state.rag {
                     match rag.bm25_rebuild().await {
-                        Ok(()) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                "BM25 rebuild requested".to_string(),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
-                            // TODO: Add a way to return the result of the rebuild with a timeout.
-                        }
+                        Ok(()) => add_msg_shortcut("BM25 rebuild requested").await,
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 rebuild failed: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 rebuild failed: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot rebuild BM25".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot rebuild BM25").await;
                 }
             }
 
@@ -1078,35 +989,15 @@ pub async fn state_manager(
                             } else {
                                 format!("BM25 results (top {}):\n{}", top_k, lines.join("\n"))
                             };
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                content,
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            add_msg_shortcut(&content).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 search failed: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 search failed: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot run BM25 search".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot run BM25 search").await;
                 }
             }
 
@@ -1123,35 +1014,15 @@ pub async fn state_manager(
                             } else {
                                 format!("Hybrid results (top {}):\n{}", top_k, lines.join("\n"))
                             };
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                content,
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            add_msg_shortcut(&content).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("Hybrid search failed: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("Hybrid search failed: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot run hybrid search".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot run hybrid search").await;
                 }
             }
 
@@ -1159,35 +1030,16 @@ pub async fn state_manager(
                 if let Some(rag) = &state.rag {
                     match rag.bm25_status().await {
                         Ok(status) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 status: {:?}", status),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 status: {:?}", status);
+                            add_msg_shortcut(&msg).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 status error: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 status error: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot query BM25 status".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot query BM25 status").await;
                 }
             }
 
@@ -1195,35 +1047,16 @@ pub async fn state_manager(
                 if let Some(rag) = &state.rag {
                     match rag.bm25_save(path.clone()).await {
                         Ok(()) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 index saved to {}", path.display()),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 index saved to {}", path.display());
+                            add_msg_shortcut(&msg).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 save failed: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 save failed: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot save BM25 index".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot save BM25 index").await;
                 }
             }
 
@@ -1231,35 +1064,16 @@ pub async fn state_manager(
                 if let Some(rag) = &state.rag {
                     match rag.bm25_load(path.clone()).await {
                         Ok(()) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 index load requested from {}", path.display()),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 index load requested from {}", path.display());
+                            add_msg_shortcut(&msg).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 load failed: {}", e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 load failed: {}", e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        "RAG service unavailable; cannot load BM25 index".to_string(),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    add_msg_shortcut("RAG service unavailable; cannot load BM25 index").await;
                 }
             }
 
@@ -1283,35 +1097,16 @@ pub async fn state_manager(
                             } else {
                                 format!("{}\n{}", header, lines.join("\n"))
                             };
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                content,
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            add_msg_shortcut(&content).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("BM25 search (req_id: {}) failed: {}", req_id, e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("BM25 search (req_id: {}) failed: {}", req_id, e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        format!("RAG service unavailable; cannot run BM25 search (req_id: {})", req_id),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    let msg = format!("RAG service unavailable; cannot run BM25 search (req_id: {})", req_id);
+                    add_msg_shortcut(&msg).await;
                 }
             }
 
@@ -1329,35 +1124,16 @@ pub async fn state_manager(
                             } else {
                                 format!("{}\n{}", header, lines.join("\n"))
                             };
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                content,
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            add_msg_shortcut(&content).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("Dense search (req_id: {}) failed: {}", req_id, e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("Dense search (req_id: {}) failed: {}", req_id, e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        format!("RAG service unavailable; cannot run dense search (req_id: {})", req_id),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    let msg = format!("RAG service unavailable; cannot run dense search (req_id: {})", req_id);
+                    add_msg_shortcut(&msg).await;
                 }
             }
 
@@ -1366,35 +1142,17 @@ pub async fn state_manager(
                     match rag.get_context(&user_query, top_k, budget, strategy).await {
                         Ok(_ctx) => {
                             // Until dedicated AppEvent variants are added, post a summary line to the UI.
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("Assembled context successfully (req_id: {}, top_k: {})", req_id, top_k),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("Assembled context successfully (req_id: {}, top_k: {})", req_id, top_k);
+                            add_msg_shortcut(&msg).await;
                         }
                         Err(e) => {
-                            add_msg_immediate(
-                                &state,
-                                &event_bus,
-                                Uuid::new_v4(),
-                                format!("Assemble context (req_id: {}) failed: {}", req_id, e),
-                                MessageKind::SysInfo,
-                            )
-                            .await;
+                            let msg = format!("Assemble context (req_id: {}) failed: {}", req_id, e);
+                            add_msg_shortcut(&msg).await;
                         }
                     }
                 } else {
-                    add_msg_immediate(
-                        &state,
-                        &event_bus,
-                        Uuid::new_v4(),
-                        format!("RAG service unavailable; cannot assemble context (req_id: {})", req_id),
-                        MessageKind::SysInfo,
-                    )
-                    .await;
+                    let msg = format!("RAG service unavailable; cannot assemble context (req_id: {})", req_id);
+                    add_msg_shortcut(&msg).await;
                 }
             }
 
