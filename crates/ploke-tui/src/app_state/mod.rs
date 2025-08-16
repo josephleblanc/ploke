@@ -23,6 +23,7 @@ use ploke_db::{
 };
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
+use ploke_rag::{TokenBudget, RetrievalStrategy};
 use ploke_transform::{macro_traits::HasAnyNodeId, transform::transform_parsed_graph};
 use serde::{Deserialize, Serialize};
 use syn_parser::{
@@ -426,6 +427,43 @@ pub enum StateCommand {
         query: String,
         top_k: usize,
     },
+
+    /// Queries the status of the BM25 index via the RAG service.
+    RagBm25Status,
+
+    /// Saves the BM25 index sidecar to the given path.
+    RagBm25Save {
+        path: PathBuf,
+    },
+
+    /// Loads the BM25 index sidecar from the given path.
+    RagBm25Load {
+        path: PathBuf,
+    },
+
+    /// Runs a BM25 search with an explicit strict flag and request correlation ID.
+    RagSparseSearch {
+        req_id: Uuid,
+        query: String,
+        top_k: usize,
+        strict: bool,
+    },
+
+    /// Runs a dense-only search (HNSW) with request correlation ID.
+    RagDenseSearch {
+        req_id: Uuid,
+        query: String,
+        top_k: usize,
+    },
+
+    /// Assembles a retrieval-augmented context for LLM prompting.
+    RagAssembleContext {
+        req_id: Uuid,
+        user_query: String,
+        top_k: usize,
+        budget: TokenBudget,
+        strategy: RetrievalStrategy,
+    },
 }
 
 impl StateCommand {
@@ -463,6 +501,12 @@ impl StateCommand {
             Bm25Rebuild => "Bm25Rebuild",
             Bm25Search { .. } => "Bm25Search",
             HybridSearch { .. } => "HybridSearch",
+            RagBm25Status => "RagBm25Status",
+            RagBm25Save { .. } => "RagBm25Save",
+            RagBm25Load { .. } => "RagBm25Load",
+            RagSparseSearch { .. } => "RagSparseSearch",
+            RagDenseSearch { .. } => "RagDenseSearch",
+            RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
             // ... other variants
         }
@@ -1049,6 +1093,249 @@ pub async fn state_manager(
                         &event_bus,
                         Uuid::new_v4(),
                         "RAG service unavailable; cannot run hybrid search".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagBm25Status => {
+                if let Some(rag) = &state.rag {
+                    match rag.bm25_status().await {
+                        Ok(status) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 status: {:?}", status),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 status error: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot query BM25 status".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagBm25Save { path } => {
+                if let Some(rag) = &state.rag {
+                    match rag.bm25_save(path.clone()).await {
+                        Ok(()) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 index saved to {}", path.display()),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 save failed: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot save BM25 index".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagBm25Load { path } => {
+                if let Some(rag) = &state.rag {
+                    match rag.bm25_load(path.clone()).await {
+                        Ok(()) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 index load requested from {}", path.display()),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 load failed: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot load BM25 index".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagSparseSearch { req_id, query, top_k, strict } => {
+                if let Some(rag) = &state.rag {
+                    let result = if strict {
+                        rag.search_bm25_strict(&query, top_k).await
+                    } else {
+                        rag.search_bm25(&query, top_k).await
+                    };
+                    match result {
+                        Ok(results) => {
+                            let lines: Vec<String> = results
+                                .into_iter()
+                                .map(|(id, score)| format!("{}: {:.3}", id, score))
+                                .collect();
+                            let header = format!("BM25 {}results (req_id: {}, top {}):",
+                                if strict { "strict " } else { "" }, req_id, top_k);
+                            let content = if lines.is_empty() {
+                                format!("{} <no hits>", header)
+                            } else {
+                                format!("{}\n{}", header, lines.join("\n"))
+                            };
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                content,
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 search (req_id: {}) failed: {}", req_id, e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        format!("RAG service unavailable; cannot run BM25 search (req_id: {})", req_id),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagDenseSearch { req_id, query, top_k } => {
+                if let Some(rag) = &state.rag {
+                    match rag.search(&query, top_k).await {
+                        Ok(results) => {
+                            let lines: Vec<String> = results
+                                .into_iter()
+                                .map(|(id, score)| format!("{}: {:.3}", id, score))
+                                .collect();
+                            let header = format!("Dense results (req_id: {}, top {}):", req_id, top_k);
+                            let content = if lines.is_empty() {
+                                format!("{} <no hits>", header)
+                            } else {
+                                format!("{}\n{}", header, lines.join("\n"))
+                            };
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                content,
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("Dense search (req_id: {}) failed: {}", req_id, e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        format!("RAG service unavailable; cannot run dense search (req_id: {})", req_id),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::RagAssembleContext { req_id, user_query, top_k, budget, strategy } => {
+                if let Some(rag) = &state.rag {
+                    match rag.get_context(&user_query, top_k, budget, strategy).await {
+                        Ok(_ctx) => {
+                            // Until dedicated AppEvent variants are added, post a summary line to the UI.
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("Assembled context successfully (req_id: {}, top_k: {})", req_id, top_k),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("Assemble context (req_id: {}) failed: {}", req_id, e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        format!("RAG service unavailable; cannot assemble context (req_id: {})", req_id),
                         MessageKind::SysInfo,
                     )
                     .await;
