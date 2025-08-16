@@ -191,7 +191,7 @@ H) Rollout and compatibility
 - Document state transitions and error cases in RagService rustdoc.
 
 Out-of-scope for this point
-- Actual persistence file format and storage policy (lives in ploke-db).
+- Actual persistence file format and storage policy (lives in ploke-tui).
 - Long-lived background autosave/autoload policies (could be added later behind config).
 
 Deliverables for Point 3
