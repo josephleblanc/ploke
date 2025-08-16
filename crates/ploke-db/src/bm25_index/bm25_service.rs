@@ -71,7 +71,7 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                 Bm25Cmd::Search { query, top_k, resp } => {
                     tracing::debug!("query: {query}, top_k: {top_k}, resp: {resp:?}");
                     let scored = indexer.search(&query, top_k);
-                    tracing::debug!("scored: {scored:?}");
+                    tracing::trace!("scored: {scored:?}");
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
                     if resp.send(results).is_err() {
@@ -86,7 +86,7 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
     Ok( tx )
 }
 
-—
+
 /// Convenience starter with a reasonable default avgdl.
 pub fn start_default(db: Arc<Database>) -> Result< mpsc::Sender<Bm25Cmd>, DbError > {
     start(db, 10.0)

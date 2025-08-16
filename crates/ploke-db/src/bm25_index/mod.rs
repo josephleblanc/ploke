@@ -633,43 +633,6 @@ impl Bm25Indexer {
         Ok(inserted)
     }
 
-    ///// Index a batch and upsert document metadata into the provided Cozo client.
-    ///// This demonstrates action (A): write doc metadata to Cozo while indexing.
-    //pub fn index_batch_with_cozo(
-    //    &mut self,
-    //    batch: Vec<(Uuid, String)>,
-    //    cozo: Arc<Database>,
-    //) {
-    //    for (id, snippet) in batch {
-    //        let embedding = self.embedder.embed(&snippet);
-    //        self.scorer.upsert(&id, embedding);
-    //        // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet)
-    //        // NOTE: This wraps the UUID v5 into the project's TrackingHash newtype.
-    //        // In the future, prefer TrackingHash::generate(...) when token/context data is available.
-    //        let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
-    //        // compute token length using tokenizer
-    //        let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
-    //
-    //        // stage for Finalize
-    //        self.staged_meta.insert(
-    //            id,
-    //            DocMeta {
-    //                token_length: token_len,
-    //                tracking_hash,
-    //            },
-    //        );
-    //
-    //        // upsert to cozo
-    //        cozo.upsert_bm25_doc_meta_batch(
-    //            id,
-    //            DocMeta {
-    //                token_length: token_len,
-    //                tracking_hash,
-    //            },
-    //        );
-    //    }
-    //}
-
     /// Remove a document by id (used when file changes and nodes are pruned)
     pub fn remove(&mut self, id: &Uuid) {
         self.scorer.remove(id);
@@ -680,7 +643,7 @@ impl Bm25Indexer {
         let qemb = self.embedder.embed(query);
         tracing::debug!("qemb: {qemb:?}");
         let mut matches = self.scorer.matches(&qemb);
-        tracing::debug!("matches: {matches:?}");
+        tracing::trace!("matches: {matches:?}");
         if matches.len() > top_k {
             matches.truncate(top_k);
         }
@@ -710,7 +673,7 @@ impl Bm25Indexer {
 /// It filters out rows where `name` or `tracking_hash` are missing.
 ///
 /// Example (no_run):
-/// ```
+/// ```no_run
 /// # use std::sync::Arc;
 /// # use ploke_db::bm25_index::collect_rebuild_sources;
 /// # use ploke_db::Database;
@@ -747,7 +710,7 @@ pub(crate) fn collect_rebuild_sources(
                 DataValue::Uuid(UuidWrapper(u)) => TrackingHash(*u),
                 _ => continue,
             };
-            out.push((id, name, th));
+            out.push((id, name.to_string(), th));
         }
     }
     Ok(out)

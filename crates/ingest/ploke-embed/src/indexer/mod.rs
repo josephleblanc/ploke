@@ -1,7 +1,6 @@
 #![allow(unused_mut)]
 mod unit_tests;
 
-
 use crate::local::{EmbeddingConfig, LocalEmbedder};
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
@@ -500,12 +499,17 @@ impl IndexerTask {
             // If BM25 is configured, request FinalizeSeed and await ack before committing completion.
             if let Some(tx) = &self.bm25_tx {
                 let (resp_tx, resp_rx) = oneshot::channel::<Result<(), String>>();
-                if let Err(e) = tx.send(bm25_service::Bm25Cmd::FinalizeSeed { resp: resp_tx }).await {
+                if let Err(e) = tx
+                    .send(bm25_service::Bm25Cmd::FinalizeSeed { resp: resp_tx })
+                    .await
+                {
                     let msg = format!("Failed to send BM25 FinalizeSeed: {}", e);
                     tracing::error!("{}", &msg);
                     state.status = IndexStatus::Failed(msg);
                     progress_tx.send(state)?;
-                    return Err(EmbedError::NotImplemented("BM25 FinalizeSeed send failed".into()));
+                    return Err(EmbedError::NotImplemented(
+                        "BM25 FinalizeSeed send failed".into(),
+                    ));
                 }
                 match resp_rx.await {
                     Ok(Ok(())) => {
@@ -516,14 +520,18 @@ impl IndexerTask {
                         tracing::error!("{}", &msg);
                         state.status = IndexStatus::Failed(msg);
                         progress_tx.send(state)?;
-                        return Err(EmbedError::NotImplemented("BM25 FinalizeSeed failed".into()));
+                        return Err(EmbedError::NotImplemented(
+                            "BM25 FinalizeSeed failed".into(),
+                        ));
                     }
                     Err(recv_err) => {
                         let msg = format!("BM25 FinalizeSeed channel closed: {}", recv_err);
                         tracing::error!("{}", &msg);
                         state.status = IndexStatus::Failed(msg);
                         progress_tx.send(state)?;
-                        return Err(EmbedError::NotImplemented("BM25 FinalizeSeed channel closed".into()));
+                        return Err(EmbedError::NotImplemented(
+                            "BM25 FinalizeSeed channel closed".into(),
+                        ));
                     }
                 }
             }
@@ -685,31 +693,27 @@ impl IndexerTask {
             tracing::error!("Empty valid snippets detected.");
             // panic!("AAaaaaaaaah")
         }
-        
+
         // Send DocMeta to BM25 service instead of full snippets
         if let Some(tx) = &self.bm25_tx {
             let docs_data: Vec<DocData> = valid_data
                 .iter()
                 .zip(valid_snippets.iter())
-                .map(DocData::from)
+                .map(DocData::from_embed_clone)
                 .collect();
-            
+
             tracing::debug!(
                 "Sending {} processed snippets to BM25 service",
                 docs_data.len()
             );
-            
-            if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch {
-                docs: docs_data,
-            }) {
+
+            if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch { docs: docs_data }) {
                 tracing::warn!("BM25 IndexBatch try_send failed: {}", e);
             }
         } else {
-            tracing::trace!(
-                "BM25 service not configured; skipping sparse indexing for this batch"
-            );
+            tracing::trace!("BM25 service not configured; skipping sparse indexing for this batch");
         }
-        
+
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
@@ -749,7 +753,12 @@ fn log_row(r: Vec<DataValue>) {
         tracing::info!("{}: {:?}", i, row);
     }
 }
-pub(crate) fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
+pub(crate) fn log_stuff(
+    call: CallbackOp,
+    new: NamedRows,
+    old: NamedRows,
+    counter: Arc<AtomicUsize>,
+) {
     let new_count = new.rows.len();
     let last_count = counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
     let header = new.headers.clone();
