@@ -97,6 +97,13 @@ Goal
 
 Implementation plan (incremental, PR-sized steps)
 
+Current implementation in ploke-db (this PR)
+- Added Bm25Status enum and Bm25Cmd::Status/Save/Load alongside existing commands.
+- Actor maintains lifecycle state transitions: Uninitialized -> Building -> Ready{docs}/Empty or Error; Rebuild updates state and tracing.
+- Save writes a lightweight sidecar file (version + doc_count). Load currently triggers a rebuild from the database to ensure a ready, functional index until a durable persistence format is finalized.
+- Added internal doc tracking in Bm25Indexer to power Ready { docs } and Empty status accurately across upserts/removals/rebuilds.
+- Existing behaviors (Search, IndexBatch, Remove, FinalizeSeed) preserved; tracing enriched.
+
 A) Status and readiness (requires ploke-db additions)
 - Add status query to BM25 actor in ploke-db:
   - New enum Bm25Status { Uninitialized, Building, Ready { docs: usize }, Empty, Error(String) }.

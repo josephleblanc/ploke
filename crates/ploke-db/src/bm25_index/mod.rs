@@ -6,7 +6,7 @@
 // - Adds Cozo client trait + an index_batch_with_cozo method that upserts doc metadata into Cozo
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use ploke_core::{EmbeddingData, TrackingHash};
@@ -422,6 +422,7 @@ pub struct Bm25Indexer {
     embedder: bm25::Embedder<u32, CodeTokenizer>,
     scorer: Scorer<Uuid, u32>,
     staged_meta: HashMap<Uuid, DocMeta>,
+    docs: HashSet<Uuid>,
     version: &'static str,
 }
 
@@ -434,6 +435,7 @@ impl Bm25Indexer {
             embedder,
             scorer,
             staged_meta: HashMap::new(),
+            docs: HashSet::new(),
             version: TOKENIZER_VERSION,
         }
     }
@@ -468,17 +470,20 @@ impl Bm25Indexer {
 
         let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
         let mut scorer = Scorer::<Uuid, u32>::new();
+        let mut docs_set = HashSet::new();
 
         // now embed and upsert
         for (id, _len, snippet) in doc_token_counts.into_iter() {
             let embedding = embedder.embed(&snippet);
             scorer.upsert(&id, embedding);
+            docs_set.insert(id);
         }
 
         Self {
             embedder,
             scorer,
             staged_meta: HashMap::new(),
+            docs: docs_set,
             version: TOKENIZER_VERSION,
         }
     }
@@ -548,6 +553,7 @@ impl Bm25Indexer {
             embedder,
             scorer,
             staged_meta,
+            docs: staged_meta.keys().cloned().collect(),
             version: TOKENIZER_VERSION,
         })
     }
@@ -571,6 +577,7 @@ impl Bm25Indexer {
             let combined = format!("{} {} {}", name, name, snippet);
             let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
+            self.docs.insert(id);
             // Stage per-doc metadata for atomic Finalize
             let tracking_hash = meta.tracking_hash;
             let token_len = meta.token_length;
@@ -599,6 +606,7 @@ impl Bm25Indexer {
             let combined = format!("{} {} {}", name, name, snippet);
             let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
+            self.docs.insert(id);
             // Stage per-doc metadata for atomic Finalize and avgdl computation
             self.staged_meta.insert(id, meta);
             inserted += 1;
@@ -626,6 +634,7 @@ impl Bm25Indexer {
             self.scorer.upsert(&id, embedding);
             // Stage per-doc metadata (keeps parity with index_batch and supports avgdl/finalize)
             self.staged_meta.insert(id, meta);
+            self.docs.insert(id);
             inserted += 1;
             (id, meta)
         });
@@ -636,6 +645,8 @@ impl Bm25Indexer {
     /// Remove a document by id (used when file changes and nodes are pruned)
     pub fn remove(&mut self, id: &Uuid) {
         self.scorer.remove(id);
+        self.docs.remove(id);
+        self.staged_meta.remove(id);
     }
 
     /// Search with a query string, returning top-k results as ScoredDocument<Uuid>
@@ -664,6 +675,16 @@ impl Bm25Indexer {
     /// Drain staged metadata for persistence during Finalize.
     pub fn drain_staged_meta(&mut self) -> Vec<(Uuid, DocMeta)> {
         self.staged_meta.drain().collect()
+    }
+
+    /// Number of documents currently known to the in-memory scorer.
+    pub fn doc_count(&self) -> usize {
+        self.docs.len()
+    }
+
+    /// True if there are no documents in the in-memory scorer.
+    pub fn is_empty(&self) -> bool {
+        self.docs.is_empty()
     }
 }
 

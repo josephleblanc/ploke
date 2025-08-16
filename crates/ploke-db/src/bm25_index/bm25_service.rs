@@ -6,6 +6,15 @@ use super::{Bm25Indexer, DocData, DocMeta};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+pub enum Bm25Status {
+    Uninitialized,
+    Building,
+    Ready { docs: usize },
+    Empty,
+    Error(String),
+}
+
 #[derive(Debug)]
 pub enum Bm25Cmd {
     /// Index a batch of (Uuid, DocMeta) documents with a tokenizer version tag.
@@ -18,6 +27,12 @@ pub enum Bm25Cmd {
     FinalizeSeed { resp: oneshot::Sender<Result<(), String>> },
     /// Search the index and respond via oneshot with (id, score) pairs.
     Search { query: String, top_k: usize, resp: oneshot::Sender<Vec<(Uuid, f32)>> },
+    /// Get current lifecycle/status of the BM25 actor/index.
+    Status { resp: oneshot::Sender<Result<Bm25Status, DbError>> },
+    /// Persist lightweight index metadata to disk (placeholder; sidecar only).
+    Save { path: std::path::PathBuf, resp: oneshot::Sender<Result<(), DbError>> },
+    /// Load persisted state or rebuild from DB as a functional fallback.
+    Load { path: std::path::PathBuf, resp: oneshot::Sender<Result<(), DbError>> },
 }
 
 /// Start the BM25 actor with a given avgdl parameter.
@@ -25,34 +40,58 @@ pub enum Bm25Cmd {
 pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , DbError> {
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
+    let mut status = Bm25Status::Uninitialized;
 
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 Bm25Cmd::IndexBatch { docs } => {
-                    tracing::debug!(
-                        "BM25 IndexBatch: {} docs",
-                        docs.len(),
-                    );
-                    if let Err(e) = indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
-                        tracing::error!("Error upserting batch with cozo: {e}");
-                    };
+                    tracing::debug!("BM25 IndexBatch: {} docs", docs.len());
+                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
+                        Ok(_n) => {
+                            let docs = indexer.doc_count();
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                        }
+                        Err(e) => {
+                            tracing::error!("Error upserting batch with cozo: {e}");
+                            status = Bm25Status::Error(e.to_string());
+                        }
+                    }
                 }
                 Bm25Cmd::Remove { ids } => {
                     tracing::debug!("BM25 Remove: {} docs", ids.len());
                     for id in ids {
                         indexer.remove(&id);
                     }
+                    let docs = indexer.doc_count();
+                    status = if docs == 0 {
+                        Bm25Status::Empty
+                    } else {
+                        Bm25Status::Ready { docs }
+                    };
                 }
                 Bm25Cmd::Rebuild => {
                     tracing::info!("BM25 Rebuild: starting rebuild from database");
+                    status = Bm25Status::Building;
                     match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
+                            let docs = new_indexer.doc_count();
                             indexer = new_indexer;
-                            tracing::info!("BM25 Rebuild: completed successfully");
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                            tracing::info!("BM25 Rebuild: completed successfully with {} docs", docs);
                         }
                         Err(e) => {
-                            tracing::error!("BM25 Rebuild: failed with error: {e}");
+                            let msg = e.to_string();
+                            tracing::error!("BM25 Rebuild: failed with error: {msg}");
+                            status = Bm25Status::Error(msg);
                         }
                     }
                 }
@@ -77,6 +116,46 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                     if resp.send(results).is_err() {
                         tracing::warn!("BM25 search response receiver dropped before sending results");
                     }
+                }
+                Bm25Cmd::Status { resp } => {
+                    let _ = resp.send(Ok(status.clone()));
+                }
+                Bm25Cmd::Save { path, resp } => {
+                    let docs = indexer.doc_count();
+                    let content = format!(r#"{{"version":"{}","docs":{}}}"#, super::TOKENIZER_VERSION, docs);
+                    let result = (|| -> Result<(), std::io::Error> {
+                        if let Some(dir) = path.parent() {
+                            if !dir.as_os_str().is_empty() {
+                                std::fs::create_dir_all(dir)?;
+                            }
+                        }
+                        std::fs::write(&path, content)?;
+                        Ok(())
+                    })().map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
+                    let _ = resp.send(result);
+                }
+                Bm25Cmd::Load { path, resp } => {
+                    tracing::info!("BM25 Load requested from {:?}", path);
+                    // Placeholder implementation: perform a rebuild to ensure a ready index.
+                    status = Bm25Status::Building;
+                    let res = match Bm25Indexer::rebuild_from_db(db.as_ref()) {
+                        Ok(new_indexer) => {
+                            let docs = new_indexer.doc_count();
+                            indexer = new_indexer;
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            status = Bm25Status::Error(msg.clone());
+                            Err(DbError::Cozo(format!("bm25 load error: {}", msg)))
+                        }
+                    };
+                    let _ = resp.send(res);
                 }
             }
         }
@@ -114,29 +193,59 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
 
     tokio::spawn(async move {
         let mut indexer = indexer;
+        let mut status = {
+            let docs = indexer.doc_count();
+            if docs == 0 { Bm25Status::Empty } else { Bm25Status::Ready { docs } }
+        };
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 Bm25Cmd::IndexBatch { docs } => {
                     tracing::debug!("BM25 IndexBatch: {} docs", docs.len());
-                    if let Err(e) = indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
-                        tracing::error!("Error upserting batch with cozo: {e}");
-                    };
+                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
+                        Ok(_n) => {
+                            let docs = indexer.doc_count();
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                        }
+                        Err(e) => {
+                            tracing::error!("Error upserting batch with cozo: {e}");
+                            status = Bm25Status::Error(e.to_string());
+                        }
+                    }
                 }
                 Bm25Cmd::Remove { ids } => {
                     tracing::debug!("BM25 Remove: {} docs", ids.len());
                     for id in ids {
                         indexer.remove(&id);
                     }
+                    let docs = indexer.doc_count();
+                    status = if docs == 0 {
+                        Bm25Status::Empty
+                    } else {
+                        Bm25Status::Ready { docs }
+                    };
                 }
                 Bm25Cmd::Rebuild => {
                     tracing::info!("BM25 Rebuild: starting rebuild from database");
+                    status = Bm25Status::Building;
                     match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
+                            let docs = new_indexer.doc_count();
                             indexer = new_indexer;
-                            tracing::info!("BM25 Rebuild: completed successfully");
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                            tracing::info!("BM25 Rebuild: completed successfully with {} docs", docs);
                         }
                         Err(e) => {
-                            tracing::error!("BM25 Rebuild: failed with error: {e}");
+                            let msg = e.to_string();
+                            tracing::error!("BM25 Rebuild: failed with error: {msg}");
+                            status = Bm25Status::Error(msg);
                         }
                     }
                 }
@@ -159,6 +268,46 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                     if resp.send(results).is_err() {
                         tracing::warn!("BM25 search response receiver dropped before sending results");
                     }
+                }
+                Bm25Cmd::Status { resp } => {
+                    let _ = resp.send(Ok(status.clone()));
+                }
+                Bm25Cmd::Save { path, resp } => {
+                    let docs = indexer.doc_count();
+                    let content = format!(r#"{{"version":"{}","docs":{}}}"#, super::TOKENIZER_VERSION, docs);
+                    let result = (|| -> Result<(), std::io::Error> {
+                        if let Some(dir) = path.parent() {
+                            if !dir.as_os_str().is_empty() {
+                                std::fs::create_dir_all(dir)?;
+                            }
+                        }
+                        std::fs::write(&path, content)?;
+                        Ok(())
+                    })().map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
+                    let _ = resp.send(result);
+                }
+                Bm25Cmd::Load { path, resp } => {
+                    tracing::info!("BM25 Load requested from {:?}", path);
+                    // Placeholder implementation: perform a rebuild to ensure a ready index.
+                    status = Bm25Status::Building;
+                    let res = match Bm25Indexer::rebuild_from_db(db.as_ref()) {
+                        Ok(new_indexer) => {
+                            let docs = new_indexer.doc_count();
+                            indexer = new_indexer;
+                            status = if docs == 0 {
+                                Bm25Status::Empty
+                            } else {
+                                Bm25Status::Ready { docs }
+                            };
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            status = Bm25Status::Error(msg.clone());
+                            Err(DbError::Cozo(format!("bm25 load error: {}", msg)))
+                        }
+                    };
+                    let _ = resp.send(res);
                 }
             }
         }
