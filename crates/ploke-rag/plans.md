@@ -47,11 +47,17 @@ This document describes the next stages of work for the `ploke-rag` crate. It fo
   - Techniques: min-max per modality, z-score, or calibrated logistic transform. Start with min-max with clamping and configurable epsilon.
 - Reciprocal Rank Fusion (RRF)
   - Current basic RRF remains; make `k` and per-modality weights configurable.
-  - Tie-breaking: stable ordering by UUID if all else equal.
+  - Weighted formula: fused(u) = w_bm25 / (k + rank_bm25(u)) + w_dense / (k + rank_dense(u)); ranks are 1-based per list and missing ranks contribute 0.
+  - Config: RrfConfig { k: f32, weight_bm25: f32, weight_dense: f32 } with defaults k=60.0, weight_bm25=1.0, weight_dense=1.0.
+  - Tie-breaking: stable ordering by (fused score desc, then UUID asc) if all else equal.
 - Maximal Marginal Relevance (MMR) for diversity
   - Select a final set of results balancing relevance and diversity.
   - Use cosine similarity on vector embeddings (reuse `ploke-embed` for vectors if needed).
   - Configurable lambda (tradeoff), similarity function, and candidate pool size.
+  - Objective per candidate x: score(x) = lambda * rel(x) - (1 - lambda) * max_{y in S} sim(x, y), where S is the selected set; higher is better.
+  - Config: MmrConfig { lambda: f32, sim_metric: Similarity, candidate_pool: usize } with defaults lambda=0.7, sim_metric=Cosine, candidate_pool=50.
+  - Similarity: Cosine on normalized vectors; treat missing embeddings as zero-vector (similarity 0.0).
+  - Algorithm: greedy selection from top-N candidates (candidate_pool), start with highest rel(x); on ties break by UUID asc; deterministic given same inputs.
 - Proposed internal module and signatures
   - fusion module:
     - rrf_fuse(bm25: &[(Uuid, f32)], dense: &[(Uuid, f32)], cfg: &RrfConfig) -> Vec<(Uuid, f32)>
