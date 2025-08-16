@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::super::core::AppState;
+use crate::app_state::AppState;
+use crate::parser::run_parse;
+use crate::{AppEvent, EventBus};
+
 use super::chat::add_msg_immediate;
 
 pub async fn index_workspace(

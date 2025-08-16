@@ -33,9 +33,9 @@ impl MockTrait for EmbeddingProcessor {
     }
 }
 
-impl MockTrait for crate::ploke_io::IoManagerHandle {
+impl MockTrait for ploke_io::IoManagerHandle {
     fn mock() -> Self {
-        crate::ploke_io::IoManagerHandle::new()
+        ploke_io::IoManagerHandle::new()
     }
 }
 
@@ -45,7 +45,7 @@ async fn test_race_condition_without_oneshot() {
     let state = Arc::new(AppState::new(
         Arc::new(db),
         Arc::new(EmbeddingProcessor::mock()),
-        crate::ploke_io::IoManagerHandle::mock(),
+        ploke_io::IoManagerHandle::mock(),
     ));
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
@@ -103,7 +103,7 @@ async fn test_fix_with_oneshot() {
     let state = Arc::new(AppState::new(
         Arc::new(db),
         Arc::new(EmbeddingProcessor::mock()),
-        crate::ploke_io::IoManagerHandle::mock(),
+        ploke_io::IoManagerHandle::mock(),
     ));
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
@@ -156,7 +156,7 @@ async fn test_concurrency_with_fuzzing() {
     let state = Arc::new(AppState::new(
         Arc::new(db),
         Arc::new(EmbeddingProcessor::mock()),
-        crate::ploke_io::IoManagerHandle::mock(),
+        ploke_io::IoManagerHandle::mock(),
     ));
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));

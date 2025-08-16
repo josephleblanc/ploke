@@ -1,3 +1,5 @@
+use syn_parser::GraphAccess;
+use syn_parser::parser::nodes::AsAnyNodeId;
 use itertools::Itertools;
 use syn_parser::{
     parser::nodes::{AnyNodeId, GraphNode, ModuleNodeId},

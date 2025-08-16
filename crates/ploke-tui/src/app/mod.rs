@@ -342,7 +342,7 @@ impl App {
 
             // Application events
             Ok(app_event) = self.event_rx.recv() => {
-                events::handle_event(self, app_event).await;
+                events::handle_event(&mut self, app_event).await;
                 self.needs_redraw = true;
             }
 

@@ -4,14 +4,15 @@ use tokio::sync::oneshot;
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate};
-use crate::llm;
+use crate::app_state::commands;
+use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
+use crate::{llm, EventBus};
 use crate::utils::helper::truncate_string;
 
-use super::super::{AppEvent, AppState, MessageUpdatedEvent};
+use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
 pub async fn update_message(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     id: Uuid,
     update: MessageUpdate,
@@ -36,7 +37,7 @@ pub async fn update_message(
 }
 
 pub async fn add_user_message(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc< AppState>,
     event_bus: &Arc<EventBus>,
     new_msg_id: Uuid,
     content: String,
@@ -47,7 +48,7 @@ pub async fn add_user_message(
 }
 
 pub async fn add_message(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc< AppState>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     child_id: Uuid,
@@ -68,9 +69,9 @@ pub async fn add_message(
 }
 
 pub async fn navigate_list(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc< AppState>,
     event_bus: &Arc<EventBus>,
-    direction: super::super::commands::ListNavigation,
+    direction: commands::ListNavigation,
 ) {
     let mut chat_guard = state.chat.0.write().await;
     chat_guard.navigate_list(direction);
@@ -78,7 +79,7 @@ pub async fn navigate_list(
 }
 
 pub async fn create_assistant_message(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc< AppState>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     responder: oneshot::Sender<Uuid>,
@@ -101,7 +102,7 @@ pub async fn prune_history() {
 
 #[instrument(skip(state))]
 pub async fn add_msg_immediate(
-    state: &Arc<super::super::core::AppState>,
+    state: &Arc< AppState>,
     event_bus: &Arc<EventBus>,
     new_msg_id: Uuid,
     content: String,

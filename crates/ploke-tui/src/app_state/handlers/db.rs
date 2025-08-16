@@ -2,7 +2,9 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use super::super::core::AppState;
+use crate::{app_state::database, error::ErrorExt as _, AppEvent, EventBus};
+
+use crate::AppState;
 
 pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     use ploke_db::{create_index_warn, replace_index_warn, NodeType};
@@ -55,7 +57,7 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
 }
 
 pub async fn write_query(state: &Arc<AppState>, query_content: String) {
-    super::super::database::write_query(state, query_content).await;
+    database::write_query(state, query_content).await;
 }
 
 pub async fn read_query(event_bus: &Arc<EventBus>, query_name: String, file_name: String) {
@@ -76,7 +78,7 @@ pub async fn read_query(event_bus: &Arc<EventBus>, query_name: String, file_name
 }
 
 pub async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    use super::super::database::save_db;
+    use database::save_db;
     if let std::ops::ControlFlow::Break(_) = save_db(state, event_bus).await {
         return;
     }
@@ -90,7 +92,7 @@ pub async fn batch_prompt_search(
     threshold: Option<f32>,
     event_bus: &Arc<EventBus>,
 ) {
-    match super::super::database::batch_prompt_search(state, prompt_file, out_file, max_hits, threshold).await {
+    match database::batch_prompt_search(state, prompt_file, out_file, max_hits, threshold).await {
         Ok(embed_data) => {
             tracing::info!("Batch prompt search succeeded with {} results.", embed_data.len());
         },
@@ -109,7 +111,7 @@ pub async fn load_db(
     event_bus: &Arc<EventBus>,
     crate_name: String,
 ) {
-    if let Err(e) = super::super::database::load_db(state, event_bus, crate_name).await {
+    if let Err(e) = database::load_db(state, event_bus, crate_name).await {
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),
             ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => e.emit_warning(),
@@ -125,7 +127,7 @@ pub async fn scan_for_change(
     event_bus: &Arc<EventBus>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) {
-    let _ = super::super::database::scan_for_change(state, event_bus, scan_tx)
+    let _ = database::scan_for_change(state, event_bus, scan_tx)
         .await
         .inspect_err(|e| {
             e.emit_error();

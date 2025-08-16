@@ -2,11 +2,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::super::core::AppState;
+use crate::EventBus;
+
+use crate::AppState;
 
 pub async fn bm25_rebuild(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.bm25_rebuild().await {
@@ -21,9 +30,21 @@ pub async fn bm25_rebuild(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     }
 }
 
-pub async fn bm25_search(state: &Arc<AppState>, event_bus: &Arc<EventBus>, query: String, top_k: usize) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+pub async fn bm25_search(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    query: String,
+    top_k: usize,
+) {
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.search_bm25(&query, top_k).await {
@@ -49,9 +70,21 @@ pub async fn bm25_search(state: &Arc<AppState>, event_bus: &Arc<EventBus>, query
     }
 }
 
-pub async fn hybrid_search(state: &Arc<AppState>, event_bus: &Arc<EventBus>, query: String, top_k: usize) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+pub async fn hybrid_search(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    query: String,
+    top_k: usize,
+) {
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.hybrid_search(&query, top_k).await {
@@ -78,8 +111,15 @@ pub async fn hybrid_search(state: &Arc<AppState>, event_bus: &Arc<EventBus>, que
 }
 
 pub async fn bm25_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.bm25_status().await {
@@ -98,8 +138,15 @@ pub async fn bm25_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
 }
 
 pub async fn bm25_save(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: PathBuf) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.bm25_save(path.clone()).await {
@@ -118,8 +165,15 @@ pub async fn bm25_save(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: P
 }
 
 pub async fn bm25_load(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: PathBuf) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.bm25_load(path.clone()).await {
@@ -145,8 +199,15 @@ pub async fn sparse_search(
     top_k: usize,
     strict: bool,
 ) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         let result = if strict {
@@ -194,8 +255,15 @@ pub async fn dense_search(
     query: String,
     top_k: usize,
 ) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.search(&query, top_k).await {
@@ -235,8 +303,15 @@ pub async fn assemble_context(
     budget: ploke_rag::TokenBudget,
     strategy: ploke_rag::RetrievalStrategy,
 ) {
-    let add_msg = |msg: &str| super::chat::add_msg_immediate(
-        state, event_bus, Uuid::new_v4(), msg.to_string(), crate::chat_history::MessageKind::SysInfo);
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
 
     if let Some(rag) = &state.rag {
         match rag.get_context(&user_query, top_k, budget, strategy).await {

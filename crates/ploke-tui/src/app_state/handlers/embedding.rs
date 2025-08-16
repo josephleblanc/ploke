@@ -4,10 +4,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::chat_history::Message;
+use crate::{app_state::AppState, chat_history::Message, error::ResultExt as _, RagEvent};
 use ploke_db::{search_similar, NodeType};
-
-use super::super::core::AppState;
 
 pub async fn handle_embed_message(
     state: &Arc<AppState>,

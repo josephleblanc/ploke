@@ -4,7 +4,6 @@ pub mod app;
 pub mod app_state;
 pub mod chat_history;
 pub mod context;
-pub mod database;
 pub mod error;
 pub mod file_man;
 pub mod llm;

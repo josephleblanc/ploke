@@ -5,7 +5,7 @@ use crate::chat_history::ChatHistory;
 use crate::llm::LLMParameters;
 use crate::user_config::ProviderRegistry;
 use ploke_db::Database;
-use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask};
+use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
 use ploke_io::IoManagerHandle;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
