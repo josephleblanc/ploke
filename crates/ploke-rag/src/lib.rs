@@ -35,6 +35,11 @@ use uuid::Uuid;
 
 pub mod fusion;
 pub use fusion::{normalize_scores, ScoreNorm, RrfConfig, MmrConfig, Similarity, rrf_fuse, mmr_select};
+pub mod context;
+pub use context::{
+    TokenBudget, ContextPartKind, Modality, ContextPart, ContextStats, AssembledContext,
+    AssemblyPolicy, Ordering, TokenCounter, ApproxCharTokenizer, assemble_context,
+};
 
 #[derive(Error, Debug)]
 pub enum RagError {
