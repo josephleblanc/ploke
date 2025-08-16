@@ -153,20 +153,24 @@ Guidelines from dtolnay and burntsushi applied
 
 Migration plan (incremental, low-risk)
 
-- Phase 1: Types + Input
+- [x] Phase 1: Types + Input
   - Add types.rs, utils.rs, input/keymap.rs with Action.
   - Convert on_key_event to action routing.
-- Phase 2: View Components
+- [x] Phase 2: View Components
   - Implement ConversationView and InputView; move height/scroll logic out of App.
   - App::draw becomes orchestration of components.
-- Phase 3: Commands split
+- [x] Phase 3: Commands split
   - commands/{parser,exec}.rs; wire help/list/update as examples; de-block list_models.
-- Phase 4: Events
+- [x] Phase 4: Events
   - EventSubscriber for components; keep events.rs as router.
-- Phase 5: Iterator-based rendering
+- [/] Phase 5: Iterator-based rendering
   - Replace Vec<RenderableMessage> with iterators; remove collect in App::run loop.
-- Phase 6: Tests/benchmarks
+- [ ] Phase 6: Tests/benchmarks
   - Snapshot tests for rendering; criteria benches for measure/wrap.
+
+crates/ploke-tui/src/app/mod.rs
+crates/ploke-tui/src/app/view/components/conversation.rs
+crates/ploke-tui/src/app/message_item.rs
 
 Notes on current code (tech-debt to address)
 - A nested display_file_info exists inside App::run and a duplicate in events.rs; unify in utils.rs.

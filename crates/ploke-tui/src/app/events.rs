@@ -1,3 +1,4 @@
+use crate::app::view::EventSubscriber;
 use super::App;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
