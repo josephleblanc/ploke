@@ -285,7 +285,13 @@ async fn prepare_and_run_llm_call(
         prompt
             .into_iter()
             .map(|(k, c)| RequestMessage {
-                role: k.into(),
+                role: match k {
+                    MessageKind::User => "user",
+                    MessageKind::Assistant => "assistant",
+                    MessageKind::System => "system",
+                    MessageKind::Tool => "tool",
+                    MessageKind::SysInfo => "system",
+                },
                 content: c,
             })
             .collect::<Vec<_>>()
@@ -294,7 +300,13 @@ async fn prepare_and_run_llm_call(
             .iter()
             .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
             .map(|msg| RequestMessage {
-                role: msg.kind.into(),
+                role: match msg.kind {
+                    MessageKind::User => "user",
+                    MessageKind::Assistant => "assistant",
+                    MessageKind::System => "system",
+                    MessageKind::Tool => "tool",
+                    MessageKind::SysInfo => "system",
+                },
                 content: msg.content.clone(),
             })
             .collect::<Vec<_>>()
@@ -310,11 +322,6 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    tracing::info!(
-        "Inside prepare_and_run_llm_call num2 {:#?}",
-        provider.llm_params
-    );
-    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
         messages,
@@ -324,15 +331,7 @@ async fn prepare_and_run_llm_call(
         stream: false,
     };
 
-    tracing::info!(
-        "Inside prepare_and_run_llm_call num3 {:#?}",
-        request_payload
-    );
 
-    tracing::info!(
-        "request_payload is {:#?}",
-        request_payload
-    );
 
     let response = client
         .post(format!("{}/chat/completions", provider.base_url))

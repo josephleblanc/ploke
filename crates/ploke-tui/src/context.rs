@@ -280,7 +280,7 @@ impl ContextManager {
         let msgs = messages
             .into_iter()
             .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
-            .inspect(|m| tracing::error!("m.content.is_empty() = {}", m.content.is_empty()))
+            .inspect(|m| tracing::debug!("m.content.is_empty() = {}", m.content.is_empty()))
             .map(|msg| (msg.kind, msg.content));
         base.extend(msgs);
 
@@ -319,7 +319,7 @@ impl ContextManager {
         let msgs = messages
             .into_iter()
             .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
-            .inspect(|m| tracing::error!("m.content.is_empty() = {}", m.content.is_empty()))
+            .inspect(|m| tracing::debug!("m.content.is_empty() = {}", m.content.is_empty()))
             .map(|msg| (msg.kind, msg.content));
         base.extend(msgs);
 
