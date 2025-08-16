@@ -1140,6 +1140,11 @@ impl App {
                     &cmd["hybrid ".len()..]
                 };
                 let mut parts = tail.split_whitespace();
+                // AI: This currently searches for only a single word, which is not made clear.
+                // Add a way for the user's input to be taken completely. Additionally we should
+                // reverse the order of the search terms, to make the first item be the number of
+                // returned results. If the first item is not parsed into a number, we can default
+                // to 10 results. AI!
                 let query = parts.next().unwrap_or("").to_string();
                 let top_k = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(10);
 
