@@ -123,24 +123,31 @@ impl App {
         while self.running {
             if self.needs_redraw {
                 // Prepare data for this frame by reading from AppState.
-                let history_guard = self.state.chat.0.read().await;
-                let current_path = history_guard.get_full_path();
-                let current_id = history_guard.current;
-
-                // Iterator-based rendering (Phase 5): avoid materializing a Vec here.
-                let path_len = current_path.len();
-                let iter_factory = || {
-                    current_path.iter().map(|m| RenderableMessage {
-                        id: m.id,
-                        kind: m.kind,
-                        content: m.content.clone(),
-                    })
+                // Collect a single owned snapshot of the path to avoid borrowing across the draw call.
+                let (messages, current_id) = {
+                    let history_guard = self.state.chat.0.read().await;
+                    let msgs: Vec<RenderableMessage> = history_guard
+                        .get_full_path()
+                        .into_iter()
+                        .map(|m| RenderableMessage {
+                            id: m.id,
+                            kind: m.kind,
+                            content: m.content.clone(),
+                        })
+                        .collect();
+                    (msgs, history_guard.current)
                 };
-                drop(history_guard);
+                let path_len = messages.len();
 
                 // Draw the UI with the prepared data using fresh iterators for measure and render.
                 terminal.draw(|frame| {
-                    self.draw(frame, iter_factory(), iter_factory(), path_len, current_id)
+                    self.draw(
+                        frame,
+                        messages.iter(),
+                        messages.iter(),
+                        path_len,
+                        current_id,
+                    )
                 })?;
                 self.needs_redraw = false;
             }
@@ -287,8 +294,8 @@ impl App {
         path_len: usize,
         current_id: Uuid,
     ) where
-        I1: IntoIterator<Item = RenderableMessage<'a>>,
-        I2: IntoIterator<Item = RenderableMessage<'a>>,
+        I1: IntoIterator<Item = &'a RenderableMessage>,
+        I2: IntoIterator<Item = &'a RenderableMessage>,
     {
         // Always show the currently selected model in the top-right
         let show_indicator = true;

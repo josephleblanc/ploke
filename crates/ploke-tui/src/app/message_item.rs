@@ -52,18 +52,18 @@ fn render_one_message<'a>(
 }
  // ---------- main replacement -------------------------------------------------
 #[instrument(skip(renderable_msg), level = "trace")]
-pub fn measure_messages<I>(
+pub fn measure_messages<'a, I>(
     renderable_msg: I,
     conversation_width: u16,
-    selected_index: Option<usize>,
+    _selected_index: Option<usize>,
 ) -> (u16, Vec<u16>)
 where
-    I: IntoIterator<Item = RenderableMessage>,
+    I: IntoIterator<Item = &'a RenderableMessage>,
 {
     // Compute per-message heights and total height for the current frame.
     let mut heights: Vec<u16> = Vec::new();
     let mut total_height = 0u16;
-    for (idx, msg) in renderable_msg.into_iter().enumerate() {
+    for msg in renderable_msg.into_iter() {
         // Always reserve a 1-column gutter for the selection bar to keep heights stable.
         let eff_w = conversation_width.saturating_sub(1);
         let h = calc_height(&msg.content, eff_w);
@@ -74,7 +74,7 @@ where
 }
 
 #[instrument(skip(frame, renderable_msg, heights), level = "trace")]
-pub fn render_messages<I>(
+pub fn render_messages<'a, I>(
     frame: &mut Frame,
     renderable_msg: I,
     conversation_width: u16,
@@ -84,7 +84,7 @@ pub fn render_messages<I>(
     selected_index: Option<usize>,
 )
 where
-    I: IntoIterator<Item = RenderableMessage>,
+    I: IntoIterator<Item = &'a RenderableMessage>,
 {
     // 1) Clamp offset
     let viewport_height = conversation_area.height;

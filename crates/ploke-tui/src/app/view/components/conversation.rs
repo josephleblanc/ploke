@@ -19,7 +19,7 @@ pub struct ConversationView {
 }
 
 impl ConversationView {
-    pub fn prepare<I>(
+    pub fn prepare<'a, I>(
         &mut self,
         path: I,
         path_len: usize,
@@ -28,7 +28,7 @@ impl ConversationView {
         selected_index_opt: Option<usize>,
     )
     where
-        I: IntoIterator<Item = RenderableMessage>,
+        I: IntoIterator<Item = &'a RenderableMessage>,
     {
         self.last_viewport_height = viewport_height;
 
@@ -92,7 +92,7 @@ impl ConversationView {
         }
     }
 
-    pub fn render<I>(
+    pub fn render<'a, I>(
         &self,
         frame: &mut Frame,
         path: I,
@@ -101,7 +101,7 @@ impl ConversationView {
         selected_index_opt: Option<usize>,
     )
     where
-        I: IntoIterator<Item = RenderableMessage>,
+        I: IntoIterator<Item = &'a RenderableMessage>,
     {
         render_messages(
             frame,
