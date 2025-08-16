@@ -273,9 +273,8 @@ impl ContextManager {
         ]);
 
         // Add assembled context parts as system messages
-        for part in ctx.parts.iter() {
-            base.push((MessageKind::System, part.text.clone()));
-        }
+        let text = ctx.parts.into_iter().map(|p| ( MessageKind::System, p.text ));
+        base.extend(text);
 
         // Add conversation messages
         let msgs = messages
