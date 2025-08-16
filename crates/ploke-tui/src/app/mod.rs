@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use crate::app::input::keymap::{Action, to_action};
 use crate::app::types::{Mode, RenderableMessage};
 use crate::app::utils::truncate_uuid;
+use crate::app::view::components::conversation::ConversationView;
+use crate::app::view::components::input_box::InputView;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -24,10 +26,10 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use itertools::Itertools;
-use message_item::{measure_messages, render_messages};
+ // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
-use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
-use textwrap::wrap;
+use ratatui::widgets::Gauge;
+ // use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
@@ -53,25 +55,12 @@ pub struct App {
     pub mode: Mode,
     command_style: CommandStyle,
     indexing_state: Option<indexer::IndexingStatus>,
-    input_vscroll: u16,
-    input_scrollstate: ScrollbarState,
-    convo_vscroll: u16,
-    convo_scrollstate: ScrollbarState,
-    // Conversation viewport scrolling state
-    convo_offset_y: u16,
-    convo_content_height: u16,
-    convo_item_heights: Vec<u16>,
-    convo_auto_follow: bool,
+    conversation: ConversationView,
+    input_view: InputView,
     active_model_indicator: Option<(String, Instant)>,
     active_model_id: String,
-    input_cursor_row: u16,
-    input_cursor_col: u16,
-    is_trailing_whitespace: bool,
     // Scrolling/UI helpers
-    convo_free_scrolling: bool,
     pending_char: Option<char>,
-    last_viewport_height: u16,
-    last_chat_area: ratatui::layout::Rect,
     needs_redraw: bool,
     show_context_preview: bool,
 }
@@ -96,24 +85,12 @@ impl App {
             command_style,
             indexing_state: None,
 
-            input_vscroll: 0,
-            input_scrollstate: ScrollbarState::default(),
-            convo_vscroll: 0,
-            convo_scrollstate: ScrollbarState::default(),
-            // Conversation viewport scrolling init
-            convo_offset_y: 0,
-            convo_content_height: 0,
-            convo_item_heights: Vec::new(),
-            convo_auto_follow: false,
+            conversation: ConversationView::default(),
+            input_view: InputView::default(),
             active_model_indicator: None,
             active_model_id,
-            input_cursor_row: 0,
-            input_cursor_col: 0,
-            is_trailing_whitespace: false,
-            convo_free_scrolling: false,
+            // Scrolling/UI helpers
             pending_char: None,
-            last_viewport_height: 0,
-            last_chat_area: ratatui::layout::Rect::default(),
             needs_redraw: true,
             show_context_preview: false,
         }
@@ -182,26 +159,20 @@ impl App {
                         Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
-                                    // Free scroll up by 3 lines, clamp at 0
-                                    self.convo_offset_y = self.convo_offset_y.saturating_sub(3);
-                                    self.convo_free_scrolling = true;
+                                    self.conversation.scroll_lines_up(3);
+                                    self.conversation.set_free_scrolling(true);
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
                                 MouseEventKind::ScrollDown => {
-                                    // Free scroll down by 3 lines, clamp to max offset
-                                    let max_offset = self
-                                        .convo_content_height
-                                        .saturating_sub(self.last_viewport_height);
-                                    let new_offset = self.convo_offset_y.saturating_add(3);
-                                    self.convo_offset_y = new_offset.min(max_offset);
-                                    self.convo_free_scrolling = true;
+                                    self.conversation.scroll_lines_down(3);
+                                    self.conversation.set_free_scrolling(true);
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
                                 MouseEventKind::Down(MouseButton::Left) => {
                                     // Hit-test inside chat area to select message on click
-                                    let area = self.last_chat_area;
+                                    let area = self.conversation.last_chat_area();
                                     let x = mouse_event.column;
                                     let y = mouse_event.row;
                                     if x >= area.x
@@ -210,11 +181,11 @@ impl App {
                                         && y < area.y.saturating_add(area.height)
                                     {
                                         let rel_y = y.saturating_sub(area.y);
-                                        let virtual_line = self.convo_offset_y.saturating_add(rel_y);
+                                        let virtual_line = self.conversation.offset().saturating_add(rel_y);
 
                                         let mut acc = 0u16;
                                         let mut target_idx_opt: Option<usize> = None;
-                                        for (i, h) in self.convo_item_heights.iter().enumerate() {
+                                        for (i, h) in self.conversation.item_heights().iter().enumerate() {
                                             let next_acc = acc.saturating_add(*h);
                                             if virtual_line < next_acc {
                                                 target_idx_opt = Some(i);
@@ -222,14 +193,14 @@ impl App {
                                             }
                                             acc = next_acc;
                                         }
-                                        let len = self.convo_item_heights.len();
+                                        let len = self.conversation.item_heights().len();
                                         if len > 0 {
                                             let target_idx = target_idx_opt.unwrap_or_else(|| len.saturating_sub(1));
 
                                             // Update UI selection immediately
                                             let prev_sel = self.list.selected();
                                             self.list.select(Some(target_idx));
-                                            self.convo_free_scrolling = false;
+                                            self.conversation.set_free_scrolling(false);
                                             self.pending_char = None;
 
                                             // Sync AppState selection using existing navigation commands
@@ -354,8 +325,7 @@ impl App {
             (chat_area_full, None)
         };
 
-        // Remember conversation area for mouse hit-testing
-        self.last_chat_area = chat_area;
+        // Remember conversation area for mouse hit-testing is handled by ConversationView.
 
         let status_line_area = layout_statusline(5, status_area);
 
@@ -363,85 +333,17 @@ impl App {
         // Render message tree
         let conversation_width = chat_area.width.saturating_sub(6);
         let viewport_height = chat_area.height;
-        self.last_viewport_height = viewport_height;
 
-        // 1) Measure current frame (no rendering)
         // Clamp selected index to valid range to avoid OOB when the path shrinks between frames.
         let selected_index_opt = self
             .list
             .selected()
             .map(|i| i.min(path.len().saturating_sub(1)));
-        let (total_height, heights) =
-            measure_messages(path, conversation_width, selected_index_opt);
 
-        // 2) Decide/adjust offset using current metrics
-        let max_offset = total_height.saturating_sub(viewport_height);
-
-        if path.is_empty() {
-            // Nothing to render; keep viewport at top and mark as following.
-            self.convo_offset_y = 0;
-            self.convo_auto_follow = true;
-            self.convo_free_scrolling = false;
-        } else if let Some(selected_index) = selected_index_opt {
-            let is_last = selected_index + 1 == path.len();
-            if is_last {
-                // Only force bottom if auto-follow is enabled and user is not free-scrolling.
-                if self.convo_auto_follow && !self.convo_free_scrolling {
-                    self.convo_offset_y = max_offset;
-                }
-            } else if !self.convo_free_scrolling {
-                // Exit auto-follow when navigating to a non-last message and minimally reveal selection
-                self.convo_auto_follow = false;
-
-                // Minimally reveal selection within current viewport
-                let mut prefix_sum = 0u16;
-                for (i, h) in heights.iter().enumerate() {
-                    if i == selected_index {
-                        break;
-                    }
-                    prefix_sum = prefix_sum.saturating_add(*h);
-                }
-                let selected_top = prefix_sum;
-                let selected_bottom = prefix_sum.saturating_add(heights[selected_index]);
-                let viewport_bottom = self.convo_offset_y.saturating_add(viewport_height);
-
-                if selected_top < self.convo_offset_y {
-                    self.convo_offset_y = selected_top;
-                } else if selected_bottom > viewport_bottom {
-                    self.convo_offset_y = selected_bottom.saturating_sub(viewport_height);
-                }
-            }
-        } else {
-            // No explicit selection; keep existing offset (will clamp below)
-        }
-
-        // Clamp offset to valid range
-        if self.convo_offset_y > max_offset {
-            self.convo_offset_y = max_offset;
-        }
-
-        // 3) Persist metrics and auto-follow status
-        self.convo_content_height = total_height;
-        self.convo_item_heights = heights;
-        if !self.convo_free_scrolling {
-            if let Some(selected_index) = selected_index_opt {
-                let is_last = selected_index + 1 == path.len();
-                self.convo_auto_follow = is_last || self.convo_offset_y >= max_offset;
-            } else {
-                self.convo_auto_follow = self.convo_offset_y >= max_offset;
-            }
-        }
-
-        // 4) Render with final offset
-        render_messages(
-            frame,
-            path,
-            conversation_width,
-            chat_area,
-            self.convo_offset_y,
-            &self.convo_item_heights,
-            selected_index_opt,
-        );
+        // Prepare and render conversation via ConversationView
+        self.conversation.prepare(path, conversation_width, viewport_height, selected_index_opt);
+        self.conversation.set_last_chat_area(chat_area);
+        self.conversation.render(frame, path, conversation_width, chat_area, selected_index_opt);
 
         // Right-side context preview (placeholder until wired to Rag events)
         if let Some(preview_area) = preview_area_opt {
@@ -457,29 +359,9 @@ impl App {
             _ => "Input",
         };
 
-        // Guess at the amount of scroll needed:
-
-        // ---------- Text Wrap ----------------
-        let input_width = input_area.width.saturating_sub(2);
-        let input_wrapped = textwrap::wrap(self.input_buffer.as_str(), input_width as usize);
-        self.input_scrollstate = self.input_scrollstate.content_length(input_wrapped.len());
-
-        // -- Get cursor position
-        if !self.is_trailing_whitespace {
-            self.input_cursor_col = input_wrapped.last().map(|line| line.len()).unwrap_or(0) as u16;
-        }
-        self.input_cursor_row = (input_wrapped.len().saturating_sub(1)) as u16;
-        // --
-
-        let input_text = Text::from_iter(input_wrapped);
-        let input = Paragraph::new(input_text)
-            .scroll((self.input_vscroll, 0))
-            .block(Block::bordered().title(input_title))
-            .style(match self.mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-                Mode::Command => Style::default().fg(Color::Cyan),
-            });
+        // Render input box via InputView
+        self.input_view
+            .render(frame, input_area, &self.input_buffer, self.mode, input_title);
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
@@ -506,7 +388,7 @@ impl App {
 
         // ---------- Render widgets in layout ----------
         // -- top level
-        frame.render_widget(input, input_area);
+        // InputView rendered above.
         // frame.render_stateful_widget(
         //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
         //         .begin_symbol(Some("↑"))
@@ -548,19 +430,7 @@ impl App {
             }
         }
 
-        match self.mode {
-            Mode::Insert | Mode::Command => {
-                // Position cursor at end of input buffer
-                frame.set_cursor_position((
-                    input_area.x + 1 + self.input_cursor_col,
-                    input_area.y + 1 + self.input_cursor_row,
-                ));
-            }
-            Mode::Normal => {
-                // Hide cursor in normal mode
-                // - By not calling `set_cursor_position`, the cursor is automatically hidden
-            }
-        }
+        // Cursor is managed by InputView for Insert/Command modes.
     }
 
     fn create_branch(&mut self) {
@@ -671,14 +541,14 @@ impl App {
             }
 
             Action::NavigateListUp => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Up,
                 });
             }
             Action::NavigateListDown => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Down,
@@ -686,41 +556,37 @@ impl App {
             }
 
             Action::PageDown => {
-                let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).clamp(1, 5);
-                self.convo_offset_y = self.convo_offset_y.saturating_add(page_step);
-                self.convo_free_scrolling = true;
+                self.conversation.page_down();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
             Action::PageUp => {
-                let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).clamp(1, 5);
-                self.convo_offset_y = self.convo_offset_y.saturating_sub(page_step);
-                self.convo_free_scrolling = true;
+                self.conversation.page_up();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
 
             Action::BranchPrev => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch {
                     direction: Previous,
                 });
             }
             Action::BranchNext => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
             }
 
             Action::ScrollLineDown => {
-                self.convo_offset_y = self.convo_offset_y.saturating_add(1);
-                self.convo_free_scrolling = true;
+                self.conversation.scroll_line_down();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
             Action::ScrollLineUp => {
-                self.convo_offset_y = self.convo_offset_y.saturating_sub(1);
-                self.convo_free_scrolling = true;
+                self.conversation.scroll_line_up();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
 
@@ -730,8 +596,8 @@ impl App {
                     self.send_cmd(StateCommand::NavigateList {
                         direction: ListNavigation::Top,
                     });
-                    self.convo_offset_y = u16::MAX; // clamp to bottom on draw
-                    self.convo_free_scrolling = false;
+                    self.conversation.request_bottom();
+                    self.conversation.set_free_scrolling(false);
                     self.pending_char = None;
                 } else {
                     self.pending_char = Some('g');
@@ -742,8 +608,8 @@ impl App {
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Bottom,
                 });
-                self.convo_offset_y = 0;
-                self.convo_free_scrolling = false;
+                self.conversation.request_top();
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
             }
 
@@ -777,10 +643,10 @@ impl App {
             }
 
             Action::InputScrollPrev => {
-                self.input_scrollstate.prev();
+                self.input_view.scroll_prev();
             }
             Action::InputScrollNext => {
-                self.input_scrollstate.next();
+                self.input_view.scroll_next();
             }
         }
     }
@@ -796,10 +662,10 @@ impl App {
                 }
                 // FIX: testing
                 KeyCode::Up => {
-                    self.input_scrollstate.prev();
+                    self.input_view.scroll_prev();
                 }
                 KeyCode::Down => {
-                    self.input_scrollstate.next();
+                    self.input_view.scroll_next();
                 }
                 _ => {}
             }
@@ -869,19 +735,17 @@ impl App {
             KeyCode::Backspace => self.handle_backspace(),
             // FIX: testing
             KeyCode::Up => {
-                self.convo_scrollstate.next();
+                self.conversation.page_up();
             }
             KeyCode::Down => {
-                self.convo_scrollstate.prev();
+                self.conversation.page_down();
             }
             _ => {}
         }
     }
 
     fn handle_backspace(&mut self) {
-        let last_char = self.input_buffer.pop();
-        self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
-        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
+        let _ = self.input_buffer.pop();
     }
 
     pub fn handle_command_mode(&mut self, key: KeyEvent) {
@@ -907,10 +771,6 @@ impl App {
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
-        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
-        if self.is_trailing_whitespace {
-            self.input_cursor_col += 1;
-        }
     }
 
     fn execute_command(&mut self) {
@@ -979,14 +839,14 @@ impl App {
             match key.code {
                 KeyCode::Char('n') => {
                     // Line down
-                    self.convo_offset_y = self.convo_offset_y.saturating_add(1);
-                    self.convo_free_scrolling = true;
+                    self.conversation.scroll_line_down();
+                    self.conversation.set_free_scrolling(true);
                     self.pending_char = None;
                 }
                 KeyCode::Char('p') => {
                     // Line up
-                    self.convo_offset_y = self.convo_offset_y.saturating_sub(1);
-                    self.convo_free_scrolling = true;
+                    self.conversation.scroll_line_up();
+                    self.conversation.set_free_scrolling(true);
                     self.pending_char = None;
                 }
                 _ => {}
@@ -1000,14 +860,14 @@ impl App {
             // --- NAVIGATION ---
             // Send commands instead of calling local methods
             KeyCode::Char('k') | KeyCode::Up => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Up,
                 });
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Down,
@@ -1015,29 +875,25 @@ impl App {
             }
             // Page scrolling with Shift-J / Shift-K
             KeyCode::Char('J') => {
-                let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).clamp(1, 5);
-                self.convo_offset_y = self.convo_offset_y.saturating_add(page_step);
-                self.convo_free_scrolling = true;
+                self.conversation.page_down();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
             KeyCode::Char('K') => {
-                let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).clamp(1, 5);
-                self.convo_offset_y = self.convo_offset_y.saturating_sub(page_step);
-                self.convo_free_scrolling = true;
+                self.conversation.page_up();
+                self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
             // Branch navigation clears free-scrolling to allow reveal
             KeyCode::Char('h') | KeyCode::Left => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch {
                     direction: Previous,
                 });
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                self.convo_free_scrolling = false;
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
             }
@@ -1049,8 +905,8 @@ impl App {
                     self.send_cmd(StateCommand::NavigateList {
                         direction: ListNavigation::Top,
                     });
-                    self.convo_offset_y = u16::MAX; // will clamp to bottom on draw
-                    self.convo_free_scrolling = false;
+                    self.conversation.request_bottom(); // will clamp to bottom on draw
+                    self.conversation.set_free_scrolling(false);
                     self.pending_char = None;
                 } else {
                     // wait for second 'g'
@@ -1062,8 +918,8 @@ impl App {
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Bottom,
                 });
-                self.convo_offset_y = 0;
-                self.convo_free_scrolling = false;
+                self.conversation.request_top();
+                self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
             }
 
