@@ -2,10 +2,12 @@ pub mod registry;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use std::{default, sync::Arc, time::Duration};
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
     oneshot,
+    broadcast,
 };
 use tracing::instrument;
 use uuid::Uuid;
@@ -95,7 +97,7 @@ pub async fn llm_manager(
     while let Ok(event) = event_rx.recv().await {
         match event {
             AppEvent::Llm(
-                request @ llm::Event::Request {
+                request @ Event::Request {
                     parent_id,
                     new_msg_id,
                     ..
@@ -110,7 +112,7 @@ pub async fn llm_manager(
                 );
                 pending_requests.push(request);
             }
-            AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
+            AppEvent::Llm(context @ Event::PromptConstructed { parent_id, .. }) => {
                 tracing::info!("Received context for parent_id: {}", parent_id);
                 ready_contexts.insert(parent_id, context);
 
@@ -126,17 +128,16 @@ pub async fn llm_manager(
                 drop(guard);
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
-                    if let llm::Event::Request {
-                        new_msg_id: req_parent,
-                        // parent_id: req_parent,
+                    if let Event::Request {
+                        parent_id: req_parent,
                         ..
-                    } = req
+                    } = req.clone()
                     {
                         tracing::info!(
                             "pending_requests found match for req_parent: {}",
                             req_parent
                         );
-                        if let Some(context) = ready_contexts.remove(req_parent) {
+                        if let Some(context) = ready_contexts.remove(&req_parent) {
                             tracing::info!(
                                 "ready_contexts found match for req_parent: {}",
                                 req_parent
@@ -152,10 +153,12 @@ pub async fn llm_manager(
                             tracing::info!("removing id from pending_requests");
                             false // Remove from pending
                         } else {
-                            tracing::info!("keep id from pending_requests
+                            tracing::info!(
+                                "keep id from pending_requests
                                 found pending_request but not ready_context
-                                checking if ready_contexts removed req_parent during conditional: {}", 
-                                ready_contexts.contains_key(req_parent));
+                                checking if ready_contexts contains req_parent during conditional: {}",
+                                ready_contexts.contains_key(&req_parent)
+                            );
                             true // Keep waiting
                         }
                     } else {
@@ -173,20 +176,20 @@ pub async fn llm_manager(
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
 #[instrument(skip(state, client, provider_config))]
 pub async fn process_llm_request(
-    request: llm::Event,
+    request: Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     provider_config: crate::user_config::ProviderConfig,
-    context: Option<llm::Event>,
+    context: Option<Event>,
 ) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request {
+        Event::Request {
             parent_id,
-            new_msg_id,
+            new_msg_id: _,
             ..
-        } => new_msg_id,
+        } => parent_id,
         _ => {
             tracing::info!("Not a Request, do nothing");
             return;
@@ -326,11 +329,6 @@ async fn prepare_and_run_llm_call(
         request_payload
     );
 
-    let response_test = client
-        .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(provider.resolve_api_key())
-        .json(&request_payload);
-    
     tracing::info!(
         "request_payload is {:#?}",
         request_payload

@@ -97,7 +97,6 @@
 //!
 use std::collections::HashMap;
 use std::sync::Arc;
-use error::RagError;
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(not(test))]
@@ -135,6 +134,7 @@ use uuid::Uuid;
 pub mod error;
 pub mod fusion;
 pub use fusion::{normalize_scores, ScoreNorm, RrfConfig, MmrConfig, Similarity, rrf_fuse, mmr_select};
+pub use error::RagError;
 pub mod context;
 pub use context::{
     TokenBudget, ContextPartKind, Modality, ContextPart, ContextStats, AssembledContext,
