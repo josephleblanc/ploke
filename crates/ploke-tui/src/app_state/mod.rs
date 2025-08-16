@@ -848,36 +848,81 @@ pub async fn state_manager(
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
-                    Ok(Some((last_usr_msg_id, last_user_msg))) => {
-                        tracing::info!("Start embedding user message: {}", last_user_msg);
-                        let temp_embed = state
-                            .embedder
-                            .generate_embeddings(vec![last_user_msg])
-                            .await
-                            .expect("Error while generating embedding of user message");
-                        // drop guard after we are done with last_usr_message, which is consumed by
-                        // generate_embeddings
+                    Ok(Some((_last_usr_msg_id, last_user_msg))) => {
+                        let query = last_user_msg;
+                        // Release the read lock before awaiting further ops
                         drop(chat_guard);
-                        let embeddings = temp_embed
-                            .into_iter()
-                            .next()
-                            .expect("No results from user message embedding generation");
-                        tracing::info!("Finish embedding user message");
 
                         tracing::info!("Waiting to finish processing updates to files, if any");
                         // Wait on the oneshot from `scan_for_change`, letting us know that the database
-                        // has been updated with the embeddings from any recent changes, if there were any.
+                        // has been updated with any recent changes, if there were any.
                         if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, scan_rx).await {
                             continue;
                         }
                         tracing::info!("Finished waiting on parsing target crate");
 
-                        if let Err(e) =
-                            embedding_search_similar(&state, &context_tx, new_msg_id, embeddings)
-                                .await
-                        {
-                            tracing::error!("error during embedding search: {}", e);
-                        };
+                        if let Some(rag) = &state.rag {
+                            let top_k: usize = 12;
+                            match rag.hybrid_search(&query, top_k).await {
+                                Ok(results) => {
+                                    // Fetch snippets via IoManager for the retrieved IDs and forward to context manager
+                                    let ids: Vec<Uuid> = results.into_iter().map(|(id, _)| id).collect();
+                                    let snippets = state
+                                        .io_handle
+                                        .get_snippets_batch(ids)
+                                        .await
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .filter_map(|r| r.ok())
+                                        .collect::<Vec<String>>();
+
+                                    if let Err(e) = context_tx
+                                        .send(RagEvent::ContextSnippets(new_msg_id, snippets))
+                                        .await
+                                    {
+                                        tracing::error!("Failed sending ContextSnippets: {}", e);
+                                    }
+
+                                    // Then trigger context construction with the correct parent ID
+                                    let messages: Vec<Message> =
+                                        state.chat.0.read().await.clone_current_path_conv();
+
+                                    if let Err(e) = context_tx
+                                        .send(RagEvent::UserMessages(new_msg_id, messages))
+                                        .await
+                                    {
+                                        tracing::error!("Failed sending UserMessages: {}", e);
+                                    }
+                                    if let Err(e) = context_tx
+                                        .send(RagEvent::ConstructContext(new_msg_id))
+                                        .await
+                                    {
+                                        tracing::error!("Failed sending ConstructContext: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Hybrid search failed: {}", e);
+                                    add_msg_immediate(
+                                        &state,
+                                        &event_bus,
+                                        Uuid::new_v4(),
+                                        format!("Hybrid search failed: {}", e),
+                                        MessageKind::SysInfo,
+                                    )
+                                    .await;
+                                }
+                            }
+                        } else {
+                            tracing::warn!("RAG service unavailable; skipping hybrid search in EmbedMessage");
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                "RAG service unavailable; cannot run hybrid search".to_string(),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
                     }
                     Ok(None) => {
                         tracing::warn!(
