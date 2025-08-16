@@ -1139,14 +1139,25 @@ impl App {
                 } else {
                     &cmd["hybrid ".len()..]
                 };
+                // Allow the user to provide an optional leading number for top_k, e.g. "5 how to foo bar".
+                // If the first token parses as a usize it is used as top_k and the remaining tokens
+                // are joined as the query. Otherwise the entire tail is treated as the query and
+                // top_k defaults to 10.
                 let mut parts = tail.split_whitespace();
-                // AI: This currently searches for only a single word, which is not made clear.
-                // Add a way for the user's input to be taken completely. Additionally we should
-                // reverse the order of the search terms, to make the first item be the number of
-                // returned results. If the first item is not parsed into a number, we can default
-                // to 10 results. AI!
-                let query = parts.next().unwrap_or("").to_string();
-                let top_k = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(10);
+                let (top_k, query) = if let Some(first) = parts.next() {
+                    if let Ok(n) = first.parse::<usize>() {
+                        let q = parts.collect::<Vec<_>>().join(" ");
+                        (n, q)
+                    } else {
+                        // Reconstruct the full query including the first token.
+                        let mut v = Vec::with_capacity(1);
+                        v.push(first);
+                        v.extend(parts);
+                        (10usize, v.join(" "))
+                    }
+                } else {
+                    (10usize, String::new())
+                };
 
                 if query.is_empty() {
                     self.send_cmd(StateCommand::AddMessageImmediate {
