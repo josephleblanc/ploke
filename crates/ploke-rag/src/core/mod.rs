@@ -1,3 +1,12 @@
+#![allow(missing_docs)]
+//! Core orchestration: `RagService` and configuration.
+//!
+//! [`RagService`] is the primary entry point for performing sparse, dense, and hybrid retrieval,
+//! as well as assembling a token-budgeted context. It wraps the BM25 actor with timeouts, optional
+//! retries/backoff (lenient mode), and exposes strict variants and persistence hooks.
+//!
+//! Configure behavior via [`RagConfig`], including fusion defaults, dense search parameters, and
+//! context assembly policy. For diversity or learning-to-rank experiments, plug in a custom [`Reranker`].
 mod unit_tests;
 use super::*;
 use std::collections::HashMap;

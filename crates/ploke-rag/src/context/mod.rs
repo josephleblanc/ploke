@@ -1,3 +1,15 @@
+#![allow(missing_docs)]
+//! Context assembly: budgeting, deduplication, ordering, and packaging of snippets.
+//!
+//! Given a ranked list of node IDs (typically fused BM25+dense), this module fetches snippet text
+//! via `ploke-io`, trims parts under a configurable token budget, deduplicates, and returns a
+//! reproducible [`AssembledContext`] suitable for downstream prompting.
+//!
+//! The tokenizer is abstracted by [`TokenCounter`], enabling deterministic tests and pluggable
+//! adapters for real LLM tokenizers in higher-level crates.
+//!
+//! Current implementation focuses on end-to-end wiring; stitching of ranges and richer metadata
+//! are documented in `plans.md` for subsequent iterations.
 use std::collections::{HashMap, HashSet};
 
 use ploke_core::EmbeddingData;

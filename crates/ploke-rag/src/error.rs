@@ -1,3 +1,9 @@
+#![allow(missing_docs)]
+//! Error types for ploke-rag.
+//!
+//! [`RagError`] captures channel failures, database/actor errors, embedding failures, and
+//! search state violations. A conversion into the workspace-wide error type is provided so
+//! higher layers can uniformly handle failures.
 use ploke_db::DbError;
 use thiserror::Error;
 

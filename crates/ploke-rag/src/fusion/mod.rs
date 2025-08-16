@@ -1,3 +1,13 @@
+#![allow(missing_docs)]
+//! Fusion utilities: score normalization, weighted RRF, and MMR.
+//!
+//! This module provides building blocks to combine sparse (BM25) and dense results into a single,
+//! deterministic ranking. The core entry points are:
+//! - [`normalize_scores`]: bring scores from different modalities onto a comparable scale.
+//! - [`rrf_fuse`]: weighted reciprocal rank fusion with stable UUID tie-breaking.
+//! - [`mmr_select`]: diversity-aware selection using cosine similarity on normalized vectors.
+//!
+//! The algorithms are intentionally small, well-documented, and pure (no I/O) to aid testing and reuse.
 use uuid::Uuid;
 use std::collections::{HashMap, HashSet};
 
