@@ -37,8 +37,7 @@ High-performance text retrieval system for ploke's RAG pipeline, optimized for L
 - **Helper Methods**: High-level functions for common tasks like fetching nodes that need embedding or retrieving node data by ID.
 
 ```rust
-use ploke_db::{Database, NodeType};
-use ploke_db::index::hnsw::{search_similar_args, SimilarArgs};
+use ploke_db::{search_similar_args, Database, EmbedDataVerbose, NodeType, SimilarArgs};
 use uuid::Uuid;
 
 // Assume `db` is an initialized `Database` instance and `vector_query` is a `Vec<f32>`.
@@ -53,10 +52,10 @@ let args = SimilarArgs {
     max_hits: 5,
     radius: 0.5,
 };
-let similar_nodes = search_similar_args(args)?; // -> EmbedDataVerbose { typed_data, dist }
+let EmbedDataVerbose { typed_data, dist } = search_similar_args(args)?;
 
 // 2. After getting node IDs from a search, retrieve their full data
-let node_ids: Vec<Uuid> = similar_nodes.typed_data.v.iter().map(|d| d.id).collect();
+let node_ids: Vec<Uuid> = typed_data.v.iter().map(|d| d.id).collect();
 let node_data = db.get_nodes_ordered(node_ids)?; // -> Vec<EmbeddingData>
 
 // 3. Use raw CozoScript for a custom graph query
@@ -83,7 +82,7 @@ flowchart TD
 
 1.  **`Database` Struct**: The main entry point. It wraps a `cozo::Db` instance and provides methods for raw queries (`raw_query`, `raw_query_mut`) and various helper queries (`get_unembedded_node_data`, `get_nodes_ordered`, etc.).
 
-2.  **`index::hnsw` Module**: Contains functions for dense vector retrieval using HNSW indexes. The main function is `search_similar_args`.
+2.  **Dense Vector Search**: The crate provides `search_similar_args` for dense vector retrieval using HNSW indexes.
 
 3.  **`bm25_index` Module**: Implements sparse retrieval using a BM25 index. It includes a `CodeTokenizer` tailored for source code and a `bm25_service` actor for managing the index and handling search requests.
 
