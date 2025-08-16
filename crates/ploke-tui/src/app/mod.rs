@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::app::input::keymap::{Action, to_action};
-use crate::app::types::{Mode, RenderableMessage};
+use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
@@ -122,29 +122,17 @@ impl App {
         // let mut frame_counter = 0;
         while self.running {
             if self.needs_redraw {
-                // Prepare data for this frame by reading from AppState.
-                // Collect a single owned snapshot of the path to avoid borrowing across the draw call.
-                let (messages, current_id) = {
-                    let history_guard = self.state.chat.0.read().await;
-                    let msgs: Vec<RenderableMessage> = history_guard
-                        .get_full_path()
-                        .into_iter()
-                        .map(|m| RenderableMessage {
-                            id: m.id,
-                            kind: m.kind,
-                            content: m.content.clone(),
-                        })
-                        .collect();
-                    (msgs, history_guard.current)
-                };
-                let path_len = messages.len();
+                // Prepare data for this frame by reading from AppState without allocating per-frame.
+                let history_guard = self.state.chat.0.read().await;
+                let path_len = history_guard.path_len();
+                let current_id = history_guard.current;
 
-                // Draw the UI with the prepared data using fresh iterators for measure and render.
+                // Draw the UI using iterators over the cached path.
                 terminal.draw(|frame| {
                     self.draw(
                         frame,
-                        messages.iter(),
-                        messages.iter(),
+                        history_guard.iter_path(),
+                        history_guard.iter_path(),
                         path_len,
                         current_id,
                     )
@@ -286,7 +274,7 @@ impl App {
     }
 
     /// Renders the user interface.
-    fn draw<'a, I1, I2>(
+    fn draw<'a, I1, I2, T: RenderMsg>(
         &mut self,
         frame: &mut Frame,
         path_for_measure: I1,
@@ -294,8 +282,8 @@ impl App {
         path_len: usize,
         current_id: Uuid,
     ) where
-        I1: IntoIterator<Item = &'a RenderableMessage>,
-        I2: IntoIterator<Item = &'a RenderableMessage>,
+        I1: IntoIterator<Item = &'a T>,
+        I2: IntoIterator<Item = &'a T>,
     {
         // Always show the currently selected model in the top-right
         let show_indicator = true;

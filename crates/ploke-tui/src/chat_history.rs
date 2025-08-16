@@ -313,6 +313,8 @@ pub struct ChatHistory {
     pub current: Uuid,
     /// Final message in the currently selected message list.
     pub tail: Uuid,
+    /// Cached path from root to tail for fast, zero-alloc iteration during render
+    path_cache: Vec<Uuid>,
     /// Scroll bar support
     pub scroll_bar: Option<ScrollbarState>,
 }
@@ -343,8 +345,32 @@ impl ChatHistory {
             current: root_id,
             // new list has same root/tail
             tail: root_id,
+            // initialize cached path with root
+            path_cache: vec![root_id],
             scroll_bar: None,
         }
+    }
+
+    /// Rebuilds the cached root -> tail path.
+    fn rebuild_path_cache(&mut self) {
+        let mut path = Vec::new();
+        let mut cur = Some(self.tail);
+        while let Some(id) = cur {
+            path.push(id);
+            cur = self.messages.get(&id).and_then(|m| m.parent);
+        }
+        path.reverse();
+        self.path_cache = path;
+    }
+
+    /// Returns an iterator of Messages on the cached root -> tail path.
+    pub fn iter_path(&self) -> impl Iterator<Item = &Message> {
+        self.path_cache.iter().filter_map(|id| self.messages.get(id))
+    }
+
+    /// Fast path length (root -> tail).
+    pub fn path_len(&self) -> usize {
+        self.path_cache.len()
     }
 
     // TODO: Documentation, actually implement this (needs async?)
@@ -419,6 +445,7 @@ impl ChatHistory {
         // Consider a case where multiple children are being added simultaneously.
         // Forget it, we would likely need a different function for that.
         self.tail = child_id;
+        self.rebuild_path_cache();
         Ok(child_id)
     }
 
@@ -491,9 +518,7 @@ impl ChatHistory {
     /// For a conversation path A -> B -> C (where C is tail):
     /// Returns [A, B, C]
     pub fn get_full_path(&self) -> Vec<&Message> {
-        self.full_path_ids()
-            .filter_map(|id| self.messages.get(&id))
-            .collect()
+        self.iter_path().collect()
     }
 
     /// Returns an iterator of UUIDs in the full path from root to current message
@@ -622,21 +647,24 @@ impl ChatHistory {
 
     /// Navigates the current path and updates the `current` message ID.
     pub fn navigate_list(&mut self, direction: ListNavigation) {
-        let path_ids: Vec<Uuid> = self.get_full_path().iter().map(|m| m.id).collect();
-        if path_ids.is_empty() {
+        if self.path_cache.is_empty() {
             return;
         }
 
-        let current_index = path_ids.iter().position(|&id| id == self.current);
+        let current_index = self
+            .path_cache
+            .iter()
+            .position(|&id| id == self.current)
+            .unwrap_or(0);
 
         let new_index = match direction {
-            ListNavigation::Up => current_index.map_or(0, |i| i.saturating_sub(1)),
-            ListNavigation::Down => current_index.map_or(0, |i| (i + 1).min(path_ids.len() - 1)),
+            ListNavigation::Up => current_index.saturating_sub(1),
+            ListNavigation::Down => (current_index + 1).min(self.path_cache.len() - 1),
             ListNavigation::Top => 0,
-            ListNavigation::Bottom => path_ids.len() - 1,
+            ListNavigation::Bottom => self.path_cache.len() - 1,
         };
 
-        self.current = path_ids[new_index];
+        self.current = self.path_cache[new_index];
     }
 
     /// Navigates between sibling messages sharing the same parent

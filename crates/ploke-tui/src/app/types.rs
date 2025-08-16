@@ -11,7 +11,7 @@ Intended usage:
 - The App struct stores Mode for modal behavior (Normal/Insert/Command).
 */
 
-use crate::chat_history::MessageKind;
+use crate::chat_history::{Message, MessageKind};
 use uuid::Uuid;
 
 /// Editing/interaction mode for the TUI.
@@ -43,4 +43,36 @@ pub struct RenderableMessage {
     pub(crate) id: Uuid,
     pub(crate) kind: MessageKind,
     pub(crate) content: String,
+}
+
+/// A lightweight trait for rendering without cloning.
+/// Implemented both for snapshots (RenderableMessage) and the live model (chat_history::Message).
+pub trait RenderMsg {
+    fn id(&self) -> Uuid;
+    fn kind(&self) -> MessageKind;
+    fn content(&self) -> &str;
+}
+
+impl RenderMsg for RenderableMessage {
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn kind(&self) -> MessageKind {
+        self.kind
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+impl RenderMsg for Message {
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn kind(&self) -> MessageKind {
+        self.kind
+    }
+    fn content(&self) -> &str {
+        &self.content
+    }
 }

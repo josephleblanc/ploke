@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::app::message_item::{measure_messages, render_messages};
-use crate::app::types::RenderableMessage;
+use crate::app::types::RenderMsg;
 use crate::app::view::EventSubscriber;
 use crate::app::AppEvent;
 
@@ -19,7 +19,7 @@ pub struct ConversationView {
 }
 
 impl ConversationView {
-    pub fn prepare<'a, I>(
+    pub fn prepare<'a, I, T: RenderMsg>(
         &mut self,
         path: I,
         path_len: usize,
@@ -28,7 +28,7 @@ impl ConversationView {
         selected_index_opt: Option<usize>,
     )
     where
-        I: IntoIterator<Item = &'a RenderableMessage>,
+        I: IntoIterator<Item = &'a T>,
     {
         self.last_viewport_height = viewport_height;
 
@@ -92,7 +92,7 @@ impl ConversationView {
         }
     }
 
-    pub fn render<'a, I>(
+    pub fn render<'a, I, T: RenderMsg>(
         &self,
         frame: &mut Frame,
         path: I,
@@ -101,7 +101,7 @@ impl ConversationView {
         selected_index_opt: Option<usize>,
     )
     where
-        I: IntoIterator<Item = &'a RenderableMessage>,
+        I: IntoIterator<Item = &'a T>,
     {
         render_messages(
             frame,

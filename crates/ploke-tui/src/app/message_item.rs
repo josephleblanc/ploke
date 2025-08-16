@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
 use super::*;
-use crate::app::types::RenderableMessage;
+use crate::app::types::RenderMsg;
+use crate::chat_history::MessageKind;
 // In app.rs, replace the List rendering with custom Paragraph-based rendering
 
 #[derive(Debug, Clone)]
@@ -52,13 +53,13 @@ fn render_one_message<'a>(
 }
  // ---------- main replacement -------------------------------------------------
 #[instrument(skip(renderable_msg), level = "trace")]
-pub fn measure_messages<'a, I>(
+pub fn measure_messages<'a, I, T: RenderMsg>(
     renderable_msg: I,
     conversation_width: u16,
     _selected_index: Option<usize>,
 ) -> (u16, Vec<u16>)
 where
-    I: IntoIterator<Item = &'a RenderableMessage>,
+    I: IntoIterator<Item = &'a T>,
 {
     // Compute per-message heights and total height for the current frame.
     let mut heights: Vec<u16> = Vec::new();
@@ -66,7 +67,7 @@ where
     for msg in renderable_msg.into_iter() {
         // Always reserve a 1-column gutter for the selection bar to keep heights stable.
         let eff_w = conversation_width.saturating_sub(1);
-        let h = calc_height(&msg.content, eff_w);
+        let h = calc_height(msg.content(), eff_w);
         heights.push(h);
         total_height = total_height.saturating_add(h);
     }
@@ -74,7 +75,7 @@ where
 }
 
 #[instrument(skip(frame, renderable_msg, heights), level = "trace")]
-pub fn render_messages<'a, I>(
+pub fn render_messages<'a, I, T: RenderMsg>(
     frame: &mut Frame,
     renderable_msg: I,
     conversation_width: u16,
@@ -84,7 +85,7 @@ pub fn render_messages<'a, I>(
     selected_index: Option<usize>,
 )
 where
-    I: IntoIterator<Item = &'a RenderableMessage>,
+    I: IntoIterator<Item = &'a T>,
 {
     // 1) Clamp offset
     let viewport_height = conversation_area.height;
@@ -98,7 +99,7 @@ where
     for (idx, msg) in renderable_msg.into_iter().enumerate() {
         let height = heights[idx];
         let is_selected = selected_index == Some(idx);
-        let base_style = match msg.kind {
+        let base_style = match msg.kind() {
             MessageKind::User => Style::new().blue(),
             MessageKind::Assistant => Style::new().green(),
             MessageKind::System => Style::new().cyan(),
@@ -113,7 +114,7 @@ where
 
         // Use the same effective width as in height calc: always reserve 1-column gutter.
         let eff_w = conversation_width.saturating_sub(1);
-        let wrapped = textwrap::wrap(&msg.content, eff_w as usize);
+        let wrapped = textwrap::wrap(msg.content(), eff_w as usize);
         let bar = Span::styled("│", base_style.fg(Color::White));
 
         // If offset lands inside this message, skip top lines so we don’t waste space
