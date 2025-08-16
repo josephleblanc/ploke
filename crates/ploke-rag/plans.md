@@ -90,16 +90,108 @@ This document describes the next stages of work for the `ploke-rag` crate. It fo
 
 ### 3) BM25 actor lifecycle and fallbacks
 
-- Index status and readiness
-  - Expose a lightweight status query on actor channel (to be implemented in `ploke-db`) so `ploke-rag` can vary behavior without guessing.
-- Persistence hooks
-  - Add hooks in `ploke-db` for serializing/deserializing the sparse index to disk; `ploke-rag` triggers these during startup/shutdown or on-demand.
-- Fallback behavior
-  - Maintain current graceful fallback to dense when BM25 returns empty. Make it configurable per-call (strict vs. lenient).
-- API additions in RagService (non-breaking)
-  - bm25_status() -> Result<Bm25Status, RagError>
-  - bm25_save() / bm25_load() -> Result<(), RagError> (call-through to `ploke-db` when available)
-  - search_bm25_strict(query, k) -> Result<Vec<(Uuid, f32)>, RagError> (fails if index empty)
+Goal
+- Make BM25 interactions explicit and observable: status, readiness, persistence, and deterministic fallbacks.
+- Provide non-breaking APIs in ploke-rag that delegate to ploke-db’s BM25 actor, with strict vs. lenient behavior selectable per call.
+- Ensure predictable error mapping and tracing for operability.
+
+Implementation plan (incremental, PR-sized steps)
+
+A) Status and readiness (requires ploke-db additions)
+- Add status query to BM25 actor in ploke-db:
+  - New enum Bm25Status { Uninitialized, Building, Ready { docs: usize }, Empty, Error(String) }.
+  - New Bm25Cmd::Status { resp: oneshot::Sender<Result<Bm25Status, DbError>> }.
+  - Actor maintains internal state transitions:
+    - Uninitialized -> Building (on Rebuild) -> Ready|Empty or Error
+    - Ready -> Building (on Rebuild) or stays Ready
+    - Error can transition back to Building on Rebuild
+- ploke-rag wiring:
+  - RagService::bm25_status() -> Result<Bm25Status, RagError>:
+    - Send Bm25Cmd::Status, map channel/db errors to RagError, return status.
+- Behavior changes:
+  - search_bm25() uses status for better logging and to decide whether to wait/retry (see backoff below).
+  - hybrid_search() can include status in trace fields.
+
+B) Persistence hooks (requires ploke-db additions)
+- Add serialization/deserialization commands to BM25 actor:
+  - Bm25Cmd::Save { path: PathBuf, resp: oneshot::Sender<Result<(), DbError>> }
+  - Bm25Cmd::Load { path: PathBuf, resp: oneshot::Sender<Result<(), DbError>> }
+- Define persistence semantics in ploke-db:
+  - Save only when state is Ready or Empty (no concurrent Building writes).
+  - Load transitions: Uninitialized/Empty -> Building -> Ready/Empty or Error, or Ready -> Ready (replace) with a short swap phase.
+  - Validate version/format; incompatible versions return Error.
+- ploke-rag call-through:
+  - RagService::bm25_save(path: impl AsRef<Path>) -> Result<(), RagError>
+  - RagService::bm25_load(path: impl AsRef<Path>) -> Result<(), RagError>
+  - Trace events: persistence_started, persistence_done, bytes_written/read (if available), duration_ms.
+
+C) Fallback behavior (strict vs. lenient)
+- Keep current lenient fallback in search_bm25():
+  - If BM25 returns empty results, call dense search and return dense results.
+  - Add structured tracing fields: fallback_used=true, bm25_status=..., dense_len=..., bm25_len=0.
+- Add strict variant:
+  - RagService::search_bm25_strict(query, k) -> Result<Vec<(Uuid, f32)>, RagError>
+    - If BM25 returns empty and status is not Ready, return RagError::Search("bm25 index not ready/empty").
+    - If BM25 returns empty but status is Ready with docs=0 (Empty), return RagError::Search("bm25 index empty").
+    - Do not fall back to dense; let caller decide strategy.
+- Hybrid behavior:
+  - hybrid_search() remains strict about dense search errors; BM25 errors bubble as-is.
+  - If BM25 returns empty while status is Building/Uninitialized, proceed with dense-only fusion (same as current) and trace fallback_used=true.
+
+D) Timeouts, retry and backoff
+- Add per-call timeout for BM25 actor requests (default 250ms; configurable later):
+  - If status/search/save/load exceeds timeout, map to RagError::Channel("timeout ...").
+- Add lightweight retry for Status during cold start:
+  - In search_bm25() lenient mode: on Status=Building or Uninitialized, retry search up to 2 times with exponential backoff (50ms, 100ms) before falling back to dense.
+  - Emit trace events with attempt number and sleep_ms.
+- All sleeps via tokio::time::sleep to avoid blocking.
+
+E) Error mapping and observability
+- Map DbError and channel errors consistently:
+  - Channel send/recv -> RagError::Channel
+  - Actor/DB-specific failures -> RagError::Db via From
+  - Persistence issues -> RagError::Db (surface inner error text)
+- Tracing fields to add on all new paths:
+  - bm25_status, strict, timeout_ms, attempts, fallback_used, bm25_results, dense_results.
+- Optional events for metrics later:
+  - bm25_status_counts, bm25_search_latency_ms, bm25_fallback_count, bm25_persist_success/failure.
+
+F) Public API additions in ploke-rag (non-breaking)
+- enum Bm25Status (re-export the ploke-db definition to avoid duplication or define a local mirror with From/Into).
+- RagService:
+  - async fn bm25_status(&self) -> Result<Bm25Status, RagError>
+  - async fn bm25_save<P: AsRef<std::path::Path> + Send>(&self, path: P) -> Result<(), RagError>
+  - async fn bm25_load<P: AsRef<std::path::Path> + Send>(&self, path: P) -> Result<(), RagError>
+  - async fn search_bm25_strict(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError>
+- Configuration (future, separate PR):
+  - RagConfig.bm25: { timeout_ms, retries, backoff_ms, strict_default, persist_path }
+
+G) Tests (unit + integration)
+- Unit tests (ploke-rag, using a stub/fake bm25 actor or feature-flagged mock in ploke-db):
+  - bm25_status_ok: returns Ready/Empty/Error deterministically.
+  - lenient_fallback_triggers: empty BM25 results -> dense used; strict returns error.
+  - timeout and retry: injected delays cause retry then fallback.
+- Integration tests (existing fixture DB):
+  - Rebuild then search: ensure non-empty results without dense fallback.
+  - Cold start strict: search_bm25_strict before rebuild -> error.
+  - Save/Load roundtrip (when ploke-db implements persistence): after Load, first search succeeds without Rebuild.
+- Tracing assertions:
+  - Use test subscriber to assert presence of fallback_used and bm25_status fields on the appropriate spans.
+
+H) Rollout and compatibility
+- Keep existing search_bm25() semantics (lenient) to avoid breaking callers.
+- Introduce new methods alongside old ones; mark strict behavior and persistence as opt-in.
+- Document state transitions and error cases in RagService rustdoc.
+
+Out-of-scope for this point
+- Actual persistence file format and storage policy (lives in ploke-db).
+- Long-lived background autosave/autoload policies (could be added later behind config).
+
+Deliverables for Point 3
+- New BM25 actor messages and status enum in ploke-db; adapter methods in RagService.
+- Lenient and strict BM25 search modes with retries/backoff.
+- Save/Load call-throughs with tracing and error mapping.
+- Tests covering status, fallback correctness, and (if available) persistence.
 
 ### 4) Public APIs and configurable strategies
 
