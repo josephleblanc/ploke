@@ -7,25 +7,13 @@ use textwrap;
 use crate::app::types::Mode;
 
 /// Encapsulates input box rendering and state (scroll, cursor).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InputView {
     vscroll: u16,
     scrollstate: ScrollbarState,
     cursor_row: u16,
     cursor_col: u16,
     trailing_whitespace: bool,
-}
-
-impl Default for InputView {
-    fn default() -> Self {
-        Self {
-            vscroll: 0,
-            scrollstate: ScrollbarState::default(),
-            cursor_row: 0,
-            cursor_col: 0,
-            trailing_whitespace: false,
-        }
-    }
 }
 
 impl InputView {

@@ -284,11 +284,7 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             app.send_cmd(StateCommand::Bm25Rebuild);
         }
         cmd if cmd.starts_with("bm25 search ") || cmd.starts_with("hybrid ") => {
-            let tail = if cmd.starts_with("bm25 search ") {
-                &cmd["bm25 search ".len()..]
-            } else {
-                &cmd["hybrid ".len()..]
-            };
+            let tail = cmd.strip_prefix("bm25 search ").unwrap_or("hybrid ");
             let mut parts = tail.split_whitespace();
             let (top_k, query) = if let Some(first) = parts.next() {
                 if let Ok(n) = first.parse::<usize>() {
