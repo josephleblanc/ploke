@@ -40,7 +40,7 @@ static HELP_COMMANDS: &str = r#"Available commands:
     bm25 status - Show sparse BM25 index status
     bm25 save <path> - Save sparse index sidecar to file
     bm25 load <path> - Load sparse index sidecar from file
-    bm25 search <query> [top_k] - Search with BM25 (hybrid wiring in progress)
+    bm25 search <query> [top_k] - Search with BM25
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
     help - Show this help
 
@@ -50,6 +50,7 @@ static HELP_COMMANDS: &str = r#"Available commands:
     : - Enter command mode (vim-style)
     m - Quick model selection
     ? - Show this help
+    / - Quick hybrid search prompt
     j/↓ - Navigate down (selection)
     k/↑ - Navigate up (selection)
     J - Page down (scroll)
@@ -521,10 +522,19 @@ impl App {
             .split(frame.area());
 
         let model_info_area = main_layout[0];
-        let chat_area = main_layout[1];
+        let chat_area_full = main_layout[1];
         let input_area = main_layout[2];
         let status_area = main_layout[3];
-        // Remember chat area for mouse hit-testing
+
+        // Split chat into conversation (left) and context preview (right)
+        let chat_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .split(chat_area_full);
+        let chat_area = chat_columns[0];
+        let preview_area = chat_columns[1];
+
+        // Remember conversation area for mouse hit-testing
         self.last_chat_area = chat_area;
 
         let status_line_area = layout_statusline(5, status_area);
@@ -611,6 +621,11 @@ impl App {
             &self.convo_item_heights,
             selected_index_opt,
         );
+
+        // Right-side context preview (placeholder until wired to Rag events)
+        let preview = Paragraph::new("Context Preview\nWaiting for results…")
+            .block(Block::bordered().title(" Context Preview "));
+        frame.render_widget(preview, preview_area);
 
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
@@ -1102,7 +1117,7 @@ impl App {
             }
             cmd if cmd.starts_with("bm25 rebuild") => {
                 self.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: "Requested BM25 rebuild. This will rebuild the sparse index from currently active primary nodes. (Wiring in progress)".to_string(),
+                    msg: "Requested BM25 rebuild. This will rebuild the sparse index from currently active primary nodes.".to_string(),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 });
@@ -1306,6 +1321,15 @@ impl App {
             }
 
             // --- COMMANDS ---
+            KeyCode::Char('/') => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                if self.command_style == CommandStyle::Slash {
+                    self.input_buffer = "/hybrid ".to_string();
+                } else {
+                    self.input_buffer = ":hybrid ".to_string();
+                }
+            }
             KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
