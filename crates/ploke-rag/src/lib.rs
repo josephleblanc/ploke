@@ -45,7 +45,7 @@ pub use context::{
     AssemblyPolicy, Ordering, TokenCounter, ApproxCharTokenizer, assemble_context,
 };
 pub mod core;
-pub use core::RagService;
+pub use core::{RagService, RagConfig, RetrievalStrategy, Reranker, NoopReranker};
 pub use ploke_db::bm25_index::bm25_service::Bm25Status;
 
 const BM25_TIMEOUT_MS: u64 = 250;

@@ -1,5 +1,91 @@
 mod unit_tests;
 use super::*;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use ploke_io::IoManagerHandle;
+
+#[derive(Debug, Clone)]
+pub enum RetrievalStrategy {
+    Dense,
+    Sparse { strict: Option<bool> },
+    Hybrid { rrf: RrfConfig, mmr: Option<MmrConfig> },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SearchParams {
+    pub ef: usize,
+    pub radius: f32,
+    pub max_hits: usize,
+}
+
+impl Default for SearchParams {
+    fn default() -> Self {
+        Self { ef: 10, radius: 10.0, max_hits: 0 }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RagConfig {
+    pub bm25_timeout_ms: u64,
+    pub bm25_retry_backoff_ms: Vec<u64>,
+    pub strict_bm25_by_default: bool,
+    pub rrf_default: RrfConfig,
+    pub mmr_default: Option<MmrConfig>,
+    pub score_norm: ScoreNorm,
+    pub search_per_type: HashMap<NodeType, SearchParams>,
+    pub assembly_policy: AssemblyPolicy,
+    pub token_counter: Arc<dyn TokenCounter>,
+    pub reranker: Option<Arc<dyn Reranker>>,
+}
+
+impl Default for RagConfig {
+    fn default() -> Self {
+        Self {
+            bm25_timeout_ms: crate::BM25_TIMEOUT_MS,
+            bm25_retry_backoff_ms: crate::BM25_RETRY_BACKOFF_MS.to_vec(),
+            strict_bm25_by_default: false,
+            rrf_default: RrfConfig::default(),
+            mmr_default: None,
+            score_norm: ScoreNorm::default(),
+            search_per_type: HashMap::new(),
+            assembly_policy: AssemblyPolicy::default(),
+            token_counter: Arc::new(crate::context::ApproxCharTokenizer::default()),
+            reranker: None,
+        }
+    }
+}
+
+impl RagConfig {
+    pub fn params_for(&self, ty: NodeType) -> SearchParams {
+        self.search_per_type.get(&ty).copied().unwrap_or_default()
+    }
+}
+
+/// Optional async reranker for candidate reordering using snippet texts.
+pub trait Reranker: Send + Sync {
+    fn rerank<'a>(
+        &'a self,
+        query: &'a str,
+        candidates: Vec<(Uuid, String)>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Uuid, f32)>, RagError>> + Send + 'a>>;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopReranker;
+
+impl Reranker for NoopReranker {
+    fn rerank<'a>(
+        &'a self,
+        _query: &'a str,
+        candidates: Vec<(Uuid, String)>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Uuid, f32)>, RagError>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(candidates.into_iter().map(|(id, _)| (id, 1.0)).collect())
+        })
+    }
+}
 
 /// RAG orchestration service.
 ///
@@ -18,6 +104,8 @@ pub struct RagService {
     db: Arc<Database>,
     dense_embedder: Arc<EmbeddingProcessor>,
     bm_embedder: mpsc::Sender<Bm25Cmd>,
+    cfg: RagConfig,
+    io: Option<Arc<IoManagerHandle>>,
 }
 
 impl RagService {
@@ -32,6 +120,52 @@ impl RagService {
             db,
             dense_embedder,
             bm_embedder,
+            cfg: RagConfig::default(),
+            io: None,
+        })
+    }
+
+    /// Construct with explicit configuration (no IoManager).
+    pub fn new_with_config(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingProcessor>,
+        cfg: RagConfig,
+    ) -> Result<Self, RagError> {
+        ensure_tracer_initialized();
+        let bm_embedder = bm25_service::start_default(db.clone())?;
+        Ok(Self {
+            db,
+            dense_embedder,
+            bm_embedder,
+            cfg,
+            io: None,
+        })
+    }
+
+    /// Construct with an IoManager and default configuration.
+    pub fn new_with_io(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingProcessor>,
+        io: IoManagerHandle,
+    ) -> Result<Self, RagError> {
+        Self::new_full(db, dense_embedder, io, RagConfig::default())
+    }
+
+    /// Construct with both IoManager and explicit configuration.
+    pub fn new_full(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingProcessor>,
+        io: IoManagerHandle,
+        cfg: RagConfig,
+    ) -> Result<Self, RagError> {
+        ensure_tracer_initialized();
+        let bm_embedder = bm25_service::start_default(db.clone())?;
+        Ok(Self {
+            db,
+            dense_embedder,
+            bm_embedder,
+            cfg,
+            io: Some(Arc::new(io)),
         })
     }
 
@@ -75,7 +209,7 @@ impl RagService {
                     ))
                 })?;
 
-            let res = match timeout(Duration::from_millis(BM25_TIMEOUT_MS), rx).await {
+            let res = match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
                 Ok(Ok(r)) => r,
                 Ok(Err(recv_err)) => {
                     return Err(RagError::Channel(format!(
@@ -88,7 +222,7 @@ impl RagService {
                 Err(_) => {
                     return Err(RagError::Channel(format!(
                         "timeout waiting for BM25 search ({} ms)",
-                        BM25_TIMEOUT_MS
+                        self.cfg.bm25_timeout_ms
                     )))
                 }
             };
@@ -101,10 +235,10 @@ impl RagService {
             // Decide retry/fallback based on status.
             let mut fallback_used = false;
             let should_retry = matches!(status_opt, Some(Bm25Status::Uninitialized) | Some(Bm25Status::Building))
-                && attempts <= BM25_RETRY_BACKOFF_MS.len();
+                && attempts <= self.cfg.bm25_retry_backoff_ms.len();
 
             if should_retry {
-                let backoff = BM25_RETRY_BACKOFF_MS[attempts - 1];
+                let backoff = self.cfg.bm25_retry_backoff_ms[attempts - 1];
                 debug!(attempts = attempts, bm25_results = 0, bm25_status = ?status_opt, backoff_ms = backoff, "BM25 empty; retrying after backoff");
                 sleep(Duration::from_millis(backoff)).await;
                 continue;
@@ -154,11 +288,11 @@ impl RagService {
             .send(Bm25Cmd::Status { resp: tx })
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 status command: {}", e)))?;
-        match timeout(Duration::from_millis(BM25_TIMEOUT_MS), rx).await {
+        match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
             Ok(Ok(Ok(status))) => Ok(status),
             Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
             Ok(Err(recv_err)) => Err(RagError::Channel(format!("BM25 status response channel closed: {}", recv_err))),
-            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 status ({} ms)", BM25_TIMEOUT_MS))),
+            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 status ({} ms)", self.cfg.bm25_timeout_ms))),
         }
     }
 
@@ -170,11 +304,11 @@ impl RagService {
             .send(Bm25Cmd::Save { path: path.as_ref().to_path_buf(), resp: tx })
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 save command: {}", e)))?;
-        match timeout(Duration::from_millis(BM25_TIMEOUT_MS), rx).await {
+        match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
             Ok(Err(recv_err)) => Err(RagError::Channel(format!("BM25 save response channel closed: {}", recv_err))),
-            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 save ({} ms)", BM25_TIMEOUT_MS))),
+            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 save ({} ms)", self.cfg.bm25_timeout_ms))),
         }
     }
 
@@ -186,11 +320,11 @@ impl RagService {
             .send(Bm25Cmd::Load { path: path.as_ref().to_path_buf(), resp: tx })
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 load command: {}", e)))?;
-        match timeout(Duration::from_millis(BM25_TIMEOUT_MS), rx).await {
+        match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
             Ok(Err(recv_err)) => Err(RagError::Channel(format!("BM25 load response channel closed: {}", recv_err))),
-            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 load ({} ms)", BM25_TIMEOUT_MS))),
+            Err(_) => Err(RagError::Channel(format!("timeout waiting for BM25 load ({} ms)", self.cfg.bm25_timeout_ms))),
         }
     }
 
@@ -221,7 +355,7 @@ impl RagService {
                 ))
             })?;
 
-        let res = match timeout(Duration::from_millis(BM25_TIMEOUT_MS), rx).await {
+        let res = match timeout(Duration::from_millis(self.cfg.bm25_timeout_ms), rx).await {
             Ok(Ok(r)) => r,
             Ok(Err(recv_err)) => {
                 return Err(RagError::Channel(format!(
@@ -234,7 +368,7 @@ impl RagService {
             Err(_) => {
                 return Err(RagError::Channel(format!(
                     "timeout waiting for BM25 search ({} ms)",
-                    BM25_TIMEOUT_MS
+                    self.cfg.bm25_timeout_ms
                 )))
             }
         };
@@ -283,14 +417,16 @@ impl RagService {
             Vec::with_capacity(NodeType::primary_nodes().len() * top_k);
 
         for node_type in NodeType::primary_nodes() {
+            let params = self.cfg.params_for(node_type);
+            let max_hits = if params.max_hits == 0 { top_k } else { params.max_hits };
             let args = SimilarArgs {
                 db: &self.db,
                 vector_query: &query_embedding,
                 k: top_k,
-                ef: 10, // Default ef value
+                ef: params.ef, // Configurable ef value
                 ty: node_type,
-                max_hits: top_k,
-                radius: 10.0, // Default radius value
+                max_hits,
+                radius: params.radius, // Configurable radius value
             };
 
             let result = search_similar_args(args)?;
@@ -318,6 +454,106 @@ impl RagService {
 
         debug!("Dense search returning {} results", all_results.len());
         Ok(all_results)
+    }
+
+    /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
+    /// Uses configured defaults (policy, tokenizer, strict bm25) unless overridden by the strategy.
+    #[instrument(skip(self, query, budget, strategy), fields(query_len = %query.len(), top_k = top_k))]
+    pub async fn get_context(
+        &self,
+        query: &str,
+        top_k: usize,
+        budget: TokenBudget,
+        strategy: RetrievalStrategy,
+    ) -> Result<AssembledContext, RagError> {
+        // 1) Retrieve hits according to strategy
+        let hits: Vec<(Uuid, f32)> = match strategy {
+            RetrievalStrategy::Dense => {
+                self.search(query, top_k)
+                    .await
+                    .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?
+            }
+            RetrievalStrategy::Sparse { strict } => {
+                let use_strict = strict.unwrap_or(self.cfg.strict_bm25_by_default);
+                if use_strict {
+                    self.search_bm25_strict(query, top_k).await?
+                } else {
+                    self.search_bm25(query, top_k).await?
+                }
+            }
+            RetrievalStrategy::Hybrid { rrf, mmr } => {
+                let bm25_fut = self.search_bm25(query, top_k);
+                let dense_fut = self.search(query, top_k);
+                let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
+                let bm25_list = bm25_res?;
+                let dense_list = dense_res
+                    .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
+                let mut fused = rrf_fuse(&bm25_list, &dense_list, &rrf);
+                fused.truncate(top_k);
+                if let Some(mcfg) = mmr {
+                    // Optional diversity re-ranking based on embeddings; default to no-embeddings map.
+                    let embed_map: HashMap<Uuid, Vec<f32>> = HashMap::new();
+                    let selected = mmr_select(&fused, top_k, &embed_map, &mcfg);
+                    selected
+                } else {
+                    fused
+                }
+            }
+        };
+
+        // Optional reranker: requires IoManager to fetch texts
+        let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
+            let io = self
+                .io
+                .as_ref()
+                .ok_or_else(|| RagError::Search("IoManagerHandle not configured for reranking".to_string()))?
+                .clone();
+
+            // Fetch texts for candidates
+            let ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
+            let nodes = self
+                .db
+                .get_nodes_ordered(ids.clone())
+                .map_err(|e| RagError::Embed(e.to_string()))?;
+            let texts = io
+                .get_snippets_batch(nodes)
+                .await
+                .map_err(|e| RagError::Search(format!("get_snippets_batch failed for rerank: {:?}", e)))?;
+            let mut cand: Vec<(Uuid, String)> = Vec::new();
+            for (i, res) in texts.into_iter().enumerate() {
+                if let Some(id) = ids.get(i) {
+                    match res {
+                        Ok(s) => cand.push((*id, s)),
+                        Err(e) => {
+                            if self.cfg.assembly_policy.strict_io {
+                                return Err(RagError::Search(format!("IO error during rerank snippet fetch: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+            }
+            rr.rerank(query, cand).await?
+        } else {
+            hits
+        };
+
+        // 2) Assemble context
+        let io = self
+            .io
+            .as_ref()
+            .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
+            .clone();
+
+        assemble_context(
+            query,
+            &final_hits,
+            &budget,
+            &self.cfg.assembly_policy,
+            &*self.cfg.token_counter,
+            &self.db,
+            &io,
+        )
+        .await
     }
 
     /// Perform a hybrid search (BM25 + dense).
