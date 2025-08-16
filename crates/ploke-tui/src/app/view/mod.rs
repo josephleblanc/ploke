@@ -4,7 +4,7 @@
 use uuid::Uuid;
 use ratatui::Frame;
 
-use super::RenderableMessage;
+use crate::app::types::RenderableMessage;
 use super::App;
 
 /// Placeholder view model for future snapshot-based rendering tests.

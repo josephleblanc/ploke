@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use super::*;
+use crate::app::types::RenderableMessage;
 // In app.rs, replace the List rendering with custom Paragraph-based rendering
 
 #[derive(Debug, Clone)]

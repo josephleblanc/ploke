@@ -8,6 +8,7 @@ use std::time::Instant;
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::system;
 use super::AppEvent;
+use super::utils::display_file_info;
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
@@ -143,7 +144,3 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
     }
 }
 
-fn display_file_info(file: Option<&Arc<PathBuf>>) -> String {
-    file.map(|f| f.display().to_string())
-        .unwrap_or_else(|| "File not found.".to_string())
-}

@@ -1,8 +1,11 @@
-//! Input handling scaffolding.
-//! In the next steps we'll move key-handling and mode transitions here
-//! and emit high-level Actions for the App to consume.
+/*!
+Input handling scaffolding.
 
-/// Placeholder module for future key handling refactor.
-pub(crate) mod keymap {
-    // In a follow-up, define Action enum and mappings here.
-}
+Phase 1 introduces a dedicated keymap that translates KeyEvent to high-level
+Actions for the App to handle. This keeps the input loop simple and enables
+clean testing.
+
+See: `input::keymap` for the Action enum and mapping.
+*/
+
+pub mod keymap;

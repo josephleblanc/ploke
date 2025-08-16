@@ -4,6 +4,8 @@ pub mod commands;
 pub mod events;
 pub mod input;
 pub mod view;
+pub mod types;
+pub mod utils;
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -20,6 +22,9 @@ use crossterm::event::{
 };
 use itertools::Itertools;
 use message_item::{measure_messages, render_messages};
+use crate::app::types::{Mode, RenderableMessage};
+use crate::app::input::keymap::{Action, to_action};
+use crate::app::utils::truncate_uuid;
 use ploke_db::search_similar;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
@@ -27,64 +32,9 @@ use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
 
-static DATA_DIR: &str = "crates/ploke-tui/data";
-static TEST_QUERY_FILE: &str = "queries.json";
-static TEST_QUERY_RESULTS: &str = "results.json";
 
-static HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory
-                              (defaults to current dir)
-    index pause - Pause indexing
-    index resume - Resume indexing
-    index cancel - Cancel indexing
-    check api - Check API key configuration
-    model list - List available models
-    model <name> - Switch model
-    bm25 rebuild - Rebuild sparse BM25 index
-    bm25 status - Show sparse BM25 index status
-    bm25 save <path> - Save sparse index sidecar to file
-    bm25 load <path> - Load sparse index sidecar from file
-    bm25 search <query> [top_k] - Search with BM25
-    hybrid <query> [top_k] - Hybrid (BM25 + dense) search
-    preview [on|off|toggle] - Toggle context preview panel
-    help - Show this help
 
-    Keyboard shortcuts (Normal mode):
-    q - Quit
-    i - Enter insert mode
-    : - Enter command mode (vim-style)
-    m - Quick model selection
-    ? - Show this help
-    / - Quick hybrid search prompt
-    P - Toggle context preview
-    j/↓ - Navigate down (selection)
-    k/↑ - Navigate up (selection)
-    J - Page down (scroll)
-    K - Page up (scroll)
-    G - Go to bottom (scroll)
-    gg - Go to top (scroll)
-    h/← - Navigate branch previous
-    l/→ - Navigate branch next
-    Ctrl+n - Scroll down one line
-    Ctrl+p - Scroll up one line"#;
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Mode {
-    Normal,
-    #[default]
-    Insert,
-    Command,
-}
-
-impl std::fmt::Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Normal => write!(f, "Normal"),
-            Mode::Insert => write!(f, "Insert"),
-            Mode::Command => write!(f, "Command"),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct App {
@@ -349,9 +299,6 @@ impl App {
             }
         }
 
-        fn display_file_info(file: Option<&Arc<std::path::PathBuf>>) -> String {
-            file.map(|f| f.display().to_string()).unwrap_or("File not found.".to_string())
-        }
         if let Err(e) = execute!(
             std::io::stdout(),
             DisableBracketedPaste,
@@ -643,20 +590,200 @@ impl App {
         }
     } // The read lock `guard` is dropped here.
 
-    /// Handles the key events and updates the state of [`App`]
+    /// Handles the key events and updates application state via high-level Actions.
+    ///
+    /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
-        // Global quit command - this is a UI-local action
-        // Question: Why is this a UI-local action? Shouldn't this send a message to the rest of
-        // the application to shut down, e.g. the other tokio runtimes?
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            self.quit();
-            return;
+        if let Some(action) = to_action(self.mode, key, self.command_style) {
+            self.handle_action(action);
+            self.needs_redraw = true;
         }
+    }
 
-        match self.mode {
-            Mode::Normal => self.handle_normal_mode(key),
-            Mode::Insert => self.handle_insert_mode(key),
-            Mode::Command => self.handle_command_mode(key),
+    /// Centralized Action handler. This consolidates the previous per-mode handlers
+    /// into a single, testable entrypoint.
+    fn handle_action(&mut self, action: Action) {
+        use crate::chat_history::NavigationDirection::{Next, Previous};
+
+        match action {
+            Action::Quit => {
+                self.quit();
+            }
+
+            Action::SwitchMode(new_mode) => {
+                self.mode = new_mode;
+                self.pending_char = None;
+            }
+
+            Action::InsertChar(c) => {
+                // Special-case: Slash style treats leading '/' as entering Command mode.
+                if self.mode == Mode::Insert
+                    && self.command_style == CommandStyle::Slash
+                    && c == '/'
+                    && self.input_buffer.is_empty()
+                {
+                    self.mode = Mode::Command;
+                    self.input_buffer = "/".to_string();
+                } else {
+                    self.add_input_char(c);
+                }
+            }
+
+            Action::Backspace => {
+                if self.mode == Mode::Command {
+                    if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
+                        self.mode = Mode::Insert;
+                    }
+                }
+                self.handle_backspace();
+            }
+
+            Action::Submit => {
+                // Enter in Insert mode: send the user's message via StateCommands.
+                if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
+                    let (completion_tx, completion_rx) = oneshot::channel();
+                    let (scan_tx, scan_rx) = oneshot::channel();
+                    let new_msg_id = Uuid::new_v4();
+                    self.send_cmd(StateCommand::AddUserMessage {
+                        content: self.input_buffer.clone(),
+                        new_msg_id,
+                        completion_tx,
+                    });
+                    self.send_cmd(StateCommand::ScanForChange { scan_tx });
+                    self.send_cmd(StateCommand::EmbedMessage {
+                        new_msg_id,
+                        completion_rx,
+                        scan_rx
+                    });
+                    self.send_cmd(StateCommand::AddMessage {
+                        kind: MessageKind::SysInfo,
+                        content: "Embedding User Message".to_string(),
+                        target: llm::ChatHistoryTarget::Main,
+                        parent_id: new_msg_id,
+                        child_id: Uuid::new_v4(),
+                    });
+                    self.input_buffer.clear();
+                }
+            }
+
+            Action::ExecuteCommand => {
+                self.execute_command();
+                self.input_buffer.clear();
+                self.mode = Mode::Insert;
+            }
+
+            Action::NavigateListUp => {
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Up,
+                });
+            }
+            Action::NavigateListDown => {
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Down,
+                });
+            }
+
+            Action::PageDown => {
+                let vh = self.last_viewport_height.max(1);
+                let page_step: u16 = (vh / 10).clamp(1, 5);
+                self.convo_offset_y = self.convo_offset_y.saturating_add(page_step);
+                self.convo_free_scrolling = true;
+                self.pending_char = None;
+            }
+            Action::PageUp => {
+                let vh = self.last_viewport_height.max(1);
+                let page_step: u16 = (vh / 10).clamp(1, 5);
+                self.convo_offset_y = self.convo_offset_y.saturating_sub(page_step);
+                self.convo_free_scrolling = true;
+                self.pending_char = None;
+            }
+
+            Action::BranchPrev => {
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateBranch {
+                    direction: Previous,
+                });
+            }
+            Action::BranchNext => {
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+            }
+
+            Action::ScrollLineDown => {
+                self.convo_offset_y = self.convo_offset_y.saturating_add(1);
+                self.convo_free_scrolling = true;
+                self.pending_char = None;
+            }
+            Action::ScrollLineUp => {
+                self.convo_offset_y = self.convo_offset_y.saturating_sub(1);
+                self.convo_free_scrolling = true;
+                self.pending_char = None;
+            }
+
+            Action::GotoSequenceG => {
+                if matches!(self.pending_char, Some('g')) {
+                    // gg -> bottom (preserve existing behavior)
+                    self.send_cmd(StateCommand::NavigateList {
+                        direction: ListNavigation::Top,
+                    });
+                    self.convo_offset_y = u16::MAX; // clamp to bottom on draw
+                    self.convo_free_scrolling = false;
+                    self.pending_char = None;
+                } else {
+                    self.pending_char = Some('g');
+                }
+            }
+            Action::JumpTop => {
+                // 'G' -> top (preserve existing behavior)
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Bottom,
+                });
+                self.convo_offset_y = 0;
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
+            }
+
+            Action::OpenCommand => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                if self.command_style == CommandStyle::Slash {
+                    self.input_buffer = "/hybrid ".to_string();
+                } else {
+                    self.input_buffer = ":hybrid ".to_string();
+                }
+            }
+            Action::OpenCommandColon => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = ":".to_string();
+            }
+            Action::OpenQuickModel => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = "/model ".to_string();
+            }
+            Action::OpenHelp => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = "/help".to_string();
+            }
+            Action::TogglePreview => {
+                self.pending_char = None;
+                self.show_context_preview = !self.show_context_preview;
+            }
+
+            Action::InputScrollPrev => {
+                self.input_scrollstate.prev();
+            }
+            Action::InputScrollNext => {
+                self.input_scrollstate.next();
+            }
         }
     }
 
@@ -794,7 +921,7 @@ impl App {
 
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: HELP_COMMANDS.to_string(),
+            msg: commands::HELP_COMMANDS.to_string(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });
@@ -988,13 +1115,4 @@ impl App {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RenderableMessage {
-    id: Uuid,
-    kind: MessageKind,
-    content: String, // Add other fields if needed for drawing, e.g. status
-}
 
-fn truncate_uuid(id: Uuid) -> String {
-    id.to_string().chars().take(8).collect()
-}
