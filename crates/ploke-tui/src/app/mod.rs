@@ -1,40 +1,36 @@
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
-pub mod message_item;
 pub mod commands;
 pub mod events;
 pub mod input;
-pub mod view;
+pub mod message_item;
 pub mod types;
 pub mod utils;
+pub mod view;
 
 use super::*;
-use std::time::{Duration, Instant};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
+use crate::app::input::keymap::{Action, to_action};
+use crate::app::types::{Mode, RenderableMessage};
+use crate::app::utils::truncate_uuid;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
-use crossterm::execute;
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
     EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton,
     MouseEvent, MouseEventKind,
 };
+use crossterm::execute;
 use itertools::Itertools;
 use message_item::{measure_messages, render_messages};
-use crate::app::types::{Mode, RenderableMessage};
-use crate::app::input::keymap::{Action, to_action};
-use crate::app::utils::truncate_uuid;
 use ploke_db::search_similar;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-
-
-
-
 
 #[derive(Debug)]
 pub struct App {
@@ -375,7 +371,8 @@ impl App {
             .list
             .selected()
             .map(|i| i.min(path.len().saturating_sub(1)));
-        let (total_height, heights) = measure_messages(path, conversation_width, selected_index_opt);
+        let (total_height, heights) =
+            measure_messages(path, conversation_width, selected_index_opt);
 
         // 2) Decide/adjust offset using current metrics
         let max_offset = total_height.saturating_sub(viewport_height);
@@ -630,10 +627,11 @@ impl App {
             }
 
             Action::Backspace => {
-                if self.mode == Mode::Command {
-                    if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
-                        self.mode = Mode::Insert;
-                    }
+                if self.mode == Mode::Command
+                    && self.input_buffer.len() == 1
+                    && self.input_buffer.starts_with('/')
+                {
+                    self.mode = Mode::Insert;
                 }
                 self.handle_backspace();
             }
@@ -653,7 +651,7 @@ impl App {
                     self.send_cmd(StateCommand::EmbedMessage {
                         new_msg_id,
                         completion_rx,
-                        scan_rx
+                        scan_rx,
                     });
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
@@ -840,7 +838,7 @@ impl App {
                     self.send_cmd(StateCommand::EmbedMessage {
                         new_msg_id,
                         completion_rx,
-                        scan_rx
+                        scan_rx,
                     });
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
@@ -1114,5 +1112,3 @@ impl App {
         self.running = false;
     }
 }
-
-
