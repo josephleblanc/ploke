@@ -17,8 +17,9 @@ High-performance text retrieval system for ploke's RAG pipeline, optimized for L
    - Never converts back to Rust types (text-only interface)
 
 2. **Hybrid Retrieval**:
-   - **Exact queries**: "Find all public functions calling parse_json()"
+   - **Graph queries**: "Find all public functions calling parse_json()"
    - **Semantic search**: "Find code similar to error handling examples"
+   - **Keyword search**: "Find code containing the term 'BM25'"
    - Combined ranking of graph and vector results
 
 3. **Location-Aware**:
@@ -28,144 +29,84 @@ High-performance text retrieval system for ploke's RAG pipeline, optimized for L
 
 ## Key Features
 
+`ploke-db` provides several mechanisms for retrieving code data:
+
+- **Dense Vector Search (HNSW)**: Find semantically similar code using embeddings.
+- **Sparse Keyword Search (BM25)**: Find code based on keyword relevance.
+- **Direct Graph Queries (CozoScript)**: Perform complex traversals and pattern matching on the code graph.
+- **Helper Methods**: High-level functions for common tasks like fetching nodes that need embedding or retrieving node data by ID.
+
 ```rust
-// 1. Exact graph pattern matching
-db.query()
-   .functions()
-   .called_by("main")
-   .with_docs()
-   .execute()?; // → Vec<CodeSnippet>
+use ploke_db::{Database, NodeType};
+use ploke_db::index::hnsw::{search_similar_args, SimilarArgs};
+use uuid::Uuid;
 
-// 2. Semantic/vector search  
-db.semantic_search("async database client")
-   .in_files("src/db/")
-   .limit(3) // → Vec<CodeSnippet>
+// Assume `db` is an initialized `Database` instance and `vector_query` is a `Vec<f32>`.
 
-// 3. Change detection
-db.query()
-   .modified_since("a1b2c3d")
-   .execute()?;
+// 1. Semantic/vector search for functions similar to a query vector
+let args = SimilarArgs {
+    db: &db,
+    vector_query: &vector_query,
+    k: 5,
+    ef: 100,
+    ty: NodeType::Function,
+    max_hits: 5,
+    radius: 0.5,
+};
+let similar_nodes = search_similar_args(args)?; // -> EmbedDataVerbose { typed_data, dist }
+
+// 2. After getting node IDs from a search, retrieve their full data
+let node_ids: Vec<Uuid> = similar_nodes.typed_data.v.iter().map(|d| d.id).collect();
+let node_data = db.get_nodes_ordered(node_ids)?; // -> Vec<EmbeddingData>
+
+// 3. Use raw CozoScript for a custom graph query
+let query = r#"
+    ?[name, path] := *function{name}, *module{id: module_id}, *file_mod{owner_id: module_id, file_path: path}
+"#;
+let results = db.raw_query(query)?; // -> QueryResult
 ```
-
-## Architecture Position
-
-```mermaid
-flowchart LR
-    parser["Parser (AST)"] --> graph["ploke-graph\n(Schema)"]
-    graph --> db[(CozoDB)]
-    ploke_db --> db
-    ploke_db --> context["Context Builder"]
-    context --> llm[(LLM)]
-    
-    style ploke_db stroke:#f66,stroke-width:2px
-```
-
-**Role**: Sole interface between:
-- Database storage (ploke-graph)
-- LLM context building
-- Never handles ASTs or type information directly
-
-## Performance Considerations
-
-- Optimized for bulk text retrieval
-- Efficient location-based queries
-- Caching of common snippet patterns
 
 ## Architecture Position
 
 ```mermaid
 flowchart TD
-    parser["Parser\n(ploke-graph)"] -->|writes| ploke_db
-    ploke_db -->|reads| context["Context Builder"]
+    parser["Parser\n(syn_parser)"] -->|writes| db[(CozoDB)]
+    ploke_db -->|reads| db
+    ploke_db -->|reads| context["RAG Context Builder"]
     ploke_db -->|reads| ui["UI/CLI"]
     ploke_db -->|reads| llm["LLM Integration"]
 ```
 
-## Key Features
-
-- **Graph Traversal**:
-  ```rust
-  db.query()
-     .function("my_function")
-     .with_relations(RelationKind::Calls)
-     .execute()
-  ```
-
-- **Semantic Search**:
-  ```rust
-  db.semantic_search("parse JSON")
-     .with_threshold(0.8)
-     .limit(5)
-  ```
-
-- **Type-Safe Results**:
-  ```rust
-  let functions: Vec<Function> = db.find_functions()
-     .with_return_type("String")
-     .collect()?;
-  ```
+**Role**: The primary interface for reading from the code graph database (`CozoDB`). It provides retrieval capabilities needed by the RAG pipeline, UI, and other components. It does not handle parsing or schema creation directly.
 
 ## Core Components
 
-1. **Query Builder**:
-   - Fluent interface for constructing queries
-   - Supports all relation types from ploke-graph schema
-   - Composable filter conditions
+1.  **`Database` Struct**: The main entry point. It wraps a `cozo::Db` instance and provides methods for raw queries (`raw_query`, `raw_query_mut`) and various helper queries (`get_unembedded_node_data`, `get_nodes_ordered`, etc.).
 
-2. **Node Types**:
-   - Strongly-typed representations of:
-     - Functions
-     - Structs/Enums/Unions
-     - Traits/Impls
-     - Modules
+2.  **`index::hnsw` Module**: Contains functions for dense vector retrieval using HNSW indexes. The main function is `search_similar_args`.
 
-3. **Hybrid Search**:
-   - Combine exact graph patterns with vector similarity
-   - Configurable ranking algorithms
-   - Result explanation/debugging
+3.  **`bm25_index` Module**: Implements sparse retrieval using a BM25 index. It includes a `CodeTokenizer` tailored for source code and a `bm25_service` actor for managing the index and handling search requests.
 
-## Example Usage
+4.  **`QueryResult` Struct**: A generic wrapper around `cozo::NamedRows` returned by queries. It provides helper methods to convert the raw data into more structured types like `Vec<EmbeddingData>` or `Vec<CodeSnippet>`.
 
-```rust
-use ploke_db::{Database, QueryBuilder};
-
-// Find all public functions using a specific type
-let db = Database::new(cozo_db);
-let results = db.query()
-    .functions()
-    .with_visibility(Visibility::Public)
-    .using_type("serde_json::Value")
-    .with_documentation()
-    .execute()?;
-
-// Semantic search for similar code
-let similar = db.semantic_search("parse JSON config")
-    .in_functions()
-    .with_min_score(0.7)
-    .execute()?;
-```
+5.  **`QueryBuilder`**: A **work-in-progress** fluent interface for constructing CozoScript queries. It is currently limited and will be expanded in the future.
 
 ## Relationship to Other Crates
 
-- **ploke-graph**:
-  - Provides database schema and write operations
-  - Defines the node and relation types we query
-
-- **syn-parser**:
-  - Shares type definitions for code elements
-  - Provides parsing logic that creates our data
-
-- **ploke-embed**:
-  - Handles vector embeddings we use for semantic search
-  - Manages embedding model integration
+- **`ploke-transform`**: Defines the database schema (`function`, `struct`, `syntax_edge` relations, etc.) that `ploke-db` queries against.
+- **`syn-parser`**: Populates the database with data that `ploke-db` reads.
+- **`ploke-core`**: Defines core data structures like `EmbeddingData` and `TrackingHash` that are used for query inputs and results.
+- **`ploke-embed`**: Generates the vector embeddings that are stored in the database and used by the `hnsw` module for semantic search.
 
 ## Development Status
 
 Current focus areas:
-- [x] Basic query execution
-- [ ] Query builder implementation
-- [ ] Node type conversions
-- [ ] Hybrid search integration
-- [ ] Performance optimization
+- [x] Raw CozoScript query execution.
+- [x] HNSW vector search implementation.
+- [x] BM25 keyword search implementation.
+- [x] Helper methods for core RAG workflows (getting unembedded nodes, updating embeddings).
+- [ ] Expanding the fluent `QueryBuilder` to cover more use cases.
+- [ ] Implementing high-level hybrid search strategies.
+- [ ] Performance optimization and caching.
 
-See [PROPOSED_ARCH_V3.md](../../PROPOSED_ARCH_V3.md) for overall system architecture.
+See `PROPOSED_ARCH_V3.md` in the workspace root for the overall system architecture.
