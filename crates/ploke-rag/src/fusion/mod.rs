@@ -359,9 +359,9 @@ mod tests {
         let out = normalize_scores(&s, &ScoreNorm::ZScore { epsilon: 1e-6 });
         assert_eq!(out.len(), 3);
         // Expected (population) z-scores for [1,2,3] are about [-1.2247, 0.0, 1.2247]
-        assert!(approx_eq(out[0].1, -1.224_7449, 1e-3));
+        assert!(approx_eq(out[0].1, -1.224_744_9, 1e-3));
         assert!(approx_eq(out[1].1, 0.0, 1e-6));
-        assert!(approx_eq(out[2].1, 1.224_7449, 1e-3));
+        assert!(approx_eq(out[2].1, 1.224_744_9, 1e-3));
     }
 
     #[test]

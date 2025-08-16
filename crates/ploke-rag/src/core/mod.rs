@@ -16,7 +16,7 @@ pub enum RetrievalStrategy {
 #[derive(Debug, Clone, Copy)]
 pub struct SearchParams {
     pub ef: usize,
-    pub radius: f32,
+    pub radius: f64,
     pub max_hits: usize,
 }
 
@@ -51,7 +51,7 @@ impl Default for RagConfig {
             score_norm: ScoreNorm::default(),
             search_per_type: HashMap::new(),
             assembly_policy: AssemblyPolicy::default(),
-            token_counter: Arc::new(crate::context::ApproxCharTokenizer::default()),
+            token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
         }
     }
@@ -64,7 +64,8 @@ impl RagConfig {
 }
 
 /// Optional async reranker for candidate reordering using snippet texts.
-pub trait Reranker: Send + Sync {
+#[allow(clippy::type_complexity)]
+pub trait Reranker: Send + Sync + std::fmt::Debug {
     fn rerank<'a>(
         &'a self,
         query: &'a str,
@@ -244,10 +245,7 @@ impl RagService {
                 continue;
             }
 
-            let use_fallback = match status_opt {
-                Some(Bm25Status::Ready { docs }) if docs > 0 => false,
-                _ => true,
-            };
+            let use_fallback = !matches!(status_opt, Some(Bm25Status::Ready { docs }) if docs > 0);
 
             if use_fallback {
                 fallback_used = true;
@@ -493,8 +491,8 @@ impl RagService {
                 if let Some(mcfg) = mmr {
                     // Optional diversity re-ranking based on embeddings; default to no-embeddings map.
                     let embed_map: HashMap<Uuid, Vec<f32>> = HashMap::new();
-                    let selected = mmr_select(&fused, top_k, &embed_map, &mcfg);
-                    selected
+                    
+                    mmr_select(&fused, top_k, &embed_map, &mcfg)
                 } else {
                     fused
                 }

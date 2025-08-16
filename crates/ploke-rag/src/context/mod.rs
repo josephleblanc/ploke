@@ -109,18 +109,18 @@ impl Default for AssemblyPolicy {
 }
 
 /// Trait for counting tokens. Implementations can be provided by consumers.
-pub trait TokenCounter: Send + Sync {
+pub trait TokenCounter: Send + Sync + std::fmt::Debug {
     fn count(&self, text: &str) -> usize;
 }
 
 /// A simple, deterministic tokenizer suitable for tests:
 /// approximates tokens as ceil(chars / 4).
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ApproxCharTokenizer;
 
 impl TokenCounter for ApproxCharTokenizer {
     fn count(&self, text: &str) -> usize {
-        (text.chars().count() + 3) / 4
+        text.chars().count().div_ceil(4)
     }
 }
 
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn approx_char_tokenizer_counts() {
-        let tk = ApproxCharTokenizer::default();
+        let tk = ApproxCharTokenizer;
         assert_eq!(tk.count(""), 0);
         assert_eq!(tk.count("abcd"), 1);
         assert_eq!(tk.count("abcde"), 2);
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn trimming_obeys_limits() {
-        let tk = ApproxCharTokenizer::default();
+        let tk = ApproxCharTokenizer;
         let text = "abcdefghijklmnopqrstuvwxyz"; // 26 chars ~= 7 tokens
         let (t1, trunc1) = trim_text_to_tokens(text, 3, &tk);
         assert!(trunc1);
