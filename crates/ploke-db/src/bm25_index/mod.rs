@@ -549,11 +549,12 @@ impl Bm25Indexer {
             staged_meta.insert(id, meta);
         }
 
+        let docs = staged_meta.keys().cloned().collect();
         Ok(Self {
             embedder,
             scorer,
             staged_meta,
-            docs: staged_meta.keys().cloned().collect(),
+            docs,
             version: TOKENIZER_VERSION,
         })
     }

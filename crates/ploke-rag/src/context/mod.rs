@@ -6,7 +6,7 @@ use ploke_io::IoManagerHandle;
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
-use crate::RagError;
+use crate::error::RagError;
 
 /// Token budget parameters for context assembly.
 #[derive(Debug, Clone)]
@@ -196,7 +196,8 @@ pub async fn assemble_context(
     let (dedup_ids, dedup_removed) = stable_dedup_ids_ordered(&ordered_ids);
 
     // Fetch embedding metadata in the requested order.
-    let nodes: Vec<EmbeddingData> = db.get_nodes_ordered(dedup_ids.clone())?;
+    let nodes: Vec<EmbeddingData> = db.get_nodes_ordered(dedup_ids.clone())
+        .map_err(|e| RagError::Embed(e.to_string()))?;
 
     // Batch fetch snippets.
     let batch = io

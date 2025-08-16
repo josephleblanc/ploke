@@ -1,10 +1,12 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 use std::collections::HashMap;
 use std::sync::Arc;
+use error::RagError;
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(not(test))]
 static TRACER_INIT: std::sync::Once = std::sync::Once::new();
+
 
 #[cfg(test)]
 static _TRACE_MARKER: () = ();
@@ -33,6 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
+pub mod error;
 pub mod fusion;
 pub use fusion::{normalize_scores, ScoreNorm, RrfConfig, MmrConfig, Similarity, rrf_fuse, mmr_select};
 pub mod context;
@@ -40,48 +43,6 @@ pub use context::{
     TokenBudget, ContextPartKind, Modality, ContextPart, ContextStats, AssembledContext,
     AssemblyPolicy, Ordering, TokenCounter, ApproxCharTokenizer, assemble_context,
 };
-
-#[derive(Error, Debug)]
-pub enum RagError {
-    #[error("Database error: {0}")]
-    Db(#[from] DbError),
-
-    #[error("Channel error: {0}")]
-    Channel(String),
-
-    #[error("Embedding error: {0}")]
-    Embed(String),
-
-    #[error("Embedding error: {0}")]
-    Search(String),
-}
-
-impl From<RagError> for ploke_error::Error {
-    fn from(value: RagError) -> ploke_error::Error {
-        match value {
-            RagError::Db(db_err) => {
-                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
-                    format!("DB error: {}", db_err),
-                ))
-            }
-            RagError::Channel(msg) => {
-                ploke_error::Error::Internal(ploke_error::internal::InternalError::CompilerError(
-                    format!("Channel communication error: {}", msg),
-                ))
-            }
-            RagError::Embed(msg) => {
-                ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
-                    format!("Embedding error: {}", msg),
-                ))
-            }
-            RagError::Search(msg) => {
-                ploke_error::Error::Internal(ploke_error::internal::InternalError::NotImplemented(
-                    format!("Embedding error: {}", msg),
-                ))
-            }
-        }
-    }
-}
 
 /// RAG orchestration service.
 ///

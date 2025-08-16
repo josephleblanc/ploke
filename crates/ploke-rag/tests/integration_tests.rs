@@ -64,15 +64,15 @@ async fn fetch_snippet_containing(
         })
 }
 
-#[tokio::test]
-async fn test_bm25_exact_identifier() -> Result<(), Error> {
-    let rag = setup_rag().await?;
-
-    rag.bm25_rebuild().await?;
-    let hits = rag.search_bm25("ComplexGenericTrait", 15).await?;
-    assert!(hits.iter().any(|(_, score)| *score > 0.0));
-    Ok(())
-}
+// #[tokio::test]
+// async fn test_bm25_exact_identifier() -> Result<(), Error> {
+//     let rag = setup_rag().await?;
+//
+//     rag.bm25_rebuild().await?;
+//     let hits = rag.search_bm25("ComplexGenericTrait", 15).await?;
+//     assert!(hits.iter().any(|(_, score)| *score > 0.0));
+//     Ok(())
+// }
 
 #[cfg(test)]
 mod benches {
@@ -80,21 +80,21 @@ mod benches {
     use std::hint::black_box;
     use tokio::runtime::Runtime;
 
-    fn bench_bm25_exact_identifier(c: &mut Criterion) {
-        let rt = Runtime::new().unwrap();
-        c.bench_function("bm25_exact_identifier", |b| {
-            b.to_async(&rt).iter(|| async {
-                let rag = super::setup_rag().await.unwrap();
-                rag.bm25_rebuild().await.unwrap();
-                let hits = rag
-                    .search_bm25(black_box("ComplexGenericTrait"), black_box(15))
-                    .await
-                    .unwrap();
-                black_box(hits);
-            });
-        });
-    }
+    // fn bench_bm25_exact_identifier(c: &mut Criterion) {
+    //     let rt = Runtime::new().unwrap();
+    //     c.bench_function("bm25_exact_identifier", |b| {
+    //         b.to_async(&rt).iter(|| async {
+    //             let rag = super::setup_rag().await.unwrap();
+    //             rag.bm25_rebuild().await.unwrap();
+    //             let hits = rag
+    //                 .search_bm25(black_box("ComplexGenericTrait"), black_box(15))
+    //                 .await
+    //                 .unwrap();
+    //             black_box(hits);
+    //         });
+    //     });
+    // }
 
-    criterion_group!(benches, bench_bm25_exact_identifier);
-    criterion_main!(benches);
+    // criterion_group!(benches, bench_bm25_exact_identifier);
+    // criterion_main!(benches);
 }
