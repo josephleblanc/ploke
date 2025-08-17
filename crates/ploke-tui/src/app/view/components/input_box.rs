@@ -15,7 +15,6 @@ pub struct InputView {
     scrollstate: ScrollbarState,
     cursor_row: u16,
     cursor_col: u16,
-    trailing_whitespace: bool,
 }
 
 impl InputView {
@@ -32,15 +31,33 @@ impl InputView {
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
         self.scrollstate = self.scrollstate.content_length(input_wrapped.len());
 
-        // Update cursor position
-        self.trailing_whitespace = buffer.chars().last().is_some_and(|c| c == ' ');
-        if !self.trailing_whitespace {
-            self.cursor_col = input_wrapped
-                .last()
-                .map(|line| line.len())
-                .unwrap_or(0) as u16;
+        // Update cursor position: include trailing spaces and wrapping
+        let input_lines = input_wrapped.len() as u16;
+        let base_last_len: u16 = input_wrapped
+            .last()
+            .map(|line| line.chars().count() as u16)
+            .unwrap_or(0);
+
+        // Count trailing spaces only after the last explicit newline
+        let tail_segment = buffer.rsplit('\n').next().unwrap_or("");
+        let trailing_spaces: u16 = tail_segment
+            .chars()
+            .rev()
+            .take_while(|&c| c == ' ')
+            .count() as u16;
+
+        // Start from the wrapped baseline, then add trailing spaces with width-based wrapping.
+        let mut row = input_lines.saturating_sub(1);
+        let mut col = base_last_len;
+
+        if input_width > 0 {
+            let total = base_last_len.saturating_add(trailing_spaces);
+            row = row.saturating_add(total / input_width);
+            col = total % input_width;
         }
-        self.cursor_row = (input_wrapped.len().saturating_sub(1)) as u16;
+
+        self.cursor_row = row;
+        self.cursor_col = col;
 
         // Build paragraph
         let input_text = Text::from_iter(input_wrapped);

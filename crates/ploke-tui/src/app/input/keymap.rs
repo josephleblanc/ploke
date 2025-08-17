@@ -67,18 +67,28 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
     match mode {
         Mode::Insert => match (key.modifiers, key.code) {
             (m, KeyCode::Esc) if m.is_empty() => Some(Action::SwitchMode(Mode::Normal)),
-            (m, KeyCode::Enter) if m.is_empty() => Some(Action::Submit),
-            (m, KeyCode::Backspace) if m.is_empty() => Some(Action::Backspace),
-            (m, KeyCode::Char(c)) if m.is_empty() => Some(Action::InsertChar(c)),
+            (m, KeyCode::Enter) if m.is_empty() || m == KeyModifiers::SHIFT => Some(Action::Submit),
+            (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
+                Some(Action::Backspace)
+            }
+            (m, KeyCode::Char(c)) if m.is_empty() || m == KeyModifiers::SHIFT => {
+                Some(Action::InsertChar(c))
+            }
             (m, KeyCode::Up) if m.contains(KeyModifiers::CONTROL) => Some(Action::InputScrollPrev),
             (m, KeyCode::Down) if m.contains(KeyModifiers::CONTROL) => Some(Action::InputScrollNext),
             _ => None,
         },
         Mode::Command => match (key.modifiers, key.code) {
             (m, KeyCode::Esc) if m.is_empty() => Some(Action::SwitchMode(Mode::Normal)),
-            (m, KeyCode::Enter) if m.is_empty() => Some(Action::ExecuteCommand),
-            (m, KeyCode::Backspace) if m.is_empty() => Some(Action::Backspace),
-            (m, KeyCode::Char(c)) if m.is_empty() => Some(Action::InsertChar(c)),
+            (m, KeyCode::Enter) if m.is_empty() || m == KeyModifiers::SHIFT => {
+                Some(Action::ExecuteCommand)
+            }
+            (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
+                Some(Action::Backspace)
+            }
+            (m, KeyCode::Char(c)) if m.is_empty() || m == KeyModifiers::SHIFT => {
+                Some(Action::InsertChar(c))
+            }
             _ => None,
         },
         Mode::Normal => {
