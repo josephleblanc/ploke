@@ -482,8 +482,20 @@ impl App {
     fn on_key_event(&mut self, key: KeyEvent) {
         if let Some(action) = to_action(self.mode, key, self.command_style) {
             self.handle_action(action);
-            self.needs_redraw = true;
+        } else {
+            // Fallbacks to preserve expected input behavior for Space and Backspace.
+            // Some terminals/keymaps may not map these via to_action; ensure they work in text-entry modes.
+            match (self.mode, key.code) {
+                (Mode::Insert, KeyCode::Char(' ')) | (Mode::Command, KeyCode::Char(' ')) => {
+                    self.handle_action(Action::InsertChar(' '));
+                }
+                (Mode::Insert, KeyCode::Backspace) | (Mode::Command, KeyCode::Backspace) => {
+                    self.handle_action(Action::Backspace);
+                }
+                _ => {}
+            }
         }
+        self.needs_redraw = true;
     }
 
     /// Centralized Action handler. This consolidates the previous per-mode handlers
