@@ -109,44 +109,48 @@ pub async fn process_with_rag(
 
         context_tx
             .send(RagEvent::UserMessages(new_msg_id, messages))
-            .await?; // AI: change this to the emit/tracing pattern above AI!
+            .await
+            .inspect_err(|e| tracing::error!("Failed to send UserMessages: {}", e))
+            .ok();
         context_tx
             .send(RagEvent::ConstructContext(new_msg_id))
-            .await?; // AI: change this to the emit/tracing pattern above AI!
-        Ok(())
+            .await
+            .inspect_err(|e| tracing::error!("Failed to send ConstructContext: {}", e))
+            .ok();
     }
-    fn construct_context_from_rag(
-        ctx: AssembledContext,
-        messages: &[Message],
-        parent_id: Uuid,
-    ) -> llm::Event {
-        tracing::info!(
-            "constructing context (RAG) with {} parts and {} messages",
-            ctx.parts.len(),
-            messages.len()
-        );
+}
 
-        let mut base: Vec<(MessageKind, String)> = Vec::from([
-            (MessageKind::System, String::from(PROMPT_HEADER)),
-            (MessageKind::System, String::from(PROMPT_CODE)),
-        ]);
+fn construct_context_from_rag(
+    ctx: AssembledContext,
+    messages: &[Message],
+    parent_id: Uuid,
+) -> llm::Event {
+    tracing::info!(
+        "constructing context (RAG) with {} parts and {} messages",
+        ctx.parts.len(),
+        messages.len()
+    );
 
-        // Add assembled context parts as system messages
-        let text = ctx.parts.into_iter().map(|p| ( MessageKind::System, p.text ));
-        base.extend(text);
+    let mut base: Vec<(MessageKind, String)> = Vec::from([
+        (MessageKind::System, String::from(PROMPT_HEADER)),
+        (MessageKind::System, String::from(PROMPT_CODE)),
+    ]);
 
-        // Add conversation messages
-        let msgs = messages
-            .into_iter()
-            .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
-            .inspect(|m| tracing::debug!("m.content.is_empty() = {}", m.content.is_empty()))
-            .map(|msg| (msg.kind, msg.content));
-        base.extend(msgs);
+    // Add assembled context parts as system messages
+    let text = ctx.parts.into_iter().map(|p| ( MessageKind::System, p.text ));
+    base.extend(text);
 
-        llm::Event::PromptConstructed {
-            parent_id,
-            prompt: base,
-        }
+    // Add conversation messages
+    let msgs = messages
+        .into_iter()
+        .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
+        .inspect(|m| tracing::debug!("m.content.is_empty() = {}", m.content.is_empty()))
+        .map(|msg| (msg.kind, msg.content));
+    base.extend(msgs);
+
+    llm::Event::PromptConstructed {
+        parent_id,
+        prompt: base,
     }
 }
 
