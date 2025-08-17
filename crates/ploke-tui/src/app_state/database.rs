@@ -673,12 +673,7 @@ mod test {
         let io_handle = ploke_io::IoManagerHandle::new();
 
         // TODO: These numbers should be tested for performance under different circumstances.
-        let event_bus_caps = EventBusCaps {
-            realtime_cap: 100,
-            background_cap: 1000,
-            error_cap: 100,
-            index_cap: 1000,
-        };
+        let event_bus_caps = EventBusCaps::default();
         let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
         let processor = config.load_embedding_processor()?;
@@ -721,8 +716,8 @@ mod test {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
         let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
-        let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
-        tokio::spawn(context_manager.run());
+        // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
+        // tokio::spawn(context_manager.run());
 
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);

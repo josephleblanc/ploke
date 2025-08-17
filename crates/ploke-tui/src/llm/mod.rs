@@ -55,11 +55,13 @@ impl<'a> OpenAiRequest<'a> {
             max_tokens,
             top_p,
             stream: false,
+            tools: None,
+            tool_choice: None,
         }
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct RequestMessage<'a> {
     pub role: &'a str,
     pub content: String,
@@ -420,6 +422,8 @@ async fn prepare_and_run_llm_call(
     let tools = vec![request_code_context_tool_def()];
     let mut attempts: u32 = 0;
 
+    // TODO: This is an atrocious design pattern, use while/let and relocate the handling of the
+    // tool call to a separate file.
     loop {
         let request_payload = OpenAiRequest {
             model: provider.model.as_str(),
@@ -502,6 +506,7 @@ async fn prepare_and_run_llm_call(
             let resp_msg = choice.message;
 
             if let Some(tool_calls) = resp_msg.tool_calls {
+                // This doesn't seem to have a reason for being set, as it isn't used anywhere.
                 handled_tool_calls = true;
                 attempts += 1;
 
@@ -526,15 +531,18 @@ async fn prepare_and_run_llm_call(
                                 call_id: Some(oc.id.clone()),
                                 vendor: ToolVendor::OpenAI,
                             };
+                            #[allow(clippy::single_match)]
                             match evt {
                                 Event::ToolCall { ref name, ref arguments, .. } => {
+                                    // TODO: Add actual tool calling once we have tool calls
+                                    // implemented in other parts of the system.
                                     tracing::info!(
                                         "Routing ToolCall event for function '{}' with arguments {}",
                                         name,
                                         arguments
                                     );
                                 }
-                                _ => {}
+                                _ => { unimplemented!(); }
                             }
 
                             // Handle our example tool
@@ -659,7 +667,7 @@ fn attempt_request_code_context(
         "content": format!(
             "(stub) Providing up to {} tokens of additional code context. {}",
             args.token_budget,
-            if hint.is_empty() { "" } else { format!("Hint: {}", hint) }
+            if hint.is_empty() { String::new() } else { format!("Hint: {}", hint) }
         ),
         "tokens_used": args.token_budget
     }))
