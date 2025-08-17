@@ -232,6 +232,7 @@ pub async fn llm_manager(
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
+                                event_bus.clone(),
                                 provider_config.to_owned(),
                                 Some(context),
                             ));
@@ -280,6 +281,7 @@ pub async fn process_llm_request(
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
+    event_bus: Arc<EventBus>,
     provider_config: crate::user_config::ProviderConfig,
     context: Option<Event>,
 ) {
@@ -318,7 +320,7 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context)
+    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context, &event_bus)
         .await
         .map(|content| StateCommand::UpdateMessage {
             id: assistant_message_id,
@@ -354,6 +356,7 @@ async fn prepare_and_run_llm_call(
     client: &Client,
     provider: &ProviderConfig,
     context: Option<llm::Event>,
+    event_bus: &Arc<EventBus>,
 ) -> Result<String, LlmError> {
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
@@ -530,9 +533,13 @@ async fn prepare_and_run_llm_call(
                                 oc.function.arguments
                             );
 
-                            // Route as event (logged)
+                            // Subscribe before sending to avoid missing fast responses
+                            let mut rx = event_bus.realtime_tx.subscribe();
+
+                            // Build and emit ToolCall event to be handled by the system/agent layer
+                            let request_id = Uuid::new_v4();
                             let evt = Event::ToolCall {
-                                request_id: Uuid::new_v4(),
+                                request_id,
                                 parent_id: state.chat.0.read().await.current,
                                 name: oc.function.name.clone(),
                                 arguments: serde_json::from_str::<Value>(&oc.function.arguments)
@@ -540,68 +547,70 @@ async fn prepare_and_run_llm_call(
                                 call_id: Some(oc.id.clone()),
                                 vendor: ToolVendor::OpenAI,
                             };
-                            #[allow(clippy::single_match)]
-                            match evt {
-                                Event::ToolCall { ref name, ref arguments, .. } => {
-                                    // TODO: Add actual tool calling once we have tool calls
-                                    // implemented in other parts of the system.
-                                    tracing::info!(
-                                        "Routing ToolCall event for function '{}' with arguments {}",
-                                        name,
-                                        arguments
-                                    );
-                                }
-                                _ => { unimplemented!(); }
-                            }
+                            tracing::info!(
+                                "Routing ToolCall event for function '{}' with call_id {}",
+                                oc.function.name,
+                                oc.id
+                            );
+                            event_bus.send(AppEvent::Llm(evt));
 
-                            // Handle our example tool
-                            let args_val: Value = serde_json::from_str(&oc.function.arguments)
-                                .unwrap_or(json!({}));
-                            if oc.function.name == "request_code_context" {
-                                let parsed: Result<RequestCodeContextArgs, _> =
-                                    serde_json::from_value(args_val.clone());
-                                let tool_result = match parsed {
-                                    Ok(args) => {
-                                        match attempt_request_code_context(&args, token_limit) {
-                                            Ok(val) => val,
-                                            Err(err) => {
-                                                // Inform model of failure so it can adjust
-                                                let sys_msg = format!(
-                                                    "Tool call 'request_code_context' failed: {}. You may retry with a smaller token_budget (<= {}).",
-                                                    err, token_limit
-                                                );
-                                                messages.push(RequestMessage::new_system(sys_msg));
-                                                json!({"ok": false, "error": err})
-                                            }
+                            // Wait for completion/failure correlated by (request_id, call_id)
+                            let wait = async {
+                                loop {
+                                    match rx.recv().await {
+                                        Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                                            request_id: rid,
+                                            call_id: cid,
+                                            content,
+                                            ..
+                                        })) if rid == request_id && cid == oc.id => {
+                                            break Ok(content);
+                                        }
+                                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                                            request_id: rid,
+                                            call_id: cid,
+                                            error,
+                                            ..
+                                        })) if rid == request_id && cid == oc.id => {
+                                            break Err(error);
+                                        }
+                                        Ok(_) => {
+                                            // unrelated event
+                                        }
+                                        Err(e) => {
+                                            break Err(format!("Event channel error: {}", e));
                                         }
                                     }
-                                    Err(e) => {
-                                        let err = format!("Invalid arguments for request_code_context: {}", e);
-                                        let sys_msg = format!(
-                                            "Tool call 'request_code_context' failed: {}.",
-                                            err
-                                        );
-                                        messages.push(RequestMessage::new_system(sys_msg));
-                                        json!({"ok": false, "error": err})
-                                    }
-                                };
+                                }
+                            };
 
-                                // Append tool result message for the model
-                                messages.push(RequestMessage::new_tool(
-                                    tool_result.to_string(),
-                                    oc.id,
-                                ));
-                            } else {
-                                // Unknown tool – inform model
-                                let err = format!(
-                                    "Unknown tool '{}' requested. Only 'request_code_context' is available.",
-                                    oc.function.name
-                                );
-                                messages.push(RequestMessage::new_system(err.clone()));
-                                messages.push(RequestMessage::new_tool(
-                                    json!({"ok": false, "error": err}).to_string(),
-                                    oc.id,
-                                ));
+                            match tokio::time::timeout(Duration::from_secs(30), wait).await {
+                                Ok(Ok(content)) => {
+                                    messages.push(RequestMessage::new_tool(content, oc.id));
+                                }
+                                Ok(Err(err)) => {
+                                    let sys_msg = format!(
+                                        "Tool call '{}' failed: {}.",
+                                        oc.function.name, err
+                                    );
+                                    messages.push(RequestMessage::new_system(sys_msg));
+                                    messages.push(RequestMessage::new_tool(
+                                        json!({"ok": false, "error": err}).to_string(),
+                                        oc.id,
+                                    ));
+                                }
+                                Err(_) => {
+                                    let err = "Timed out waiting for tool result".to_string();
+                                    let sys_msg = format!(
+                                        "Tool call '{}' failed: {}.",
+                                        oc.function.name, err
+                                    );
+                                    messages.push(RequestMessage::new_system(sys_msg));
+                                    messages.push(RequestMessage::new_tool(
+                                        json!({"ok": false, "error": err}).to_string(),
+                                        oc.id,
+                                    ));
+                                }
                             }
                         }
                         GenericToolCall::Other(v) => {
