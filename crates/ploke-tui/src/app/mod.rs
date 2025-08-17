@@ -449,39 +449,7 @@ impl App {
             }
         }
 
-        // Explicitly set the cursor position so it updates immediately, even after Space/Backspace.
-        if matches!(self.mode, Mode::Insert | Mode::Command) {
-            // Assume a bordered input box: 1 cell padding on each side.
-            let inner_x = input_area.x.saturating_add(1);
-            let inner_y = input_area.y.saturating_add(1);
-            let inner_w = input_area.width.saturating_sub(2).max(1);
-            let inner_h = input_area.height.saturating_sub(2).max(1);
-
-            // Best-effort wrapping calculation for cursor position.
-            let mut col: u16 = 0;
-            let mut row: u16 = 0;
-            for ch in self.input_buffer.chars() {
-                if ch == '\n' {
-                    col = 0;
-                    row = row.saturating_add(1);
-                } else {
-                    col = col.saturating_add(1);
-                    if col >= inner_w {
-                        col = 0;
-                        row = row.saturating_add(1);
-                    }
-                }
-            }
-
-            // Clamp within the inner area; if content overflows vertically, stick to last visible line.
-            if row >= inner_h {
-                row = inner_h.saturating_sub(1);
-            }
-
-            let cursor_x = inner_x.saturating_add(col.min(inner_w.saturating_sub(1)));
-            let cursor_y = inner_y.saturating_add(row);
-            frame.set_cursor(cursor_x, cursor_y);
-        }
+        // Cursor position is handled by InputView.
     }
 
     fn create_branch(&mut self) {
@@ -514,18 +482,6 @@ impl App {
     fn on_key_event(&mut self, key: KeyEvent) {
         if let Some(action) = to_action(self.mode, key, self.command_style) {
             self.handle_action(action);
-        } else {
-            // Fallbacks to preserve expected input behavior for Space and Backspace.
-            // Some terminals/keymaps may not map these via to_action; ensure they work in text-entry modes.
-            match (self.mode, key.code) {
-                (Mode::Insert, KeyCode::Char(' ')) | (Mode::Command, KeyCode::Char(' ')) => {
-                    self.handle_action(Action::InsertChar(' '));
-                }
-                (Mode::Insert, KeyCode::Backspace) | (Mode::Command, KeyCode::Backspace) => {
-                    self.handle_action(Action::Backspace);
-                }
-                _ => {}
-            }
         }
         self.needs_redraw = true;
     }
@@ -714,123 +670,11 @@ impl App {
         }
     }
 
-    fn handle_insert_mode(&mut self, key: KeyEvent) {
-        if key.modifiers == KeyModifiers::CONTROL {
-            match key.code {
-                // NOTE: This is here just for testing, remove it when we actually want to release
-                // this.
-                KeyCode::Char('a') => {
-                    self.input_buffer
-                        .push_str("Agnostic anthromoporcine agrippa");
-                }
-                // FIX: testing
-                KeyCode::Up => {
-                    self.input_view.scroll_prev();
-                }
-                KeyCode::Down => {
-                    self.input_view.scroll_next();
-                }
-                _ => {}
-            }
-        }
-        match key.code {
-            // 1. UI-Local State Change: Switch mode
-            KeyCode::Esc => self.mode = Mode::Normal,
-
-            // 2. Shared State Change: Send a command
-            KeyCode::Enter => {
-                if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
-                    // Somewhat complex implementation here, could use some work.
-                    // - Basically, we first start adding the user message, which is then updated
-                    // after we have embedded the user message.
-                    // - The currently selected crate is then parsed, checking to see if we need to
-                    // update the database or not. Currently this is quite coarse, such that we
-                    // reparse the entire directory if any file changes are noticed. However, we
-                    // only update the embeddings of the changed files.
-                    // - Concurrently with the parsing, the user's message is embedded, then once
-                    // the oneshot is sent to signify that the parsing has finished and database
-                    // has been updated (if needed), then the user's message is used with semantic
-                    // search to query the database, and continues into context building and
-                    // finally sending the message to the LLM.
-                    let (completion_tx, completion_rx) = oneshot::channel();
-                    let (scan_tx, scan_rx) = oneshot::channel();
-                    let new_msg_id = Uuid::new_v4();
-                    self.send_cmd(StateCommand::AddUserMessage {
-                        // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
-                        // instead.
-                        content: self.input_buffer.clone(),
-                        new_msg_id,
-                        completion_tx,
-                    });
-                    self.send_cmd(StateCommand::ScanForChange { scan_tx });
-                    // TODO: Expand EmbedMessage to include other types of message
-                    self.send_cmd(StateCommand::EmbedMessage {
-                        new_msg_id,
-                        completion_rx,
-                        scan_rx,
-                    });
-                    self.send_cmd(StateCommand::AddMessage {
-                        kind: MessageKind::SysInfo,
-                        content: "Embedding User Message".to_string(),
-                        target: llm::ChatHistoryTarget::Main,
-                        parent_id: new_msg_id,
-                        child_id: Uuid::new_v4(),
-                    });
-                    // self.send_cmd(StateCommand::ForwardContext { new_msg_id });
-                    // Clear the UI-local buffer after sending the command
-                    self.input_buffer.clear();
-                }
-            }
-
-            // 3. UI-Local State Change: Modify input buffer
-            KeyCode::Char(c) => {
-                // Handle command prefix for slash mode
-                if self.command_style == CommandStyle::Slash
-                    && c == '/'
-                    && self.input_buffer.is_empty()
-                {
-                    self.mode = Mode::Command;
-                    self.input_buffer = "/".to_string();
-                } else {
-                    self.add_input_char(c);
-                }
-            }
-            KeyCode::Backspace => self.handle_backspace(),
-            // FIX: testing
-            KeyCode::Up => {
-                self.conversation.page_up();
-            }
-            KeyCode::Down => {
-                self.conversation.page_down();
-            }
-            _ => {}
-        }
-    }
 
     fn handle_backspace(&mut self) {
         let _ = self.input_buffer.pop();
     }
 
-    pub fn handle_command_mode(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-            }
-            KeyCode::Enter => {
-                self.execute_command();
-                self.input_buffer.clear();
-                self.mode = Mode::Insert;
-            }
-            KeyCode::Char(c) => self.add_input_char(c),
-            KeyCode::Backspace => {
-                if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
-                    self.mode = Mode::Insert;
-                }
-                self.handle_backspace();
-            }
-            _ => {}
-        }
-    }
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
@@ -892,139 +736,6 @@ impl App {
         });
     }
 
-    /// This function is responsible for doing something with user input when
-    /// the terminal is in "Normal" Mode.
-    fn handle_normal_mode(&mut self, key: KeyEvent) {
-        use chat_history::NavigationDirection::{Next, Previous};
-
-        // Free-scrolling controls (Normal mode) with Ctrl modifiers
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('n') => {
-                    // Line down
-                    self.conversation.scroll_line_down();
-                    self.conversation.set_free_scrolling(true);
-                    self.pending_char = None;
-                }
-                KeyCode::Char('p') => {
-                    // Line up
-                    self.conversation.scroll_line_up();
-                    self.conversation.set_free_scrolling(true);
-                    self.pending_char = None;
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        match key.code {
-            KeyCode::Char('q') => self.quit(),
-
-            // --- NAVIGATION ---
-            // Send commands instead of calling local methods
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Up,
-                });
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Down,
-                });
-            }
-            // Page scrolling with Shift-J / Shift-K
-            KeyCode::Char('J') => {
-                self.conversation.page_down();
-                self.conversation.set_free_scrolling(true);
-                self.pending_char = None;
-            }
-            KeyCode::Char('K') => {
-                self.conversation.page_up();
-                self.conversation.set_free_scrolling(true);
-                self.pending_char = None;
-            }
-            // Branch navigation clears free-scrolling to allow reveal
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateBranch {
-                    direction: Previous,
-                });
-            }
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
-            }
-
-            // Jump to bottom/top and select message
-            KeyCode::Char('g') => {
-                if matches!(self.pending_char, Some('g')) {
-                    // gg -> bottom: select last message and scroll to bottom
-                    self.send_cmd(StateCommand::NavigateList {
-                        direction: ListNavigation::Top,
-                    });
-                    self.conversation.request_bottom(); // will clamp to bottom on draw
-                    self.conversation.set_free_scrolling(false);
-                    self.pending_char = None;
-                } else {
-                    // wait for second 'g'
-                    self.pending_char = Some('g');
-                }
-            }
-            KeyCode::Char('G') => {
-                // Top: select first message and scroll to top
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Bottom,
-                });
-                self.conversation.request_top();
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-            }
-
-            // --- COMMANDS ---
-            KeyCode::Char('/') => {
-                self.pending_char = None;
-                self.mode = Mode::Command;
-                if self.command_style == CommandStyle::Slash {
-                    self.input_buffer = "/hybrid ".to_string();
-                } else {
-                    self.input_buffer = ":hybrid ".to_string();
-                }
-            }
-            KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
-                self.pending_char = None;
-                self.mode = Mode::Command;
-                self.input_buffer = ":".to_string();
-            }
-            KeyCode::Char('m') => {
-                self.pending_char = None;
-                self.mode = Mode::Command;
-                self.input_buffer = "/model ".to_string();
-            }
-            KeyCode::Char('?') => {
-                self.pending_char = None;
-                self.mode = Mode::Command;
-                self.input_buffer = "/help".to_string();
-            }
-            KeyCode::Char('P') => {
-                self.pending_char = None;
-                self.show_context_preview = !self.show_context_preview;
-            }
-            KeyCode::Char('i') => {
-                self.pending_char = None;
-                self.mode = Mode::Insert;
-            }
-            _ => {
-                // Clear any pending multi-key sequence
-                self.pending_char = None;
-            }
-        }
-    }
 
     /// Set running to false to quit the application.
     fn quit(&mut self) {

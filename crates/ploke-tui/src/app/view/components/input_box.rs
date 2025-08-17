@@ -29,7 +29,7 @@ impl InputView {
         // Wrap text to area width minus borders
         let input_width = area.width.saturating_sub(2);
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
-        self.scrollstate = self.scrollstate.content_length(input_wrapped.len());
+        // scrollstate updated after auto-scroll below
 
         // Update cursor position: include trailing spaces and wrapping
         let input_lines = input_wrapped.len() as u16;
@@ -59,6 +59,31 @@ impl InputView {
         self.cursor_row = row;
         self.cursor_col = col;
 
+        // Auto-scroll to keep cursor visible and clamp within content
+        let inner_h: u16 = area.height.saturating_sub(2).max(1);
+        let total_lines: u16 = input_wrapped.len() as u16;
+
+        // Ensure cursor is within the visible window
+        if self.cursor_row >= self.vscroll.saturating_add(inner_h) {
+            self.vscroll = self.cursor_row.saturating_sub(inner_h).saturating_add(1);
+        }
+        if self.cursor_row < self.vscroll {
+            self.vscroll = self.cursor_row;
+        }
+
+        // Clamp vscroll to valid range based on content height
+        if total_lines > inner_h {
+            self.vscroll = self.vscroll.min(total_lines.saturating_sub(inner_h));
+        } else {
+            self.vscroll = 0;
+        }
+
+        // Keep scrollbar state in sync (even if not rendered yet)
+        self.scrollstate = self
+            .scrollstate
+            .content_length(input_wrapped.len())
+            .position(self.vscroll as usize);
+
         // Build paragraph
         let input_text = Text::from_iter(input_wrapped);
         let input = Paragraph::new(input_text)
@@ -75,7 +100,8 @@ impl InputView {
         // Manage cursor visibility/position
         match mode {
             Mode::Insert | Mode::Command => {
-                frame.set_cursor_position((area.x + 1 + self.cursor_col, area.y + 1 + self.cursor_row));
+                let visible_row = self.cursor_row.saturating_sub(self.vscroll);
+                frame.set_cursor_position((area.x + 1 + self.cursor_col, area.y + 1 + visible_row));
             }
             Mode::Normal => {
                 // No cursor positioning => hidden by terminal backend
@@ -84,11 +110,13 @@ impl InputView {
     }
 
     pub fn scroll_prev(&mut self) {
-        self.scrollstate.prev();
+        self.vscroll = self.vscroll.saturating_sub(1);
+        self.scrollstate = self.scrollstate.position(self.vscroll as usize);
     }
 
     pub fn scroll_next(&mut self) {
-        self.scrollstate.next();
+        self.vscroll = self.vscroll.saturating_add(1);
+        self.scrollstate = self.scrollstate.position(self.vscroll as usize);
     }
 }
 
