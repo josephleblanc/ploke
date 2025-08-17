@@ -56,6 +56,7 @@ static PROMPT_USER: &str = r#"
 
 "#;
 
+#[tracing::instrument(skip(state, event_bus, arguments), fields(%request_id, %parent_id, call_id = %call_id, tool = %name))]
 pub async fn handle_tool_call_requested(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -69,7 +70,7 @@ pub async fn handle_tool_call_requested(
     tracing::info!("handle_tool_call_requested: vendor={:?}, name={}", vendor, name);
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
-        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
             request_id,
             parent_id,
             call_id,
@@ -84,7 +85,7 @@ pub async fn handle_tool_call_requested(
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
     if token_budget.is_none() || token_budget == Some(0) {
-        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
             request_id,
             parent_id,
             call_id,
@@ -109,6 +110,16 @@ pub async fn handle_tool_call_requested(
         }
     };
 
+    if query.trim().is_empty() {
+        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id,
+            error: "No query available (no hint provided and no recent user message)".to_string(),
+        }));
+        return;
+    }
+
     let top_k = calc_top_k_for_budget(token_budget);
 
     if let Some(rag) = &state.rag {
@@ -127,7 +138,7 @@ pub async fn handle_tool_call_requested(
                 })
                 .to_string();
 
-                event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id,
                     parent_id,
                     call_id,
@@ -137,7 +148,7 @@ pub async fn handle_tool_call_requested(
             Err(e) => {
                 let msg = format!("RAG hybrid_search failed: {}", e);
                 tracing::warn!("{}", msg);
-                event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id,
                     parent_id,
                     call_id,
@@ -148,7 +159,7 @@ pub async fn handle_tool_call_requested(
     } else {
         let msg = "RAG service unavailable".to_string();
         tracing::warn!("{}", msg);
-        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
             request_id,
             parent_id,
             call_id,

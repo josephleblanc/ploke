@@ -5,9 +5,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
-use std::{default, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::{
-    mpsc::{self, error::TrySendError},
+    mpsc,
     oneshot,
     broadcast,
 };
@@ -206,8 +206,8 @@ pub async fn llm_manager(
                 let guard = state.config.read().await;
                 let maybe_provider = guard.provider_registry.get_active_provider();
                 if maybe_provider.is_none() {
-                    tracing::warn!("Could not find active provider in registry, returning early");
-                    return;
+                    tracing::warn!("Could not find active provider in registry, continuing event loop");
+                    continue;
                 }
                 let provider_config = maybe_provider
                     .expect("Error in unwrapping a value guarenteed to be Some")
@@ -339,7 +339,7 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context, &event_bus)
+    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context, &event_bus, parent_id)
         .await
         .map(|content| StateCommand::UpdateMessage {
             id: assistant_message_id,
@@ -376,6 +376,7 @@ async fn prepare_and_run_llm_call(
     provider: &ProviderConfig,
     context: Option<llm::Event>,
     event_bus: &Arc<EventBus>,
+    parent_id: Uuid,
 ) -> Result<String, LlmError> {
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
@@ -442,7 +443,7 @@ async fn prepare_and_run_llm_call(
 
     messages.extend(conversation_messages);
 
-    log::info!(
+    tracing::trace!(
         "Sending conversation history message with content: {:#?}",
         messages
     );
@@ -456,9 +457,15 @@ async fn prepare_and_run_llm_call(
     // TODO: This is an atrocious design pattern, use while/let and relocate the handling of the
     // tool call to a separate file.
     loop {
+        let history_budget_chars: usize = params
+            .max_tokens
+            .map(|t| (t as usize).saturating_mul(4))
+            .unwrap_or(12000);
+        let effective_messages = cap_messages_by_chars(&messages, history_budget_chars);
+
         let request_payload = OpenAiRequest {
             model: provider.model.as_str(),
-            messages: messages.clone(),
+            messages: effective_messages,
             temperature: params.temperature,
             max_tokens: params.max_tokens,
             top_p: params.top_p,
@@ -552,23 +559,25 @@ async fn prepare_and_run_llm_call(
                             // Subscribe before sending to avoid missing fast responses
                             let rx = event_bus.realtime_tx.subscribe();
 
-                            // Build and emit ToolCall event to be handled by the system/agent layer
+                            // Emit System ToolCallRequested directly on realtime bus
                             let request_id = Uuid::new_v4();
-                            let evt = Event::ToolCall {
-                                request_id,
-                                parent_id: state.chat.0.read().await.current,
-                                name: oc.function.name.clone(),
-                                arguments: serde_json::from_str::<Value>(&oc.function.arguments)
-                                    .unwrap_or(json!({ "raw": oc.function.arguments })),
-                                call_id: Some(oc.id.clone()),
-                                vendor: ToolVendor::OpenAI,
-                            };
+                            let arguments = serde_json::from_str::<Value>(&oc.function.arguments)
+                                .unwrap_or(json!({ "raw": oc.function.arguments }));
                             tracing::info!(
-                                "Routing ToolCall event for function '{}' with call_id {}",
+                                "Routing ToolCallRequested for function '{}' with call_id {}",
                                 oc.function.name,
                                 oc.id
                             );
-                            event_bus.send(AppEvent::Llm(evt));
+                            let _ = event_bus
+                                .realtime_tx
+                                .send(AppEvent::System(SystemEvent::ToolCallRequested {
+                                    request_id,
+                                    parent_id,
+                                    vendor: ToolVendor::OpenAI,
+                                    name: oc.function.name.clone(),
+                                    arguments,
+                                    call_id: oc.id.clone(),
+                                }));
 
                             // Wait for completion/failure correlated by (request_id, call_id)
                             match session::await_tool_result(rx, request_id, &oc.id, 30).await {
@@ -630,6 +639,23 @@ async fn prepare_and_run_llm_call(
     }
 }
 
+fn cap_messages_by_chars(messages: &[RequestMessage], budget: usize) -> Vec<RequestMessage> {
+    // Walk from the tail so we keep the most recent context, then reverse to restore order
+    let mut used = 0usize;
+    let mut kept: Vec<&RequestMessage> = Vec::new();
+    for m in messages.iter().rev() {
+        let len = m.content.len();
+        if used.saturating_add(len) > budget && !kept.is_empty() {
+            break;
+        }
+        used = used.saturating_add(len);
+        kept.push(m);
+    }
+    kept.reverse();
+    // Clone into a fresh vec; RequestMessage owns String content so zero-copy is not possible here
+    kept.into_iter().cloned().collect()
+}
+
 // Example tool-call argument struct
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct RequestCodeContextArgs {
@@ -640,46 +666,7 @@ struct RequestCodeContextArgs {
 
 // Example tool-call handler (stub)
 
-fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
-    match msg.kind {
-        MessageKind::User => "user",
-        MessageKind::Assistant => "assistant",
-        MessageKind::System => "system",
-        MessageKind::Tool => "tool",
-        MessageKind::SysInfo => "sysinfo",
-    }
-}
 
-// Backpressure-aware command sender
-struct CommandSender {
-    inner: mpsc::Sender<StateCommand>,
-    event_bus: Arc<EventBus>,
-}
-
-impl CommandSender {
-    async fn send(&self, cmd: StateCommand) {
-        match self.inner.try_send(cmd) {
-            Ok(_) => {}
-            Err(TrySendError::Full(cmd)) => {
-                self.event_bus
-                    .send(AppEvent::System(SystemEvent::CommandDropped(
-                        cmd.discriminant(),
-                    )));
-                // Optional retry logic
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                if let Err(e) = self.inner.send(cmd).await {
-                    log::error!("Permanent send failure: {}", e);
-                    // possibly more logging here.
-                }
-            }
-            Err(TrySendError::Closed(_)) => {
-                // TODO: What should go here?
-                // check docs on ratatui? tokio?
-                // Shutting down
-            }
-        }
-    }
-}
 
 // --- Supporting Types ---
 
