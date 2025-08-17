@@ -172,6 +172,7 @@ pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
     // providers: crate::user_config::ProviderRegistry,
 ) {
     let client = Client::new();
@@ -251,12 +252,20 @@ pub async fn llm_manager(
                     }
                 });
             }
-            AppEvent::Llm(Event::ToolCall { request_id, parent_id, name, arguments, vendor, .. }) => {
+            AppEvent::Llm(Event::ToolCall { request_id, parent_id, name, arguments, vendor, call_id }) => {
+                let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
                 tracing::info!(
-                    "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, name={}, arguments={}",
-                    vendor, request_id, parent_id, name, arguments
+                    "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
+                    vendor, request_id, parent_id, call_id, name, arguments
                 );
-                // For now, just log the event. Actual routing/handling can be extended here.
+                event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                    request_id,
+                    parent_id,
+                    vendor,
+                    name,
+                    arguments,
+                    call_id,
+                }));
             }
             _ => {}
         }

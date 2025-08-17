@@ -190,6 +190,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
+        event_bus.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
@@ -230,6 +231,9 @@ pub mod system {
     use std::{borrow::Cow, sync::Arc};
 
     use ploke_db::TypedEmbedData;
+    use uuid::Uuid;
+    use serde_json::Value;
+    use crate::llm::ToolVendor;
 
     use crate::UiError;
 
@@ -241,6 +245,26 @@ pub mod system {
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
         ModelSwitched(String),
+        ToolCallRequested {
+            request_id: Uuid,
+            parent_id: Uuid,
+            vendor: ToolVendor,
+            name: String,
+            arguments: Value,
+            call_id: String,
+        },
+        ToolCallCompleted {
+            request_id: Uuid,
+            parent_id: Uuid,
+            call_id: String,
+            content: String,
+        },
+        ToolCallFailed {
+            request_id: Uuid,
+            parent_id: Uuid,
+            call_id: String,
+            error: String,
+        },
         ReadQuery {
             file_name: String,
             query_name: String,
@@ -317,6 +341,9 @@ impl AppEvent {
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
