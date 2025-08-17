@@ -532,13 +532,10 @@ async fn prepare_and_run_llm_call(
             .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
         tracing::trace!("raw body response to request: {:#?}", body);
 
-        let mut handled_tool_calls = false;
         if let Some(choice) = response_body.choices.into_iter().next() {
             let resp_msg = choice.message;
 
             if let Some(tool_calls) = resp_msg.tool_calls {
-                // This doesn't seem to have a reason for being set, as it isn't used anywhere.
-                handled_tool_calls = true;
                 attempts += 1;
 
                 for call in tool_calls {
@@ -553,7 +550,7 @@ async fn prepare_and_run_llm_call(
                             );
 
                             // Subscribe before sending to avoid missing fast responses
-                            let mut rx = event_bus.realtime_tx.subscribe();
+                            let rx = event_bus.realtime_tx.subscribe();
 
                             // Build and emit ToolCall event to be handled by the system/agent layer
                             let request_id = Uuid::new_v4();

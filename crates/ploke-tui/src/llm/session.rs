@@ -73,20 +73,22 @@ mod tests {
     #[tokio::test]
     async fn test_await_tool_result_completed() {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let mut rx = event_bus.realtime_tx.subscribe();
+        let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
         let call_id = "call-123".to_string();
         let content = "tool response".to_string();
         let eb = event_bus.clone();
 
         // spawn sender that emits completion shortly after
+        let call_id_for_task = call_id.clone();
+        let content_for_task = content.clone();
         tokio::spawn(async move {
             sleep(Duration::from_millis(50)).await;
             eb.send(AppEvent::System(SystemEvent::ToolCallCompleted {
                 request_id,
                 parent_id: Uuid::new_v4(),
-                call_id: call_id.clone(),
-                content: content.clone(),
+                call_id: call_id_for_task,
+                content: content_for_task,
             }));
         });
 
@@ -98,19 +100,21 @@ mod tests {
     #[tokio::test]
     async fn test_await_tool_result_failed() {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let mut rx = event_bus.realtime_tx.subscribe();
+        let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
         let call_id = "call-err".to_string();
         let error_msg = "something went wrong".to_string();
         let eb = event_bus.clone();
 
+        let call_id_for_task = call_id.clone();
+        let error_msg_for_task = error_msg.clone();
         tokio::spawn(async move {
             sleep(Duration::from_millis(50)).await;
             eb.send(AppEvent::System(SystemEvent::ToolCallFailed {
                 request_id,
                 parent_id: Uuid::new_v4(),
-                call_id: call_id.clone(),
-                error: error_msg.clone(),
+                call_id: call_id_for_task,
+                error: error_msg_for_task,
             }));
         });
 

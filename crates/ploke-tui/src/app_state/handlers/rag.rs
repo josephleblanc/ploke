@@ -158,7 +158,7 @@ pub async fn handle_tool_call_requested(
 }
 
 fn calc_top_k_for_budget(token_budget: u32) -> usize {
-    let mut top_k = (token_budget / 200) as usize;
+    let top_k = (token_budget / 200) as usize;
     if top_k < 5 {
         5
     } else if top_k > 20 {
