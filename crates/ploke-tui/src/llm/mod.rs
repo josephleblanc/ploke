@@ -1,4 +1,5 @@
 pub mod registry;
+mod session;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -573,52 +574,11 @@ async fn prepare_and_run_llm_call(
                             event_bus.send(AppEvent::Llm(evt));
 
                             // Wait for completion/failure correlated by (request_id, call_id)
-                            let wait = async {
-                                loop {
-                                    match rx.recv().await {
-                                        Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            content,
-                                            ..
-                                        })) if rid == request_id && cid == oc.id => {
-                                            break Ok(content);
-                                        }
-                                        Ok(AppEvent::System(SystemEvent::ToolCallFailed {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            error,
-                                            ..
-                                        })) if rid == request_id && cid == oc.id => {
-                                            break Err(error);
-                                        }
-                                        Ok(_) => {
-                                            // unrelated event
-                                        }
-                                        Err(e) => {
-                                            break Err(format!("Event channel error: {}", e));
-                                        }
-                                    }
-                                }
-                            };
-
-                            match tokio::time::timeout(Duration::from_secs(30), wait).await {
-                                Ok(Ok(content)) => {
+                            match session::await_tool_result(rx, request_id, &oc.id, 30).await {
+                                Ok(content) => {
                                     messages.push(RequestMessage::new_tool(content, oc.id));
                                 }
-                                Ok(Err(err)) => {
-                                    let sys_msg = format!(
-                                        "Tool call '{}' failed: {}.",
-                                        oc.function.name, err
-                                    );
-                                    messages.push(RequestMessage::new_system(sys_msg));
-                                    messages.push(RequestMessage::new_tool(
-                                        json!({"ok": false, "error": err}).to_string(),
-                                        oc.id,
-                                    ));
-                                }
-                                Err(_) => {
-                                    let err = "Timed out waiting for tool result".to_string();
+                                Err(err) => {
                                     let sys_msg = format!(
                                         "Tool call '{}' failed: {}.",
                                         oc.function.name, err
