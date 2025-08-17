@@ -394,7 +394,7 @@ async fn prepare_and_run_llm_call(
         }
     }
 
-    // Now safe to deserialize into OpenAiResponse
+    // AI:
     let response_body: OpenAiResponse = serde_json::from_str(&body)
         .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
     tracing::trace!("raw body response to request: {:#?}", body);
