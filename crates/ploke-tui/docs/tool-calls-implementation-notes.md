@@ -8,10 +8,10 @@ Milestone Checklist
 - [x] LLM manager routes Event::ToolCall -> SystemEvent::ToolCallRequested.
 - [x] Await tool result via EventBus with correlation (request_id, call_id) + timeout.
 - [x] request_code_context prototype behavior implemented (currently in LLM layer).
-- [ ] Move dispatcher to System handler (Milestone 3 proper).
+- [x] Move dispatcher to System handler (Milestone 3 proper).
 - [ ] Extract RequestSession from prepare_and_run_llm_call (Milestone 2 proper).
-- [ ] Remove inline stub attempt_request_code_context.
-- [ ] Factor top_k heuristic into shared helper.
+- [x] Remove inline stub attempt_request_code_context.
+- [x] Factor top_k heuristic into shared helper.
 - [ ] Add prompt-size caps (message window + RAG context budget).
 - [ ] Add tracing spans with request_id, parent_id, call_id across LLM/System.
 - [ ] Tests: unit dispatcher, integration session, E2E smoke.
@@ -65,4 +65,5 @@ Open Questions
 - Should the UI show tool outputs explicitly? For now, only the LLM sees tool JSON; UI gets final assistant content.
 
 Changelog (to be updated)
+- 2025-08-17: Moved dispatcher to system handler (app_state::handlers::rag::handle_tool_call_requested); removed inline stub; added top_k helper.
 - 2025-08-17: Initial notes created based on current implementation.

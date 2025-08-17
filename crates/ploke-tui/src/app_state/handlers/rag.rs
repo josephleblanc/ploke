@@ -15,6 +15,7 @@ use crate::error::ErrorExt;
 use crate::llm;
 use crate::AppEvent;
 use crate::EventBus;
+use crate::system::SystemEvent;
 
 use crate::AppState;
 use crate::RagEvent;
@@ -54,6 +55,118 @@ static PROMPT_USER: &str = r#"
 # USER
 
 "#;
+
+pub async fn handle_tool_call_requested(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    request_id: Uuid,
+    parent_id: Uuid,
+    vendor: llm::ToolVendor,
+    name: String,
+    arguments: serde_json::Value,
+    call_id: String,
+) {
+    tracing::info!("handle_tool_call_requested: vendor={:?}, name={}", vendor, name);
+    if name != "request_code_context" {
+        tracing::warn!("Unsupported tool call: {}", name);
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id,
+            error: format!("Unsupported tool: {}", name),
+        }));
+        return;
+    }
+
+    // Parse arguments
+    let token_budget = arguments
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+    if token_budget.is_none() || token_budget == Some(0) {
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id,
+            error: "Invalid or missing token_budget".to_string(),
+        }));
+        return;
+    }
+    let token_budget = token_budget.unwrap();
+    let hint = arguments
+        .get("hint")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Determine query: prefer hint, otherwise last user message
+    let query = if let Some(h) = hint.filter(|s| !s.trim().is_empty()) {
+        h
+    } else {
+        let guard = state.chat.read().await;
+        match guard.last_user_msg() {
+            Ok(Some((_id, content))) => content,
+            _ => String::new(),
+        }
+    };
+
+    let top_k = calc_top_k_for_budget(token_budget);
+
+    if let Some(rag) = &state.rag {
+        match rag.hybrid_search(&query, top_k).await {
+            Ok(results) => {
+                let results_json: Vec<serde_json::Value> = results
+                    .into_iter()
+                    .map(|(id, score)| serde_json::json!({"id": id.to_string(), "score": score}))
+                    .collect();
+
+                let content = serde_json::json!({
+                    "ok": true,
+                    "query": query,
+                    "top_k": top_k,
+                    "results": results_json
+                })
+                .to_string();
+
+                event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    content,
+                }));
+            }
+            Err(e) => {
+                let msg = format!("RAG hybrid_search failed: {}", e);
+                tracing::warn!("{}", msg);
+                event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    error: msg,
+                }));
+            }
+        }
+    } else {
+        let msg = "RAG service unavailable".to_string();
+        tracing::warn!("{}", msg);
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id,
+            error: msg,
+        }));
+    }
+}
+
+fn calc_top_k_for_budget(token_budget: u32) -> usize {
+    let mut top_k = (token_budget / 200) as usize;
+    if top_k < 5 {
+        5
+    } else if top_k > 20 {
+        20
+    } else {
+        top_k
+    }
+}
 
 pub async fn process_with_rag(
     state: &Arc<AppState>, 

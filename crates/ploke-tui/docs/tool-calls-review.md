@@ -11,7 +11,7 @@ Summary
   - Emits AppEvent::Llm(Event::ToolCall { ... }) and immediately forwards AppEvent::System(SystemEvent::ToolCallRequested { ... }).
   - Performs the request_code_context tool execution by calling RAG hybrid_search and emits SystemEvent::ToolCallCompleted/Failed with structured JSON results.
   - Waits asynchronously (with a 30s timeout) for correlated SystemEvent completions/failures and pushes tool role messages back into the request loop so the model can observe tool outputs.
-- However, the dispatcher that actually executes the tool is currently implemented inside llm_manager rather than the system layer, which deviates from the plan’s System-side responsibility (Milestone 3). The RequestSession abstraction (Milestone 2) is also embedded inside prepare_and_run_llm_call rather than as a dedicated type.
+- The dispatcher for request_code_context is now implemented in the system layer (app_state::handlers::rag::handle_tool_call_requested). The RequestSession abstraction (Milestone 2) remains embedded in prepare_and_run_llm_call rather than as a dedicated type.
 
 Mapping to the Plan Milestones
 1) Plumbing: Add SystemEvent variants and routing in llm_manager → DONE
@@ -22,26 +22,26 @@ Mapping to the Plan Milestones
    - It subscribes to EventBus before routing ToolCall, awaits ToolCallCompleted/Failed, handles timeout, appends messages, and continues.
    - Missing: dedicated RequestSession type, encapsulated state (attempts, messages, params), and clean separation from llm_manager.
 
-3) Tool dispatcher in System side → PARTIAL/PLACED INCORRECTLY
-   - request_code_context is implemented, but in llm_manager (LLM layer), not a system handler module.
-   - Should be moved to System (e.g., a system handler or AgentSystem), decoupled from LLM loop.
+3) Tool dispatcher in System side → DONE
+   - request_code_context is implemented in app_state::handlers::rag::handle_tool_call_requested.
+   - LLM loop now only emits ToolCallRequested and awaits completions/failures.
 
-4) Remove inline stub handling → NOT DONE (but stub is unused)
+4) Remove inline stub handling → DONE (removed attempt_request_code_context)
    - attempt_request_code_context remains in llm/mod.rs as a dead/stub function. Can be removed once dispatcher is fully in System.
 
 5) Polish (timeouts, metrics, validation) → PARTIAL
    - Timeout (30s) is present. Logging is present, tracing spans can be improved. Argument validation exists for request_code_context. Top-k heuristic implemented.
 
 Key Findings and Cleanups
-- Responsibility split (LLM vs System): Move the request_code_context execution (RAG calls and result emission) out of llm_manager into the System handler. Keep llm_manager limited to emitting ToolCallRequested and awaiting ToolCallCompleted/Failed.
-- Dead code: Remove attempt_request_code_context from llm/mod.rs after dispatcher is moved; it’s misleading.
+- Responsibility split (LLM vs System): request_code_context execution (RAG calls and result emission) is now in the System handler (app_state::handlers::rag). llm_manager only emits ToolCallRequested and awaits ToolCallCompleted/Failed.
+- Dead code: Removed attempt_request_code_context from llm/mod.rs.
 - Duplication and cohesion:
   - RAG usage exists in two styles:
     - UI/Operator commands (rag.rs) → SysInfo-formatted messages.
     - Tool results (llm/mod.rs) → Structured JSON for model consumption.
     This is intentional, but consider centralizing the “hybrid_search -> Vec<(Id, Score)> -> JSON” transform in a small utility function to ensure consistency between system dispatcher and any future reuses.
 - Configuration cohesion:
-  - top_k heuristic is embedded in llm/mod.rs; extract a small shared helper (e.g., tools::calc_top_k_for_budget) so the System dispatcher uses the same logic.
+  - top_k heuristic has been factored into a small helper (calc_top_k_for_budget in app_state::handlers::rag) so the System dispatcher and future reuses can share the same logic.
   - tool_max_retries and tool_token_limit are in LLMParameters; ensure they’re surfaced in user config or defaults in one place and documented.
 - Event correlation:
   - The design subscribes to the broadcast channel before emitting the ToolCall event → good. Keep that pattern when moving logic to System.
