@@ -79,7 +79,13 @@ test-context = "0.1"
 fake = "4.3.0"
 cozo = { workspace = true }
 rand = "0.9"
+insta = "1.39.0"
+criterion = "0.5"
 
 [features]
 default = ["custom_list"]
 custom_list = []
+
+[[bench]]
+name = "ui_measure"
+harness = false
