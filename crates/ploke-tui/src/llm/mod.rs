@@ -259,14 +259,106 @@ pub async fn llm_manager(
                     "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
                     vendor, request_id, parent_id, call_id, name, arguments
                 );
+
+                // Emit "requested" for telemetry and correlation
                 event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                     request_id,
                     parent_id,
-                    vendor,
-                    name,
-                    arguments,
-                    call_id,
+                    vendor: vendor.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                    call_id: call_id.clone(),
                 }));
+
+                // Milestone 3: Tool dispatcher for `request_code_context`
+                if name == "request_code_context" {
+                    // Parse arguments
+                    let parsed: Result<RequestCodeContextArgs, _> = serde_json::from_value(arguments.clone());
+                    let args = match parsed {
+                        Ok(a) => a,
+                        Err(e) => {
+                            tracing::warn!("Invalid request_code_context args: {}", e);
+                            event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                                request_id,
+                                parent_id,
+                                call_id: call_id.clone(),
+                                error: format!("Invalid arguments: {}", e),
+                            }));
+                            continue;
+                        }
+                    };
+
+                    // Determine query: prefer hint, otherwise last user message
+                    let hint = args.hint.clone().unwrap_or_default();
+                    let query = if !hint.trim().is_empty() {
+                        hint
+                    } else {
+                        let guard = state.chat.0.read().await;
+                        let path = guard.get_current_path();
+                        path.iter()
+                            .rev()
+                            .find(|m| m.kind == MessageKind::User)
+                            .map(|m| m.content.clone())
+                            .unwrap_or_default()
+                    };
+
+                    // Heuristic for top_k: clamp(token_budget / 200, 5, 20)
+                    let mut top_k_calc = (args.token_budget / 200) as usize;
+                    if top_k_calc < 5 { top_k_calc = 5; }
+                    if top_k_calc > 20 { top_k_calc = 20; }
+
+                    if let Some(rag) = &state.rag {
+                        match rag.hybrid_search(&query, top_k_calc).await {
+                            Ok(results) => {
+                                let results_json: Vec<Value> = results
+                                    .into_iter()
+                                    .map(|(id, score)| json!({"id": id.to_string(), "score": score}))
+                                    .collect();
+
+                                let content = json!({
+                                    "ok": true,
+                                    "query": query,
+                                    "top_k": top_k_calc,
+                                    "results": results_json
+                                }).to_string();
+
+                                event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                                    request_id,
+                                    parent_id,
+                                    call_id: call_id.clone(),
+                                    content,
+                                }));
+                            }
+                            Err(e) => {
+                                let msg = format!("RAG hybrid_search failed: {}", e);
+                                tracing::warn!("{}", msg);
+                                event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                                    request_id,
+                                    parent_id,
+                                    call_id: call_id.clone(),
+                                    error: msg,
+                                }));
+                            }
+                        }
+                    } else {
+                        let msg = "RAG service unavailable".to_string();
+                        tracing::warn!("{}", msg);
+                        event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                            request_id,
+                            parent_id,
+                            call_id: call_id.clone(),
+                            error: msg,
+                        }));
+                    }
+                } else {
+                    tracing::warn!("Unsupported tool call: {}", name);
+                    event_bus.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: format!("Unsupported tool: {}", name),
+                    }));
+                }
             }
             _ => {}
         }
