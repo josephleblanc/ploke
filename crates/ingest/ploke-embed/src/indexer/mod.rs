@@ -47,7 +47,7 @@ impl EmbeddingProcessor {
 
     pub async fn generate_embeddings(
         &self,
-        snippets: Vec<String>,
+        snippets: Vec< String >,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
         tracing::trace!("Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
             self.dimensions(),

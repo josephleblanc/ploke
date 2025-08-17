@@ -1544,7 +1544,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
-        init_test_tracing(tracing::Level::TRACE);
+        // init_test_tracing(tracing::Level::TRACE);
 
         let fixture_name = "fixture_nodes";
         let crate_path = fixtures_crates_dir().join(fixture_name);

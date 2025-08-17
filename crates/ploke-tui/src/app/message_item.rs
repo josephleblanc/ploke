@@ -53,7 +53,7 @@ fn render_one_message<'a>(
 }
  // ---------- main replacement -------------------------------------------------
 #[instrument(skip(renderable_msg), level = "trace")]
-pub fn measure_messages<'a, I, T: RenderMsg>(
+pub fn measure_messages<'a, I, T: RenderMsg + 'a >(
     renderable_msg: I,
     conversation_width: u16,
     _selected_index: Option<usize>,
@@ -75,7 +75,7 @@ where
 }
 
 #[instrument(skip(frame, renderable_msg, heights), level = "trace")]
-pub fn render_messages<'a, I, T: RenderMsg>(
+pub fn render_messages<'a, I, T: RenderMsg + 'a >(
     frame: &mut Frame,
     renderable_msg: I,
     conversation_width: u16,

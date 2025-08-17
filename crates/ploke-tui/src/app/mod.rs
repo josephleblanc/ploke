@@ -123,7 +123,8 @@ impl App {
         while self.running {
             if self.needs_redraw {
                 // Prepare data for this frame by reading from AppState without allocating per-frame.
-                let history_guard = self.state.chat.0.read().await;
+                let app_state = Arc::clone(&self.state);
+                let history_guard = app_state.chat.0.read().await;
                 let path_len = history_guard.path_len();
                 let current_id = history_guard.current;
 
@@ -274,7 +275,7 @@ impl App {
     }
 
     /// Renders the user interface.
-    fn draw<'a, I1, I2, T: RenderMsg>(
+    fn draw<'a, I1, I2, T: RenderMsg + 'a >(
         &mut self,
         frame: &mut Frame,
         path_for_measure: I1,

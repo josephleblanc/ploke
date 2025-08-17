@@ -29,6 +29,7 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
+use ploke_rag::TokenBudget;
 use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -141,6 +142,10 @@ pub async fn try_main() -> color_eyre::Result<()> {
         }
     };
 
+    let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+    // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
+    // tokio::spawn(context_manager.run());
+
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::default(),
@@ -152,14 +157,12 @@ pub async fn try_main() -> color_eyre::Result<()> {
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
         rag,
+        // TODO: Add TokenBudget fields to Config
+        budget: TokenBudget::default(),
     });
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
-
-    let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
-    let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
-    tokio::spawn(context_manager.run());
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
@@ -170,6 +173,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         rag_event_tx.clone(),
         event_bus.realtime_tx.clone(),
     );
+
+
 
     tokio::spawn(file_manager.run());
 

@@ -13,6 +13,7 @@ use crate::chat_history::Message;
 use crate::chat_history::MessageKind;
 use crate::error::ErrorExt;
 use crate::llm;
+use crate::AppEvent;
 use crate::EventBus;
 
 use crate::AppState;
@@ -60,7 +61,6 @@ pub async fn process_with_rag(
     scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
     new_msg_id: Uuid, 
     completion_rx: oneshot::Receiver<()>,
-    context_tx: &mpsc::Sender<RagEvent>,
 ) {
     if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
         return;
@@ -74,7 +74,7 @@ pub async fn process_with_rag(
             crate::chat_history::MessageKind::SysInfo,
         )
     };
-    if let Some(rag) = state.rag {
+    if let Some(rag) = &state.rag {
         let guard = state.chat.read().await; 
 
         let ( msg_id, user_msg ) = {
@@ -90,7 +90,7 @@ pub async fn process_with_rag(
             }
         };
         let messages: Vec<Message> = guard.clone_current_path_conv();
-        let budget = state.budget;
+        let budget = &state.budget;
         // TODO: Add this to the program config
         let top_k = 15;
         let retrieval_strategy = RetrievalStrategy::Hybrid {
@@ -105,24 +105,15 @@ pub async fn process_with_rag(
                 return;
             }
         };
-        let llm_event = construct_context_from_rag(rag_ctx, &messages, msg_id);
+        let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
 
-        context_tx
-            .send(RagEvent::UserMessages(new_msg_id, messages))
-            .await
-            .inspect_err(|e| tracing::error!("Failed to send UserMessages: {}", e))
-            .ok();
-        context_tx
-            .send(RagEvent::ConstructContext(new_msg_id))
-            .await
-            .inspect_err(|e| tracing::error!("Failed to send ConstructContext: {}", e))
-            .ok();
+        event_bus.send(AppEvent::Llm(augmented_prompt));
     }
 }
 
 fn construct_context_from_rag(
     ctx: AssembledContext,
-    messages: &[Message],
+    messages: Vec<Message>,
     parent_id: Uuid,
 ) -> llm::Event {
     tracing::info!(
@@ -448,7 +439,7 @@ pub async fn assemble_context(
     req_id: Uuid,
     user_query: String,
     top_k: usize,
-    budget: ploke_rag::TokenBudget,
+    budget: &ploke_rag::TokenBudget,
     strategy: ploke_rag::RetrievalStrategy,
 ) {
     let add_msg = |msg: &str| {
@@ -462,7 +453,7 @@ pub async fn assemble_context(
     };
 
     if let Some(rag) = &state.rag {
-        match rag.get_context(&user_query, top_k, budget, strategy).await {
+        match rag.get_context(&user_query, top_k, &budget, strategy).await {
             Ok(_ctx) => {
                 let msg = format!(
                     "Assembled context successfully (req_id: {}, top_k: {})",

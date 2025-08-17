@@ -124,7 +124,7 @@ impl RagService {
         db: Arc<Database>,
         dense_embedder: Arc<EmbeddingProcessor>,
     ) -> Result<Self, RagError> {
-        ensure_tracer_initialized();
+        // ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self {
             db,
@@ -141,7 +141,6 @@ impl RagService {
         dense_embedder: Arc<EmbeddingProcessor>,
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
-        ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self {
             db,
@@ -168,8 +167,24 @@ impl RagService {
         io: IoManagerHandle,
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
-        ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
+        Ok(Self {
+            db,
+            dense_embedder,
+            bm_embedder,
+            cfg,
+            io: Some(Arc::new(io)),
+        })
+    }
+
+    /// Construct with both IoManager and rebuild avgld from db contents.
+    pub fn new_rebuilt(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingProcessor>,
+        io: IoManagerHandle,
+        cfg: RagConfig,
+    ) -> Result<Self, RagError> {
+        let bm_embedder = bm25_service::start_rebuilt(db.clone())?;
         Ok(Self {
             db,
             dense_embedder,
@@ -470,7 +485,7 @@ impl RagService {
         &self,
         query: &str,
         top_k: usize,
-        budget: TokenBudget,
+        budget: &TokenBudget,
         strategy: RetrievalStrategy,
     ) -> Result<AssembledContext, RagError> {
         // 1) Retrieve hits according to strategy
@@ -554,7 +569,7 @@ impl RagService {
         assemble_context(
             query,
             &final_hits,
-            &budget,
+            budget,
             &self.cfg.assembly_policy,
             &*self.cfg.token_counter,
             &self.db,

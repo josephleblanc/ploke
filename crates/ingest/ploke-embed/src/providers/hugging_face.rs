@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::{config::HuggingFaceConfig, error::{EmbedError, truncate_string}};
+use crate::{
+    config::HuggingFaceConfig,
+    error::{truncate_string, EmbedError},
+};
 
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
@@ -26,10 +29,7 @@ impl HuggingFaceBackend {
         }
     }
 
-    pub async fn compute_batch(
-        &self,
-        snippets: Vec<String>
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    pub async fn compute_batch(&self, snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
         let client = reqwest::Client::new();
         let inputs: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
         let request_body = EmbeddingRequest { inputs: &inputs };
@@ -39,7 +39,7 @@ impl HuggingFaceBackend {
             .post(&endpoint)
             .bearer_auth(&self.token)
             .json(&request_body)
-            .timeout(Duration::from_secs(30))  // Add timeout
+            .timeout(Duration::from_secs(30)) // Add timeout
             .send()
             .await?; // Uses From<reqwest::Error>
 
@@ -53,8 +53,11 @@ impl HuggingFaceBackend {
             });
         }
 
-        res.json::<Vec<Vec<f32>>>()
-            .await
-            .map_err(|e| EmbedError::Network(format!("Deserialization failed: {}", truncate_string(&e.to_string(), 60))))
+        res.json::<Vec<Vec<f32>>>().await.map_err(|e| {
+            EmbedError::Network(format!(
+                "Deserialization failed: {}",
+                truncate_string(&e.to_string(), 60)
+            ))
+        })
     }
 }

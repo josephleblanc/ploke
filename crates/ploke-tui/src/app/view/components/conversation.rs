@@ -19,7 +19,7 @@ pub struct ConversationView {
 }
 
 impl ConversationView {
-    pub fn prepare<'a, I, T: RenderMsg>(
+    pub fn prepare<'a, I, T: RenderMsg + 'a >(
         &mut self,
         path: I,
         path_len: usize,
@@ -92,7 +92,7 @@ impl ConversationView {
         }
     }
 
-    pub fn render<'a, I, T: RenderMsg>(
+    pub fn render<'a, I, T: RenderMsg + 'a>(
         &self,
         frame: &mut Frame,
         path: I,

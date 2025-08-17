@@ -16,7 +16,7 @@ async fn main() -> color_eyre::Result<()> {
     //  TODO: Getting weird stuff writing to terminal, might be this.
     //  Look more into it later
     // color_eyre::config::HookBuilder::default()
-    //     .display_location_section(false)
+    //     .display_location_section(true)
     //     .install()?;
 
     if let Err(e) = try_main().await {

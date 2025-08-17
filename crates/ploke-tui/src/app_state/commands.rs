@@ -156,6 +156,11 @@ pub enum StateCommand {
         budget: TokenBudget,
         strategy: RetrievalStrategy,
     },
+    ProcessWithRag {
+        user_query: String,
+        strategy: RetrievalStrategy,
+        budget: TokenBudget
+    },
 }
 
 impl StateCommand {
@@ -200,6 +205,7 @@ impl StateCommand {
             RagDenseSearch { .. } => "RagDenseSearch",
             RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
+            ProcessWithRag { .. } => "ProcessWithRag",
         }
     }
 }

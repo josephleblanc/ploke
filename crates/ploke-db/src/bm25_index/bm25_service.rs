@@ -76,7 +76,7 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                 }
                 Bm25Cmd::Rebuild => {
                     tracing::info!("BM25 Rebuild: starting rebuild from database");
-                    status = Bm25Status::Building;
+                    // status = Bm25Status::Building;
                     match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
                             let docs = new_indexer.doc_count();
@@ -137,7 +137,7 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                 Bm25Cmd::Load { path, resp } => {
                     tracing::info!("BM25 Load requested from {:?}", path);
                     // Placeholder implementation: perform a rebuild to ensure a ready index.
-                    status = Bm25Status::Building;
+                    // status = Bm25Status::Building;
                     let res = match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
                             let docs = new_indexer.doc_count();
@@ -230,7 +230,7 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                 }
                 Bm25Cmd::Rebuild => {
                     tracing::info!("BM25 Rebuild: starting rebuild from database");
-                    status = Bm25Status::Building;
+                    // status = Bm25Status::Building;
                     match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
                             let docs = new_indexer.doc_count();
@@ -289,7 +289,7 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                 Bm25Cmd::Load { path, resp } => {
                     tracing::info!("BM25 Load requested from {:?}", path);
                     // Placeholder implementation: perform a rebuild to ensure a ready index.
-                    status = Bm25Status::Building;
+                    // status = Bm25Status::Building;
                     let res = match Bm25Indexer::rebuild_from_db(db.as_ref()) {
                         Ok(new_indexer) => {
                             let docs = new_indexer.doc_count();

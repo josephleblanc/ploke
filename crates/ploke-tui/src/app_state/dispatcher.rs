@@ -79,8 +79,11 @@ pub async fn state_manager(
             }
 
             StateCommand::EmbedMessage { new_msg_id, completion_rx, scan_rx } => {
-                handlers::embedding::handle_embed_message(&state, &context_tx, new_msg_id, completion_rx, scan_rx).await;
+                handlers::rag::process_with_rag(&state, &event_bus, scan_rx, new_msg_id, completion_rx).await;
+                // handlers::embedding::handle_embed_message(&state, &context_tx, new_msg_id, completion_rx, scan_rx).await;
             }
+            // StateCommand::ProcessWithRag { user_query, strategy, budget } => {
+            // }
 
             StateCommand::SwitchModel { alias_or_id } => {
                 handlers::model::switch_model(&state, &event_bus, alias_or_id).await;
@@ -118,7 +121,7 @@ pub async fn state_manager(
                 handlers::rag::dense_search(&state, &event_bus, req_id, query, top_k).await
             }
             StateCommand::RagAssembleContext { req_id, user_query, top_k, budget, strategy } => {
-                handlers::rag::assemble_context(&state, &event_bus, req_id, user_query, top_k, budget, strategy).await
+                handlers::rag::assemble_context(&state, &event_bus, req_id, user_query, top_k, &budget, strategy).await
             }
 
             _ => {}

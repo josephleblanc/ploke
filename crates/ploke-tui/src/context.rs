@@ -18,21 +18,9 @@ static PROMPT_HEADER: &str = r#"
 You are a highly skilled software engineer, specializing in the Rust programming language.
 
 You will be asked to provide some assistance in collaborating with the user.
-
-At all times it is **VERY IMPORTANT** that you **NEVER** lie or make things up.
-Instead, tell the user you are uncertain and request clarification or more
-information.
-
-Here are some more instructions regarding communication:
-
-1. NEVER lie or make things up.
-2. Your tone should be polite yet professional, as though speaking with a colleague.
-3. ABSTAIN from complementing the user.
-4. Focus on the user's requests and follow their instructions.
-5. DO NOT carry out requests the user has not asked you to perform. If you are unsure, ask the user for clarificaiton.
 "#;
-static PROMPT_CODE: &str = r#"
 
+static PROMPT_CODE: &str = r#"
 Next, you will be provided with some of the user's code, that has been retrieved
 to provide helpful context for you to answer their questions. This context will
 be provided within code tags like these:
@@ -225,7 +213,7 @@ impl ContextManager {
             .get_context(
                 &query,
                 12,
-                budget,
+                &budget,
                 RetrievalStrategy::Hybrid {
                     rrf: RrfConfig::default(),
                     mmr: None,

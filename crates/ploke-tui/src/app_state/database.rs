@@ -706,7 +706,9 @@ mod test {
             db:db_handle.clone(),
             embedder:Arc::clone(&proc_arc),
             io_handle:io_handle.clone(), 
-            rag: Some(Arc::new( rag )) 
+            rag: Some(Arc::new( rag )),
+            budget: TokenBudget::default()
+            // rag_tx: rag_event_tx.clone()
         });
         {
             let mut system_guard = state.system.write().await;
