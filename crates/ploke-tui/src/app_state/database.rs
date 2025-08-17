@@ -763,6 +763,7 @@ mod test {
             event_bus.subscribe(EventPriority::Background),
             state.clone(),
             cmd_tx.clone(), // Clone for each subsystem
+            event_bus.clone()
         ));
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
