@@ -449,7 +449,39 @@ impl App {
             }
         }
 
-        // Cursor is managed by InputView for Insert/Command modes.
+        // Explicitly set the cursor position so it updates immediately, even after Space/Backspace.
+        if matches!(self.mode, Mode::Insert | Mode::Command) {
+            // Assume a bordered input box: 1 cell padding on each side.
+            let inner_x = input_area.x.saturating_add(1);
+            let inner_y = input_area.y.saturating_add(1);
+            let inner_w = input_area.width.saturating_sub(2).max(1);
+            let inner_h = input_area.height.saturating_sub(2).max(1);
+
+            // Best-effort wrapping calculation for cursor position.
+            let mut col: u16 = 0;
+            let mut row: u16 = 0;
+            for ch in self.input_buffer.chars() {
+                if ch == '\n' {
+                    col = 0;
+                    row = row.saturating_add(1);
+                } else {
+                    col = col.saturating_add(1);
+                    if col >= inner_w {
+                        col = 0;
+                        row = row.saturating_add(1);
+                    }
+                }
+            }
+
+            // Clamp within the inner area; if content overflows vertically, stick to last visible line.
+            if row >= inner_h {
+                row = inner_h.saturating_sub(1);
+            }
+
+            let cursor_x = inner_x.saturating_add(col.min(inner_w.saturating_sub(1)));
+            let cursor_y = inner_y.saturating_add(row);
+            frame.set_cursor(cursor_x, cursor_y);
+        }
     }
 
     fn create_branch(&mut self) {
