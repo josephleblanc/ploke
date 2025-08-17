@@ -1,10 +1,154 @@
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
+use ploke_rag::AssembledContext;
+use ploke_rag::RagService;
+use ploke_rag::RetrievalStrategy;
+use ploke_rag::RrfConfig;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use crate::chat_history::Message;
+use crate::chat_history::MessageKind;
+use crate::error::ErrorExt;
+use crate::llm;
 use crate::EventBus;
 
 use crate::AppState;
+use crate::RagEvent;
+
+use super::embedding::wait_on_oneshot;
+
+static PROMPT_HEADER: &str = r#"
+<-- SYSTEM PROMPT -->
+You are a highly skilled software engineer, specializing in the Rust programming language.
+
+You will be asked to provide some assistance in collaborating with the user.
+"#;
+
+static PROMPT_CODE: &str = r#"
+Next, you will be provided with some of the user's code, that has been retrieved
+to provide helpful context for you to answer their questions. This context will
+be provided within code tags like these:
+
+<code="path/to/file.rs" #132:486>Code goes here</code>
+
+Where the "path/to/file.rs" is the absolute path to the file and the #132:486
+are the line numbers, inclusive.
+
+What follows is the provided code snippets for you to use as reference, and will
+be shown in a header (like # Header) and with subheaders (like ## subheader).
+Follow the code section will be the User's query, delineated by a header.
+
+After the user query, there may be a response from another collaborator marked
+with a header (like # Assistant or # Collaborator). These headers may alternate
+and contain subheaders with the whole text of their messages so far, summaries
+of the conversation, or other contextual information about the code base.
+
+# Code
+
+"#;
+static PROMPT_USER: &str = r#"
+# USER
+
+"#;
+
+pub async fn process_with_rag(
+    state: &Arc<AppState>, 
+    event_bus: &Arc<EventBus>,
+    scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
+    new_msg_id: Uuid, 
+    completion_rx: oneshot::Receiver<()>,
+    context_tx: &mpsc::Sender<RagEvent>,
+) {
+    if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
+        return;
+    }
+    let add_msg = |msg: &str| {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+    };
+    if let Some(rag) = state.rag {
+        let guard = state.chat.read().await; 
+
+        let ( msg_id, user_msg ) = {
+            match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
+                Ok(maybe_msg) => match maybe_msg {
+                    Some(msg) => msg,
+                    None => {
+                        tracing::warn!("Attempting to submit empty user message"); 
+                        return;
+                    },
+                },
+                Err(e) => {e.emit_error(); return;}
+            }
+        };
+        let messages: Vec<Message> = guard.clone_current_path_conv();
+        let budget = state.budget;
+        // TODO: Add this to the program config
+        let top_k = 15;
+        let retrieval_strategy = RetrievalStrategy::Hybrid {
+                    rrf: RrfConfig::default(),
+                    mmr: None,
+                };
+        let rag_ctx = match rag.get_context(&user_msg, top_k, budget, retrieval_strategy).await {
+            Ok(res) => res,
+            Err(e) => {
+                e.emit_error();
+                tracing::error!("Failed to return results from hybrid RAG");
+                return;
+            }
+        };
+        let llm_event = construct_context_from_rag(rag_ctx, &messages, msg_id);
+
+        context_tx
+            .send(RagEvent::UserMessages(new_msg_id, messages))
+            .await?; // AI: change this to the emit/tracing pattern above AI!
+        context_tx
+            .send(RagEvent::ConstructContext(new_msg_id))
+            .await?; // AI: change this to the emit/tracing pattern above AI!
+        Ok(())
+    }
+    fn construct_context_from_rag(
+        ctx: AssembledContext,
+        messages: &[Message],
+        parent_id: Uuid,
+    ) -> llm::Event {
+        tracing::info!(
+            "constructing context (RAG) with {} parts and {} messages",
+            ctx.parts.len(),
+            messages.len()
+        );
+
+        let mut base: Vec<(MessageKind, String)> = Vec::from([
+            (MessageKind::System, String::from(PROMPT_HEADER)),
+            (MessageKind::System, String::from(PROMPT_CODE)),
+        ]);
+
+        // Add assembled context parts as system messages
+        let text = ctx.parts.into_iter().map(|p| ( MessageKind::System, p.text ));
+        base.extend(text);
+
+        // Add conversation messages
+        let msgs = messages
+            .into_iter()
+            .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
+            .inspect(|m| tracing::debug!("m.content.is_empty() = {}", m.content.is_empty()))
+            .map(|msg| (msg.kind, msg.content));
+        base.extend(msgs);
+
+        llm::Event::PromptConstructed {
+            parent_id,
+            prompt: base,
+        }
+    }
+}
 
 pub async fn bm25_rebuild(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let add_msg = |msg: &str| {
