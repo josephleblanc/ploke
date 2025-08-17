@@ -2,6 +2,7 @@ pub mod registry;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use thiserror::Error;
 use std::{default, sync::Arc, time::Duration};
 use tokio::sync::{
@@ -33,6 +34,10 @@ pub struct OpenAiRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>, // e.g., "auto"
 }
 
 impl<'a> OpenAiRequest<'a> {
@@ -58,6 +63,8 @@ impl<'a> OpenAiRequest<'a> {
 pub struct RequestMessage<'a> {
     pub role: &'a str,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl RequestMessage<'_> {
@@ -65,7 +72,58 @@ impl RequestMessage<'_> {
         Self {
             role: "system",
             content,
+            tool_call_id: None,
         }
+    }
+
+    pub fn new_tool(content: String, tool_call_id: String) -> Self {
+        Self {
+            role: "tool",
+            content,
+            tool_call_id: Some(tool_call_id),
+        }
+    }
+}
+
+// OpenAI tool/function definition (for request payload)
+#[derive(Serialize, Debug, Clone)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub r#type: &'static str, // "function"
+    pub function: ToolFunctionDef,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ToolFunctionDef {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: Value, // JSON Schema
+}
+
+// Helper to define our example tool
+fn request_code_context_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        r#type: "function",
+        function: ToolFunctionDef {
+            name: "request_code_context",
+            description: "Request additional code context from the repository up to a token budget.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "token_budget": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum tokens of code context to return."
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "Optional hint to guide which code to retrieve."
+                    }
+                },
+                "required": ["token_budget"],
+                "additionalProperties": false
+            }),
+        },
     }
 }
 
@@ -81,7 +139,31 @@ struct Choice {
 
 #[derive(Deserialize, Debug)]
 struct ResponseMessage {
-    content: String,
+    // When tool_calls are present, content may be null/absent
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<GenericToolCall>>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum GenericToolCall {
+    OpenAi(OpenAiToolCall),
+    Other(Value), // Placeholder for other vendor formats
+}
+
+#[derive(Deserialize, Debug)]
+struct OpenAiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub r#type: String, // should be "function"
+    pub function: OpenAiToolFunctionCall,
+}
+
+#[derive(Deserialize, Debug)]
+struct OpenAiToolFunctionCall {
+    pub name: String,
+    pub arguments: String, // JSON string
 }
 
 pub async fn llm_manager(
@@ -166,6 +248,13 @@ pub async fn llm_manager(
                         true
                     }
                 });
+            }
+            AppEvent::Llm(Event::ToolCall { request_id, parent_id, name, arguments, vendor, .. }) => {
+                tracing::info!(
+                    "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, name={}, arguments={}",
+                    vendor, request_id, parent_id, name, arguments
+                );
+                // For now, just log the event. Actual routing/handling can be extended here.
             }
             _ => {}
         }
@@ -275,6 +364,10 @@ async fn prepare_and_run_llm_call(
     );
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
 
+    // Defaults for tool handling
+    let max_retries: u32 = params.tool_max_retries.unwrap_or(2);
+    let token_limit: u32 = params.tool_token_limit.unwrap_or(2048);
+
     // Prepend system prompt if provided
     if let Some(sys) = params.system_prompt.as_ref() {
         messages.push(RequestMessage::new_system(sys.clone()));
@@ -293,6 +386,7 @@ async fn prepare_and_run_llm_call(
                     MessageKind::SysInfo => "system",
                 },
                 content: c,
+                tool_call_id: None,
             })
             .collect::<Vec<_>>()
     } else {
@@ -308,6 +402,7 @@ async fn prepare_and_run_llm_call(
                     MessageKind::SysInfo => "system",
                 },
                 content: msg.content.clone(),
+                tool_call_id: None,
             })
             .collect::<Vec<_>>()
     };
@@ -322,91 +417,252 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    let request_payload = OpenAiRequest {
-        model: provider.model.as_str(),
-        messages,
-        temperature: params.temperature,
-        max_tokens: params.max_tokens,
-        top_p: params.top_p,
-        stream: false,
-    };
+    let tools = vec![request_code_context_tool_def()];
+    let mut attempts: u32 = 0;
 
-
-
-    let response = client
-        .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(provider.resolve_api_key())
-        .json(&request_payload)
-        .send()
-        .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
-
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
-
-        let user_friendly_msg = if status == 401 {
-            format!(
-                "Authentication failed. Please check your API key configuration.\n\nDetails {}",
-                error_text
-            )
-        } else if status == 429 {
-            format!(
-                "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
-                error_text
-            )
-        } else if status >= 500 {
-            format!(
-                "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
-                error_text
-            )
-        } else {
-            format!("API error (status {}): {}", status, error_text)
+    loop {
+        let request_payload = OpenAiRequest {
+            model: provider.model.as_str(),
+            messages: messages.clone(),
+            temperature: params.temperature,
+            max_tokens: params.max_tokens,
+            top_p: params.top_p,
+            stream: false,
+            tools: Some(tools.clone()),
+            tool_choice: Some("auto".to_string()),
         };
 
-        return Err(LlmError::Api {
-            status,
-            message: user_friendly_msg,
-        });
-    }
+        let response = client
+            .post(format!("{}/chat/completions", provider.base_url))
+            .bearer_auth(provider.resolve_api_key())
+            .json(&request_payload)
+            .send()
+            .await
+            .map_err(|e| LlmError::Request(e.to_string()))?;
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
-    tracing::debug!("raw body: {}", body);
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Could not retrieve error body".to_string());
 
-    // OpenRouter sometimes puts errors inside a 200 body
-    if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(err_obj) = err.get("error") {
-            let msg = err_obj
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown OpenRouter error");
-            let code = err_obj.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
+            let user_friendly_msg = if status == 401 {
+                format!(
+                    "Authentication failed. Please check your API key configuration.\n\nDetails {}",
+                    error_text
+                )
+            } else if status == 429 {
+                format!(
+                    "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
+                    error_text
+                )
+            } else if status >= 500 {
+                format!(
+                    "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
+                    error_text
+                )
+            } else {
+                format!("API error (status {}): {}", status, error_text)
+            };
+
             return Err(LlmError::Api {
-                status: code as u16,
-                message: msg.to_string(),
+                status,
+                message: user_friendly_msg,
             });
         }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| LlmError::Request(e.to_string()))?;
+        tracing::debug!("raw body: {}", body);
+
+        // Providers sometimes put errors inside a 200 body
+        if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(err_obj) = err.get("error") {
+                let msg = err_obj
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown provider error");
+                let code = err_obj.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
+                return Err(LlmError::Api {
+                    status: code as u16,
+                    message: msg.to_string(),
+                });
+            }
+        }
+
+        let response_body: OpenAiResponse = serde_json::from_str(&body)
+            .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
+        tracing::trace!("raw body response to request: {:#?}", body);
+
+        let mut handled_tool_calls = false;
+        if let Some(choice) = response_body.choices.into_iter().next() {
+            let resp_msg = choice.message;
+
+            if let Some(tool_calls) = resp_msg.tool_calls {
+                handled_tool_calls = true;
+                attempts += 1;
+
+                for call in tool_calls {
+                    match call {
+                        GenericToolCall::OpenAi(oc) => {
+                            tracing::info!(
+                                "OpenAI tool call received: id={}, type={}, fn={}, args={}",
+                                oc.id,
+                                oc.r#type,
+                                oc.function.name,
+                                oc.function.arguments
+                            );
+
+                            // Route as event (logged)
+                            let evt = Event::ToolCall {
+                                request_id: Uuid::new_v4(),
+                                parent_id: state.chat.0.read().await.current,
+                                name: oc.function.name.clone(),
+                                arguments: serde_json::from_str::<Value>(&oc.function.arguments)
+                                    .unwrap_or(json!({ "raw": oc.function.arguments })),
+                                call_id: Some(oc.id.clone()),
+                                vendor: ToolVendor::OpenAI,
+                            };
+                            match evt {
+                                Event::ToolCall { ref name, ref arguments, .. } => {
+                                    tracing::info!(
+                                        "Routing ToolCall event for function '{}' with arguments {}",
+                                        name,
+                                        arguments
+                                    );
+                                }
+                                _ => {}
+                            }
+
+                            // Handle our example tool
+                            let args_val: Value = serde_json::from_str(&oc.function.arguments)
+                                .unwrap_or(json!({}));
+                            if oc.function.name == "request_code_context" {
+                                let parsed: Result<RequestCodeContextArgs, _> =
+                                    serde_json::from_value(args_val.clone());
+                                let tool_result = match parsed {
+                                    Ok(args) => {
+                                        match attempt_request_code_context(&args, token_limit) {
+                                            Ok(val) => val,
+                                            Err(err) => {
+                                                // Inform model of failure so it can adjust
+                                                let sys_msg = format!(
+                                                    "Tool call 'request_code_context' failed: {}. You may retry with a smaller token_budget (<= {}).",
+                                                    err, token_limit
+                                                );
+                                                messages.push(RequestMessage::new_system(sys_msg));
+                                                json!({"ok": false, "error": err})
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let err = format!("Invalid arguments for request_code_context: {}", e);
+                                        let sys_msg = format!(
+                                            "Tool call 'request_code_context' failed: {}.",
+                                            err
+                                        );
+                                        messages.push(RequestMessage::new_system(sys_msg));
+                                        json!({"ok": false, "error": err})
+                                    }
+                                };
+
+                                // Append tool result message for the model
+                                messages.push(RequestMessage::new_tool(
+                                    tool_result.to_string(),
+                                    oc.id,
+                                ));
+                            } else {
+                                // Unknown tool – inform model
+                                let err = format!(
+                                    "Unknown tool '{}' requested. Only 'request_code_context' is available.",
+                                    oc.function.name
+                                );
+                                messages.push(RequestMessage::new_system(err.clone()));
+                                messages.push(RequestMessage::new_tool(
+                                    json!({"ok": false, "error": err}).to_string(),
+                                    oc.id,
+                                ));
+                            }
+                        }
+                        GenericToolCall::Other(v) => {
+                            tracing::warn!("Received non-OpenAI tool call payload: {}", v);
+                            // Placeholder: return a generic error back to the model
+                            let call_id = v
+                                .get("id")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let err = "Unsupported tool call format".to_string();
+                            messages.push(RequestMessage::new_system(err.clone()));
+                            messages.push(RequestMessage::new_tool(
+                                json!({"ok": false, "error": err, "vendor": "other"}).to_string(),
+                                call_id,
+                            ));
+                        }
+                    }
+                }
+
+                if attempts > max_retries {
+                    return Err(LlmError::Unknown(format!(
+                        "Tool call retries exhausted after {} attempt(s)",
+                        attempts
+                    )));
+                }
+
+                // Continue loop to let the model observe tool outputs and respond
+                continue;
+            }
+
+            // No tool calls; finalize content
+            let content = resp_msg
+                .content
+                .unwrap_or_else(|| "No content received from API.".to_string());
+            return Ok(content);
+        } else {
+            return Err(LlmError::Deserialization(
+                "No choices in response".to_string(),
+            ));
+        }
+    }
+}
+
+// Example tool-call argument struct
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct RequestCodeContextArgs {
+    pub token_budget: u32,
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+// Example tool-call handler (stub)
+fn attempt_request_code_context(
+    args: &RequestCodeContextArgs,
+    token_limit: u32,
+) -> Result<Value, String> {
+    if args.token_budget == 0 {
+        return Err("token_budget must be greater than 0".to_string());
+    }
+    if args.token_budget > token_limit {
+        return Err(format!(
+            "Requested token_budget {} exceeds limit {}",
+            args.token_budget, token_limit
+        ));
     }
 
-    // AI:
-    let response_body: OpenAiResponse = serde_json::from_str(&body)
-        .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
-    tracing::trace!("raw body response to request: {:#?}", body);
-
-    let content = response_body
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .unwrap_or_else(|| "No content received from API.".to_string());
-
-    Ok(content)
+    // Stubbed success: in a real implementation, retrieve code context here.
+    let hint = args.hint.clone().unwrap_or_default();
+    Ok(json!({
+        "ok": true,
+        "content": format!(
+            "(stub) Providing up to {} tokens of additional code context. {}",
+            args.token_budget,
+            if hint.is_empty() { "" } else { format!("Hint: {}", hint) }
+        ),
+        "tokens_used": args.token_budget
+    }))
 }
 
 fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
@@ -414,7 +670,7 @@ fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
         MessageKind::User => "user",
         MessageKind::Assistant => "assistant",
         MessageKind::System => "system",
-        MessageKind::Tool => todo!(),
+        MessageKind::Tool => "tool",
         MessageKind::SysInfo => "sysinfo",
     }
 }
@@ -506,11 +762,28 @@ pub enum Event {
     ModelChanged {
         new_model: String, // e.g., "claude-3-opus"
     },
+
+    /// Tool/function call emitted by model (OpenAI tools or other)
+    ToolCall {
+        request_id: Uuid,
+        parent_id: Uuid,
+        name: String,
+        arguments: Value,
+        call_id: Option<String>,
+        vendor: ToolVendor,
+    },
+
     /// Prompt constructed to be sent to the LLM
     PromptConstructed {
         prompt: Vec<(MessageKind, String)>,
         parent_id: Uuid,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ToolVendor {
+    OpenAI,
+    Other,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -526,14 +799,12 @@ impl Event {
         match self {
             Event::Request { parent_id, .. } => *parent_id,
             Event::Response { parent_id, .. } => *parent_id,
-            Event::PartialResponse { request_id, delta } => todo!(),
-            Event::Error { request_id, error } => todo!(),
-            Event::Status {
-                active_requests,
-                queue_depth,
-            } => todo!(),
-            Event::ModelChanged { new_model } => todo!(),
-            Event::PromptConstructed { prompt, parent_id } => *parent_id,
+            Event::PartialResponse { .. } => todo!(),
+            Event::Error { .. } => todo!(),
+            Event::Status { .. } => todo!(),
+            Event::ModelChanged { .. } => todo!(),
+            Event::ToolCall { parent_id, .. } => *parent_id,
+            Event::PromptConstructed { parent_id, .. } => *parent_id,
         }
     }
 }
@@ -674,6 +945,14 @@ pub struct LLMParameters {
     /// Optional system prompt to steer the model
     #[serde(default)]
     pub system_prompt: Option<String>,
+
+    /// Maximum number of tool-call retry cycles
+    #[serde(default)]
+    pub tool_max_retries: Option<u32>,
+
+    /// Token limit for tool-provided context (sane default)
+    #[serde(default)]
+    pub tool_token_limit: Option<u32>,
 }
 
 /// Metadata about LLM execution
@@ -773,6 +1052,8 @@ impl Default for LLMParameters {
             response_format: Default::default(),
             safety_settings: Default::default(),
             system_prompt: None,
+            tool_max_retries: Some(2),
+            tool_token_limit: Some(2048),
         }
     }
 }
