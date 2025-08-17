@@ -55,9 +55,9 @@ This document distills the next-phase goals from the initial project brief and s
 
 ## How we’ll share essential project context
 
-- Use `scripts/gen_project_context.sh` to produce a compact `project_context.txt`.
+- Use `scripts/gen_project_context.sh` (mini mode by default) to produce a compact `project_context.txt`. Set MODE=full for a full dump; tune MAX_LINES and MAX_TREE_LINES to adjust size.
 - Paste that file into chat for planning/design iterations.
-- Keep bodies large code out; prefer signatures, relation names, and invariants.
+- Keep large code bodies out; prefer signatures, relation names, and invariants.
 
 ## Next steps
 
