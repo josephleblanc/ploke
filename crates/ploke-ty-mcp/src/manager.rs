@@ -7,13 +7,13 @@ use rmcp::{
     transport::{child_process::TokioChildProcess, ConfigureCommandExt},
     RoleClient,
 };
-use std::{collections::HashMap, sync::Arc};
-use tokio::{process::Command, sync::Mutex};
+use dashmap::DashMap;
+use tokio::process::Command;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
     cfg: McpConfig,
-    registry: Arc<Mutex<HashMap<ServerId, RunningService<RoleClient, ()>>>>,
+    registry: DashMap<ServerId, RunningService<RoleClient, ()>>,
 }
 
 impl McpManager {
@@ -21,7 +21,7 @@ impl McpManager {
     pub async fn from_config(cfg: McpConfig) -> Result<Self, McpError> {
         Ok(Self {
             cfg,
-            registry: Arc::new(Mutex::new(HashMap::new())),
+            registry: DashMap::new(),
         })
     }
 
@@ -44,18 +44,14 @@ impl McpManager {
         let service = Self::spawn_service(spec).await?;
 
         // Insert into registry
-        let mut guard = self.registry.lock().await;
-        guard.insert(id.clone(), service);
+        self.registry.insert(id.clone(), service);
         Ok(())
     }
 
     /// Cancel (stop) a running server. Returns NotFound if not running.
     pub async fn cancel(&self, id: &ServerId) -> Result<(), McpError> {
         // Remove from registry to drop it after cancel
-        let service = {
-            let mut guard = self.registry.lock().await;
-            guard.remove(id)
-        };
+        let service = self.registry.remove(id).map(|(_, svc)| svc);
 
         match service {
             Some(svc) => {
@@ -73,17 +69,15 @@ impl McpManager {
 
     /// Cancel all running servers.
     pub async fn cancel_all(&self) -> Result<(), McpError> {
-        // Take ownership of all services to avoid holding lock across awaits.
-        let services: Vec<(ServerId, RunningService<RoleClient, ()>)> = {
-            let mut guard = self.registry.lock().await;
-            let map = std::mem::take(&mut *guard);
-            map.into_iter().collect()
-        };
+        // Collect keys first to avoid holding references across awaits.
+        let keys: Vec<ServerId> = self.registry.iter().map(|kv| kv.key().clone()).collect();
 
-        for (id, svc) in services {
-            if let Err(e) = svc.cancel().await {
-                // Best-effort: continue canceling others
-                eprintln!("Warning: cancel failed for '{}': {}", id, e);
+        for id in keys {
+            if let Some((_, svc)) = self.registry.remove(&id) {
+                if let Err(e) = svc.cancel().await {
+                    // Best-effort: continue canceling others
+                    eprintln!("Warning: cancel failed for '{}': {}", id, e);
+                }
             }
         }
         Ok(())
@@ -91,8 +85,7 @@ impl McpManager {
 
     /// Check if a server is currently running.
     pub async fn is_running(&self, id: &ServerId) -> bool {
-        let guard = self.registry.lock().await;
-        guard.contains_key(id)
+        self.registry.contains_key(id)
     }
 
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {

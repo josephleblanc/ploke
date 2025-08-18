@@ -2,7 +2,7 @@ use crate::types::ServerId;
 use std::collections::BTreeMap;
 
 /// Specification for starting and managing a single MCP server.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ServerSpec {
     pub id: ServerId,
     pub command: String,
