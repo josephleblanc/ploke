@@ -9,7 +9,7 @@ pub mod clients;
 pub use config::{McpConfig, ServerSpec};
 pub use manager::McpManager;
 pub use clients::{context7::Context7Client, git::GitClient};
-pub use types::{McpError, ServerId, ToolDescriptor, ToolResult};
+pub use types::{McpError, ServerId, ToolDescriptor, ToolResult, GitOps, DocsLookup};
 
 // TODO: Add crate docs
 // TODO: Fix doc tests and doc comments to handle backticks correctly

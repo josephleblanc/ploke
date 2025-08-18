@@ -65,3 +65,21 @@ impl From<anyhow::Error> for McpError {
         McpError::Anyhow(value)
     }
 }
+
+/// Async traits to decouple typed clients from their backends.
+/// These enable swapping MCP-backed clients for native implementations later.
+#[async_trait::async_trait]
+pub trait GitOps: Send + Sync {
+    async fn status(&self, repo_path: &str) -> Result<String, McpError>;
+    async fn diff(&self, repo_path: &str, args: Option<Vec<String>>) -> Result<String, McpError>;
+    async fn add(&self, repo_path: &str, paths: Vec<String>) -> Result<String, McpError>;
+    async fn commit(&self, repo_path: &str, message: &str, all: bool) -> Result<String, McpError>;
+    async fn checkout(&self, repo_path: &str, branch: &str, create: bool) -> Result<String, McpError>;
+    async fn branch(&self, repo_path: &str) -> Result<String, McpError>;
+}
+
+#[async_trait::async_trait]
+pub trait DocsLookup: Send + Sync {
+    async fn resolve_library_id(&self, name: &str) -> Result<String, McpError>;
+    async fn get_library_docs(&self, id: &str, tokens: usize, topic: &str) -> Result<String, McpError>;
+}

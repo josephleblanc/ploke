@@ -46,3 +46,32 @@ impl<'a> Context7Client<'a> {
         Ok(result.text)
     }
 }
+
+#[async_trait::async_trait]
+impl<'a> crate::types::DocsLookup for Context7Client<'a> {
+    async fn resolve_library_id(&self, name: &str) -> Result<String, McpError> {
+        self.mgr.ensure_started(&self.id).await?;
+        let result = self
+            .mgr
+            .call_tool(&self.id, "resolve-library-id", json!({ "libraryName": name }))
+            .await?;
+        Ok(result.text)
+    }
+
+    async fn get_library_docs(&self, id: &str, tokens: usize, topic: &str) -> Result<String, McpError> {
+        self.mgr.ensure_started(&self.id).await?;
+        let result = self
+            .mgr
+            .call_tool(
+                &self.id,
+                "get-library-docs",
+                json!({
+                    "context7CompatibleLibraryID": id,
+                    "tokens": tokens,
+                    "topic": topic
+                }),
+            )
+            .await?;
+        Ok(result.text)
+    }
+}

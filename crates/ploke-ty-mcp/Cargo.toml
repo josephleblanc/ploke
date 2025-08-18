@@ -10,3 +10,4 @@ anyhow = "1.0"
 serde_json = { workspace = true }
 itertools = { workspace = true }
 dashmap = "6"
+async-trait = "0.1"
