@@ -21,6 +21,8 @@ use crate::{
     user_config::ProviderConfig,
 };
 use crate::app_state::handlers::rag as rag_handlers;
+use crate::{AppEvent, EventBus};
+use crate::app_state::{AppState, StateCommand};
 
 // API and Config
 
@@ -377,7 +379,7 @@ async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     provider: &ProviderConfig,
-    context: Option<llm::Event>,
+    context: Option<Event>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
