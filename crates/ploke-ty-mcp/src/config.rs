@@ -13,6 +13,8 @@ pub struct ServerSpec {
     pub env: BTreeMap<String, String>,
     pub autostart: bool,
     pub restart_on_exit: bool,
+    /// Optional default timeout for tool calls on this server (milliseconds).
+    pub default_timeout_ms: Option<u64>,
     /// Lower value = higher priority
     pub priority: u8,
 }
@@ -31,6 +33,8 @@ struct RawServer {
     autostart: Option<bool>,
     #[serde(default)]
     restart_on_exit: Option<bool>,
+    #[serde(default)]
+    default_timeout_ms: Option<u64>,
     #[serde(default)]
     priority: Option<u8>,
 }
@@ -75,6 +79,7 @@ impl McpConfig {
                 env: raw_srv.env.unwrap_or_default().into_iter().collect(),
                 autostart: raw_srv.autostart.unwrap_or(false),
                 restart_on_exit: raw_srv.restart_on_exit.unwrap_or(false),
+                default_timeout_ms: raw_srv.default_timeout_ms,
                 priority: raw_srv.priority.unwrap_or(100),
             };
             servers.push(spec);

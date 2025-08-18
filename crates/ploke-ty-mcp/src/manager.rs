@@ -120,7 +120,12 @@ impl McpManager {
             name: name.to_string().into(),
             arguments: args.as_object().cloned(),
         });
-        let result = tokio::time::timeout(Duration::from_secs(30), fut)
+        let timeout_ms = self
+            .cfg
+            .get(id)
+            .and_then(|s| s.default_timeout_ms)
+            .unwrap_or(30_000);
+        let result = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
             .await
             .map_err(|_| McpError::Timeout)?
             .map_err(|e| McpError::Tool(format!("call_tool '{}' on '{}' failed: {}", name, id, e)))?;
