@@ -116,3 +116,70 @@ impl McpConfig {
         Ok((cfg, path))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_parsing_sorting_and_defaults() {
+        let toml = r#"
+[servers.git]
+id = "git"
+command = "uvx"
+args = ["mcp-server-git"]
+autostart = true
+priority = 0
+
+[servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+restart_on_exit = false
+default_timeout_ms = 15000
+priority = 1
+
+[servers.foo]
+command = "/opt/custom/foo"
+priority = 10
+"#;
+
+        let cfg = McpConfig::from_toml_str(toml).expect("parse ok");
+        assert_eq!(cfg.servers.len(), 3, "should parse three servers");
+
+        // Sorted by ascending priority: 0, 1, 10
+        let ids: Vec<String> = cfg.servers.iter().map(|s| s.id.0.clone()).collect();
+        assert_eq!(ids, vec!["git", "context7", "foo"]);
+
+        // Defaults and explicit fields
+        let git = &cfg.servers[0];
+        assert_eq!(git.id.0, "git");
+        assert_eq!(git.command, "uvx");
+        assert_eq!(git.args, vec!["mcp-server-git"]);
+        assert!(git.autostart, "git autostart should be true");
+        assert_eq!(git.priority, 0);
+        assert_eq!(git.env.len(), 0);
+        assert_eq!(git.default_timeout_ms, None);
+
+        let ctx = &cfg.servers[1];
+        assert_eq!(ctx.id.0, "context7", "id should default from table key");
+        assert_eq!(ctx.command, "npx");
+        assert_eq!(ctx.args, vec!["-y", "@upstash/context7-mcp"]);
+        assert!(!ctx.autostart, "autostart defaults to false when not provided");
+        assert_eq!(ctx.priority, 1);
+        assert_eq!(ctx.default_timeout_ms, Some(15_000));
+
+        let foo = &cfg.servers[2];
+        assert_eq!(foo.id.0, "foo");
+        assert_eq!(foo.command, "/opt/custom/foo");
+        assert_eq!(foo.args.len(), 0, "args defaults to empty");
+        assert!(!foo.autostart);
+        assert_eq!(foo.priority, 10);
+    }
+
+    #[test]
+    fn default_config_path_shape() {
+        let path = McpConfig::default_config_path().expect("path");
+        assert_eq!(path.file_name().and_then(|s| s.to_str()), Some("mcp.toml"));
+        assert_eq!(path.extension().and_then(|s| s.to_str()), Some("toml"));
+    }
+}

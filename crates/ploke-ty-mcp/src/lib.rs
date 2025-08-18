@@ -1,7 +1,26 @@
-
-pub mod config;
-pub mod manager;
-pub mod types;
+ //! ploke-ty-mcp: typed async client for MCP servers (git, context7) built on rmcp.
+ //! Provides McpManager, typed clients GitClient and Context7Client, a config loader, timeouts,
+ //! cancellation, restart-on-exit, and tracing-based observability.
+ //! End-to-end tests are gated by PLOKE_E2E_MCP=1 and require uvx/npx on PATH.
+ //!
+ //! Quick start:
+ //! ```no_run
+ //! use ploke_ty_mcp::{McpManager, McpConfig};
+ //! # async fn run() -> Result<(), ploke_ty_mcp::McpError> {
+ //! let (cfg, _path) = McpConfig::load_default_file()?;
+ //! let mgr = McpManager::from_config(cfg).await?;
+ //! mgr.start_autostart().await?;
+ //! if let Some(git) = mgr.client_git() {
+ //!     let status = git.status(".").await?;
+ //!     println!("{status}");
+ //! }
+ //! # Ok(()) }
+ //! ```
+ //!
+ //! See PLAN.md for architecture and roadmap.
+ pub mod config;
+ pub mod manager;
+ pub mod types;
 pub mod clients;
 pub mod util;
 
@@ -19,5 +38,3 @@ pub async fn manager_from_default_config_autostart() -> Result<McpManager, McpEr
     Ok(mgr)
 }
 
-// TODO: Add crate docs
-// TODO: Fix doc tests and doc comments to handle backticks correctly
