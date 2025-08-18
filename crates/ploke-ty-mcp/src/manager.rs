@@ -1,6 +1,6 @@
 use crate::{
     config::{McpConfig, ServerSpec},
-    types::{McpError, ServerId},
+    types::{McpError, ServerId, ToolDescriptor, ToolResult},
 };
 use rmcp::{
     service::{RunningService, ServiceExt},
@@ -11,7 +11,6 @@ use rmcp::model::CallToolRequestParam;
 use dashmap::DashMap;
 use itertools::Itertools;
 use tokio::process::Command;
-use crate::types::ToolResult;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -124,6 +123,41 @@ impl McpManager {
             .join("\n");
 
         Ok(ToolResult { text })
+    }
+
+    /// List available tools on a running server.
+    pub async fn list_tools(&self, id: &ServerId) -> Result<Vec<ToolDescriptor>, McpError> {
+        // Ensure the server is started
+        self.ensure_started(id).await?;
+        let svc = self
+            .registry
+            .get(id)
+            .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+
+        // Query tools
+        let resp = svc
+            .list_tools(Default::default())
+            .await
+            .map_err(|e| McpError::Protocol(format!("list_tools on '{}' failed: {}", id, e)))?;
+
+        // Map response to our ToolDescriptor using a serde_json bridge for resilience
+        let val = serde_json::to_value(&resp)
+            .map_err(|e| McpError::Protocol(format!("Failed to serialize list_tools response: {}", e)))?;
+        let tools_val = val.get("tools").and_then(|v| v.as_array()).ok_or_else(|| {
+            McpError::Protocol("Unexpected list_tools response shape: missing 'tools' array".into())
+        })?;
+        let tools = tools_val
+            .iter()
+            .filter_map(|t| {
+                let name = t.get("name").and_then(|n| n.as_str())?;
+                let desc = t.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+                Some(ToolDescriptor {
+                    name: name.to_string(),
+                    description: desc,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(tools)
     }
 
     /// Convenience: get a typed Context7 client if configured.
