@@ -14,6 +14,7 @@ use tokio::process::Command;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use rand::Rng;
+use which::which;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -412,6 +413,15 @@ impl McpManager {
     #[tracing::instrument(skip(spec), fields(server_id = %spec.id, command = %spec.command))]
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {
         debug!("Launching '{}' with args {:?} and {} env vars", spec.command, spec.args, spec.env.len());
+        // Preflight: if command is not a path, ensure it exists on PATH for clearer errors
+        if !spec.command.contains(std::path::MAIN_SEPARATOR) {
+            if which::which(&spec.command).is_err() {
+                return Err(McpError::Spawn(format!(
+                    "Command '{}' not found on PATH",
+                    spec.command
+                )));
+            }
+        }
         let child = TokioChildProcess::new(
             Command::new(&spec.command).configure(|cmd| {
                 if !spec.args.is_empty() {
