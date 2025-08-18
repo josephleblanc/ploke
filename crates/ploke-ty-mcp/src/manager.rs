@@ -34,7 +34,7 @@ impl McpManager {
     #[tracing::instrument(skip(self), fields(server_id = %id))]
     pub async fn ensure_started(&self, id: &ServerId) -> Result<(), McpError> {
         // Fast path: already started
-        if self.is_running(id).await {
+        if self.is_running(id) {
             return Ok(());
         }
 
@@ -93,7 +93,7 @@ impl McpManager {
     }
 
     /// Check if a server is currently running.
-    pub async fn is_running(&self, id: &ServerId) -> bool {
+    pub fn is_running(&self, id: &ServerId) -> bool {
         self.registry.contains_key(id)
     }
 
@@ -338,7 +338,7 @@ impl McpManager {
         specs.sort_by_key(|s| s.priority);
 
         for spec in specs {
-            if !self.is_running(&spec.id).await {
+            if !self.is_running(&spec.id) {
                 let service = Self::spawn_with_backoff(spec, &spec.id).await?;
                 self.registry.insert(spec.id.clone(), service);
             }
