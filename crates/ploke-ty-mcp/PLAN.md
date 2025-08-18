@@ -47,8 +47,10 @@ Proposed Public API (Rust) – outline
     - pub async fn ensure_started(&self, id: &ServerId) -> Result<(), McpError>
     - pub async fn cancel(&self, id: &ServerId) -> Result<(), McpError>
     - pub async fn cancel_all(&self) -> Result<(), McpError>
+    - pub async fn start_autostart(&self) -> Result<(), McpError>
     - pub async fn list_tools(&self, id: &ServerId) -> Result<Vec<ToolDescriptor>, McpError>
     - pub async fn call_tool(&self, id: &ServerId, name: &str, args: serde_json::Value) -> Result<ToolResult, McpError>
+    - pub async fn call_tool_with_timeout(&self, id: &ServerId, name: &str, args: serde_json::Value, timeout: std::time::Duration) -> Result<ToolResult, McpError>
     - pub fn client_git(&self) -> Option<clients::git::GitClient>
     - pub fn client_context7(&self) -> Option<clients::context7::Context7Client>
 
@@ -62,6 +64,7 @@ Proposed Public API (Rust) – outline
       pub env: std::collections::BTreeMap<String, String>,
       pub autostart: bool,
       pub restart_on_exit: bool,
+      pub default_timeout_ms: Option<u64>, // per-server default tool-call timeout (ms); falls back to 30_000 if unset
       pub priority: u8, // lower = more important (git/context7 default to 0/1)
     }
 
@@ -133,12 +136,15 @@ Config Design
 
 - Environment
   - Allow per-server env overrides in config.
+  - Optional per-server default_timeout_ms (milliseconds) to control tool-call timeouts; default is 30000 if unset.
   - Security: optional allowlist for commands; warn on non-standard binaries.
 
 Cancellation and Timeouts
 - Each RunningService supports cancel(). Expose:
   - McpManager::cancel(id), cancel_all().
-- Tool calls accept an optional timeout in a future API; v0 uses tokio::time::timeout with a default.
+- Default timeouts: per-server default_timeout_ms (from config) is used, falling back to 30_000 ms.
+- Override per call: use McpManager::call_tool_with_timeout(id, tool, args, Duration).
+- Restart-on-exit: when restart_on_exit = true, failed tool calls and list_tools will attempt one on-demand respawn-and-retry, honoring the original timeout budget (no time extension).
 
 Observability
 - Use tracing: spans for server_start, list_tools, call_tool, cancel.
