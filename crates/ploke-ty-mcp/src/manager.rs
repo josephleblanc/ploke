@@ -160,19 +160,20 @@ impl McpManager {
 
             // Get a handle to the running service (drop guard before potential respawn)
             let result = {
-                let svc_guard = self
-                    .registry
-                    .get(id)
-                    .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                let svc = {
+                    let svc_guard = self
+                        .registry
+                        .get(id)
+                        .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                    svc_guard.clone()
+                };
 
                 debug!("Calling tool '{}', attempt {}", name, attempt + 1);
                 let start = Instant::now();
-                let fut = svc_guard.call_tool(CallToolRequestParam {
+                let fut = svc.call_tool(CallToolRequestParam {
                     name: name.to_string().into(),
                     arguments: args.as_object().cloned(),
                 });
-                // Drop guard before await beyond this point
-                drop(svc_guard);
 
                 tokio::time::timeout(remaining, fut)
                     .await
@@ -263,14 +264,15 @@ impl McpManager {
 
         loop {
             let result = {
-                let svc_guard = self
-                    .registry
-                    .get(id)
-                    .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                let svc = {
+                    let svc_guard = self
+                        .registry
+                        .get(id)
+                        .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                    svc_guard.clone()
+                };
 
-                let fut = svc_guard.list_tools(Default::default());
-                // Drop guard before await
-                drop(svc_guard);
+                let fut = svc.list_tools(Default::default());
 
                 fut.await.map_err(|e| {
                     McpError::Protocol(format!("list_tools on '{}' failed: {}", id, e))
