@@ -1,5 +1,6 @@
 pub mod registry;
 mod session;
+mod tool_call;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -545,6 +546,10 @@ async fn prepare_and_run_llm_call(
             if let Some(tool_calls) = resp_msg.tool_calls {
                 attempts += 1;
 
+                // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
+                let mut specs: Vec<tool_call::ToolCallSpec> = Vec::new();
+                let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
+
                 for call in tool_calls {
                     match call {
                         GenericToolCall::OpenAi(oc) => {
@@ -555,64 +560,60 @@ async fn prepare_and_run_llm_call(
                                 oc.function.name,
                                 oc.function.arguments
                             );
-
-                            // Subscribe before sending to avoid missing fast responses
-                            let rx = event_bus.realtime_tx.subscribe();
-
-                            // Emit System ToolCallRequested directly on realtime bus
-                            let request_id = Uuid::new_v4();
                             let arguments = serde_json::from_str::<Value>(&oc.function.arguments)
                                 .unwrap_or(json!({ "raw": oc.function.arguments }));
-                            tracing::info!(
-                                "Routing ToolCallRequested for function '{}' with call_id {}",
-                                oc.function.name,
-                                oc.id
-                            );
-                            let _ = event_bus
-                                .realtime_tx
-                                .send(AppEvent::System(SystemEvent::ToolCallRequested {
-                                    request_id,
-                                    parent_id,
-                                    vendor: ToolVendor::OpenAI,
-                                    name: oc.function.name.clone(),
-                                    arguments,
-                                    call_id: oc.id.clone(),
-                                }));
-
-                            // Wait for completion/failure correlated by (request_id, call_id)
-                            match session::await_tool_result(rx, request_id, &oc.id, 30).await {
-                                Ok(content) => {
-                                    messages.push(RequestMessage::new_tool(content, oc.id));
-                                }
-                                Err(err) => {
-                                    let sys_msg = format!(
-                                        "Tool call '{}' failed: {}.",
-                                        oc.function.name, err
-                                    );
-                                    messages.push(RequestMessage::new_system(sys_msg));
-                                    messages.push(RequestMessage::new_tool(
-                                        json!({"ok": false, "error": err}).to_string(),
-                                        oc.id,
-                                    ));
-                                }
-                            }
+                            specs.push(tool_call::ToolCallSpec {
+                                name: oc.function.name.clone(),
+                                arguments,
+                                call_id: oc.id.clone(),
+                                vendor: ToolVendor::OpenAI,
+                            });
                         }
                         GenericToolCall::Other(v) => {
                             tracing::warn!("Received non-OpenAI tool call payload: {}", v);
-                            // Placeholder: return a generic error back to the model
                             let call_id = v
                                 .get("id")
                                 .and_then(|x| x.as_str())
                                 .unwrap_or("unknown")
                                 .to_string();
-                            let err = "Unsupported tool call format".to_string();
-                            messages.push(RequestMessage::new_system(err.clone()));
-                            messages.push(RequestMessage::new_tool(
-                                json!({"ok": false, "error": err, "vendor": "other"}).to_string(),
-                                call_id,
-                            ));
+                            let err_json = json!({
+                                "ok": false,
+                                "error": "Unsupported tool call format",
+                                "vendor": "other"
+                            })
+                            .to_string();
+                            other_errors.push((call_id, err_json));
                         }
                     }
+                }
+
+                // Execute supported tool calls concurrently and append in stable order by call_id
+                if !specs.is_empty() {
+                    let outcomes = tool_call::execute_tool_calls(event_bus, parent_id, specs, 30).await;
+                    for (spec, result) in outcomes {
+                        match result {
+                            Ok(content) => {
+                                messages.push(RequestMessage::new_tool(content, spec.call_id));
+                            }
+                            Err(err) => {
+                                let sys_msg =
+                                    format!("Tool call '{}' failed: {}.", spec.name, err);
+                                messages.push(RequestMessage::new_system(sys_msg));
+                                messages.push(RequestMessage::new_tool(
+                                    json!({"ok": false, "error": err}).to_string(),
+                                    spec.call_id,
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Handle unsupported/other formats as immediate failures
+                for (call_id, err_json) in other_errors {
+                    messages.push(RequestMessage::new_system(
+                        "Unsupported tool call format".to_string(),
+                    ));
+                    messages.push(RequestMessage::new_tool(err_json, call_id));
                 }
 
                 if attempts > max_retries {
