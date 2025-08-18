@@ -1,5 +1,3 @@
-pub mod git_client;
-pub mod context7_client;
 
 pub mod config;
 pub mod manager;

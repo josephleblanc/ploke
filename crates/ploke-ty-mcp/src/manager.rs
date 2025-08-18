@@ -11,7 +11,7 @@ use rmcp::model::CallToolRequestParam;
 use dashmap::DashMap;
 use itertools::Itertools;
 use tokio::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
@@ -48,6 +48,14 @@ impl McpManager {
         // Start without holding the lock to avoid holding across .await
         info!("Starting server");
         let service = Self::spawn_service(spec).await?;
+
+        // Health check (list_tools) with a short timeout to verify responsiveness
+        let hc_timeout = Duration::from_millis(spec.default_timeout_ms.unwrap_or(30_000).min(5_000));
+        if let Err(e) = Self::health_check(id, &service, hc_timeout).await {
+            // Best-effort cancel on failed health check
+            let _ = service.cancel().await;
+            return Err(e);
+        }
 
         // Insert into registry
         self.registry.insert(id.clone(), service);
@@ -105,6 +113,34 @@ impl McpManager {
         name: &str,
         args: serde_json::Value,
     ) -> Result<ToolResult, McpError> {
+        let timeout_ms = self
+            .cfg
+            .get(id)
+            .and_then(|s| s.default_timeout_ms)
+            .unwrap_or(30_000);
+        self.do_call_tool(id, name, args, Duration::from_millis(timeout_ms)).await
+    }
+
+    /// Call a tool with an explicit timeout, overriding any configured default.
+    #[tracing::instrument(skip(self, args, timeout), fields(server_id = %id, tool = %name))]
+    pub async fn call_tool_with_timeout(
+        &self,
+        id: &ServerId,
+        name: &str,
+        args: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<ToolResult, McpError> {
+        self.do_call_tool(id, name, args, timeout).await
+    }
+
+    /// Internal helper to perform a tool call with the provided timeout.
+    async fn do_call_tool(
+        &self,
+        id: &ServerId,
+        name: &str,
+        args: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<ToolResult, McpError> {
         // Ensure the server is started
         self.ensure_started(id).await?;
 
@@ -114,18 +150,14 @@ impl McpManager {
             .get(id)
             .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
 
-        // Invoke the tool with a conservative timeout
+        // Invoke the tool with timeout
         debug!("Calling tool '{}'", name);
+        let start = Instant::now();
         let fut = svc.call_tool(CallToolRequestParam {
             name: name.to_string().into(),
             arguments: args.as_object().cloned(),
         });
-        let timeout_ms = self
-            .cfg
-            .get(id)
-            .and_then(|s| s.default_timeout_ms)
-            .unwrap_or(30_000);
-        let result = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
+        let result = tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| McpError::Timeout)?
             .map_err(|e| McpError::Tool(format!("call_tool '{}' on '{}' failed: {}", name, id, e)))?;
@@ -137,7 +169,8 @@ impl McpManager {
             .filter_map(|c| c.as_text().map(|t| t.to_owned().text))
             .join("\n");
 
-        debug!("Tool '{}' returned {} bytes of text", name, text.len());
+        let elapsed_ms = start.elapsed().as_millis();
+        debug!("Tool '{}' returned {} bytes of text in {} ms", name, text.len(), elapsed_ms);
         Ok(ToolResult { text })
     }
 
@@ -216,6 +249,16 @@ impl McpManager {
             }
         }
         Ok(())
+    }
+
+    /// Perform a basic health check on a newly started service by calling list_tools within a timeout.
+    async fn health_check(id: &ServerId, svc: &RunningService<RoleClient, ()>, timeout: Duration) -> Result<(), McpError> {
+        debug!("Health checking '{}'", id);
+        let fut = svc.list_tools(Default::default());
+        tokio::time::timeout(timeout, fut)
+            .await
+            .map_err(|_| McpError::Timeout)
+            .and_then(|r| r.map(|_| ()).map_err(|e| McpError::Protocol(format!("health_check list_tools on '{}' failed: {}", id, e))))
     }
 
     #[tracing::instrument(skip(spec), fields(server_id = %spec.id, command = %spec.command))]
