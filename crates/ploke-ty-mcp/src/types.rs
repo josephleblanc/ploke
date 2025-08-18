@@ -1,4 +1,5 @@
 use std::fmt;
+use thiserror::Error;
 
 /// Strongly-typed identifier for an MCP server instance.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -62,58 +63,32 @@ pub struct ToolResult {
 }
 
 /// Unified error type for MCP client operations.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum McpError {
+    #[error("Transport error: {0}")]
     Transport(String),
+    #[error("Protocol error: {0}")]
     Protocol(String),
+    #[error("Tool error: {0}")]
     Tool(String),
+    #[error("Spawn error: {0}")]
     Spawn(String),
+    #[error("Timeout")]
     Timeout,
+    #[error("Canceled")]
     Canceled,
+    #[error("Not found: {0}")]
     NotFound(String),
+    #[error("Config error: {0}")]
     Config(String),
-    Io(std::io::Error),
-    Anyhow(anyhow::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
 }
 
-impl fmt::Display for McpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            McpError::Transport(s) => write!(f, "Transport error: {}", s),
-            McpError::Protocol(s) => write!(f, "Protocol error: {}", s),
-            McpError::Tool(s) => write!(f, "Tool error: {}", s),
-            McpError::Spawn(s) => write!(f, "Spawn error: {}", s),
-            McpError::Timeout => write!(f, "Timeout"),
-            McpError::Canceled => write!(f, "Canceled"),
-            McpError::NotFound(s) => write!(f, "Not found: {}", s),
-            McpError::Config(s) => write!(f, "Config error: {}", s),
-            McpError::Io(e) => write!(f, "IO error: {}", e),
-            McpError::Anyhow(e) => write!(f, "{}", e),
-        }
-    }
-}
 
-impl std::error::Error for McpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            McpError::Io(e) => Some(e),
-            McpError::Anyhow(e) => Some(e.as_ref()),
-            _ => None,
-        }
-    }
-}
 
-impl From<std::io::Error> for McpError {
-    fn from(value: std::io::Error) -> Self {
-        McpError::Io(value)
-    }
-}
-
-impl From<anyhow::Error> for McpError {
-    fn from(value: anyhow::Error) -> Self {
-        McpError::Anyhow(value)
-    }
-}
 
 /// Async traits to decouple typed clients from their backends.
 /// These enable swapping MCP-backed clients for native implementations later.
