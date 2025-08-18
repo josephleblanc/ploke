@@ -164,7 +164,7 @@ impl McpManager {
         // Map response to our ToolDescriptor using a serde_json bridge for resilience
         let val = serde_json::to_value(&resp)
             .map_err(|e| McpError::Protocol(format!("Failed to serialize list_tools response: {}", e)))?;
-        let tools = map_tools_from_value(&val)?;
+        let tools = Self::map_tools_from_value(&val)?;
         Ok(tools)
     }
 
@@ -224,7 +224,7 @@ mod tests {
                 { "name": "git_diff" }
             ]
         });
-        let tools = map_tools_from_value(&val).expect("ok");
+        let tools = McpManager::map_tools_from_value(&val).expect("ok");
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "git_status");
         assert_eq!(tools[0].description.as_deref(), Some("List status"));
