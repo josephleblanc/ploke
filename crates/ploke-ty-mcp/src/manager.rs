@@ -11,6 +11,7 @@ use rmcp::model::CallToolRequestParam;
 use dashmap::DashMap;
 use itertools::Itertools;
 use tokio::process::Command;
+use std::time::Duration;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -106,13 +107,14 @@ impl McpManager {
             .get(id)
             .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
 
-        // Invoke the tool
-        let result = svc
-            .call_tool(CallToolRequestParam {
-                name: name.to_string().into(),
-                arguments: args.as_object().cloned(),
-            })
+        // Invoke the tool with a conservative timeout
+        let fut = svc.call_tool(CallToolRequestParam {
+            name: name.to_string().into(),
+            arguments: args.as_object().cloned(),
+        });
+        let result = tokio::time::timeout(Duration::from_secs(30), fut)
             .await
+            .map_err(|_| McpError::Timeout)?
             .map_err(|e| McpError::Tool(format!("call_tool '{}' on '{}' failed: {}", name, id, e)))?;
 
         // Aggregate all text content blocks into a single string
@@ -123,6 +125,25 @@ impl McpManager {
             .join("\n");
 
         Ok(ToolResult { text })
+    }
+
+    /// Map rmcp list_tools JSON Value into ToolDescriptor list.
+    fn map_tools_from_value(val: &serde_json::Value) -> Result<Vec<ToolDescriptor>, McpError> {
+        let tools_val = val.get("tools").and_then(|v| v.as_array()).ok_or_else(|| {
+            McpError::Protocol("Unexpected list_tools response shape: missing 'tools' array".into())
+        })?;
+        let tools = tools_val
+            .iter()
+            .filter_map(|t| {
+                let name = t.get("name").and_then(|n| n.as_str())?;
+                let desc = t.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+                Some(ToolDescriptor {
+                    name: name.to_string(),
+                    description: desc,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(tools)
     }
 
     /// List available tools on a running server.
@@ -143,20 +164,7 @@ impl McpManager {
         // Map response to our ToolDescriptor using a serde_json bridge for resilience
         let val = serde_json::to_value(&resp)
             .map_err(|e| McpError::Protocol(format!("Failed to serialize list_tools response: {}", e)))?;
-        let tools_val = val.get("tools").and_then(|v| v.as_array()).ok_or_else(|| {
-            McpError::Protocol("Unexpected list_tools response shape: missing 'tools' array".into())
-        })?;
-        let tools = tools_val
-            .iter()
-            .filter_map(|t| {
-                let name = t.get("name").and_then(|n| n.as_str())?;
-                let desc = t.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
-                Some(ToolDescriptor {
-                    name: name.to_string(),
-                    description: desc,
-                })
-            })
-            .collect::<Vec<_>>();
+        let tools = map_tools_from_value(&val)?;
         Ok(tools)
     }
 
@@ -201,5 +209,26 @@ impl McpManager {
             .map_err(|e| McpError::Transport(format!("Failed to connect to '{}': {}", spec.id, e)))?;
 
         Ok(service)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_tools_basic() {
+        let val = serde_json::json!({
+            "tools": [
+                { "name": "git_status", "description": "List status" },
+                { "name": "git_diff" }
+            ]
+        });
+        let tools = map_tools_from_value(&val).expect("ok");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "git_status");
+        assert_eq!(tools[0].description.as_deref(), Some("List status"));
+        assert_eq!(tools[1].name, "git_diff");
+        assert!(tools[1].description.is_none());
     }
 }
