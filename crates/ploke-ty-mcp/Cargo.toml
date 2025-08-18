@@ -16,3 +16,4 @@ toml = "0.8"
 dirs = "5"
 tracing = { version = "0.1", features = ["attributes"] }
 tracing-subscriber = { workspace = true }
+rand = "0.8"

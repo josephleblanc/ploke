@@ -13,6 +13,7 @@ use itertools::Itertools;
 use tokio::process::Command;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
+use rand::Rng;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -45,18 +46,9 @@ impl McpManager {
             )));
         };
 
-        // Start without holding the lock to avoid holding across .await
+        // Start with bounded exponential backoff and health check
         info!("Starting server");
-        let service = Self::spawn_service(spec).await?;
-
-        // Health check (list_tools) with a short timeout to verify responsiveness
-        let hc_timeout = Duration::from_millis(spec.default_timeout_ms.unwrap_or(30_000).min(5_000));
-        if let Err(e) = Self::health_check(id, &service, hc_timeout).await {
-            // Best-effort cancel on failed health check
-            let _ = service.cancel().await;
-            return Err(e);
-        }
-
+        let service = Self::spawn_with_backoff(spec, id).await?;
         // Insert into registry
         self.registry.insert(id.clone(), service);
         info!("Server started");
@@ -144,34 +136,96 @@ impl McpManager {
         // Ensure the server is started
         self.ensure_started(id).await?;
 
-        // Get a handle to the running service
-        let svc = self
-            .registry
+        let restart_on_exit = self
+            .cfg
             .get(id)
-            .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+            .map(|s| s.restart_on_exit)
+            .unwrap_or(false);
 
-        // Invoke the tool with timeout
-        debug!("Calling tool '{}'", name);
-        let start = Instant::now();
-        let fut = svc.call_tool(CallToolRequestParam {
-            name: name.to_string().into(),
-            arguments: args.as_object().cloned(),
-        });
-        let result = tokio::time::timeout(timeout, fut)
-            .await
-            .map_err(|_| McpError::Timeout)?
-            .map_err(|e| McpError::Tool(format!("call_tool '{}' on '{}' failed: {}", name, id, e)))?;
+        let start_total = Instant::now();
+        let max_attempts = if restart_on_exit { 2 } else { 1 };
+        let mut attempt = 0usize;
 
-        // Aggregate all text content blocks into a single string
-        let text = result
-            .content
-            .into_iter()
-            .filter_map(|c| c.as_text().map(|t| t.to_owned().text))
-            .join("\n");
+        loop {
+            // Compute remaining timeout budget
+            let elapsed = start_total.elapsed();
+            let remaining = if elapsed >= timeout {
+                Duration::from_millis(0)
+            } else {
+                timeout - elapsed
+            };
+            if remaining.is_zero() {
+                return Err(McpError::Timeout);
+            }
 
-        let elapsed_ms = start.elapsed().as_millis();
-        debug!("Tool '{}' returned {} bytes of text in {} ms", name, text.len(), elapsed_ms);
-        Ok(ToolResult { text })
+            // Get a handle to the running service (drop guard before potential respawn)
+            let result = {
+                let svc_guard = self
+                    .registry
+                    .get(id)
+                    .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+
+                debug!("Calling tool '{}', attempt {}", name, attempt + 1);
+                let start = Instant::now();
+                let fut = svc_guard.call_tool(CallToolRequestParam {
+                    name: name.to_string().into(),
+                    arguments: args.as_object().cloned(),
+                });
+                // Drop guard before await beyond this point
+                drop(svc_guard);
+
+                tokio::time::timeout(remaining, fut)
+                    .await
+                    .map_err(|_| McpError::Timeout)
+                    .and_then(|r| {
+                        r.map_err(|e| {
+                            McpError::Tool(format!(
+                                "call_tool '{}' on '{}' failed: {}",
+                                name, id, e
+                            ))
+                        })
+                    })
+                    .map(|res| {
+                        let text = res
+                            .content
+                            .into_iter()
+                            .filter_map(|c| c.as_text().map(|t| t.to_owned().text))
+                            .join("\n");
+                        let elapsed_ms = start.elapsed().as_millis();
+                        debug!(
+                            "Tool '{}' returned {} bytes of text in {} ms",
+                            name,
+                            text.len(),
+                            elapsed_ms
+                        );
+                        ToolResult { text }
+                    })
+            };
+
+            match result {
+                Ok(out) => return Ok(out),
+                Err(err) => {
+                    attempt += 1;
+                    if attempt >= max_attempts {
+                        return Err(err);
+                    }
+                    // Try to respawn and retry once if allowed
+                    warn!("Tool call failed; attempting respawn of '{}' and retry once: {}", id, format!("{err:?}"));
+                    if let Some(spec) = self.cfg.get(id).cloned() {
+                        // Best-effort respawn with backoff
+                        if let Err(respawn_err) = self.respawn_with_backoff(id, &spec).await {
+                            error!("Respawn failed for '{}': {}", id, respawn_err);
+                            // Give up and return original error
+                            return Err(err);
+                        }
+                        // Loop to retry with remaining timeout
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
     }
 
     /// Map rmcp list_tools JSON Value into ToolDescriptor list.
@@ -198,22 +252,61 @@ impl McpManager {
     pub async fn list_tools(&self, id: &ServerId) -> Result<Vec<ToolDescriptor>, McpError> {
         // Ensure the server is started
         self.ensure_started(id).await?;
-        let svc = self
-            .registry
+
+        let restart_on_exit = self
+            .cfg
             .get(id)
-            .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+            .map(|s| s.restart_on_exit)
+            .unwrap_or(false);
+        let max_attempts = if restart_on_exit { 2 } else { 1 };
+        let mut attempt = 0usize;
 
-        // Query tools
-        let resp = svc
-            .list_tools(Default::default())
-            .await
-            .map_err(|e| McpError::Protocol(format!("list_tools on '{}' failed: {}", id, e)))?;
+        loop {
+            let result = {
+                let svc_guard = self
+                    .registry
+                    .get(id)
+                    .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
 
-        // Map response to our ToolDescriptor using a serde_json bridge for resilience
-        let val = serde_json::to_value(&resp)
-            .map_err(|e| McpError::Protocol(format!("Failed to serialize list_tools response: {}", e)))?;
-        let tools = Self::map_tools_from_value(&val)?;
-        Ok(tools)
+                let fut = svc_guard.list_tools(Default::default());
+                // Drop guard before await
+                drop(svc_guard);
+
+                fut.await.map_err(|e| {
+                    McpError::Protocol(format!("list_tools on '{}' failed: {}", id, e))
+                })
+            };
+
+            match result {
+                Ok(resp) => {
+                    // Map response to our ToolDescriptor using a serde_json bridge for resilience
+                    let val = serde_json::to_value(&resp).map_err(|e| {
+                        McpError::Protocol(format!(
+                            "Failed to serialize list_tools response: {}",
+                            e
+                        ))
+                    })?;
+                    let tools = Self::map_tools_from_value(&val)?;
+                    return Ok(tools);
+                }
+                Err(err) => {
+                    attempt += 1;
+                    if attempt >= max_attempts {
+                        return Err(err);
+                    }
+                    warn!("list_tools failed; attempting respawn of '{}' and retry once: {}", id, format!("{err:?}"));
+                    if let Some(spec) = self.cfg.get(id).cloned() {
+                        if let Err(respawn_err) = self.respawn_with_backoff(id, &spec).await {
+                            error!("Respawn failed for '{}': {}", id, respawn_err);
+                            return Err(err);
+                        }
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
     }
 
     /// Convenience: get a typed Context7 client if configured.
@@ -244,7 +337,7 @@ impl McpManager {
 
         for spec in specs {
             if !self.is_running(&spec.id).await {
-                let service = Self::spawn_service(spec).await?;
+                let service = Self::spawn_with_backoff(spec, &spec.id).await?;
                 self.registry.insert(spec.id.clone(), service);
             }
         }
@@ -259,6 +352,59 @@ impl McpManager {
             .await
             .map_err(|_| McpError::Timeout)
             .and_then(|r| r.map(|_| ()).map_err(|e| McpError::Protocol(format!("health_check list_tools on '{}' failed: {}", id, e))))
+    }
+
+    /// Spawn a service with bounded exponential backoff and jitter, including an initial health check.
+    async fn spawn_with_backoff(spec: &ServerSpec, id: &ServerId) -> Result<RunningService<RoleClient, ()>, McpError> {
+        let mut attempt: u32 = 0;
+        let max_attempts: u32 = 5;
+        let mut last_err: Option<McpError> = None;
+
+        loop {
+            match Self::spawn_service(spec).await {
+                Ok(service) => {
+                    // Health check (list_tools) with a short timeout to verify responsiveness
+                    let hc_timeout = Duration::from_millis(spec.default_timeout_ms.unwrap_or(30_000).min(5_000));
+                    match Self::health_check(id, &service, hc_timeout).await {
+                        Ok(()) => return Ok(service),
+                        Err(e) => {
+                            // Best-effort cancel on failed health check and retry with backoff
+                            let _ = service.cancel().await;
+                            warn!("Health check failed for '{}': {}. Will retry with backoff.", id, e);
+                            last_err = Some(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Spawn failed for '{}': {}. Will retry with backoff.", id, e);
+                    last_err = Some(e);
+                }
+            }
+
+            attempt += 1;
+            if attempt >= max_attempts {
+                return Err(last_err.unwrap_or_else(|| McpError::Spawn(format!("Failed to start '{}'", id))));
+            }
+
+            // Exponential backoff with jitter: base 500ms, cap ~8s
+            let base = 500u64;
+            let backoff_ms = (base.saturating_mul(1u64 << attempt.min(4))) // 500,1_000,2_000,4_000,8_000
+                .min(8_000);
+            let jitter: u64 = rand::thread_rng().gen_range(0..=250);
+            let sleep_ms = backoff_ms + jitter;
+            debug!("Backoff sleeping for {} ms before retrying '{}'", sleep_ms, id);
+            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+        }
+    }
+
+    /// Best-effort respawn: cancel existing (if any), then spawn_with_backoff and insert.
+    async fn respawn_with_backoff(&self, id: &ServerId, spec: &ServerSpec) -> Result<(), McpError> {
+        if let Some((_, old)) = self.registry.remove(id) {
+            let _ = old.cancel().await;
+        }
+        let service = Self::spawn_with_backoff(spec, id).await?;
+        self.registry.insert(id.clone(), service);
+        Ok(())
     }
 
     #[tracing::instrument(skip(spec), fields(server_id = %spec.id, command = %spec.command))]
