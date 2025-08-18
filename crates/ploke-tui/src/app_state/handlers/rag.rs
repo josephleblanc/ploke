@@ -68,6 +68,7 @@ pub async fn handle_tool_call_requested(
     call_id: String,
 ) {
     tracing::info!("handle_tool_call_requested: vendor={:?}, name={}", vendor, name);
+    tracing::warn!("DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility.");
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
         let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {

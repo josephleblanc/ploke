@@ -133,17 +133,17 @@ fn request_code_context_tool_def() -> ToolDefinition {
 }
 
 #[derive(Deserialize, Debug)]
-struct OpenAiResponse {
+pub(super) struct OpenAiResponse {
     choices: Vec<Choice>,
 }
 
 #[derive(Deserialize, Debug)]
-struct Choice {
+pub(super) struct Choice {
     message: ResponseMessage,
 }
 
 #[derive(Deserialize, Debug)]
-struct ResponseMessage {
+pub(super) struct ResponseMessage {
     // When tool_calls are present, content may be null/absent
     content: Option<String>,
     #[serde(default)]
@@ -152,13 +152,13 @@ struct ResponseMessage {
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
-enum GenericToolCall {
+pub(super) enum GenericToolCall {
     OpenAi(OpenAiToolCall),
     Other(Value), // Placeholder for other vendor formats
 }
 
 #[derive(Deserialize, Debug)]
-struct OpenAiToolCall {
+pub(super) struct OpenAiToolCall {
     pub id: String,
     #[serde(rename = "type")]
     pub r#type: String, // should be "function"
@@ -166,7 +166,7 @@ struct OpenAiToolCall {
 }
 
 #[derive(Deserialize, Debug)]
-struct OpenAiToolFunctionCall {
+pub(super) struct OpenAiToolFunctionCall {
     pub name: String,
     pub arguments: String, // JSON string
 }
@@ -262,6 +262,7 @@ pub async fn llm_manager(
                     "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
                     vendor, request_id, parent_id, call_id, name, arguments
                 );
+                tracing::warn!("DEPRECATED: Routing tool calls via SystemEvent::ToolCallRequested; this path will be replaced by dedicated tool events in a future EventBus refactor.");
                 event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                     request_id,
                     parent_id,
@@ -273,6 +274,7 @@ pub async fn llm_manager(
             }
             AppEvent::System(SystemEvent::ToolCallRequested { request_id, parent_id, vendor, name, arguments, call_id }) => {
                 tracing::info!("Dispatching ToolCallRequested in system handler: name={}", name);
+                tracing::warn!("DEPRECATED PATH: SystemEvent::ToolCallRequested handling is deprecated and will be refactored into dedicated event types; retained for compatibility.");
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
@@ -453,194 +455,22 @@ async fn prepare_and_run_llm_call(
     drop(history_guard);
 
     let tools = vec![request_code_context_tool_def()];
-    let mut attempts: u32 = 0;
 
-    // TODO: This is an atrocious design pattern, use while/let and relocate the handling of the
-    // tool call to a separate file.
-    loop {
-        let history_budget_chars: usize = params
-            .max_tokens
-            .map(|t| (t as usize).saturating_mul(4))
-            .unwrap_or(12000);
-        let effective_messages = cap_messages_by_chars(&messages, history_budget_chars);
+    // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
+    let session = session::RequestSession::new(
+        client,
+        provider,
+        Arc::clone(event_bus),
+        parent_id,
+        messages,
+        tools,
+        params.clone(),
+    );
 
-        let request_payload = OpenAiRequest {
-            model: provider.model.as_str(),
-            messages: effective_messages,
-            temperature: params.temperature,
-            max_tokens: params.max_tokens,
-            top_p: params.top_p,
-            stream: false,
-            tools: Some(tools.clone()),
-            tool_choice: Some("auto".to_string()),
-        };
-
-        let response = client
-            .post(format!("{}/chat/completions", provider.base_url))
-            .bearer_auth(provider.resolve_api_key())
-            .json(&request_payload)
-            .send()
-            .await
-            .map_err(|e| LlmError::Request(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Could not retrieve error body".to_string());
-
-            let user_friendly_msg = if status == 401 {
-                format!(
-                    "Authentication failed. Please check your API key configuration.\n\nDetails {}",
-                    error_text
-                )
-            } else if status == 429 {
-                format!(
-                    "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
-                    error_text
-                )
-            } else if status >= 500 {
-                format!(
-                    "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
-                    error_text
-                )
-            } else {
-                format!("API error (status {}): {}", status, error_text)
-            };
-
-            return Err(LlmError::Api {
-                status,
-                message: user_friendly_msg,
-            });
-        }
-
-        let body = response
-            .text()
-            .await
-            .map_err(|e| LlmError::Request(e.to_string()))?;
-        tracing::debug!("raw body: {}", body);
-
-        // Providers sometimes put errors inside a 200 body
-        if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
-            if let Some(err_obj) = err.get("error") {
-                let msg = err_obj
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown provider error");
-                let code = err_obj.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
-                return Err(LlmError::Api {
-                    status: code as u16,
-                    message: msg.to_string(),
-                });
-            }
-        }
-
-        let response_body: OpenAiResponse = serde_json::from_str(&body)
-            .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
-        tracing::trace!("raw body response to request: {:#?}", body);
-
-        if let Some(choice) = response_body.choices.into_iter().next() {
-            let resp_msg = choice.message;
-
-            if let Some(tool_calls) = resp_msg.tool_calls {
-                attempts += 1;
-
-                // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                let mut specs: Vec<tool_call::ToolCallSpec> = Vec::new();
-                let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
-
-                for call in tool_calls {
-                    match call {
-                        GenericToolCall::OpenAi(oc) => {
-                            tracing::info!(
-                                "OpenAI tool call received: id={}, type={}, fn={}, args={}",
-                                oc.id,
-                                oc.r#type,
-                                oc.function.name,
-                                oc.function.arguments
-                            );
-                            let arguments = serde_json::from_str::<Value>(&oc.function.arguments)
-                                .unwrap_or(json!({ "raw": oc.function.arguments }));
-                            specs.push(tool_call::ToolCallSpec {
-                                name: oc.function.name.clone(),
-                                arguments,
-                                call_id: oc.id.clone(),
-                                vendor: ToolVendor::OpenAI,
-                            });
-                        }
-                        GenericToolCall::Other(v) => {
-                            tracing::warn!("Received non-OpenAI tool call payload: {}", v);
-                            let call_id = v
-                                .get("id")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let err_json = json!({
-                                "ok": false,
-                                "error": "Unsupported tool call format",
-                                "vendor": "other"
-                            })
-                            .to_string();
-                            other_errors.push((call_id, err_json));
-                        }
-                    }
-                }
-
-                // Execute supported tool calls concurrently and append in stable order by call_id
-                if !specs.is_empty() {
-                    let outcomes = tool_call::execute_tool_calls(event_bus, parent_id, specs, 30).await;
-                    for (spec, result) in outcomes {
-                        match result {
-                            Ok(content) => {
-                                messages.push(RequestMessage::new_tool(content, spec.call_id));
-                            }
-                            Err(err) => {
-                                let sys_msg =
-                                    format!("Tool call '{}' failed: {}.", spec.name, err);
-                                messages.push(RequestMessage::new_system(sys_msg));
-                                messages.push(RequestMessage::new_tool(
-                                    json!({"ok": false, "error": err}).to_string(),
-                                    spec.call_id,
-                                ));
-                            }
-                        }
-                    }
-                }
-
-                // Handle unsupported/other formats as immediate failures
-                for (call_id, err_json) in other_errors {
-                    messages.push(RequestMessage::new_system(
-                        "Unsupported tool call format".to_string(),
-                    ));
-                    messages.push(RequestMessage::new_tool(err_json, call_id));
-                }
-
-                if attempts > max_retries {
-                    return Err(LlmError::Unknown(format!(
-                        "Tool call retries exhausted after {} attempt(s)",
-                        attempts
-                    )));
-                }
-
-                // Continue loop to let the model observe tool outputs and respond
-                continue;
-            }
-
-            // No tool calls; finalize content
-            let content = resp_msg
-                .content
-                .unwrap_or_else(|| "No content received from API.".to_string());
-            return Ok(content);
-        } else {
-            return Err(LlmError::Deserialization(
-                "No choices in response".to_string(),
-            ));
-        }
-    }
+    session.run().await
 }
 
-fn cap_messages_by_chars(messages: &[RequestMessage], budget: usize) -> Vec<RequestMessage> {
+pub(super) fn cap_messages_by_chars(messages: &[RequestMessage], budget: usize) -> Vec<RequestMessage> {
     // Walk from the tail so we keep the most recent context, then reverse to restore order
     let mut used = 0usize;
     let mut kept: Vec<&RequestMessage> = Vec::new();
