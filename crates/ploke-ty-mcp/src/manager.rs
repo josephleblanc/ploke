@@ -110,7 +110,7 @@ impl McpManager {
         // Invoke the tool
         let result = svc
             .call_tool(CallToolRequestParam {
-                name: name.to_string(),
+                name: name.to_string().into(),
                 arguments: args.as_object().cloned(),
             })
             .await
