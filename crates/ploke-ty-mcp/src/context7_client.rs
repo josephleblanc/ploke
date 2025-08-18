@@ -294,7 +294,8 @@ pub async fn get_library_docs(
 ///
 /// #[derive(Component)]
 /// struct Position { x: f32, y: f32 }
-/// \`\`\`#
+/// \`\`\`
+/// "#;
 /// ```
 pub async fn resolve_library_id(
     service: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
