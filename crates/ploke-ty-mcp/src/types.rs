@@ -28,6 +28,28 @@ impl std::fmt::Display for ServerId {
     }
 }
 
+/// Well-known servers with suggested default priorities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrioritizedServer {
+    Git,
+    Context7,
+}
+
+impl PrioritizedServer {
+    pub fn id(self) -> ServerId {
+        match self {
+            PrioritizedServer::Git => ServerId("git".to_string()),
+            PrioritizedServer::Context7 => ServerId("context7".to_string()),
+        }
+    }
+    pub fn default_priority(self) -> u8 {
+        match self {
+            PrioritizedServer::Git => 0,
+            PrioritizedServer::Context7 => 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolDescriptor {
     pub name: String,

@@ -14,3 +14,4 @@ async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
+tracing = { version = "0.1", features = ["attributes"] }

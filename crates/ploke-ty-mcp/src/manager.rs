@@ -12,6 +12,7 @@ use dashmap::DashMap;
 use itertools::Itertools;
 use tokio::process::Command;
 use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -29,6 +30,7 @@ impl McpManager {
     }
 
     /// Ensure a server with the given id is started. No-op if already running.
+    #[tracing::instrument(skip(self), fields(server_id = %id))]
     pub async fn ensure_started(&self, id: &ServerId) -> Result<(), McpError> {
         // Fast path: already started
         if self.is_running(id).await {
@@ -44,14 +46,17 @@ impl McpManager {
         };
 
         // Start without holding the lock to avoid holding across .await
+        info!("Starting server");
         let service = Self::spawn_service(spec).await?;
 
         // Insert into registry
         self.registry.insert(id.clone(), service);
+        info!("Server started");
         Ok(())
     }
 
     /// Cancel (stop) a running server. Returns NotFound if not running.
+    #[tracing::instrument(skip(self), fields(server_id = %id))]
     pub async fn cancel(&self, id: &ServerId) -> Result<(), McpError> {
         // Remove from registry to drop it after cancel
         let service = self.registry.remove(id).map(|(_, svc)| svc);
@@ -71,6 +76,7 @@ impl McpManager {
     }
 
     /// Cancel all running servers.
+    #[tracing::instrument(skip(self))]
     pub async fn cancel_all(&self) -> Result<(), McpError> {
         // Collect keys first to avoid holding references across awaits.
         let keys: Vec<ServerId> = self.registry.iter().map(|kv| kv.key().clone()).collect();
@@ -79,7 +85,7 @@ impl McpManager {
             if let Some((_, svc)) = self.registry.remove(&id) {
                 if let Err(e) = svc.cancel().await {
                     // Best-effort: continue canceling others
-                    eprintln!("Warning: cancel failed for '{}': {}", id, e);
+                    warn!("Cancel failed for '{}': {}", id, e);
                 }
             }
         }
@@ -92,6 +98,7 @@ impl McpManager {
     }
 
     /// Call a tool on a server and aggregate textual content blocks.
+    #[tracing::instrument(skip(self, args), fields(server_id = %id, tool = %name))]
     pub async fn call_tool(
         &self,
         id: &ServerId,
@@ -108,6 +115,7 @@ impl McpManager {
             .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
 
         // Invoke the tool with a conservative timeout
+        debug!("Calling tool '{}'", name);
         let fut = svc.call_tool(CallToolRequestParam {
             name: name.to_string().into(),
             arguments: args.as_object().cloned(),
@@ -124,6 +132,7 @@ impl McpManager {
             .filter_map(|c| c.as_text().map(|t| t.to_owned().text))
             .join("\n");
 
+        debug!("Tool '{}' returned {} bytes of text", name, text.len());
         Ok(ToolResult { text })
     }
 
@@ -147,6 +156,7 @@ impl McpManager {
     }
 
     /// List available tools on a running server.
+    #[tracing::instrument(skip(self), fields(server_id = %id))]
     pub async fn list_tools(&self, id: &ServerId) -> Result<Vec<ToolDescriptor>, McpError> {
         // Ensure the server is started
         self.ensure_started(id).await?;
@@ -189,6 +199,7 @@ impl McpManager {
     }
 
     /// Start all servers marked as `autostart = true`, honoring `priority` (lower starts first).
+    #[tracing::instrument(skip(self))]
     pub async fn start_autostart(&self) -> Result<(), McpError> {
         let mut specs: Vec<&ServerSpec> = self.cfg.servers.iter().filter(|s| s.autostart).collect();
         specs.sort_by_key(|s| s.priority);
@@ -202,7 +213,9 @@ impl McpManager {
         Ok(())
     }
 
+    #[tracing::instrument(skip(spec), fields(server_id = %spec.id, command = %spec.command))]
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {
+        debug!("Launching '{}' with args {:?} and {} env vars", spec.command, spec.args, spec.env.len());
         let child = TokioChildProcess::new(
             Command::new(&spec.command).configure(|cmd| {
                 if !spec.args.is_empty() {
@@ -222,6 +235,7 @@ impl McpManager {
             .await
             .map_err(|e| McpError::Transport(format!("Failed to connect to '{}': {}", spec.id, e)))?;
 
+        info!("Connected to server process");
         Ok(service)
     }
 }
