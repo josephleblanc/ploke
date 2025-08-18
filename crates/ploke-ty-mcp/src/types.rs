@@ -28,6 +28,17 @@ impl std::fmt::Display for ServerId {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub text: String,
+}
+
 /// Unified error type for MCP client operations.
 #[derive(Debug)]
 pub enum McpError {

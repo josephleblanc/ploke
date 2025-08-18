@@ -7,8 +7,11 @@ use rmcp::{
     transport::{child_process::TokioChildProcess, ConfigureCommandExt},
     RoleClient,
 };
+use rmcp::model::CallToolRequestParam;
 use dashmap::DashMap;
+use itertools::Itertools;
 use tokio::process::Command;
+use crate::types::ToolResult;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
 pub struct McpManager {
@@ -86,6 +89,61 @@ impl McpManager {
     /// Check if a server is currently running.
     pub async fn is_running(&self, id: &ServerId) -> bool {
         self.registry.contains_key(id)
+    }
+
+    /// Call a tool on a server and aggregate textual content blocks.
+    pub async fn call_tool(
+        &self,
+        id: &ServerId,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, McpError> {
+        // Ensure the server is started
+        self.ensure_started(id).await?;
+
+        // Get a handle to the running service
+        let svc = self
+            .registry
+            .get(id)
+            .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+
+        // Invoke the tool
+        let result = svc
+            .call_tool(CallToolRequestParam {
+                name: name.to_string(),
+                arguments: args.as_object().cloned(),
+            })
+            .await
+            .map_err(|e| McpError::Tool(format!("call_tool '{}' on '{}' failed: {}", name, id, e)))?;
+
+        // Aggregate all text content blocks into a single string
+        let text = result
+            .content
+            .into_iter()
+            .filter_map(|c| c.as_text().map(|t| t.to_owned().text))
+            .join("\n");
+
+        Ok(ToolResult { text })
+    }
+
+    /// Convenience: get a typed Context7 client if configured.
+    pub fn client_context7(&self) -> Option<crate::clients::context7::Context7Client<'_>> {
+        let id: ServerId = "context7".into();
+        if self.cfg.get(&id).is_some() {
+            Some(crate::clients::context7::Context7Client::new(self))
+        } else {
+            None
+        }
+    }
+
+    /// Convenience: get a typed Git client if configured.
+    pub fn client_git(&self) -> Option<crate::clients::git::GitClient<'_>> {
+        let id: ServerId = "git".into();
+        if self.cfg.get(&id).is_some() {
+            Some(crate::clients::git::GitClient::new(self))
+        } else {
+            None
+        }
     }
 
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {

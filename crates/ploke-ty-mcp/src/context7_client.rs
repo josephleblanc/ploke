@@ -317,6 +317,10 @@ mod test {
     use super::*;
     #[tokio::test]
     async fn resolve_library_id_bevy() -> Result<()> {
+        if std::env::var("PLOKE_E2E_MCP").ok().as_deref() != Some("1") {
+            eprintln!("Skipping E2E Context7 test: set PLOKE_E2E_MCP=1 to enable.");
+            return Ok(());
+        }
         let service = ()
             .serve(TokioChildProcess::new(Command::new("npx").configure(
                 |cmd| {
@@ -351,6 +355,10 @@ mod test {
 
     #[tokio::test]
     async fn get_library_docs_bevy() -> Result<()> {
+        if std::env::var("PLOKE_E2E_MCP").ok().as_deref() != Some("1") {
+            eprintln!("Skipping E2E Context7 test: set PLOKE_E2E_MCP=1 to enable.");
+            return Ok(());
+        }
         let service = ()
             .serve(TokioChildProcess::new(Command::new("npx").configure(
                 |cmd| {
