@@ -76,6 +76,33 @@ pub enum McpError {
     Anyhow(anyhow::Error),
 }
 
+impl fmt::Display for McpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            McpError::Transport(s) => write!(f, "Transport error: {}", s),
+            McpError::Protocol(s) => write!(f, "Protocol error: {}", s),
+            McpError::Tool(s) => write!(f, "Tool error: {}", s),
+            McpError::Spawn(s) => write!(f, "Spawn error: {}", s),
+            McpError::Timeout => write!(f, "Timeout"),
+            McpError::Canceled => write!(f, "Canceled"),
+            McpError::NotFound(s) => write!(f, "Not found: {}", s),
+            McpError::Config(s) => write!(f, "Config error: {}", s),
+            McpError::Io(e) => write!(f, "IO error: {}", e),
+            McpError::Anyhow(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for McpError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            McpError::Io(e) => Some(e),
+            McpError::Anyhow(e) => Some(e.as_ref()),
+            _ => None,
+        }
+    }
+}
+
 impl From<std::io::Error> for McpError {
     fn from(value: std::io::Error) -> Self {
         McpError::Io(value)
