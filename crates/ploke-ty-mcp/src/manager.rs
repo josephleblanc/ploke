@@ -188,6 +188,20 @@ impl McpManager {
         }
     }
 
+    /// Start all servers marked as `autostart = true`, honoring `priority` (lower starts first).
+    pub async fn start_autostart(&self) -> Result<(), McpError> {
+        let mut specs: Vec<&ServerSpec> = self.cfg.servers.iter().filter(|s| s.autostart).collect();
+        specs.sort_by_key(|s| s.priority);
+
+        for spec in specs {
+            if !self.is_running(&spec.id).await {
+                let service = Self::spawn_service(spec).await?;
+                self.registry.insert(spec.id.clone(), service);
+            }
+        }
+        Ok(())
+    }
+
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {
         let child = TokioChildProcess::new(
             Command::new(&spec.command).configure(|cmd| {
