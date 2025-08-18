@@ -470,7 +470,7 @@ async fn prepare_and_run_llm_call(
     session.run().await
 }
 
-pub(super) fn cap_messages_by_chars(messages: &[RequestMessage], budget: usize) -> Vec<RequestMessage> {
+pub(super) fn cap_messages_by_chars<'a>(messages: &'a [RequestMessage<'a>], budget: usize) -> Vec<RequestMessage<'a>> {
     // Walk from the tail so we keep the most recent context, then reverse to restore order
     let mut used = 0usize;
     let mut kept: Vec<&RequestMessage> = Vec::new();
@@ -746,6 +746,14 @@ pub struct LLMParameters {
     /// Token limit for tool-provided context (sane default)
     #[serde(default)]
     pub tool_token_limit: Option<u32>,
+
+    /// Optional character budget for conversation history before each request
+    #[serde(default)]
+    pub history_char_budget: Option<usize>,
+
+    /// Per-tool call timeout in seconds
+    #[serde(default)]
+    pub tool_timeout_secs: Option<u64>,
 }
 
 /// Metadata about LLM execution
@@ -847,6 +855,8 @@ impl Default for LLMParameters {
             system_prompt: None,
             tool_max_retries: Some(2),
             tool_token_limit: Some(2048),
+            history_char_budget: Some(12000),
+            tool_timeout_secs: Some(30),
         }
     }
 }

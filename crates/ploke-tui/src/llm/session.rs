@@ -58,11 +58,15 @@ impl<'a> RequestSession<'a> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
 
         loop {
-            let history_budget_chars: usize = self
-                .params
-                .max_tokens
-                .map(|t| (t as usize).saturating_mul(4))
-                .unwrap_or(12000);
+            let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget {
+                budget
+            } else {
+                self
+                    .params
+                    .max_tokens
+                    .map(|t| (t as usize).saturating_mul(4))
+                    .unwrap_or(12000)
+            };
 
             let effective_messages = cap_messages_by_chars(&self.messages, history_budget_chars);
 
@@ -193,8 +197,13 @@ impl<'a> RequestSession<'a> {
                     // Execute supported tool calls concurrently and append in stable order by call_id
                     if !specs.is_empty() {
                         let outcomes =
-                            tool_call::execute_tool_calls(&self.event_bus, self.parent_id, specs, 30)
-                                .await;
+                            tool_call::execute_tool_calls(
+                                &self.event_bus,
+                                self.parent_id,
+                                specs,
+                                self.params.tool_timeout_secs.unwrap_or(30),
+                            )
+                            .await;
                         for (spec, result) in outcomes {
                             match result {
                                 Ok(content) => {
