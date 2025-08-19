@@ -189,3 +189,16 @@ Integrating a file watcher (e.g., using the `notify` crate) would enable proacti
 -   **`process_file` Complexity**: The `process_file` function in `src/lib.rs` is overly complex, handling file reading, parsing, hash verification, and snippet extraction in one large block with multiple exit points. It should be broken down into smaller, testable functions.
 -   **Hash Verification Logic**: The current implementation verifies the content hash against the hash from the *first* request in a batch for a given file (`requests[0]`). This is a potential bug if requests for the same file have different hashes. The logic should be made more robust.
 -   **Error Handling**: The conversion from the internal `IoError` to the workspace-wide `ploke_error::Error` is verbose and could be streamlined. Error propagation within `process_file` is also repetitive and could be simplified using the `?` operator.
+
+## Project Plan and Implementation Logs
+
+To move ploke-io to production readiness, see the phased roadmap and procedures:
+
+- Production Plan: crates/ploke-io/docs/production_plan.md
+- Implementation Logs (2-log window): crates/ploke-io/docs/implementation-log-000.md (newest first; keep only the latest two logs)
+
+Implementation process guidelines:
+
+- Each cohesive change should add a new implementation-log-NNN.md documenting rationale, summary of changes, verification, and next steps (referencing the plan).
+- Maintain a two-log window by removing the oldest log whenever a new one is added.
+- Keep PRs small, add/update tests with each change, and update docs alongside code.
