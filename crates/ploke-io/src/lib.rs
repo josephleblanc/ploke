@@ -856,6 +856,18 @@ mod tests {
         TrackingHash::generate(ploke_core::PROJECT_NAMESPACE_UUID, file_path, &tokens)
     }
 
+    // Helper that allows specifying namespace so tests align with per-request verification
+    fn tracking_hash_with_path_ns(
+        content: &str,
+        file_path: &std::path::Path,
+        namespace: Uuid,
+    ) -> TrackingHash {
+        let file = syn::parse_file(content).expect("Failed to parse content");
+        let tokens = file.into_token_stream();
+
+        TrackingHash::generate(namespace, file_path, &tokens)
+    }
+
     #[tokio::test]
     #[ignore = "needs redisign to have the id (NodeId) of file"]
     #[allow(unreachable_code)]
@@ -1003,8 +1015,8 @@ mod tests {
                 fs::write(&file_path, &content).unwrap();
                 EmbeddingData {
                     file_path: file_path.to_owned(),
-                    file_tracking_hash: tracking_hash_with_path(&content, &file_path),
-                    node_tracking_hash: tracking_hash_with_path(&content, &file_path),
+                    file_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
+                    node_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
                     start_byte: content.find("FILE").unwrap(),
                     end_byte: content.find("FILE").unwrap() + 8,
                     id: Uuid::new_v4(),
@@ -1034,9 +1046,9 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![EmbeddingData {
                 file_path: file_path.to_owned(),
-                file_tracking_hash: tracking_hash_with_path(content, &file_path),
+                file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-                node_tracking_hash: tracking_hash_with_path(content, &file_path),
+                node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
                 start_byte: 0,
                 end_byte: 1000,
                 id: Uuid::new_v4(),
@@ -1070,9 +1082,9 @@ mod tests {
         let namespace = Uuid::nil();
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
-            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-            node_tracking_hash: tracking_hash_with_path(content, &file_path),
+            node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
             start_byte: pos,
             end_byte: pos,
             id: Uuid::new_v4(),
@@ -1116,9 +1128,9 @@ mod tests {
             // Valid request 1: "valid"
             EmbeddingData {
                 file_path: file_path1.clone(),
-                file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+                file_tracking_hash: tracking_hash_with_path_ns(content1, &file_path1, namespace),
 
-                node_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+                node_tracking_hash: tracking_hash_with_path_ns(content1, &file_path1, namespace),
                 start_byte: content1.find("valid").unwrap(),
                 end_byte: content1.find("valid").unwrap() + 5,
                 id: Uuid::new_v4(),
@@ -1128,9 +1140,9 @@ mod tests {
             // Invalid request: non-existent file
             EmbeddingData {
                 file_path: non_existent_file.clone(),
-                file_tracking_hash: tracking_hash("fn dummy() {}"),
+                file_tracking_hash: tracking_hash_with_path_ns("fn dummy() {}", &non_existent_file, namespace),
 
-                node_tracking_hash: tracking_hash("fn dummy() {}"),
+                node_tracking_hash: tracking_hash_with_path_ns("fn dummy() {}", &non_existent_file, namespace),
                 start_byte: 0,
                 end_byte: 10,
                 id: Uuid::new_v4(),
@@ -1140,9 +1152,9 @@ mod tests {
             // Valid request 2: "another"
             EmbeddingData {
                 file_path: file_path2.clone(),
-                file_tracking_hash: tracking_hash_with_path(content2, &file_path2),
+                file_tracking_hash: tracking_hash_with_path_ns(content2, &file_path2, namespace),
 
-                node_tracking_hash: tracking_hash_with_path(content2, &file_path2),
+                node_tracking_hash: tracking_hash_with_path_ns(content2, &file_path2, namespace),
                 start_byte: content2.find("another").unwrap(),
                 end_byte: content2.find("another").unwrap() + 7,
                 id: Uuid::new_v4(),
@@ -1163,9 +1175,9 @@ mod tests {
             // Valid request 3: from file1 again
             EmbeddingData {
                 file_path: file_path1.clone(),
-                file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+                file_tracking_hash: tracking_hash_with_path_ns(content1, &file_path1, namespace),
 
-                node_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+                node_tracking_hash: tracking_hash_with_path_ns(content1, &file_path1, namespace),
                 start_byte: content1.find("fn").unwrap(),
                 end_byte: content1.find("fn").unwrap() + 2,
                 id: Uuid::new_v4(),
@@ -1354,9 +1366,9 @@ mod tests {
         // Valid snippet: whole multi-byte character
         let valid_request = EmbeddingData {
             file_path: file_path.clone(),
-            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-            node_tracking_hash: tracking_hash_with_path(content, &file_path),
+            node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
             start_byte: content.find("こ").unwrap(),
             end_byte: content.find("こ").unwrap() + "こ".len(),
             id: Uuid::new_v4(),
@@ -1367,9 +1379,9 @@ mod tests {
         // Invalid snippet: partial multi-byte character
         let invalid_request = EmbeddingData {
             file_path: file_path.clone(),
-            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-            node_tracking_hash: tracking_hash_with_path(content, &file_path),
+            node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
             start_byte: content.find("こ").unwrap() + 1,
             end_byte: content.find("こ").unwrap() + 2,
             id: Uuid::new_v4(),
@@ -1455,9 +1467,9 @@ mod tests {
             fs::write(&file_path, &content).unwrap();
             requests.push(EmbeddingData {
                 file_path: file_path.to_owned(),
-                file_tracking_hash: tracking_hash_with_path(&content, &file_path),
+                file_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
 
-                node_tracking_hash: tracking_hash_with_path(&content, &file_path),
+                node_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
                 start_byte: content.find("FILE").unwrap(),
                 end_byte: content.find("FILE").unwrap() + 8,
                 id: Uuid::new_v4(),
@@ -1590,7 +1602,10 @@ mod tests {
         tracing::debug!("Initializing test database");
 
         let embedding_data = setup_db_full_embeddings(fixture_name)?;
-        let data_expensive_clone = embedding_data.clone();
+        let flat_nodes: Vec<_> = embedding_data
+            .iter()
+            .flat_map(|emb| emb.v.iter().cloned())
+            .collect();
         // Add temporary tracing to inspect embedding data
         for data in &embedding_data {
             let ty = data.ty;
@@ -1605,17 +1620,16 @@ mod tests {
                 );
             }
         }
-        assert_ne!(0, embedding_data.len());
-        tracing::debug!(target: "handle", "{:?}", embedding_data.len());
+        assert_ne!(0, flat_nodes.len());
+        tracing::debug!(target: "handle", "{:?}", flat_nodes.len());
 
         for data in embedding_data.iter() {
             tracing::trace!(target: "handle", "{:#?}", data);
         }
-        let embeddings_count = embedding_data.len();
+        let embeddings_count = flat_nodes.len();
         let semaphore = Arc::new(Semaphore::new(50)); // defaulting to safe value
 
-        let embedding_data_nodes = embedding_data.into_iter().flat_map(|emb| emb.v).collect();
-        let snippets = IoManager::handle_read_snippet_batch(embedding_data_nodes, semaphore).await;
+        let snippets = IoManager::handle_read_snippet_batch(flat_nodes.clone(), semaphore).await;
         assert_eq!(embeddings_count, snippets.len());
 
         let mut s_iter = snippets.iter();
@@ -1634,9 +1648,8 @@ mod tests {
             match s {
                 Ok(snip) => {
                     correct += 1;
-                    if let Some(embed_data) = data_expensive_clone
+                    if let Some(embed_data) = flat_nodes
                         .iter()
-                        .flat_map(|emb| emb.v.iter())
                         .find(|emb| snip.contains(&emb.name))
                     {
                         tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);
@@ -1657,7 +1670,7 @@ mod tests {
             );
         }
 
-        for (i, (s, embed_data)) in snippets.iter().zip(data_expensive_clone.iter()).enumerate() {
+        for (i, (s, embed_data)) in snippets.iter().zip(flat_nodes.iter()).enumerate() {
             assert!(
                 s.is_ok(),
                 "snippet is error: {:?} \n\t| processing {}/{}\n\t| {:.2}% correct\nEmbedding data errored on: {:#?}",
