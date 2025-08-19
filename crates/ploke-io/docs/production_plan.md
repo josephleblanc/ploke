@@ -214,4 +214,4 @@ Progress Update — 2025-08-18
 - Backward-compatible: IoManagerHandle::new() retained; added IoManagerHandle::builder().
 - Unit tests added for limit computation precedence and clamping.
 - Path policy basics enforced: when roots are configured, read and scan requests for files outside the roots are rejected early with InvalidInput errors (Phase 1).
-- Phase 3 (in progress): scan_changes_batch now preserves input order deterministically while maintaining bounded concurrency.
+- Phase 3: scan_changes_batch preserves input order deterministically while maintaining bounded concurrency; next, add unit tests to verify ordering and bounded concurrency under load.
