@@ -2217,4 +2217,113 @@ mod tests {
             Err(PlokeError::Fatal(FatalError::FileOperation { .. }))
         ));
     }
+
+    #[tokio::test]
+    async fn test_scan_changes_preserves_input_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let namespace = uuid::Uuid::new_v4();
+
+        // Helper to create an unchanged file (hash matches content)
+        let make_unchanged = |name: &str, content: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            let hash = tracking_hash_with_path_ns(content, &path, namespace);
+            FileData {
+                id: uuid::Uuid::new_v4(),
+                namespace,
+                file_tracking_hash: hash,
+                file_path: path,
+            }
+        };
+
+        // Helper to create a changed file (stored hash is from old content; file is then modified)
+        let make_changed = |name: &str, old_content: &str, new_content: &str| {
+            let path = dir.path().join(name);
+            // Write old, compute hash, then overwrite with new
+            std::fs::write(&path, old_content).unwrap();
+            let old_hash = tracking_hash_with_path_ns(old_content, &path, namespace);
+            std::fs::write(&path, new_content).unwrap();
+            FileData {
+                id: uuid::Uuid::new_v4(),
+                namespace,
+                file_tracking_hash: old_hash,
+                file_path: path,
+            }
+        };
+
+        // Build requests in specific order: U C U C U
+        let reqs = vec![
+            make_unchanged("f0.rs", "fn a() {}"),
+            make_changed("f1.rs", "fn b_old() {}", "fn b_new() {}"),
+            make_unchanged("f2.rs", "fn c() {}"),
+            make_changed("f3.rs", "fn d_old() {}", "fn d_new() {}"),
+            make_unchanged("f4.rs", "fn e() {}"),
+        ];
+
+        let handle = IoManagerHandle::new();
+        let result = handle.scan_changes_batch(reqs).await.unwrap();
+        let ordered = result.expect("scan should succeed");
+
+        assert_eq!(ordered.len(), 5);
+        assert!(ordered[0].is_none(), "index 0 should be unchanged");
+        assert!(ordered[1].is_some(), "index 1 should be changed");
+        assert!(ordered[2].is_none(), "index 2 should be unchanged");
+        assert!(ordered[3].is_some(), "index 3 should be changed");
+        assert!(ordered[4].is_none(), "index 4 should be unchanged");
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_scan_changes_bounded_concurrency() {
+        let permits = 4usize;
+
+        // Enable test instrumentation to measure max concurrent scans
+        crate::test_instrumentation::reset();
+        crate::test_instrumentation::enable();
+        crate::test_instrumentation::set_delay_ms(25);
+
+        let handle = IoManagerHandle::builder()
+            .with_semaphore_permits(permits)
+            .build();
+
+        let dir = tempfile::tempdir().unwrap();
+        let namespace = uuid::Uuid::new_v4();
+
+        let mut reqs = Vec::new();
+        for i in 0..32 {
+            let path = dir.path().join(format!("g{:02}.rs", i));
+            let old = format!("fn f{}() {{}}", i);
+            std::fs::write(&path, &old).unwrap();
+            let old_hash = tracking_hash_with_path_ns(&old, &path, namespace);
+
+            // Change file after computing old hash so it registers as "changed"
+            let new = format!("fn f{}() {{ let _x: usize = {}; }}", i, i);
+            std::fs::write(&path, &new).unwrap();
+
+            reqs.push(FileData {
+                id: uuid::Uuid::new_v4(),
+                namespace,
+                file_tracking_hash: old_hash,
+                file_path: path,
+            });
+        }
+
+        let result = handle.scan_changes_batch(reqs).await.unwrap();
+        let ordered = result.expect("scan should succeed");
+
+        // All files should be detected as changed
+        assert!(ordered.iter().all(|o| o.is_some()));
+
+        // Verify measured concurrency never exceeded permit count
+        let max = crate::test_instrumentation::max();
+        assert!(
+            max <= permits,
+            "observed concurrent scans {} exceeds permits {}",
+            max,
+            permits
+        );
+
+        handle.shutdown().await;
+    }
 }

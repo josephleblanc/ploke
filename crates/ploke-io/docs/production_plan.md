@@ -214,8 +214,7 @@ Progress Update — 2025-08-18
 - Backward-compatible: IoManagerHandle::new() retained; added IoManagerHandle::builder().
 - Unit tests added for limit computation precedence and clamping.
 - Path policy basics enforced: when roots are configured, read and scan requests for files outside the roots are rejected early with InvalidInput errors (Phase 1).
-- Phase 3: scan_changes_batch preserves input order deterministically while maintaining bounded concurrency; added internal test instrumentation to measure concurrent scan operations without affecting production behavior.
-- Blocker: Adding scan ordering/concurrency unit tests requires constructing ploke_core::FileData in tests; please add the FileData definition (fields or builder) to enable creating test inputs, or expose a helper to construct FileData for tests.
+- Phase 3: scan_changes_batch preserves input order deterministically while maintaining bounded concurrency; unit tests added to verify ordering and to measure bounded concurrency under load using internal test instrumentation.
 ```rust
 // from crates/ploke-core/src/mod.rs
 #[derive(Debug, Clone)]
