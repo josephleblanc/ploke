@@ -1,7 +1,8 @@
+use ploke_core::{WriteResult, WriteSnippetData};
 use crate::{
     path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
-    write::{write_snippets_batch, WriteResult, WriteSnippetData},
+    write::write_snippets_batch,
 };
 #[cfg(test)]
 use crate::scan::test_instrumentation;

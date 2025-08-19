@@ -15,31 +15,35 @@ Notes:
 
 use super::*;
 use std::path::PathBuf;
+use ploke_core::{WriteResult, WriteSnippetData};
 use tokio::io::AsyncWriteExt;
 
-/// Placeholder structures to be replaced by shared types in ploke-core.
-#[derive(Debug, Clone)]
-pub(crate) struct WriteSnippetData {
-    pub id: uuid::Uuid,
-    pub name: String,
-    pub file_path: PathBuf,
-    pub expected_file_hash: TrackingHash,
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub replacement: String,
-    pub namespace: uuid::Uuid,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct WriteResult {
-    pub new_file_hash: TrackingHash,
-}
-
-impl WriteResult {
-    pub fn new(new_file_hash: TrackingHash) -> Self {
-        Self { new_file_hash }
-    }
-}
+// `WriteSnippetData` and `WriteResult` moved to ploke-core
+// If changes are needed, share details in implementation-log and USER will propogate them to
+// ploke-core (this is to save context while developing, as ploke-core is a large mono-file lib.rs)
+//
+// #[derive(Debug, Clone)]
+// pub struct WriteSnippetData {
+//     pub id: uuid::Uuid,
+//     pub name: String,
+//     pub file_path: PathBuf,
+//     pub expected_file_hash: TrackingHash,
+//     pub start_byte: usize,
+//     pub end_byte: usize,
+//     pub replacement: String,
+//     pub namespace: uuid::Uuid,
+// }
+//
+// #[derive(Debug, Clone)]
+// pub struct WriteResult {
+//     pub new_file_hash: TrackingHash,
+// }
+//
+// impl WriteResult {
+//     pub fn new(new_file_hash: TrackingHash) -> Self {
+//         Self { new_file_hash }
+//     }
+// }
 
 async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError> {
     use crate::read::{parse_tokens_from_str, read_file_to_string_abs};
