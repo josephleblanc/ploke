@@ -1439,13 +1439,13 @@ mod tests {
 
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::FileOperation { .. })
-        ));
+            PlokeError::Fatal(FatalError::FileOperation { .. }),
+        ), "actual error found: {:?}", results[0]);
 
         assert!(matches!(
             results[1].as_ref().unwrap_err(),
             PlokeError::Fatal(FatalError::FileOperation { .. })
-        ));
+        ), "actual error found: {:?}", results[1]);
     }
 
     #[tokio::test]
