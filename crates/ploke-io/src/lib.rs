@@ -58,6 +58,77 @@ use std::thread;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
+#[cfg(test)]
+mod test_instrumentation {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static CURRENT: AtomicUsize = AtomicUsize::new(0);
+    static MAX: AtomicUsize = AtomicUsize::new(0);
+    static DELAY_MS: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct Guard(bool);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if self.0 {
+                CURRENT.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    pub fn reset() {
+        ENABLED.store(false, Ordering::SeqCst);
+        CURRENT.store(0, Ordering::SeqCst);
+        MAX.store(0, Ordering::SeqCst);
+        DELAY_MS.store(0, Ordering::SeqCst);
+    }
+
+    pub fn enable() {
+        ENABLED.store(true, Ordering::SeqCst);
+    }
+
+    pub fn set_delay_ms(ms: usize) {
+        DELAY_MS.store(ms, Ordering::SeqCst);
+    }
+
+    pub fn max() -> usize {
+        MAX.load(Ordering::SeqCst)
+    }
+
+    pub fn enter() -> Guard {
+        if !ENABLED.load(Ordering::SeqCst) {
+            return Guard(false);
+        }
+        let cur = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+        // Update max if needed
+        loop {
+            let prev = MAX.load(Ordering::SeqCst);
+            if cur > prev {
+                if MAX
+                    .compare_exchange(prev, cur, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    break;
+                } else {
+                    continue;
+                }
+            } else {
+                break;
+            }
+        }
+        Guard(true)
+    }
+
+    pub async fn maybe_sleep() {
+        let ms = DELAY_MS.load(Ordering::SeqCst);
+        if ms > 0 {
+            tokio::time::sleep(Duration::from_millis(ms as u64)).await;
+        }
+    }
+}
+
 /// A handle to the IoManager actor.
 /// Used by other parts of the application to send requests.
 #[derive(Clone, Debug)]
@@ -812,6 +883,10 @@ impl IoManager {
             .acquire()
             .await
             .map_err(|_| IoError::ShutdownInitiated)?;
+        #[cfg(test)]
+        let _probe_guard = crate::test_instrumentation::enter();
+        #[cfg(test)]
+        crate::test_instrumentation::maybe_sleep().await;
         let file_content = read_file_to_string_abs(&file_data.file_path).await?;
         let tokens = parse_tokens_from_str(&file_content, &file_data.file_path)?;
 
