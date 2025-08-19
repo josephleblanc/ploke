@@ -6,6 +6,20 @@ fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Strict canonicalization that returns an IoError on failure.
+/// This ensures the path exists and we avoid accidental traversal outside roots.
+fn canonicalize_strict(path: &Path, operation: &'static str) -> Result<PathBuf, IoError> {
+    match std::fs::canonicalize(path) {
+        Ok(p) => Ok(p),
+        Err(e) => Err(IoError::FileOperation {
+            operation,
+            path: path.to_path_buf(),
+            kind: e.kind(),
+            source: Arc::new(e),
+        }),
+    }
+}
+
 pub(crate) fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
     let path_canon = canonicalize_best_effort(path);
     roots
@@ -25,7 +39,8 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
             kind: std::io::ErrorKind::InvalidInput,
         });
     }
-    let canon = canonicalize_best_effort(path);
+    // Strictly canonicalize the file path; fail if it cannot be resolved.
+    let canon = canonicalize_strict(path, "read")?;
     if path_within_roots(&canon, roots) {
         Ok(canon)
     } else {

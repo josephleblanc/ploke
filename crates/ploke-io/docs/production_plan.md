@@ -289,3 +289,16 @@ Progress Update — 2025-08-19 (Watcher scaffolding)
   - IoManagerHandle: subscribe_file_events() available when built with the "watcher" feature.
   - Cargo: new optional dependency "notify" and feature "watcher".
 - Process: maintain the 2-log window by removing the oldest implementation log after committing 011.
+
+Progress Update — 2025-08-19 (Phase 4 completion + Phase 7 hardening)
+- Phase 4 (Watcher) completed:
+  - Implemented debouncing and basic coalescing of notify events using an internal aggregator with configurable debounce interval.
+  - Added origin correlation field (origin: Option<Uuid>) in FileChangeEvent for future echo suppression during writes.
+  - Added old_path: Option<PathBuf> to FileChangeEvent to represent rename pairs when available.
+- Phase 7 (Path policy) hardening:
+  - normalize_against_roots now uses strict canonicalization that fails when the path cannot be resolved, preventing reads outside roots via non-existent or invalid paths.
+  - Continued using canonicalized comparisons against configured roots; builder pre-canonicalizes provided roots.
+
+Next
+- Write-path (Phase 5) scaffolding: per-file locking API and origin propagation into watcher events.
+- Additional Phase 7 items: configurable symlink policy and improved error redaction for user-facing messages.
