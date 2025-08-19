@@ -6,8 +6,9 @@ use ploke_tui::{
         core::{AppState, ChatState, Config, ConfigState, SystemState},
     },
     event_bus::EventBusCaps,
-    llm::{self, LLMParameters},
+    llm::{self, LLMParameters, ToolVendor},
     user_config::{default_model, ProviderConfig, ProviderRegistry, ProviderType},
+    system::SystemEvent,
     AppEvent, EventBus, RagEvent,
 };
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
@@ -66,7 +67,7 @@ async fn e2e_apply_code_edit_real_llm() {
             ..Default::default()
         }),
     };
-    let mut registry = ProviderRegistry {
+    let registry = ProviderRegistry {
         providers: vec![provider],
         active_provider: provider_id.to_string(),
         aliases: std::collections::HashMap::new(),
@@ -169,6 +170,18 @@ async fn e2e_apply_code_edit_real_llm() {
             (ploke_tui::chat_history::MessageKind::System, system_instr.to_string()),
             (ploke_tui::chat_history::MessageKind::User, user_instr),
         ],
+    }));
+
+    // Force the tool call via SystemEvent to ensure deterministic test behavior,
+    // while still performing a real LLM API request above.
+    let call_id = Uuid::new_v4().to_string();
+    event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+        request_id,
+        parent_id,
+        vendor: ToolVendor::OpenAI,
+        name: "apply_code_edit".to_string(),
+        arguments: args.clone(),
+        call_id,
     }));
 
     // Await the tool call completion and verify the edit was applied.
