@@ -48,6 +48,10 @@ pub struct IoManagerBuilder {
     semaphore_permits: Option<usize>,
     fd_limit: Option<usize>,
     roots: Vec<PathBuf>,
+    #[cfg(feature = "watcher")]
+    enable_watcher: bool,
+    #[cfg(feature = "watcher")]
+    watcher_debounce: std::time::Duration,
 }
 
 impl IoManagerBuilder {
@@ -75,9 +79,28 @@ impl IoManagerBuilder {
         self
     }
 
+    /// Enable or disable the file watcher (feature-gated).
+    #[cfg(feature = "watcher")]
+    pub fn enable_watcher(mut self, enabled: bool) -> Self {
+        self.enable_watcher = enabled;
+        self
+    }
+
+    /// Set the watcher debounce interval (feature-gated).
+    #[cfg(feature = "watcher")]
+    pub fn with_watcher_debounce(mut self, debounce: std::time::Duration) -> Self {
+        self.watcher_debounce = debounce;
+        self
+    }
+
     /// Build an IoManagerHandle with the configured options.
     pub fn build(self) -> IoManagerHandle {
         let (tx, rx) = mpsc::channel(100);
+
+        #[cfg(feature = "watcher")]
+        let (events_tx, _) = tokio::sync::broadcast::channel(1024);
+        #[cfg(feature = "watcher")]
+        let events_tx_for_handle = events_tx.clone();
 
         thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -111,13 +134,34 @@ impl IoManagerBuilder {
                 Some(roots)
             };
 
+            // Start watcher thread if enabled and roots are configured (feature-gated).
+            #[cfg(feature = "watcher")]
+            {
+                if self.enable_watcher {
+                    if let Some(ref roots) = roots_opt {
+                        let debounce = if self.watcher_debounce == std::time::Duration::default() {
+                            std::time::Duration::from_millis(250)
+                        } else {
+                            self.watcher_debounce
+                        };
+                        let _watcher_handle =
+                            crate::watcher::start_watcher(roots.clone(), debounce, events_tx.clone());
+                        // intentionally detached; process lifetime-bound
+                    }
+                }
+            }
+
             rt.block_on(async {
                 let manager = IoManager::new_with(rx, effective_permits, roots_opt);
                 manager.run().await;
             });
         });
 
-        IoManagerHandle { request_sender: tx }
+        IoManagerHandle {
+            request_sender: tx,
+            #[cfg(feature = "watcher")]
+            events_tx: Some(events_tx_for_handle),
+        }
     }
 }
 

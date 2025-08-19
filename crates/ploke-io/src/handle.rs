@@ -6,6 +6,8 @@ use super::*;
 pub struct IoManagerHandle {
     /// Channel sender to send requests to the IoManager
     pub(crate) request_sender: mpsc::Sender<IoManagerMessage>,
+    #[cfg(feature = "watcher")]
+    pub(crate) events_tx: Option<tokio::sync::broadcast::Sender<FileChangeEvent>>,
 }
 
 impl Default for IoManagerHandle {
@@ -31,7 +33,11 @@ impl IoManagerHandle {
             });
         });
 
-        Self { request_sender: tx }
+        Self {
+            request_sender: tx,
+            #[cfg(feature = "watcher")]
+            events_tx: None,
+        }
     }
 
     /// Create a builder to configure IoManager before starting it.
@@ -79,6 +85,15 @@ impl IoManagerHandle {
             .await
             .map_err(|_| RecvError::RecvError)
             .map_err(IoError::from)
+    }
+
+    /// Subscribe to file change events (requires `watcher` feature and enabled watcher).
+    #[cfg(feature = "watcher")]
+    pub fn subscribe_file_events(&self) -> tokio::sync::broadcast::Receiver<FileChangeEvent> {
+        self.events_tx
+            .as_ref()
+            .expect("Watcher not enabled; use IoManagerBuilder::enable_watcher(true)")
+            .subscribe()
     }
 
     /// Sends a shutdown signal to the IoManager.

@@ -281,3 +281,11 @@ Progress Update — 2025-08-19
 Notes
 - To maintain a two-log window, keep implementation-log-009.md and -010.md. Remove older logs as described in Implementation Log 010.
 - For continued work, we will add/remove files to the active chat as needed to minimize token usage, per Implementation Log 010 guidance.
+
+Progress Update — 2025-08-19 (Watcher scaffolding)
+- Phase 4 initial scaffolding:
+  - Added feature-gated watcher module using notify with a background thread broadcasting FileChangeEvent via tokio::broadcast.
+  - IoManagerBuilder: enable_watcher(bool) and with_watcher_debounce(Duration).
+  - IoManagerHandle: subscribe_file_events() available when built with the "watcher" feature.
+  - Cargo: new optional dependency "notify" and feature "watcher".
+- Process: maintain the 2-log window by removing the oldest implementation log after committing 011.

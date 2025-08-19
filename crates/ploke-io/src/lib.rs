@@ -56,6 +56,10 @@ pub use handle::IoManagerHandle;
 pub mod path_policy;
 pub mod read;
 pub mod scan;
+#[cfg(feature = "watcher")]
+pub mod watcher;
+#[cfg(feature = "watcher")]
+pub use watcher::{FileChangeEvent, FileEventKind};
 mod tests_skeleton;
 use futures::future::join_all;
 use itertools::Itertools;
