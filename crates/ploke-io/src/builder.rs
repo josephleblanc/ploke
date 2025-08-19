@@ -130,7 +130,8 @@ impl IoManagerBuilder {
                 compute_fd_limit_from_inputs(soft_limit, env_override, self.fd_limit)
             };
 
-            let roots_opt = if self.roots.is_empty() {
+            let roots_empty = self.roots.is_empty();
+            let roots_opt = if roots_empty {
                 None
             } else {
                 let roots: Vec<PathBuf> = self
@@ -160,7 +161,7 @@ impl IoManagerBuilder {
 
             rt.block_on(async {
                 // Only apply symlink policy when roots are configured
-                let symlink_policy_opt = if self.roots.is_empty() {
+                let symlink_policy_opt = if roots_empty {
                     None
                 } else {
                     self.symlink_policy

@@ -41,7 +41,7 @@
 //!
 //! Here's how to use `ploke-io` to read snippets from multiple files:
 //! TODO: Create example
-
+use ploke_core::PROJECT_NAMESPACE_UUID;
 mod actor;
 use builder::IoManagerBuilder;
 pub use actor::IoManager;
@@ -60,6 +60,7 @@ pub mod scan;
 pub mod watcher;
 #[cfg(feature = "watcher")]
 pub use watcher::{FileChangeEvent, FileEventKind};
+mod write;
 mod tests_skeleton;
 use futures::future::join_all;
 use itertools::Itertools;
