@@ -184,11 +184,12 @@ async fn read_file_to_string_abs(path: &Path) -> Result<String, IoError> {
     let bytes = match tokio::fs::read(path).await {
         Ok(b) => b,
         Err(e) => {
+            let kind = e.kind();
             return Err(IoError::FileOperation {
                 operation: "read",
                 path: path.to_path_buf(),
                 source: Arc::new(e),
-                kind: e.kind(),
+                kind,
             });
         }
     };
