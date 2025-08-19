@@ -103,7 +103,12 @@ impl IoManagerBuilder {
             let roots_opt = if self.roots.is_empty() {
                 None
             } else {
-                Some(self.roots)
+                let roots: Vec<PathBuf> = self
+                    .roots
+                    .into_iter()
+                    .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+                    .collect();
+                Some(roots)
             };
 
             rt.block_on(async {

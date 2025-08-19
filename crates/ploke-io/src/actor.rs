@@ -1,5 +1,5 @@
 use crate::{
-    path_policy::path_within_roots,
+    path_policy::normalize_against_roots,
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs}, 
 };
 #[cfg(test)]
@@ -335,25 +335,21 @@ impl IoManager {
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
     ) -> Vec<(usize, Result<String, PlokeError>)> {
-        if let Some(roots) = roots.as_ref() {
-            if !path_within_roots(&file_path, roots) {
-                let err = IoError::FileOperation {
-                    operation: "read",
-                    path: file_path.clone(),
-                    source: Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "path outside configured roots",
-                    )),
-                    kind: std::io::ErrorKind::InvalidInput,
-                };
-                return requests
-                    .into_iter()
-                    .map(|req| (req.idx, Err(err.clone().into())))
-                    .collect();
+        let normalized_path = if let Some(roots) = roots.as_ref() {
+            match normalize_against_roots(&file_path, roots) {
+                Ok(p) => p,
+                Err(err) => {
+                    return requests
+                        .into_iter()
+                        .map(|req| (req.idx, Err(err.clone().into())))
+                        .collect();
+                }
             }
-        }
+        } else {
+            file_path
+        };
 
-        Self::process_file(file_path, requests, semaphore).await
+        Self::process_file(normalized_path, requests, semaphore).await
     }
 
     /// Scans a batch of `FileData` in parallel, bounded by the given semaphore,
@@ -490,21 +486,19 @@ impl IoManager {
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
     ) -> Result<Option<ChangedFileData>, PlokeError> {
-        if let Some(roots) = roots.as_ref() {
-            if !path_within_roots(&file_data.file_path, roots) {
-                return Err(IoError::FileOperation {
-                    operation: "read",
-                    path: file_data.file_path.clone(),
-                    source: Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "path outside configured roots",
-                    )),
-                    kind: std::io::ErrorKind::InvalidInput,
+        let normalized_file_data = if let Some(roots) = roots.as_ref() {
+            match normalize_against_roots(&file_data.file_path, roots) {
+                Ok(p) => {
+                    let mut fd = file_data;
+                    fd.file_path = p;
+                    fd
                 }
-                .into());
+                Err(e) => return Err(e.into()),
             }
-        }
+        } else {
+            file_data
+        };
 
-        Self::check_file_hash(file_data, semaphore).await
+        Self::check_file_hash(normalized_file_data, semaphore).await
     }
 }
