@@ -7,6 +7,17 @@ Approach
 - Map results to ToolCallCompleted/ToolCallFailed events.
 - Keep everything within existing subsystems; no new actors required.
 
+Approval / Denial step (optional)
+- Add a gated approval phase before applying edits.
+  - Compute a per-edit preview (e.g., unified diff) from current on-disk content vs. proposed splice.
+  - Decide auto-apply vs. require approval based on:
+    1) Global config flag: editing.auto_confirm_edits (bool, default false).
+    2) Autonomous agent mode: editing.agent.enabled (bool) with editing.agent.min_confidence (0.0–1.0).
+       - If agent mode is enabled and the tool call provides an optional "confidence" field, auto-apply only when confidence >= min_confidence.
+       - If confidence is absent, treat as 0.0 (no auto-apply) unless overridden by policy.
+  - If auto-apply conditions are NOT met, emit a "pending approval" event with a request_id and the diff preview(s); wait for explicit Approve/Deny commands from the user.
+  - On Approve: apply edits atomically via ploke-io; on Deny or timeout: drop the proposal and report back (ToolCallFailed or a structured rejection event).
+
 Files to touch (minimal)
 - crates/ploke-tui/src/llm/mod.rs
   - Define a tool schema function apply_code_edit_tool_def() returning ToolDefinition for the new tool.
@@ -34,9 +45,11 @@ Recommended argument schema (JSON) for apply_code_edit
     - end_byte: integer (exclusive)
     - replacement: string
   - namespace: string (UUID; can default to PROJECT_NAMESPACE_UUID on the IO side if missing)
+  - confidence: number (0.0–1.0) Optional confidence for approval gate; if omitted, treat as 0.0.
 - required: ["edits"]
 - Example:
   {
+    "confidence": 0.92,
     "edits": [
       {
         "file_path": "/abs/path/src/lib.rs",
