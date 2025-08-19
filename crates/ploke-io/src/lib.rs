@@ -659,11 +659,6 @@ pub enum RecvError {
     RecvError,
 }
 
-impl From<RecvError> for IoError {
-    fn from(e: RecvError) -> Self {
-        IoError::Recv(e)
-    }
-}
 
 // Define the additional error variants locally since we can't edit ploke-error
 #[derive(Debug, Error, Clone)]
