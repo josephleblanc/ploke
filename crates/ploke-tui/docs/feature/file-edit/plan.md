@@ -22,13 +22,56 @@ Files to touch (minimal)
 - crates/ploke-tui/src/llm/mod.rs
   - Define a tool schema function apply_code_edit_tool_def() returning ToolDefinition for the new tool.
   - Include this tool alongside request_code_context_tool_def() in the tools vector used by RequestSession.
+  - Optionally accept a top-level numeric "confidence" argument (0.0–1.0) from the tool call payload for the approval gate.
 
 - crates/ploke-tui/src/app_state/handlers/rag.rs
   - Extend handle_tool_call_requested to support name == "apply_code_edit".
   - Parse arguments JSON payload into one or more WriteSnippetData (ploke_core::io_types::WriteSnippetData).
-  - Invoke state.io_handle.write_snippets_batch(edits).await and aggregate results.
-  - On success: send AppEvent::System(SystemEvent::ToolCallCompleted { content: json }) with details for each edit.
-  - On failure: send ToolCallFailed with a descriptive error message.
+  - Before applying, build per-edit previews (diffs) for user review.
+  - Approval gate:
+    - Read config.editing.auto_confirm_edits and config.editing.agent settings from AppState.
+    - If auto-confirm is true OR (agent.enabled && confidence >= agent.min_confidence): apply immediately.
+    - Else, emit a "pending approval" event with request_id, optional confidence, and diff previews; store the pending set in AppState for later decision.
+  - On approval: invoke state.io_handle.write_snippets_batch(edits).await and aggregate results; emit ToolCallCompleted with results JSON.
+  - On denial (or timeout): emit ToolCallFailed with a descriptive message and clear pending state.
+
+- crates/ploke-tui/src/user_config.rs
+  - Add EditingConfig:
+    - editing.auto_confirm_edits: bool (default: false)
+    - editing.agent.enabled: bool (default: false)
+    - editing.agent.min_confidence: f32 (default: 0.8)
+
+- crates/ploke-tui/src/app_state/core.rs
+  - Thread EditingConfig into AppState for read access in handlers.
+  - Add pending edit proposals storage: e.g., RwLock<HashMap<Uuid, PendingEdits>>.
+
+- crates/ploke-tui/src/app_state/commands.rs
+  - Add:
+    - ApproveEdits { request_id: Uuid }
+    - DenyEdits { request_id: Uuid }
+
+- crates/ploke-tui/src/app_state/dispatcher.rs
+  - Route ApproveEdits/DenyEdits to rag.rs to finalize or discard pending edits.
+
+- crates/ploke-tui/src/app/commands/parser.rs and crates/ploke-tui/src/app/commands/exec.rs
+  - Add user commands:
+    - "edit approve <request_id>"
+    - "edit deny <request_id>"
+  - Parse and dispatch to StateCommand::{ApproveEdits, DenyEdits}.
+
+- crates/ploke-tui/src/app/events.rs (minimal UI surface)
+  - When a proposal is pending, add a SysInfo message summarizing files and short diff excerpts.
+
+- crates/ploke-tui/src/lib.rs (events)
+  - Optional: add structured SystemEvent variants for the flow:
+    - FileEditProposed { request_id, confidence: Option<f32>, diffs: Vec<DiffPreview> }
+    - FileEditApplied { request_id, results_json }
+    - FileEditRejected { request_id, reason }
+  - Minimal path can reuse existing ToolCallCompleted/Failed + SysInfo messages.
+
+Notes
+- Agent mode is not implemented yet; only config toggles and min_confidence gate are read.
+- The "confidence" value is optional and originates from the model/tool response; when omitted, treat as 0.0 (require approval) unless auto_confirm_edits=true.
 
 No changes required (for a minimal path)
 - EventBus, SystemEvent variants (you can keep using ToolCallRequested/Completed/Failed already present).
