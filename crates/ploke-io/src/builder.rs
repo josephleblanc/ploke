@@ -164,7 +164,7 @@ impl IoManagerBuilder {
                 let symlink_policy_opt = if roots_empty {
                     None
                 } else {
-                    self.symlink_policy
+                    Some(self.symlink_policy.unwrap_or(path_policy::SymlinkPolicy::DenyCrossRoot))
                 };
                 let manager = IoManager::new_with(
                     rx,

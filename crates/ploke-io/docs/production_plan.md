@@ -393,3 +393,10 @@ Progress Update — 2025-08-19 (Phase 5 completion + Phase 4 integration + Phase
   - Propagate a write-origin correlation id to watcher events to enable echo suppression.
   - Document write guarantees, failure modes, and advisory notes per OS. Add CI jobs to exercise the watcher feature.
   - Evaluate optional OS advisory locks; keep feature-gated if adopted.
+
+Progress Update — 2025-08-19 (Phase 7 symlink policy default + Follow semantics)
+- Implemented default SymlinkPolicy::DenyCrossRoot when roots are configured via IoManagerBuilder.
+- normalize_against_roots_with_policy now:
+  - DenyCrossRoot: strict canonicalization + root containment on canonical paths.
+  - Follow: lexical containment against configured roots (prevents '..' traversal) followed by strict canonicalization for stable hashing/IO.
+- Read/Scan/Write paths already plumb symlink_policy; behavior is now consistent across operations.
