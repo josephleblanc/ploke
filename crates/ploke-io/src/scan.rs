@@ -196,7 +196,7 @@ mod tests {
 
         // Enable test instrumentation to measure max concurrent scans
         test_instrumentation::reset();
-        test_instrumentation::set_filter_namespace(namespace);
+        test_instrumentation::set_filter_namespace(PROJECT_NAMESPACE_UUID);
         test_instrumentation::enable();
         test_instrumentation::set_delay_ms(25);
 
