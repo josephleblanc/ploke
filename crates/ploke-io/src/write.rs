@@ -17,6 +17,7 @@ use super::*;
 use std::path::PathBuf;
 use ploke_core::{WriteResult, WriteSnippetData};
 use tokio::io::AsyncWriteExt;
+use crate::path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy};
 
 // `WriteSnippetData` and `WriteResult` moved to ploke-core
 // If changes are needed, share details in implementation-log and USER will propogate them to
@@ -45,20 +46,47 @@ use tokio::io::AsyncWriteExt;
 //     }
 // }
 
-async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError> {
+async fn process_one_write(
+    req: WriteSnippetData,
+    roots: Option<Arc<Vec<PathBuf>>>,
+    symlink_policy: Option<SymlinkPolicy>,
+) -> Result<WriteResult, IoError> {
     use crate::read::{parse_tokens_from_str, read_file_to_string_abs};
 
+    // 0) Normalize/validate path against configured roots and policy (writes)
+    let file_path = if let Some(roots) = roots.as_ref() {
+        let roots_ref: &[PathBuf] = roots.as_ref();
+        if let Some(policy) = symlink_policy {
+            normalize_against_roots_with_policy(&req.file_path, roots_ref, policy)?
+        } else {
+            normalize_against_roots(&req.file_path, roots_ref)?
+        }
+    } else {
+        if !req.file_path.is_absolute() {
+            return Err(IoError::FileOperation {
+                operation: "write",
+                path: req.file_path.clone(),
+                kind: std::io::ErrorKind::InvalidInput,
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "path must be absolute",
+                )),
+            });
+        }
+        req.file_path.clone()
+    };
+
     // 1) Read current content (absolute-path enforced by helper)
-    let content = read_file_to_string_abs(&req.file_path).await?;
+    let content = read_file_to_string_abs(&file_path).await?;
 
     // 2) Verify expected file hash
     let actual_hash = {
-        let tokens = parse_tokens_from_str(&content, &req.file_path)?;
-        TrackingHash::generate(req.namespace, &req.file_path, &tokens)
+        let tokens = parse_tokens_from_str(&content, &file_path)?;
+        TrackingHash::generate(req.namespace, &file_path, &tokens)
     };
     if actual_hash != req.expected_file_hash {
         return Err(IoError::ContentMismatch {
-            path: req.file_path.clone(),
+            path: file_path.clone(),
             name: req.name.clone(),
             id: req.id,
             file_tracking_hash: req.expected_file_hash.0,
@@ -70,7 +98,7 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
     let len = content.len();
     if req.start_byte > req.end_byte || req.end_byte > len {
         return Err(IoError::OutOfRange {
-            path: req.file_path.clone(),
+            path: file_path.clone(),
             start_byte: req.start_byte,
             end_byte: req.end_byte,
             file_len: len,
@@ -78,7 +106,7 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
     }
     if !content.is_char_boundary(req.start_byte) || !content.is_char_boundary(req.end_byte) {
         return Err(IoError::InvalidCharBoundary {
-            path: req.file_path.clone(),
+            path: file_path.clone(),
             start_byte: req.start_byte,
             end_byte: req.end_byte,
         });
@@ -94,13 +122,12 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
 
     // 5) Compute new hash from new content
     let new_hash = {
-        let new_tokens = parse_tokens_from_str(&new_content, &req.file_path)?;
-        TrackingHash::generate(req.namespace, &req.file_path, &new_tokens)
+        let new_tokens = parse_tokens_from_str(&new_content, &file_path)?;
+        TrackingHash::generate(req.namespace, &file_path, &new_tokens)
     };
 
     // 6) Atomic write (temp file in same directory)
-    let parent = req
-        .file_path
+    let parent = file_path
         .parent()
         .ok_or_else(|| IoError::FileOperation {
             operation: "write",
@@ -142,11 +169,11 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
     }
 
     // Rename over original
-    tokio::fs::rename(&tmp_path, &req.file_path)
+    tokio::fs::rename(&tmp_path, &file_path)
         .await
         .map_err(|e| IoError::FileOperation {
             operation: "rename",
-            path: req.file_path.clone(),
+            path: file_path.clone(),
             kind: e.kind(),
             source: Arc::new(e),
         })?;
@@ -168,10 +195,14 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
 /// Batch write entrypoint used by the IoManager.
 pub(crate) async fn write_snippets_batch(
     requests: Vec<WriteSnippetData>,
+    roots: Option<Arc<Vec<PathBuf>>>,
+    symlink_policy: Option<SymlinkPolicy>,
 ) -> Vec<Result<WriteResult, PlokeError>> {
     let mut out = Vec::with_capacity(requests.len());
     for req in requests {
-        let res = process_one_write(req).await.map_err(|e| ploke_error::Error::from(e));
+        let res = process_one_write(req, roots.clone(), symlink_policy)
+            .await
+            .map_err(|e| ploke_error::Error::from(e));
         out.push(res);
     }
     out

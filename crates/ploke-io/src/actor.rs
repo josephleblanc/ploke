@@ -125,8 +125,10 @@ impl IoManager {
                 });
             }
             IoRequest::WriteSnippetBatch { requests, responder } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
                 tokio::spawn(async move {
-                    let results = write_snippets_batch(requests).await;
+                    let results = write_snippets_batch(requests, roots, symlink_policy).await;
                     let _ = responder.send(results);
                 });
             }

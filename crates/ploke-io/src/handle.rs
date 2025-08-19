@@ -1,4 +1,5 @@
 use super::*;
+use ploke_core::{WriteResult, WriteSnippetData};
 
 /// A handle to the IoManager actor.
 /// Used by other parts of the application to send requests.
@@ -94,6 +95,25 @@ impl IoManagerHandle {
             .as_ref()
             .expect("Watcher not enabled; use IoManagerBuilder::enable_watcher(true)")
             .subscribe()
+    }
+
+    /// Write a batch of snippets to files atomically.
+    /// Returns per-request results. Channel errors are mapped to IoError.
+    pub async fn write_snippets_batch(
+        &self,
+        requests: Vec<WriteSnippetData>,
+    ) -> Result<Vec<Result<WriteResult, PlokeError>>, IoError> {
+        let (responder, response_rx) = oneshot::channel();
+        let request = IoRequest::WriteSnippetBatch { requests, responder };
+        self.request_sender
+            .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError)
+            .map_err(IoError::from)?;
+        response_rx
+            .await
+            .map_err(|_| RecvError::RecvError)
+            .map_err(IoError::from)
     }
 
     /// Sends a shutdown signal to the IoManager.
