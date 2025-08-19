@@ -47,6 +47,7 @@ pub fn start_watcher(
                     }
                 }
                 Err(e) => {
+                    tracing::warn!("ploke-io watcher error: {:?}", e);
                     // Surface watcher errors as "Other" events on a synthetic path
                     let _ = tx.send(FileChangeEvent {
                         path: PathBuf::from(format!("watcher-error:{}", e)),
@@ -64,7 +65,7 @@ pub fn start_watcher(
                     path: root.clone(),
                     kind: FileEventKind::Other,
                 });
-                eprintln!("ploke-io watcher: failed to watch {}: {:?}", root.display(), e);
+                tracing::warn!("ploke-io watcher: failed to watch {}: {:?}", root.display(), e);
             }
         }
 

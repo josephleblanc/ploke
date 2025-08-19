@@ -36,6 +36,12 @@ Next Steps
 - Phase 7: continue path policy hardening (canonicalization, symlink policy).
 - Maintain 2-log window: remove the oldest implementation log after this addition.
 
+Progress Update — 2025-08-19 (Observability)
+- Added lightweight tracing spans:
+  - io_read_snippet_batch, io_process_file for read path.
+  - io_handle_scan_batch, io_check_file_hash for scan path.
+- Watcher now logs failures via tracing::warn! instead of eprintln!.
+
 References
 - docs/production_plan.md
 - src/{builder.rs,handle.rs,watcher.rs}

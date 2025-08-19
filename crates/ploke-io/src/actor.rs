@@ -91,6 +91,7 @@ impl IoManager {
                 requests,
                 responder,
             } => {
+                let _span = tracing::info_span!("io_read_snippet_batch", total = requests.len()).entered();
                 let semaphore = self.semaphore.clone();
                 let roots = self.roots.clone();
                 tokio::spawn(async move {
@@ -104,6 +105,7 @@ impl IoManager {
                 requests,
                 responder,
             } => {
+                let _span = tracing::info_span!("io_scan_change_batch", total = requests.len()).entered();
                 let semaphore = self.semaphore.clone();
                 let roots = self.roots.clone();
                 tokio::spawn(async move {
@@ -244,6 +246,7 @@ impl IoManager {
         requests: Vec<OrderedRequest>,
         semaphore: Arc<Semaphore>,
     ) -> Vec<(usize, Result<String, PlokeError>)> {
+        let _span = tracing::info_span!("io_process_file", path = %file_path.display(), reqs = requests.len()).entered();
         let _permit = match semaphore.acquire().await {
             Ok(permit) => permit,
             Err(_) => {
@@ -364,6 +367,7 @@ impl IoManager {
         requests: Vec<FileData>,
         semaphore: Arc<Semaphore>,
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
+        let _span = tracing::info_span!("io_handle_scan_batch", total = requests.len()).entered();
         use futures::stream::StreamExt;
 
         let total = requests.len();
@@ -461,6 +465,7 @@ impl IoManager {
         file_data: FileData,
         semaphore: Arc<Semaphore>,
     ) -> Result<Option<ChangedFileData>, PlokeError> {
+        let _span = tracing::info_span!("io_check_file_hash", path = %file_data.file_path.display()).entered();
         let _permit = semaphore
             .acquire()
             .await
