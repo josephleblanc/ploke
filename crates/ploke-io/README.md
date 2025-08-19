@@ -63,6 +63,15 @@ sequenceDiagram
     Handle-->>-Client: Returns results
 ```
 
+## Decisions and Defaults
+
+- Symlink Policy: Default is DenyCrossRoot. Configure via IoManagerBuilder::with_symlink_policy; strict canonicalization is enforced before root containment checks.
+- Watcher: Feature-gated (watcher). Debounce interval configurable via builder. Roots are taken from builder at startup; runtime root changes are planned.
+- Write Durability: Atomic temp write + fsync + rename, with best-effort parent directory fsync by default on Linux targets.
+- Concurrency: Effective permits derive from soft NOFILE limit with precedence builder > env (PLOKE_IO_FD_LIMIT, clamped 4..=1024) > heuristic > default 50.
+- Error Policy: Channel/shutdown map to Internal errors; file/parse/path-policy/durability issues map to Fatal. Warnings may be emitted for suboptimal but successful operations.
+- Platform Scope: Linux first; macOS/Windows support planned with documented caveats.
+
 ## API Usage
 
 The primary entry point is `IoManagerHandle`, which can be cloned and shared across threads.
@@ -121,6 +130,51 @@ match io_manager.get_snippets_batch(requests).await {
 # }
 ```
 
+### Writing Snippets
+
+Use write_snippets_batch to apply an in-place UTF-8 splice with atomic durability steps. The write verifies the expected file hash to ensure atomicity against concurrent external edits.
+
+```rust
+# use ploke_core::{WriteSnippetData, PROJECT_NAMESPACE_UUID};
+# use ploke_io::IoManagerHandle;
+# use uuid::Uuid;
+# use std::path::PathBuf;
+# async fn example() {
+# let dir = tempfile::tempdir().unwrap();
+# let file_path = dir.path().join("example.rs");
+# std::fs::write(&file_path, "fn foo() {}\n").unwrap();
+# let namespace = PROJECT_NAMESPACE_UUID;
+# let expected = {
+#   let file = syn::parse_file("fn foo() {}\n").unwrap();
+#   let tokens = file.into_token_stream();
+#   ploke_core::TrackingHash::generate(namespace, &file_path, &tokens)
+# };
+let start = 3; // byte offsets on UTF-8 boundaries
+let end = 6;
+
+let req = WriteSnippetData {
+    id: Uuid::new_v4(),
+    name: "rename_fn".into(),
+    file_path: file_path.clone(),
+    expected_file_hash: expected,
+    start_byte: start,
+    end_byte: end,
+    replacement: "bar".into(),
+    namespace,
+};
+
+let handle = IoManagerHandle::new();
+let results = handle.write_snippets_batch(vec![req]).await.unwrap();
+match &results[0] {
+    Ok(write_result) => {
+        println!("New file hash: {:?}", write_result.new_file_hash);
+    }
+    Err(e) => eprintln!("Write failed: {e:?}"),
+}
+handle.shutdown().await;
+# }
+```
+
 ### Scanning for Changes
 
 To check if files have been modified since they were last indexed, use `scan_changes_batch`. It returns a list of files whose content hash has changed.
@@ -172,9 +226,9 @@ io_manager.shutdown().await;
 
 ### 1. Areas for Expansion
 
--   **Write Operations**: The crate is currently read-only. Adding methods to write changes to files (e.g., `apply_patch`) would be a critical feature for automated refactoring.
--   **Content Caching**: To improve performance, the `IoManager` could cache file contents and tracking hashes in memory (e.g., in an LRU cache) to avoid redundant disk reads and parsing for frequently accessed files.
--   **Configuration**: The semaphore limit is determined automatically. Exposing configuration options (e.g., via a builder pattern for `IoManagerHandle`) would offer more control to consumers.
+-   **Write Operations**: Completed for in-place edits with verification and atomic rename. Next steps: a distinct file-creation path, optional origin correlation id, and optional OS advisory locks (behind a feature) if needed.
+-   **Content Caching**: Deferred. Add Criterion benchmarks to measure baseline performance before introducing an optional, bounded LRU.
+-   **Configuration**: IoManagerBuilder exists with with_semaphore_permits, with_fd_limit, with_roots, with_symlink_policy, and watcher toggles. Consider exposing additional knobs only as needed.
 
 ### 2. Impact of a File Watcher
 
@@ -187,7 +241,7 @@ Integrating a file watcher (e.g., using the `notify` crate) would enable proacti
 ### 3. Areas for Refactoring
 
 -   **`process_file` Complexity**: The `process_file` function in `src/lib.rs` is overly complex, handling file reading, parsing, hash verification, and snippet extraction in one large block with multiple exit points. It should be broken down into smaller, testable functions.
--   **Hash Verification Logic**: The current implementation verifies the content hash against the hash from the *first* request in a batch for a given file (`requests[0]`). This is a potential bug if requests for the same file have different hashes. The logic should be made more robust.
+-   **Hash Verification Logic**: Each request is verified against a fresh per-file TrackingHash computed once per file; keep this behavior and continue to simplify the surrounding code paths.
 -   **Error Handling**: The conversion from the internal `IoError` to the workspace-wide `ploke_error::Error` is verbose and could be streamlined. Error propagation within `process_file` is also repetitive and could be simplified using the `?` operator.
 
 ## Project Plan and Implementation Logs

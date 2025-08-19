@@ -33,6 +33,7 @@ Key Deliverables (APIs and Types)
     - with_semaphore_permits(usize)
     - with_fd_limit(usize) and env override: PLOKE_IO_FD_LIMIT (clamped e.g., 4..=1024)
     - with_roots(Vec<PathBuf>) [path policy]
+    - with_symlink_policy(SymlinkPolicy) [path policy]
     - enable_watcher(bool).with_debounce(Duration)
     - with_cache_limits(bytes: usize, entries: usize) [optional future]
     - with_locking_policy(enum) [future]
@@ -41,6 +42,67 @@ Key Deliverables (APIs and Types)
   - WriteSnippetData, WriteResult
   - FileChangeEvent, FileEventKind
   - Potential LockError types if needed upstream.
+
+## Decision Summary (Locked for v1, 2025-08-19)
+
+1) Symlink Policy
+- Configurable via builder; default to DenyCrossRoot.
+- Strict canonicalization before containment checks; enforce uniformly on read/scan/write.
+- Provide informative errors; add tests (including chained symlinks).
+
+2) Cross-Process Locking (Writes)
+- Do not assume cross-process coordination in v1.
+- Ensure atomicity by verifying expected contents (hash) prior to write; return informative ContentMismatch on divergence.
+
+3) Write Event Origin Correlation
+- Introduce an origin/correlation id on write requests and propagate to watcher events.
+- Action: draft required type updates in ploke-core; implement after review.
+
+4) Observability (Tracing/Metrics)
+- Implement structured tracing and basic metrics behind a feature flag.
+
+5) Platform Support and MSRV
+- Target Linux first for production readiness; plan/document macOS/Windows follow-ups.
+- Define and document MSRV as part of release hygiene.
+
+6) Concurrency and FD Limit Policy
+- Maintain precedence: builder > env (PLOKE_IO_FD_LIMIT, clamped 4..=1024) > soft NOFILE heuristic > default.
+- Add explicit checks/heuristics for unusual environments (e.g., containers/CI).
+
+7) Write Durability Guarantees
+- Prefer stronger guarantees by default (fsync temp and best-effort parent).
+- Offer best_effort variants clearly labeled when introduced.
+
+8) Watcher Configuration Defaults
+- Debounce and channel size configurable at startup (builder).
+- Allow roots to change at runtime (planned enhancement); document guidance and error messages.
+
+9) Error Policy and Mapping
+- Fatal: operation failed, process can continue.
+- Internal: invalid state; indicates bug; treat as serious (panic/end process in appropriate layers).
+- Warning: operation succeeded with suboptimal conditions.
+
+10) Ownership of Public Types
+- Keep shared models in ploke-core (WriteSnippetData, WriteResult, FileChangeEvent, FileEventKind).
+
+11) Non-Existent Paths on Writes (Creation)
+- Add a distinct execution path for file creation separate from in-place edits; use OS-default permissions.
+
+12) Permissions and File Modes
+- Continue using OS defaults; consider post-v1 configuration.
+
+13) Optional Caching Layer
+- Defer bounded LRU; add Criterion benchmarks to establish baseline.
+
+14) API Stability and Feature Flags
+- When watcher or other features are validated, consider adding to default features.
+- Maintain features for ablation testing; plan deprecations for stability.
+
+15) Watcher Backend Strategy
+- Rely on notify defaults initially; document when alternatives/backends are recommended.
+
+16) Read-While-Write Policy
+- Prefer correctness over efficiency; consider shared coordination structures if benchmarks reveal issues.
 
 Phased Implementation Plan
 
@@ -103,7 +165,7 @@ Phase 4: Watcher Integration (Optional Feature)
 Phase 5: Write Path with Atomic Renames
 - API: write_snippets_batch(Vec<WriteSnippetData>) -> Result<Vec<Result<WriteResult, PlokeError>>, IoError>
 - Behavior:
-  - Normalize path; per-file async mutex; OS advisory lock.
+  - Normalize path; per-file async mutex (in-process). No cross-process locking in v1; optional OS advisory locks may be added later behind a feature.
   - Read current bytes; UTF-8; compute actual TrackingHash; verify expected; ContentMismatch on mismatch.
   - Splice in memory; write temp (0600), fsync; atomic rename; fsync parent.
   - Compute new TrackingHash; emit FileChangeEvent with origin; return new hash and delta.
@@ -122,7 +184,7 @@ Phase 6: Optional Caching Layer
 
 Phase 7: Security, Path Policy, and Safety
 - Canonicalize paths against configured roots.
-- Symlink policy: follow or deny across boundaries based on config.
+- Symlink policy: configurable via builder (with_symlink_policy); default is DenyCrossRoot. Comparisons performed on strictly canonicalized paths.
 - Permissions/error mapping deterministic; avoid leaking sensitive absolute paths in user-facing messages where not needed.
 - Acceptance:
   - Tests for traversal attempts, symlink edge cases, permission-denied paths.
@@ -203,6 +265,9 @@ Release Checklist
 - CI green, docs updated, examples valid.
 - CHANGELOG and semantic version bump.
 - Post-release monitoring plan.
+
+Documentation Maintenance
+- After consolidating decisions into this production_plan.md and the README, you can remove docs/production_decisions_report.md from the active conversation to reduce context footprint. Retain it in git history (or reference it in commit messages) if an audit trail is desired.
 
 References
 - docs/architecture_boundary.md
