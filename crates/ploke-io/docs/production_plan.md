@@ -311,3 +311,20 @@ Progress Update — 2025-08-19 (Watcher tests + Warnings fixed + Phase 5/7 scaff
 - Phase 5 scaffolding: introduced src/write.rs (internal stubs) for future write-path work.
 - Phase 7 scaffolding: added SymlinkPolicy enum and placeholder policy-aware root checks for future symlink handling.
 - Next: wire symlink policy into builder configuration and enforce it in normalize_against_roots.
+
+Progress Update — 2025-08-19 (Phase 5 completion + Phase 4 integration + Phase 7 ongoing)
+- Phase 5 (Write path) completed:
+  - Implemented end-to-end write pipeline with UTF-8 splice, atomic temp-write + fsync + rename, and best-effort parent fsync.
+  - Enforced absolute path + roots normalization on writes; added per-file async locks to serialize concurrent writes to the same path.
+  - Exposed public API: IoManagerHandle::write_snippets_batch; added unit tests for splice correctness, range validation, and roots enforcement.
+- Phase 4 (Watcher) integration:
+  - When the watcher feature is enabled and configured, successful writes broadcast FileChangeEvent::Modified; subscribe API available via IoManagerHandle::subscribe_file_events.
+- Phase 7 (Path policy) ongoing:
+  - Strict canonicalization in normalization; builder pre-canonicalizes roots. SymlinkPolicy plumbed and ready for expanded semantics.
+- Status:
+  - cargo test -p ploke-io and with --features watcher are green.
+- Next:
+  - Finalize symlink handling semantics (DenyCrossRoot vs Follow with constraints) and enforce across read/scan/write uniformly.
+  - Propagate a write-origin correlation id to watcher events to enable echo suppression.
+  - Document write guarantees, failure modes, and advisory notes per OS. Add CI jobs to exercise the watcher feature.
+  - Evaluate optional OS advisory locks; keep feature-gated if adopted.
