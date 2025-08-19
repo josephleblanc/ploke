@@ -1,46 +1,158 @@
 #![allow(unused_variables, unused_imports, dead_code)]
-//! # ploke-io
+//! ploke-io — Async I/O actor for safe, concurrent file operations
 //!
-//! `ploke-io` provides a non-blocking I/O actor system for reading
-//! file snippets concurrently. It is designed for applications that need to read from
-//! many files without blocking.
+//! ploke-io provides an actor-style I/O service that runs on its own Tokio runtime
+//! in a dedicated thread. It focuses on correctness, safety, and backpressure while
+//! supporting three core workflows:
 //!
-//! ## Core Components
+//! - Read snippets: UTF-8 safe byte slicing with per-request content-hash verification.
+//! - Scan for changes: recompute file hashes and report changes deterministically.
+//! - Write snippets: splice byte ranges with atomic temp-write + fsync + rename,
+//!   serialized per-file via async locks (see feature notes below).
 //!
-//! The crate is built around a few key components:
+//! Optional feature:
+//! - watcher: broadcast debounced file events using notify via a background thread.
 //!
-//! - **`IoManagerHandle`**: The public-facing API and the primary entry point for this crate.
-//!   It provides a simple, asynchronous interface to the I/O actor. It is a lightweight
-//!   handle that can be cloned and shared across threads.
+//! Key properties
+//! - Bounded concurrency based on FD heuristics or explicit builder configuration.
+//! - Path policy enforcement: absolute-path requirement and root normalization
+//!   with configurable symlink policy (DenyCrossRoot by default when roots are set).
+//! - Clear error mapping into ploke_error types.
 //!
-//! - **`IoManager`**: The internal actor that runs in a dedicated background thread. It listens
-//!   for requests, manages a pool of file handles, and executes file operations.
+//! Getting started
+//! - Use IoManagerHandle::new() for sensible defaults, or the builder for configuration.
+//! - Use ploke_core types for requests and results (EmbeddingData, FileData, WriteSnippetData, etc).
 //!
-//! - **`EmbeddingData`**: A struct that defines a request to read a specific byte range
-//!   (a "snippet") from a file. It includes data integrity checks to ensure that the
-//!   file content has not changed since it was indexed.
+//! Quick start (read snippets)
+//! ```rust,ignore
+//! use ploke_io::IoManagerHandle;
+//! use ploke_core::{EmbeddingData, TrackingHash, PROJECT_NAMESPACE_UUID};
+//! use uuid::Uuid;
+//! use quote::ToTokens;
 //!
-//! ## Runtime Management
+//! // Prepare a file and compute its tracking hash from tokens.
+//! let dir = tempfile::tempdir().unwrap();
+//! let file = dir.path().join("ex.rs");
+//! std::fs::write(&file, "fn demo() { let x = 1; }\n").unwrap();
+//! let file_ast = syn::parse_file("fn demo() { let x = 1; }\n").unwrap();
+//! let tokens = file_ast.into_token_stream();
+//! let file_hash = TrackingHash::generate(PROJECT_NAMESPACE_UUID, &file, &tokens);
 //!
-//! The `IoManager` runs its own `tokio` runtime on a dedicated OS thread. This design
-//! choice offers several advantages:
+//! // Read the "demo" identifier
+//! let content = std::fs::read_to_string(&file).unwrap();
+//! let start = content.find("demo").unwrap();
+//! let end = start + "demo".len();
 //!
-//! 1.  **Isolation**: I/O operations are completely isolated from the caller's execution
-//!     context. This is crucial for applications with their own async runtimes (like a GUI
-//!     or a web server), as it prevents I/O-intensive work from blocking the main event loop.
-//! 2.  **Dedicated Resources**: The I/O actor has its own set of resources, including a scheduler
-//!     and a thread pool, which can be optimized for file operations.
-//! 3.  **Simplified API**: Callers do not need to manage the lifecycle of the I/O runtime.
-//!     They simply create an `IoManagerHandle` and start sending requests.
+//! let req = EmbeddingData {
+//!     id: Uuid::new_v4(),
+//!     name: "demo_fn".into(),
+//!     file_path: file.clone(),
+//!     file_tracking_hash: file_hash,
+//!     start_byte: start,
+//!     end_byte: end,
+//!     node_tracking_hash: TrackingHash(Uuid::new_v4()),
+//!     namespace: PROJECT_NAMESPACE_UUID,
+//! };
 //!
-//! The `IoManagerHandle::new()` function spawns a new OS thread and initializes a
-//! `tokio::runtime::Builder` with `new_current_thread` and `enable_all`. This creates a
-//! single-threaded runtime that is efficient for managing a queue of I/O tasks.
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let handle = IoManagerHandle::new();
+//! let results = handle.get_snippets_batch(vec![req]).await.unwrap();
+//! assert_eq!(results.len(), 1);
+//! assert_eq!(results[0].as_ref().unwrap(), "demo");
+//! handle.shutdown().await;
+//! # });
+//! ```
 //!
-//! ## Usage Example
+//! Scanning for changes
+//! ```rust,ignore
+//! use ploke_io::IoManagerHandle;
+//! use ploke_core::{FileData, TrackingHash, PROJECT_NAMESPACE_UUID};
+//! use quote::ToTokens;
+//! use uuid::Uuid;
 //!
-//! Here's how to use `ploke-io` to read snippets from multiple files:
-//! TODO: Create example
+//! let dir = tempfile::tempdir().unwrap();
+//! let file = dir.path().join("s.rs");
+//! let initial = "fn a() {}\n";
+//! std::fs::write(&file, initial).unwrap();
+//!
+//! let tokens = syn::parse_file(initial).unwrap().into_token_stream();
+//! let old_hash = TrackingHash::generate(PROJECT_NAMESPACE_UUID, &file, &tokens);
+//!
+//! let req = FileData {
+//!     id: Uuid::new_v4(),
+//!     namespace: PROJECT_NAMESPACE_UUID,
+//!     file_tracking_hash: old_hash,
+//!     file_path: file.clone(),
+//! };
+//!
+//! // Change the file
+//! std::fs::write(&file, "fn a() { let _y = 1; }\n").unwrap();
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let handle = IoManagerHandle::new();
+//! let changed = handle.scan_changes_batch(vec![req]).await.unwrap().unwrap();
+//! assert!(changed[0].is_some());
+//! handle.shutdown().await;
+//! # });
+//! ```
+//!
+//! Writing snippets (atomic and serialized per file)
+//! ```rust,ignore
+//! use ploke_io::IoManagerHandle;
+//! use ploke_core::{WriteSnippetData, TrackingHash, PROJECT_NAMESPACE_UUID};
+//! use quote::ToTokens;
+//! use uuid::Uuid;
+//!
+//! let dir = tempfile::tempdir().unwrap();
+//! let file = dir.path().join("w.rs");
+//! let initial = "fn hello() {}\n";
+//! std::fs::write(&file, initial).unwrap();
+//!
+//! let tokens = syn::parse_file(initial).unwrap().into_token_stream();
+//! let expected = TrackingHash::generate(PROJECT_NAMESPACE_UUID, &file, &tokens);
+//! let start = initial.find("hello").unwrap();
+//! let end = start + "hello".len();
+//!
+//! let req = WriteSnippetData {
+//!     id: Uuid::new_v4(),
+//!     name: "node".into(),
+//!     file_path: file.clone(),
+//!     expected_file_hash: expected,
+//!     start_byte: start,
+//!     end_byte: end,
+//!     replacement: "goodbye".into(),
+//!     namespace: PROJECT_NAMESPACE_UUID,
+//! };
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let handle = IoManagerHandle::new();
+//! let resp = handle.write_snippets_batch(vec![req]).await.unwrap();
+//! assert!(resp[0].is_ok());
+//! handle.shutdown().await;
+//! # });
+//! ```
+//!
+//! Configuration via builder
+//! ```rust,ignore
+//! use ploke_io::IoManagerHandle;
+//! use ploke_io::path_policy::SymlinkPolicy;
+//!
+//! let handle = ploke_io::IoManagerHandle::builder()
+//!     .with_fd_limit(64)                // bound concurrency
+//!     .with_roots([std::env::current_dir().unwrap()])
+//!     .with_symlink_policy(SymlinkPolicy::DenyCrossRoot)
+//!     .build();
+//! # futures::executor::block_on(async { handle.shutdown().await; });
+//! ```
+//!
+//! Feature flags
+//! - watcher: enable file system watcher integration and subscribe_file_events() API.
+//!
+//! Error model
+//! - Channel/shutdown errors surface as IoError::Recv and map to ploke_error::Error::Internal.
+//! - File, parse, range, and path policy violations surface as Fatal variants via mapping.
+//!
+//! See docs/production_plan.md for a full roadmap and design details.
 use ploke_core::PROJECT_NAMESPACE_UUID;
 mod actor;
 use builder::IoManagerBuilder;
