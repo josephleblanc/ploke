@@ -126,8 +126,12 @@ impl IoManagerHandle {
         self.request_sender
             .send(IoManagerMessage::Request(request))
             .await
-            .map_err(|_| RecvError::SendError).map_err(IoError::from)?;
-        response_rx.await.map_err(|_| RecvError::RecvError).map_err(IoError::from)
+            .map_err(|_| RecvError::SendError)
+            .map_err(IoError::from)?;
+        response_rx
+            .await
+            .map_err(|_| RecvError::RecvError)
+            .map_err(IoError::from)
     }
 
     /// Sends a shutdown signal to the IoManager.
@@ -195,10 +199,7 @@ async fn read_file_to_string_abs(path: &Path) -> Result<String, IoError> {
     Ok(content)
 }
 
-fn parse_tokens_from_str(
-    content: &str,
-    path: &Path,
-) -> Result<proc_macro2::TokenStream, IoError> {
+fn parse_tokens_from_str(content: &str, path: &Path) -> Result<proc_macro2::TokenStream, IoError> {
     let parsed = syn::parse_file(content).map_err(|e| IoError::ParseError {
         path: path.to_path_buf(),
         message: e.to_string(),
@@ -365,8 +366,7 @@ impl IoManager {
         });
 
         // 4. Collect results and preserve order
-        let mut final_results: Vec<Option<Result<String, PlokeError>>> =
-            vec![None; total_requests];
+        let mut final_results: Vec<Option<Result<String, PlokeError>>> = vec![None; total_requests];
 
         for task in join_all(file_tasks).await {
             match task {
@@ -387,10 +387,10 @@ impl IoManager {
             .into_iter()
             .map(|opt| {
                 opt.unwrap_or_else(|| {
-                    Err(ploke_error::InternalError::InvalidState(
-                        "Result missing for request",
+                    Err(
+                        ploke_error::InternalError::InvalidState("Result missing for request")
+                            .into(),
                     )
-                    .into())
                 })
             })
             .collect()
@@ -502,14 +502,10 @@ impl IoManager {
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
         let concurrency_limit = std::cmp::max(1, semaphore.available_permits());
-        let results_vec = futures::stream::iter(
-            requests
-                .into_iter()
-                .map(|file_data| {
-                    let sem = semaphore.clone();
-                    async move { Self::check_file_hash(file_data, sem).await }
-                }),
-        )
+        let results_vec = futures::stream::iter(requests.into_iter().map(|file_data| {
+            let sem = semaphore.clone();
+            async move { Self::check_file_hash(file_data, sem).await }
+        }))
         .buffer_unordered(concurrency_limit)
         .collect::<Vec<_>>()
         .await;
@@ -554,7 +550,6 @@ pub enum RecvError {
     #[error("Failed to receive response from IO Manager")]
     RecvError,
 }
-
 
 // Define the additional error variants locally since we can't edit ploke-error
 #[derive(Debug, Error, Clone)]
@@ -1036,9 +1031,17 @@ mod tests {
             // Invalid request: non-existent file
             EmbeddingData {
                 file_path: non_existent_file.clone(),
-                file_tracking_hash: tracking_hash_with_path_ns("fn dummy() {}", &non_existent_file, namespace),
+                file_tracking_hash: tracking_hash_with_path_ns(
+                    "fn dummy() {}",
+                    &non_existent_file,
+                    namespace,
+                ),
 
-                node_tracking_hash: tracking_hash_with_path_ns("fn dummy() {}", &non_existent_file, namespace),
+                node_tracking_hash: tracking_hash_with_path_ns(
+                    "fn dummy() {}",
+                    &non_existent_file,
+                    namespace,
+                ),
                 start_byte: 0,
                 end_byte: 10,
                 id: Uuid::new_v4(),
@@ -1333,15 +1336,23 @@ mod tests {
         let requests = vec![reverse_request, equal_request];
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
 
-        assert!(matches!(
-            results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::FileOperation { .. }),
-        ), "actual error found: {:?}", results[0]);
+        assert!(
+            matches!(
+                results[0].as_ref().unwrap_err(),
+                PlokeError::Fatal(FatalError::FileOperation { .. }),
+            ),
+            "actual error found: {:?}",
+            results[0]
+        );
 
-        assert!(matches!(
-            results[1].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::FileOperation { .. })
-        ), "actual error found: {:?}", results[1]);
+        assert!(
+            matches!(
+                results[1].as_ref().unwrap_err(),
+                PlokeError::Fatal(FatalError::FileOperation { .. })
+            ),
+            "actual error found: {:?}",
+            results[1]
+        );
     }
 
     #[tokio::test]
@@ -1544,9 +1555,7 @@ mod tests {
             match s {
                 Ok(snip) => {
                     correct += 1;
-                    if let Some(embed_data) = flat_nodes
-                        .iter()
-                        .find(|emb| snip.contains(&emb.name))
+                    if let Some(embed_data) = flat_nodes.iter().find(|emb| snip.contains(&emb.name))
                     {
                         tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);
                         contains_name += 1;
