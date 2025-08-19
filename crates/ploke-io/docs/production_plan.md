@@ -302,3 +302,12 @@ Progress Update — 2025-08-19 (Phase 4 completion + Phase 7 hardening)
 Next
 - Write-path (Phase 5) scaffolding: per-file locking API and origin propagation into watcher events.
 - Additional Phase 7 items: configurable symlink policy and improved error redaction for user-facing messages.
+
+Progress Update — 2025-08-19 (Watcher tests + Warnings fixed + Phase 5/7 scaffolding)
+- Fixed unreachable pattern warnings in watcher match arms by:
+  - Handling rename variants before broader Modify matches.
+  - Removing ModifyKind::Name(_) from broad Modify arms and adding a specific ModifyKind::Any arm after rename handling.
+- Added feature-gated watcher tests validating Created/Modified/Removed and Renamed events with debouncing.
+- Phase 5 scaffolding: introduced src/write.rs (internal stubs) for future write-path work.
+- Phase 7 scaffolding: added SymlinkPolicy enum and placeholder policy-aware root checks for future symlink handling.
+- Next: wire symlink policy into builder configuration and enforce it in normalize_against_roots.
