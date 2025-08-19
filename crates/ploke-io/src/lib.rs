@@ -240,6 +240,10 @@ fn extract_snippet_str(
     Ok(content[start..end].to_string())
 }
 
+fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
 /// Compute effective file-descriptor-based concurrency limit given optional sources.
 /// Precedence: builder override > env override > OS soft limit heuristic > default (50).
 pub(crate) fn compute_fd_limit_from_inputs(
@@ -378,7 +382,7 @@ impl IoManagerBuilder {
 pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
-    roots: Option<Vec<PathBuf>>,
+    roots: Option<Arc<Vec<PathBuf>>>,
 }
 
 impl IoManager {
@@ -411,7 +415,7 @@ impl IoManager {
         Self {
             request_receiver,
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
-            roots,
+            roots: roots.map(Arc::new),
         }
     }
 
@@ -432,8 +436,11 @@ impl IoManager {
                 responder,
             } => {
                 let semaphore = self.semaphore.clone();
+                let roots = self.roots.clone();
                 tokio::spawn(async move {
-                    let results = Self::handle_read_snippet_batch(requests, semaphore).await;
+                    let results =
+                        Self::handle_read_snippet_batch_with_roots(requests, semaphore, roots)
+                            .await;
                     let _ = responder.send(results);
                 });
             }
@@ -442,8 +449,10 @@ impl IoManager {
                 responder,
             } => {
                 let semaphore = self.semaphore.clone();
+                let roots = self.roots.clone();
                 tokio::spawn(async move {
-                    let results = Self::handle_scan_batch(requests, semaphore).await;
+                    let results =
+                        Self::handle_scan_batch_with_roots(requests, semaphore, roots).await;
                     let _ = responder.send(results);
                 });
             }
@@ -477,6 +486,68 @@ impl IoManager {
         let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
             let semaphore = semaphore.clone();
             tokio::spawn(async move { Self::process_file(path, reqs, semaphore).await })
+        });
+
+        // 4. Collect results and preserve order
+        let mut final_results: Vec<Option<Result<String, PlokeError>>> = vec![None; total_requests];
+
+        for task in join_all(file_tasks).await {
+            match task {
+                Ok(file_results) => {
+                    for (idx, res) in file_results {
+                        if idx < final_results.len() {
+                            final_results[idx] = Some(res);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[ploke-io] FATAL: File processing task panicked: {:?}", e);
+                }
+            }
+        }
+
+        final_results
+            .into_iter()
+            .map(|opt| {
+                opt.unwrap_or_else(|| {
+                    Err(
+                        ploke_error::InternalError::InvalidState("Result missing for request")
+                            .into(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    async fn handle_read_snippet_batch_with_roots(
+        requests: Vec<EmbeddingData>,
+        semaphore: Arc<Semaphore>,
+        roots: Option<Arc<Vec<PathBuf>>>,
+    ) -> Vec<Result<String, PlokeError>> {
+        let total_requests = requests.len();
+
+        // 1. Assign original index to each request (0-indexed)
+        let ordered_requests = requests
+            .into_iter()
+            .enumerate()
+            .map(|(idx, request)| OrderedRequest { idx, request });
+
+        // 2. Group requests by file path
+        let mut requests_by_file: HashMap<PathBuf, Vec<OrderedRequest>> = HashMap::new();
+        for ordered_req in ordered_requests {
+            requests_by_file
+                .entry(ordered_req.request.file_path.clone())
+                .or_default()
+                .push(ordered_req);
+        }
+
+        // 3. Spawn a task for each file, processing them concurrently
+        let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
+            let semaphore = semaphore.clone();
+            let roots = roots.clone();
+            tokio::spawn(async move {
+                Self::process_file_with_roots(path, reqs, semaphore, roots).await
+            })
         });
 
         // 4. Collect results and preserve order
@@ -602,6 +673,33 @@ impl IoManager {
         results
     }
 
+    async fn process_file_with_roots(
+        file_path: PathBuf,
+        requests: Vec<OrderedRequest>,
+        semaphore: Arc<Semaphore>,
+        roots: Option<Arc<Vec<PathBuf>>>,
+    ) -> Vec<(usize, Result<String, PlokeError>)> {
+        if let Some(roots) = roots.as_ref() {
+            if !path_within_roots(&file_path, roots) {
+                let err = IoError::FileOperation {
+                    operation: "read",
+                    path: file_path.clone(),
+                    source: Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "path outside configured roots",
+                    )),
+                    kind: std::io::ErrorKind::InvalidInput,
+                };
+                return requests
+                    .into_iter()
+                    .map(|req| (req.idx, Err(err.clone().into())))
+                    .collect();
+            }
+        }
+
+        Self::process_file(file_path, requests, semaphore).await
+    }
+
     /// Scans a batch of `FileData` in parallel, bounded by the given semaphore,
     /// and returns the paths whose contents no longer match their stored tracking hash.
     ///
@@ -619,6 +717,29 @@ impl IoManager {
         let results_vec = futures::stream::iter(requests.into_iter().map(|file_data| {
             let sem = semaphore.clone();
             async move { Self::check_file_hash(file_data, sem).await }
+        }))
+        .buffer_unordered(concurrency_limit)
+        .collect::<Vec<_>>()
+        .await;
+
+        let mut results = Vec::with_capacity(results_vec.len());
+        for res in results_vec {
+            results.push(res?);
+        }
+        Ok(results)
+    }
+
+    async fn handle_scan_batch_with_roots(
+        requests: Vec<FileData>,
+        semaphore: Arc<Semaphore>,
+        roots: Option<Arc<Vec<PathBuf>>>,
+    ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
+        use futures::stream::StreamExt;
+        let concurrency_limit = std::cmp::max(1, semaphore.available_permits());
+        let results_vec = futures::stream::iter(requests.into_iter().map(|file_data| {
+            let sem = semaphore.clone();
+            let roots = roots.clone();
+            async move { Self::check_file_hash_with_roots(file_data, sem, roots).await }
         }))
         .buffer_unordered(concurrency_limit)
         .collect::<Vec<_>>()
@@ -654,6 +775,29 @@ impl IoManager {
         } else {
             Ok(None)
         }
+    }
+
+    async fn check_file_hash_with_roots(
+        file_data: FileData,
+        semaphore: Arc<Semaphore>,
+        roots: Option<Arc<Vec<PathBuf>>>,
+    ) -> Result<Option<ChangedFileData>, PlokeError> {
+        if let Some(roots) = roots.as_ref() {
+            if !path_within_roots(&file_data.file_path, roots) {
+                return Err(IoError::FileOperation {
+                    operation: "read",
+                    path: file_data.file_path.clone(),
+                    source: Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "path outside configured roots",
+                    )),
+                    kind: std::io::ErrorKind::InvalidInput,
+                }
+                .into());
+            }
+        }
+
+        Self::check_file_hash(file_data, semaphore).await
     }
 }
 
@@ -1896,6 +2040,58 @@ mod tests {
         let results = io_manager.get_snippets_batch(vec![req]).await.unwrap();
         assert!(matches!(
             results[0],
+            Err(PlokeError::Fatal(FatalError::FileOperation { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_roots_enforcement_basic() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let other_dir = tempfile::tempdir().unwrap();
+
+        // File inside the configured root
+        let in_path = root_dir.path().join("in.rs");
+        let in_content = "fn inside() {}";
+        std::fs::write(&in_path, in_content).unwrap();
+
+        // File outside the configured root
+        let out_path = other_dir.path().join("out.rs");
+        let out_content = "fn outside() {}";
+        std::fs::write(&out_path, out_content).unwrap();
+
+        let handle = IoManagerHandle::builder()
+            .with_roots(vec![root_dir.path().to_path_buf()])
+            .build();
+
+        let namespace = uuid::Uuid::nil();
+
+        let ok_req = EmbeddingData {
+            file_path: in_path.clone(),
+            file_tracking_hash: tracking_hash_with_path_ns(in_content, &in_path, namespace),
+            node_tracking_hash: tracking_hash_with_path_ns(in_content, &in_path, namespace),
+            start_byte: in_content.find("inside").unwrap(),
+            end_byte: in_content.find("inside").unwrap() + "inside".len(),
+            id: uuid::Uuid::new_v4(),
+            name: "inside".to_string(),
+            namespace,
+        };
+
+        let bad_req = EmbeddingData {
+            file_path: out_path.clone(),
+            file_tracking_hash: tracking_hash_with_path_ns(out_content, &out_path, namespace),
+            node_tracking_hash: tracking_hash_with_path_ns(out_content, &out_path, namespace),
+            start_byte: 0,
+            end_byte: 1,
+            id: uuid::Uuid::new_v4(),
+            name: "bad".to_string(),
+            namespace,
+        };
+
+        let results = handle.get_snippets_batch(vec![ok_req, bad_req]).await.unwrap();
+
+        assert_eq!(results[0].as_ref().unwrap(), "inside");
+        assert!(matches!(
+            results[1],
             Err(PlokeError::Fatal(FatalError::FileOperation { .. }))
         ));
     }

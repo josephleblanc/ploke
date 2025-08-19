@@ -214,3 +214,4 @@ Progress Update — 2025-08-18
 - Backward-compatible: IoManagerHandle::new() retained; added IoManagerHandle::builder().
 - Unit tests added for limit computation precedence and clamping.
 - No behavior changes to path policy yet; roots are stored for future enforcement (Phase 7).
+- Path policy basics: when roots are configured, read and scan requests for files outside the roots are rejected early with InvalidInput errors, per Phase 1.
