@@ -466,7 +466,7 @@ impl IoManager {
             .await
             .map_err(|_| IoError::ShutdownInitiated)?;
         #[cfg(test)]
-        let _probe_guard = test_instrumentation::enter();
+        let _probe_guard = test_instrumentation::enter_for_namespace(file_data.namespace);
         #[cfg(test)]
         test_instrumentation::maybe_sleep().await;
         let file_content = read_file_to_string_abs(&file_data.file_path).await?;

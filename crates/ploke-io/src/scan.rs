@@ -10,11 +10,14 @@ use super::*;
 pub(crate) mod test_instrumentation {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
+    use std::sync::Mutex;
+    use uuid::Uuid;
 
     static ENABLED: AtomicBool = AtomicBool::new(false);
     static CURRENT: AtomicUsize = AtomicUsize::new(0);
     static MAX: AtomicUsize = AtomicUsize::new(0);
     static DELAY_MS: AtomicUsize = AtomicUsize::new(0);
+    static FILTER_NS: Mutex<Option<Uuid>> = Mutex::new(None);
 
     pub struct Guard(bool);
 
@@ -31,6 +34,7 @@ pub(crate) mod test_instrumentation {
         CURRENT.store(0, Ordering::SeqCst);
         MAX.store(0, Ordering::SeqCst);
         DELAY_MS.store(0, Ordering::SeqCst);
+        *FILTER_NS.lock().unwrap() = None;
     }
 
     pub fn enable() {
@@ -41,6 +45,16 @@ pub(crate) mod test_instrumentation {
         DELAY_MS.store(ms, Ordering::SeqCst);
     }
 
+    pub fn set_filter_namespace(ns: Uuid) {
+        let mut guard = FILTER_NS.lock().unwrap();
+        *guard = Some(ns);
+    }
+
+    pub fn clear_filter_namespace() {
+        let mut guard = FILTER_NS.lock().unwrap();
+        *guard = None;
+    }
+
     pub fn max() -> usize {
         MAX.load(Ordering::SeqCst)
     }
@@ -48,6 +62,35 @@ pub(crate) mod test_instrumentation {
     pub fn enter() -> Guard {
         if !ENABLED.load(Ordering::SeqCst) {
             return Guard(false);
+        }
+        let cur = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+        // Update max if needed
+        loop {
+            let prev = MAX.load(Ordering::SeqCst);
+            if cur > prev {
+                if MAX
+                    .compare_exchange(prev, cur, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    break;
+                } else {
+                    continue;
+                }
+            } else {
+                break;
+            }
+        }
+        Guard(true)
+    }
+
+    pub fn enter_for_namespace(ns: Uuid) -> Guard {
+        if !ENABLED.load(Ordering::SeqCst) {
+            return Guard(false);
+        }
+        if let Some(filter) = *FILTER_NS.lock().unwrap() {
+            if filter != ns {
+                return Guard(false);
+            }
         }
         let cur = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
         // Update max if needed
@@ -153,6 +196,7 @@ mod tests {
 
         // Enable test instrumentation to measure max concurrent scans
         test_instrumentation::reset();
+        test_instrumentation::set_filter_namespace(namespace);
         test_instrumentation::enable();
         test_instrumentation::set_delay_ms(25);
 
