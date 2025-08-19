@@ -33,6 +33,16 @@ pub struct FileChangeEvent {
 ///
 /// Debouncing aggregates rapid sequences of events per path and emits the latest kind after
 /// at least `debounce` has elapsed since the last observed event for that path.
+fn event_rank(k: &FileEventKind) -> u8 {
+    match k {
+        FileEventKind::Removed => 4,
+        FileEventKind::Renamed => 3,
+        FileEventKind::Created => 2,
+        FileEventKind::Modified => 1,
+        FileEventKind::Other => 0,
+    }
+}
+
 pub fn start_watcher(
     roots: Vec<PathBuf>,
     debounce: Duration,
@@ -85,8 +95,31 @@ pub fn start_watcher(
                     // Map notify event into zero or more normalized events
                     for (path, kind, old_path) in map_notify_events(event) {
                         let now = Instant::now();
-                        // Coalesce by path: keep the latest kind and reset the timer
-                        pending.insert(path, (kind, old_path, now));
+                        // Coalesce by path with precedence so Created isn't downgraded by Modified, etc.
+                        // Precedence (high → low): Removed > Renamed > Created > Modified > Other
+                        use std::collections::hash_map::Entry;
+                        match pending.entry(path) {
+                            Entry::Occupied(mut occ) => {
+                                let (existing_kind, existing_old_path, last_update) = occ.get_mut();
+                                let existing_rank = event_rank(existing_kind);
+                                let new_rank = event_rank(&kind);
+                                if new_rank > existing_rank {
+                                    *existing_kind = kind;
+                                    *existing_old_path = old_path.clone();
+                                } else if matches!(existing_kind, FileEventKind::Renamed)
+                                    && existing_old_path.is_none()
+                                    && old_path.is_some()
+                                {
+                                    // Preserve rename "from" path if it arrives later
+                                    *existing_old_path = old_path.clone();
+                                }
+                                // Always extend debounce window on new activity
+                                *last_update = now;
+                            }
+                            Entry::Vacant(vac) => {
+                                vac.insert((kind, old_path, now));
+                            }
+                        }
                     }
                 }
                 Ok(Err(e)) => {
