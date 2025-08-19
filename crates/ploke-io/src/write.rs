@@ -48,8 +48,10 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
     let content = read_file_to_string_abs(&req.file_path).await?;
 
     // 2) Verify expected file hash
-    let tokens = parse_tokens_from_str(&content, &req.file_path)?;
-    let actual_hash = TrackingHash::generate(req.namespace, &req.file_path, &tokens);
+    let actual_hash = {
+        let tokens = parse_tokens_from_str(&content, &req.file_path)?;
+        TrackingHash::generate(req.namespace, &req.file_path, &tokens)
+    };
     if actual_hash != req.expected_file_hash {
         return Err(IoError::ContentMismatch {
             path: req.file_path.clone(),
@@ -87,8 +89,10 @@ async fn process_one_write(req: WriteSnippetData) -> Result<WriteResult, IoError
     new_content.push_str(tail);
 
     // 5) Compute new hash from new content
-    let new_tokens = parse_tokens_from_str(&new_content, &req.file_path)?;
-    let new_hash = TrackingHash::generate(req.namespace, &req.file_path, &new_tokens);
+    let new_hash = {
+        let new_tokens = parse_tokens_from_str(&new_content, &req.file_path)?;
+        TrackingHash::generate(req.namespace, &req.file_path, &new_tokens)
+    };
 
     // 6) Atomic write (temp file in same directory)
     let parent = req
