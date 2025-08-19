@@ -181,17 +181,18 @@ async fn read_file_to_string_abs(path: &Path) -> Result<String, IoError> {
         });
     }
 
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|e| IoError::FileOperation {
-            operation: "read",
-            path: path.to_path_buf(),
-            source: Arc::new(e),
-            kind: std::io::ErrorKind::Other, // Preserve e.kind() below where we clone if needed
-        })?;
+    let bytes = match tokio::fs::read(path).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(IoError::FileOperation {
+                operation: "read",
+                path: path.to_path_buf(),
+                source: Arc::new(e),
+                kind: e.kind(),
+            });
+        }
+    };
 
-    // Reconstruct original error kind for more accurate mapping
-    // Note: we can't extract kind after moving e above; if needed, wrap kind during map_err
     let content = String::from_utf8(bytes).map_err(|e| IoError::Utf8 {
         path: path.to_path_buf(),
         source: e,
@@ -1708,4 +1709,54 @@ mod tests {
     //     let embedding_data = db.get_nodes_for_embedding(100, None)?;
     //     Ok(embedding_data)
     // }
+
+    #[tokio::test]
+    async fn test_parse_error_invalid_rust() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("invalid.rs");
+        std::fs::write(&file_path, "fn {").unwrap();
+
+        let namespace = uuid::Uuid::nil();
+        let req = EmbeddingData {
+            file_path: file_path.clone(),
+            file_tracking_hash: TrackingHash(uuid::Uuid::new_v4()),
+            node_tracking_hash: TrackingHash(uuid::Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 1,
+            id: uuid::Uuid::new_v4(),
+            name: "invalid".to_string(),
+            namespace,
+        };
+
+        let results = io_manager.get_snippets_batch(vec![req]).await.unwrap();
+        assert!(matches!(
+            results[0],
+            Err(PlokeError::Fatal(FatalError::SyntaxError(..)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_reject_relative_path() {
+        let io_manager = IoManagerHandle::new();
+        let rel_path = std::path::PathBuf::from("relative/path.rs");
+
+        let namespace = uuid::Uuid::nil();
+        let req = EmbeddingData {
+            file_path: rel_path.clone(),
+            file_tracking_hash: TrackingHash(uuid::Uuid::new_v4()),
+            node_tracking_hash: TrackingHash(uuid::Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 0,
+            id: uuid::Uuid::new_v4(),
+            name: "rel".to_string(),
+            namespace,
+        };
+
+        let results = io_manager.get_snippets_batch(vec![req]).await.unwrap();
+        assert!(matches!(
+            results[0],
+            Err(PlokeError::Fatal(FatalError::FileOperation { .. }))
+        ));
+    }
 }

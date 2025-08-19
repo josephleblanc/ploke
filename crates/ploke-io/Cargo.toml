@@ -28,7 +28,6 @@ ploke-db = { path = "../ploke-db" }
 ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.10.1"
 mockall = "0.12"
-seahash = "4.1"                               # For hash operations in examples
 
 # [features]
 # testing = ["ploke-test-utils/test_setup"]
