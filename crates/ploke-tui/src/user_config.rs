@@ -65,6 +65,8 @@ pub struct Config {
     pub command_style: CommandStyle,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
+    #[serde(default)]
+    pub editing: EditingConfig,
 }
 
 impl Config {
@@ -127,6 +129,35 @@ pub struct EmbeddingConfig {
     pub hugging_face: Option<HuggingFaceConfig>,
     pub openai: Option<OpenAIConfig>,
     pub cozo: Option<CozoConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EditingAgentConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_agent_min_confidence")]
+    pub min_confidence: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EditingConfig {
+    #[serde(default)]
+    pub auto_confirm_edits: bool,
+    #[serde(default)]
+    pub agent: EditingAgentConfig,
+}
+
+impl Default for EditingConfig {
+    fn default() -> Self {
+        Self {
+            auto_confirm_edits: false,
+            agent: EditingAgentConfig::default(),
+        }
+    }
+}
+
+fn default_agent_min_confidence() -> f32 {
+    0.8
 }
 
 #[derive(Debug, Clone, Deserialize)]

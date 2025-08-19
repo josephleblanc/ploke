@@ -130,6 +130,50 @@ fn request_code_context_tool_def() -> ToolDefinition {
     }
 }
 
+// New tool definition for applying code edits atomically via ploke-io
+fn apply_code_edit_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        r#type: "function",
+        function: ToolFunctionDef {
+            name: "apply_code_edit",
+            description: "Apply one or more code edits atomically (tempfile + fsync + rename) using ploke-io. Each edit splices bytes [start_byte, end_byte) with replacement.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Optional model confidence (0.0–1.0) for approval gating."
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Optional namespace UUID for tracking."
+                    },
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": { "type": "string" },
+                                "expected_file_hash": { "type": "string" },
+                                "start_byte": { "type": "integer", "minimum": 0 },
+                                "end_byte": { "type": "integer", "minimum": 0 },
+                                "replacement": { "type": "string" }
+                            },
+                            "required": ["file_path", "expected_file_hash", "start_byte", "end_byte", "replacement"],
+                            "additionalProperties": false
+                        },
+                        "minItems": 1
+                    }
+                },
+                "required": ["edits"],
+                "additionalProperties": false
+            }),
+        },
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub(super) struct OpenAiResponse {
     choices: Vec<Choice>,
@@ -481,7 +525,7 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    let tools = vec![request_code_context_tool_def()];
+    let tools = vec![request_code_context_tool_def(), apply_code_edit_tool_def()];
 
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
     let session = session::RequestSession::new(

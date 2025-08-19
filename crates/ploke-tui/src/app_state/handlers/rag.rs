@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use ploke_core::{WriteSnippetData, TrackingHash, PROJECT_NAMESPACE_UUID};
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -75,6 +76,151 @@ pub async fn handle_tool_call_requested(
     tracing::warn!(
         "DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility."
     );
+
+    // Handle atomic code edit application via ploke-io
+    if name == "apply_code_edit" {
+        // Parse optional confidence (currently not used for gating in minimal path)
+        let _confidence = arguments
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32);
+
+        // Parse namespace or default to PROJECT_NAMESPACE_UUID
+        let namespace = arguments
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .unwrap_or(PROJECT_NAMESPACE_UUID);
+
+        // Parse edits array
+        let Some(edits_arr) = arguments.get("edits").and_then(|v| v.as_array()) else {
+            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id,
+                error: "Missing or invalid 'edits' array".to_string(),
+            }));
+            return;
+        };
+
+        let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(edits_arr.len());
+        let mut file_paths: Vec<std::path::PathBuf> = Vec::with_capacity(edits_arr.len());
+        for e in edits_arr {
+            let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Edit missing 'file_path'".to_string(),
+                }));
+                return;
+            };
+            let Some(hash_str) = e.get("expected_file_hash").and_then(|v| v.as_str()) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Edit missing 'expected_file_hash'".to_string(),
+                }));
+                return;
+            };
+            let Some(start_byte) = e.get("start_byte").and_then(|v| v.as_u64()) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Edit missing 'start_byte'".to_string(),
+                }));
+                return;
+            };
+            let Some(end_byte) = e.get("end_byte").and_then(|v| v.as_u64()) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Edit missing 'end_byte'".to_string(),
+                }));
+                return;
+            };
+            let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Edit missing 'replacement'".to_string(),
+                }));
+                return;
+            };
+
+            let Ok(hash_uuid) = uuid::Uuid::parse_str(hash_str) else {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: format!("Invalid expected_file_hash UUID: {}", hash_str),
+                }));
+                return;
+            };
+
+            let ws = WriteSnippetData {
+                id: uuid::Uuid::new_v4(),
+                name: "edit".to_string(),
+                file_path: std::path::PathBuf::from(file_path),
+                expected_file_hash: TrackingHash(hash_uuid),
+                start_byte: start_byte as usize,
+                end_byte: end_byte as usize,
+                replacement: replacement.to_string(),
+                namespace,
+            };
+            file_paths.push(ws.file_path.clone());
+            edits.push(ws);
+        }
+
+        // Apply edits via IoManagerHandle
+        match state.io_handle.write_snippets_batch(edits).await {
+            Ok(results) => {
+                let applied = results.iter().filter(|r| r.is_ok()).count();
+                let results_json: Vec<serde_json::Value> = results
+                    .into_iter()
+                    .zip(file_paths.into_iter())
+                    .map(|(res, path)| match res {
+                        Ok(write_res) => serde_json::json!({
+                            "file_path": path.display().to_string(),
+                            "new_file_hash": write_res.new_file_hash.to_string(),
+                        }),
+                        Err(err) => serde_json::json!({
+                            "file_path": path.display().to_string(),
+                            "error": err.to_string(),
+                        }),
+                    })
+                    .collect();
+
+                let content = serde_json::json!({
+                    "ok": applied > 0,
+                    "applied": applied,
+                    "results": results_json
+                })
+                .to_string();
+
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    content,
+                }));
+            }
+            Err(e) => {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    error: format!("Failed to apply edits: {}", e),
+                }));
+            }
+        }
+        return;
+    }
+
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
         let _ = event_bus
