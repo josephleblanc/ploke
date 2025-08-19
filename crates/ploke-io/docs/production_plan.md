@@ -208,3 +208,9 @@ References
 - docs/architecture_boundary.md
 - docs/code_review/2025-08-18.md
 - src/lib.rs (current implementation and tests)
+
+Progress Update — 2025-08-18
+- Phase 2 started: IoManagerBuilder introduced with with_semaphore_permits, with_fd_limit (env override PLOKE_IO_FD_LIMIT, clamped 4..=1024), with_roots, and build().
+- Backward-compatible: IoManagerHandle::new() retained; added IoManagerHandle::builder().
+- Unit tests added for limit computation precedence and clamping.
+- No behavior changes to path policy yet; roots are stored for future enforcement (Phase 7).
