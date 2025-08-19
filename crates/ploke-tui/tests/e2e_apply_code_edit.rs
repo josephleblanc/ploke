@@ -55,7 +55,7 @@ async fn e2e_apply_code_edit_real_llm() {
         id: provider_id.to_string(),
         api_key, // resolved directly from env
         api_key_env: None,
-        base_url: ploke_tui::OPENROUTER_URL.to_string(),
+        base_url: ploke_tui::user_config::OPENROUTER_URL.to_string(),
         // Prefer a model with tool/function calling support
         model: "openai/gpt-4o-mini".to_string(),
         display_name: Some("E2E OpenRouter gpt-4o-mini".to_string()),
