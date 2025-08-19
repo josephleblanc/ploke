@@ -40,3 +40,19 @@ Next Steps
 References
 - docs/production_plan.md
 - src/{actor.rs, builder.rs, path_policy.rs, write.rs}
+
+Progress Update — 2025-08-19 (Phase 5: Minimal Write Path)
+- Implemented the initial write path in src/write.rs:
+  - Validates absolute paths and reads UTF-8 content via existing helpers.
+  - Verifies expected TrackingHash against actual before applying changes.
+  - Enforces byte-range and UTF-8 char-boundary correctness.
+  - Splices replacement bytes in-memory, computes new TrackingHash from tokens.
+  - Performs atomic write using a temp file in the same directory, syncs, renames, and best-effort fsync of parent dir.
+- IoRequest::WriteSnippetBatch now executes real writes via write::write_snippets_batch (still internal API).
+- Not yet implemented:
+  - Per-file async locking to prevent concurrent writes to the same file.
+  - Watcher origin correlation and event emission.
+  - Public Handle API and shared types in ploke-core.
+- Next:
+  - Add per-file locking and expose a public write_snippets_batch API once shared types land in ploke-core.
+  - Enforce roots/symlink policy on write paths analogous to reads/scans.
