@@ -1411,9 +1411,9 @@ mod tests {
         // Case 1: start_byte > end_byte
         let reverse_request = EmbeddingData {
             file_path: file_path.clone(),
-            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-            node_tracking_hash: tracking_hash_with_path(content, &file_path),
+            node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
             start_byte: 10,
             end_byte: 5,
             id: Uuid::new_v4(),
@@ -1424,9 +1424,9 @@ mod tests {
         // Case 2: start_byte == end_byte (but file is shorter)
         let equal_request = EmbeddingData {
             file_path: file_path.clone(),
-            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            file_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
 
-            node_tracking_hash: tracking_hash_with_path(content, &file_path),
+            node_tracking_hash: tracking_hash_with_path_ns(content, &file_path, namespace),
             start_byte: 100,
             end_byte: 100,
             id: Uuid::new_v4(),
