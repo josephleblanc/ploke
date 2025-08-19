@@ -166,7 +166,14 @@ impl IoManagerBuilder {
                 } else {
                     self.symlink_policy
                 };
-                let manager = IoManager::new_with(rx, effective_permits, roots_opt, symlink_policy_opt);
+                let manager = IoManager::new_with(
+                    rx,
+                    effective_permits,
+                    roots_opt,
+                    symlink_policy_opt,
+                    #[cfg(feature = "watcher")]
+                    Some(events_tx.clone()),
+                );
                 manager.run().await;
             });
         });

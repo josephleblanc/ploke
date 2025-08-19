@@ -14,6 +14,8 @@ pub struct IoManager {
     semaphore: Arc<Semaphore>,
     roots: Option<Arc<Vec<PathBuf>>>,
     symlink_policy: Option<SymlinkPolicy>,
+    #[cfg(feature = "watcher")]
+    events_tx: Option<tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>>,
 }
 
 /// A message that can be sent to the IoManager.
@@ -67,6 +69,8 @@ impl IoManager {
             semaphore: Arc::new(Semaphore::new(limit)),
             roots: None,
             symlink_policy: None,
+            #[cfg(feature = "watcher")]
+            events_tx: None,
         }
     }
 
@@ -76,12 +80,16 @@ impl IoManager {
         semaphore_permits: usize,
         roots: Option<Vec<PathBuf>>,
         symlink_policy: Option<SymlinkPolicy>,
+        #[cfg(feature = "watcher")]
+        events_tx: Option<tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>>,
     ) -> Self {
         Self {
             request_receiver,
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
             roots: roots.map(Arc::new),
             symlink_policy,
+            #[cfg(feature = "watcher")]
+            events_tx,
         }
     }
 
@@ -127,8 +135,23 @@ impl IoManager {
             IoRequest::WriteSnippetBatch { requests, responder } => {
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
+                #[cfg(feature = "watcher")]
+                let events_tx = self.events_tx.clone();
                 tokio::spawn(async move {
-                    let results = write_snippets_batch(requests, roots, symlink_policy).await;
+                    let results = write_snippets_batch(requests.clone(), roots, symlink_policy).await;
+                    #[cfg(feature = "watcher")]
+                    if let Some(tx) = events_tx {
+                        for (req, res) in requests.into_iter().zip(results.iter()) {
+                            if res.is_ok() {
+                                let _ = tx.send(crate::watcher::FileChangeEvent {
+                                    path: req.file_path.clone(),
+                                    kind: crate::watcher::FileEventKind::Modified,
+                                    old_path: None,
+                                    origin: None,
+                                });
+                            }
+                        }
+                    }
                     let _ = responder.send(results);
                 });
             }

@@ -14,10 +14,13 @@ Notes:
 */
 
 use super::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ploke_core::{WriteResult, WriteSnippetData};
 use tokio::io::AsyncWriteExt;
 use crate::path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy};
+use dashmap::DashMap;
+use lazy_static::lazy_static;
+use tokio::sync::Mutex;
 
 // `WriteSnippetData` and `WriteResult` moved to ploke-core
 // If changes are needed, share details in implementation-log and USER will propogate them to
@@ -45,6 +48,17 @@ use crate::path_policy::{normalize_against_roots, normalize_against_roots_with_p
 //         Self { new_file_hash }
 //     }
 // }
+
+lazy_static! {
+    static ref FILE_LOCKS: DashMap<PathBuf, Arc<Mutex<()>>> = DashMap::new();
+}
+
+fn get_file_lock(path: &Path) -> Arc<Mutex<()>> {
+    FILE_LOCKS
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 async fn process_one_write(
     req: WriteSnippetData,
@@ -74,6 +88,12 @@ async fn process_one_write(
             });
         }
         req.file_path.clone()
+    };
+
+    // Acquire per-file async lock to serialize writes to the same path
+    let _write_lock_guard = {
+        let lock = get_file_lock(&file_path);
+        lock.lock().await
     };
 
     // 1) Read current content (absolute-path enforced by helper)

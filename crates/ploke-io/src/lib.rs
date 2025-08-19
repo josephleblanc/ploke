@@ -62,6 +62,8 @@ pub mod watcher;
 pub use watcher::{FileChangeEvent, FileEventKind};
 mod write;
 mod tests_skeleton;
+#[cfg(test)]
+mod write_tests;
 use futures::future::join_all;
 use itertools::Itertools;
 use ploke_core::ChangedFileData;
