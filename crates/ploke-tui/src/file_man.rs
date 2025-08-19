@@ -12,20 +12,20 @@ use crate::{ErrorEvent, RagEvent};
 
 pub struct FileManager {
     io_handle: ploke_io::IoManagerHandle,
-    event_rx: broadcast::Receiver<crate::AppEvent>,
-    event_tx: broadcast::Sender<crate::AppEvent>,
+    event_rx: broadcast::Receiver<AppEvent>,
+    event_tx: broadcast::Sender<AppEvent>,
     context_tx: mpsc::Sender<RagEvent>,
-    realtime_event_tx: broadcast::Sender<crate::AppEvent>,
+    realtime_event_tx: broadcast::Sender<AppEvent>,
 }
 
 impl FileManager {
     /// Creates a new FileManager instance
     pub fn new(
         io_handle: ploke_io::IoManagerHandle,
-        event_rx: broadcast::Receiver<crate::AppEvent>,
-        event_tx: broadcast::Sender<crate::AppEvent>,
+        event_rx: broadcast::Receiver<AppEvent>,
+        event_tx: broadcast::Sender<AppEvent>,
         context_tx: mpsc::Sender<RagEvent>,
-        realtime_event_tx: broadcast::Sender<crate::AppEvent>,
+        realtime_event_tx: broadcast::Sender<AppEvent>,
     ) -> Self {
         Self {
             io_handle,
@@ -44,7 +44,7 @@ impl FileManager {
     }
 
     /// Processes incoming file-related events
-    async fn handle_event(&mut self, event: crate::AppEvent) {
+    async fn handle_event(&mut self, event: AppEvent) {
         match event {
             AppEvent::System(SystemEvent::SaveRequested(content)) => {
                 let path = match std::env::current_dir() {
