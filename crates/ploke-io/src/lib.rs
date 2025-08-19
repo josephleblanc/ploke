@@ -713,20 +713,45 @@ impl IoManager {
         semaphore: Arc<Semaphore>,
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
+
+        let total = requests.len();
         let concurrency_limit = std::cmp::max(1, semaphore.available_permits());
-        let results_vec = futures::stream::iter(requests.into_iter().map(|file_data| {
-            let sem = semaphore.clone();
-            async move { Self::check_file_hash(file_data, sem).await }
-        }))
+
+        // Process with bounded concurrency but keep track of original indices.
+        let results_idx = futures::stream::iter(
+            requests
+                .into_iter()
+                .enumerate()
+                .map(|(idx, file_data)| {
+                    let sem = semaphore.clone();
+                    async move { (idx, Self::check_file_hash(file_data, sem).await) }
+                }),
+        )
         .buffer_unordered(concurrency_limit)
         .collect::<Vec<_>>()
         .await;
 
-        let mut results = Vec::with_capacity(results_vec.len());
-        for res in results_vec {
-            results.push(res?);
+        // Pre-allocate output preserving input order.
+        let mut ordered: Vec<Option<ChangedFileData>> = vec![None; total];
+        // Capture the first error by input order (deterministic).
+        let mut first_err: Option<(usize, PlokeError)> = None;
+
+        for (idx, res) in results_idx {
+            match res {
+                Ok(opt) => ordered[idx] = opt,
+                Err(e) => {
+                    if matches!(first_err, None) || first_err.as_ref().map(|(i, _)| idx < *i).unwrap_or(false) {
+                        first_err = Some((idx, e));
+                    }
+                }
+            }
         }
-        Ok(results)
+
+        if let Some((_, e)) = first_err {
+            Err(e)
+        } else {
+            Ok(ordered)
+        }
     }
 
     async fn handle_scan_batch_with_roots(
@@ -735,21 +760,43 @@ impl IoManager {
         roots: Option<Arc<Vec<PathBuf>>>,
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
+
+        let total = requests.len();
         let concurrency_limit = std::cmp::max(1, semaphore.available_permits());
-        let results_vec = futures::stream::iter(requests.into_iter().map(|file_data| {
-            let sem = semaphore.clone();
-            let roots = roots.clone();
-            async move { Self::check_file_hash_with_roots(file_data, sem, roots).await }
-        }))
+
+        let results_idx = futures::stream::iter(
+            requests
+                .into_iter()
+                .enumerate()
+                .map(|(idx, file_data)| {
+                    let sem = semaphore.clone();
+                    let roots = roots.clone();
+                    async move { (idx, Self::check_file_hash_with_roots(file_data, sem, roots).await) }
+                }),
+        )
         .buffer_unordered(concurrency_limit)
         .collect::<Vec<_>>()
         .await;
 
-        let mut results = Vec::with_capacity(results_vec.len());
-        for res in results_vec {
-            results.push(res?);
+        let mut ordered: Vec<Option<ChangedFileData>> = vec![None; total];
+        let mut first_err: Option<(usize, PlokeError)> = None;
+
+        for (idx, res) in results_idx {
+            match res {
+                Ok(opt) => ordered[idx] = opt,
+                Err(e) => {
+                    if matches!(first_err, None) || first_err.as_ref().map(|(i, _)| idx < *i).unwrap_or(false) {
+                        first_err = Some((idx, e));
+                    }
+                }
+            }
         }
-        Ok(results)
+
+        if let Some((_, e)) = first_err {
+            Err(e)
+        } else {
+            Ok(ordered)
+        }
     }
 
     /// Computes a fresh tracking hash for a single file and compares it to the store value.
