@@ -289,11 +289,16 @@ pub struct IoManager {
 impl IoManager {
     /// Creates a new IoManager.
     fn new(request_receiver: mpsc::Receiver<IoManagerMessage>) -> Self {
-        // Set concurrency based on available file descriptors
-        let limit = match rlimit::getrlimit(rlimit::Resource::NOFILE) {
+        // Set concurrency based on available file descriptors with env override
+        let default_limit = match rlimit::getrlimit(rlimit::Resource::NOFILE) {
             Ok((soft, _)) => std::cmp::min(100, (soft / 3) as usize),
             Err(_) => 50, // Default to a safe value
         };
+        let limit = std::env::var("PLOKE_IO_FD_LIMIT")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|n| n.clamp(4, 1024))
+            .unwrap_or(default_limit);
 
         Self {
             request_receiver,
@@ -366,37 +371,35 @@ impl IoManager {
         });
 
         // 4. Collect results and preserve order
-        let mut indexed_results: Vec<(usize, Result<String, PlokeError>)> = Vec::new();
+        let mut final_results: Vec<Option<Result<String, PlokeError>>> =
+            vec![None; total_requests];
+
         for task in join_all(file_tasks).await {
             match task {
-                Ok(file_results) => indexed_results.extend(file_results),
+                Ok(file_results) => {
+                    for (idx, res) in file_results {
+                        if idx < final_results.len() {
+                            final_results[idx] = Some(res);
+                        }
+                    }
+                }
                 Err(e) => {
                     tracing::warn!("[ploke-io] FATAL: File processing task panicked: {:?}", e);
                 }
             }
         }
 
-        // 5. Sort results by the original index to restore order
-        // TODO: Review the logic here. Not sure if it really makes sense to index the returned
-        // results and then sort them like this vs. using a `DashMap` or similar to handle each of
-        // the files separately, using a key of the `Uuid` of the nodes referencing the code snippet.
-        indexed_results.sort_by_key(|(idx, _)| *idx);
-
-        // 6. Create the final, ordered vector of results
-        let mut final_results = Vec::with_capacity(total_requests);
-        let mut result_idx = 0;
-        for i in 0..total_requests {
-            if result_idx < indexed_results.len() && indexed_results[result_idx].0 == i {
-                final_results.push(indexed_results[result_idx].1.clone());
-                result_idx += 1;
-            } else {
-                final_results.push(Err(ploke_error::InternalError::InvalidState(
-                    "Result missing for request",
-                )
-                .into()));
-            }
-        }
         final_results
+            .into_iter()
+            .map(|opt| {
+                opt.unwrap_or_else(|| {
+                    Err(ploke_error::InternalError::InvalidState(
+                        "Result missing for request",
+                    )
+                    .into())
+                })
+            })
+            .collect()
     }
 
     /// Processes all snippet requests for a single file efficiently.
@@ -421,6 +424,25 @@ impl IoManager {
         let mut results = Vec::new();
 
         // Read the entire file content once
+        // Basic path policy: require absolute paths (roots policy to be added in builder)
+        if !file_path.is_absolute() {
+            for req in requests {
+                results.push((
+                    req.idx,
+                    Err(IoError::FileOperation {
+                        operation: "read",
+                        path: file_path.clone(),
+                        source: Arc::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "path must be absolute",
+                        )),
+                        kind: std::io::ErrorKind::InvalidInput,
+                    }
+                    .into()),
+                ));
+            }
+            return results;
+        }
         let bytes = match tokio::fs::read(&file_path).await {
             Ok(content) => content,
             Err(e) => {
@@ -484,11 +506,12 @@ impl IoManager {
             .namespace;
         let actual_tracking_hash = TrackingHash::generate(namespace, &file_path, &file_tokens);
 
-        // Verify against the expected tracking hash
-        // TODO: Replace just using the first file_tracking_hash with a better method. we should
-        // probably just be sending the file tracking hash along once with the OrderedRequest.
-        if actual_tracking_hash != requests[0].request.file_tracking_hash {
-            for req in requests {
+        // Verify per-request against the expected tracking hash (handled in the loop below)
+
+        // Extract snippets from the in-memory content
+        for req in requests {
+            // Per-request hash verification
+            if actual_tracking_hash != req.request.file_tracking_hash {
                 tracing::error!(
                     "file: {}, database: {}\nfull request dump:\n{:#?}",
                     actual_tracking_hash.0,
@@ -496,7 +519,6 @@ impl IoManager {
                     req
                 );
                 results.push((
-                    // TODO: Replace req.idx with the actual node id
                     req.idx,
                     Err(IoError::ContentMismatch {
                         path: file_path.clone(),
@@ -507,12 +529,9 @@ impl IoManager {
                     }
                     .into()),
                 ));
+                continue;
             }
-            return results;
-        }
 
-        // Extract snippets from the in-memory content
-        for req in requests {
             // Validate byte order and bounds first
             if req.request.start_byte > req.request.end_byte
                 || req.request.end_byte > file_content.len()
@@ -527,26 +546,28 @@ impl IoManager {
                     }
                     .into()),
                 ));
-            } else {
-                // Safe UTF-8 boundary check
-                if !file_content.is_char_boundary(req.request.start_byte)
-                    || !file_content.is_char_boundary(req.request.end_byte)
-                {
-                    results.push((
-                        req.idx,
-                        Err(IoError::InvalidCharBoundary {
-                            path: file_path.clone(),
-                            start_byte: req.request.start_byte,
-                            end_byte: req.request.end_byte,
-                        }
-                        .into()),
-                    ));
-                } else {
-                    let snippet =
-                        file_content[req.request.start_byte..req.request.end_byte].to_string();
-                    results.push((req.idx, Ok(snippet)));
-                }
+                continue;
             }
+
+            // Safe UTF-8 boundary check
+            if !file_content.is_char_boundary(req.request.start_byte)
+                || !file_content.is_char_boundary(req.request.end_byte)
+            {
+                results.push((
+                    req.idx,
+                    Err(IoError::InvalidCharBoundary {
+                        path: file_path.clone(),
+                        start_byte: req.request.start_byte,
+                        end_byte: req.request.end_byte,
+                    }
+                    .into()),
+                ));
+                continue;
+            }
+
+            let snippet =
+                file_content[req.request.start_byte..req.request.end_byte].to_string();
+            results.push((req.idx, Ok(snippet)));
         }
 
         results
@@ -565,16 +586,22 @@ impl IoManager {
         semaphore: Arc<Semaphore>,
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
-        let concurrency_limit = semaphore.available_permits();
-        let mut futs = Vec::new();
-        for file_data in requests {
-            let clone_sema = semaphore.clone();
-            futs.push(async move { Self::check_file_hash(file_data, clone_sema).await });
-        }
-        let mut results = Vec::new();
-        for result in futures::future::join_all(futs).await {
-            let ok_res = result?;
-            results.push(ok_res);
+        let concurrency_limit = std::cmp::max(1, semaphore.available_permits());
+        let results_vec = futures::stream::iter(
+            requests
+                .into_iter()
+                .map(|file_data| {
+                    let sem = semaphore.clone();
+                    async move { Self::check_file_hash(file_data, sem).await }
+                }),
+        )
+        .buffer_unordered(concurrency_limit)
+        .collect::<Vec<_>>()
+        .await;
+
+        let mut results = Vec::with_capacity(results_vec.len());
+        for res in results_vec {
+            results.push(res?);
         }
         Ok(results)
     }
@@ -592,6 +619,18 @@ impl IoManager {
             .acquire()
             .await
             .map_err(|_| IoError::ShutdownInitiated)?;
+        if !file_data.file_path.is_absolute() {
+            return Err(IoError::FileOperation {
+                operation: "read",
+                path: file_data.file_path.clone(),
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "path must be absolute",
+                )),
+                kind: std::io::ErrorKind::InvalidInput,
+            }
+            .into());
+        }
         let bytes = tokio::fs::read(&file_data.file_path)
             .await
             .map_err(|e| ploke_error::FatalError::from((e, "read", file_data.file_path.clone())))?;
@@ -620,11 +659,11 @@ pub enum RecvError {
     RecvError,
 }
 
-// impl From<RecvError> for IoError {
-//     fn from(e: RecvError) -> Self {
-//         IoError::Recv(e);
-//     }
-// }
+impl From<RecvError> for IoError {
+    fn from(e: RecvError) -> Self {
+        IoError::Recv(e)
+    }
+}
 
 // Define the additional error variants locally since we can't edit ploke-error
 #[derive(Debug, Error, Clone)]
