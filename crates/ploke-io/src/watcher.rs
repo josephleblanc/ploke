@@ -48,7 +48,11 @@ pub fn start_watcher(
     debounce: Duration,
     events_tx: broadcast::Sender<FileChangeEvent>,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+    // Synchronize startup so callers don't miss very-early events (like Create)
+    // due to watcher registration races.
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+
+    let jh = thread::spawn(move || {
         let config = Config::default().with_poll_interval(debounce);
         let tx_broadcast = events_tx.clone();
 
@@ -84,6 +88,9 @@ pub fn start_watcher(
                 tracing::warn!("ploke-io watcher: failed to watch {}: {:?}", root.display(), e);
             }
         }
+
+        // Signal to the caller that watcher registration is complete.
+        let _ = ready_tx.send(());
 
         // Debounce/coalesce loop
         let mut pending: HashMap<PathBuf, (FileEventKind, Option<PathBuf>, Instant)> = HashMap::new();
@@ -162,7 +169,10 @@ pub fn start_watcher(
             // Park briefly to avoid busy loop when events are steady
             thread::park_timeout(Duration::from_millis(5));
         }
-    })
+    });
+    // Block until the watcher thread has registered all roots to avoid missing early events.
+    let _ = ready_rx.recv();
+    jh
 }
 
 fn map_notify_events(event: Event) -> Vec<(PathBuf, FileEventKind, Option<PathBuf>)> {
