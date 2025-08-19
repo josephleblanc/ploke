@@ -267,3 +267,17 @@ impl ChangedFileData {
     }
 }
 ```
+
+Progress Update — 2025-08-19
+- Phase 1/3 hygiene sustained:
+  - Read path: per-request hash verification, UTF-8 safe slicing, absolute path requirement, and early roots enforcement are in place.
+  - Scan path: bounded concurrency via buffer_unordered with deterministic output ordering; test instrumentation verifies concurrency caps.
+  - Error model: IoError carries RecvError via From; mapping to ploke_error uses Internal for channel/shutdown.
+- Phase 2: IoManagerBuilder shipped with precedence logic and env clamp; builder tests in place.
+- Docs/Process:
+  - Added Implementation Log 010 with “Conversation Context Management” to keep our active chat context small while continuing the plan.
+  - Next steps: begin watcher design scaffolding (feature-gated) and path canonicalization design notes.
+
+Notes
+- To maintain a two-log window, keep implementation-log-009.md and -010.md. Remove older logs as described in Implementation Log 010.
+- For continued work, we will add/remove files to the active chat as needed to minimize token usage, per Implementation Log 010 guidance.
