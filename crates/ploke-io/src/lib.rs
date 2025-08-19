@@ -72,29 +72,46 @@
 //!     // 2. Create an IoManagerHandle. This spawns the actor in the background.
 //!     let io_manager = IoManagerHandle::new();
 //!
-//!     // 3. Create a batch of requests.
+//!     // 3. Prepare hashing inputs and create a batch of requests.
+//!     let namespace = ploke_core::PROJECT_NAMESPACE_UUID;
+//!     let file1_tokens = syn::parse_file(content1).unwrap();
+//!     let file2_tokens = syn::parse_file(content2).unwrap();
 //!     let requests = vec![
 //!         EmbeddingData {
 //!             id: Uuid::new_v4(),  // Add UUID field
 //!             file_path: file_path1.clone(),
 //!             file_tracking_hash: ploke_core::TrackingHash::generate(
-//!                 ploke_core::PROJECT_NAMESPACE_UUID,
+//!                 namespace,
 //!                 &file_path1,
-//!                 &content1.parse().unwrap()
+//!                 &file1_tokens
+//!             ),
+//!             node_tracking_hash: ploke_core::TrackingHash::generate(
+//!                 namespace,
+//!                 &file_path1,
+//!                 &file1_tokens
 //!             ),
 //!             start_byte: content1.find("world").unwrap(),
 //!             end_byte: content1.find("world").unwrap() + "world".len(),
+//!             name: "world".to_string(),
+//!             namespace,
 //!         },
 //!         EmbeddingData {
 //!             id: Uuid::new_v4(),  // Add UUID field
 //!             file_path: file_path2.clone(),
 //!             file_tracking_hash: ploke_core::TrackingHash::generate(
-//!                 ploke_core::PROJECT_NAMESPACE_UUID,
+//!                 namespace,
 //!                 &file_path2,
-//!                 &content2.parse().unwrap()
+//!                 &file2_tokens
+//!             ),
+//!             node_tracking_hash: ploke_core::TrackingHash::generate(
+//!                 namespace,
+//!                 &file_path2,
+//!                 &file2_tokens
 //!             ),
 //!             start_byte: content2.find("This").unwrap(),
 //!             end_byte: content2.find("This").unwrap() + "This".len(),
+//!             name: "This".to_string(),
+//!             namespace,
 //!         },
 //!     ];
 //!
