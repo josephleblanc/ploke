@@ -52,7 +52,7 @@ use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
 use quote::ToTokens;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
@@ -162,6 +162,74 @@ enum IoRequest {
         requests: Vec<FileData>,
         responder: oneshot::Sender<Result<Vec<Option<ChangedFileData>>, PlokeError>>,
     },
+}
+
+async fn read_file_to_string_abs(path: &Path) -> Result<String, IoError> {
+    if !path.is_absolute() {
+        return Err(IoError::FileOperation {
+            operation: "read",
+            path: path.to_path_buf(),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    }
+
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| IoError::FileOperation {
+            operation: "read",
+            path: path.to_path_buf(),
+            source: Arc::new(e),
+            kind: std::io::ErrorKind::Other, // Preserve e.kind() below where we clone if needed
+        })?;
+
+    // Reconstruct original error kind for more accurate mapping
+    // Note: we can't extract kind after moving e above; if needed, wrap kind during map_err
+    let content = String::from_utf8(bytes).map_err(|e| IoError::Utf8 {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    Ok(content)
+}
+
+fn parse_tokens_from_str(
+    content: &str,
+    path: &Path,
+) -> Result<proc_macro2::TokenStream, IoError> {
+    let parsed = syn::parse_file(content).map_err(|e| IoError::ParseError {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+    Ok(parsed.into_token_stream())
+}
+
+fn extract_snippet_str(
+    content: &str,
+    start: usize,
+    end: usize,
+    path: &Path,
+) -> Result<String, IoError> {
+    if start > end || end > content.len() {
+        return Err(IoError::OutOfRange {
+            path: path.to_path_buf(),
+            start_byte: start,
+            end_byte: end,
+            file_len: content.len(),
+        });
+    }
+
+    if !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+        return Err(IoError::InvalidCharBoundary {
+            path: path.to_path_buf(),
+            start_byte: start,
+            end_byte: end,
+        });
+    }
+
+    Ok(content[start..end].to_string())
 }
 
 /// The `IoManager` is a central actor responsible for handling all file I/O operations
@@ -349,76 +417,24 @@ impl IoManager {
         // or contents of each other node
         let mut results = Vec::new();
 
-        // Read the entire file content once
-        // Basic path policy: require absolute paths (roots policy to be added in builder)
-        if !file_path.is_absolute() {
-            for req in requests {
-                results.push((
-                    req.idx,
-                    Err(IoError::FileOperation {
-                        operation: "read",
-                        path: file_path.clone(),
-                        source: Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "path must be absolute",
-                        )),
-                        kind: std::io::ErrorKind::InvalidInput,
-                    }
-                    .into()),
-                ));
-            }
-            return results;
-        }
-        let bytes = match tokio::fs::read(&file_path).await {
-            Ok(content) => content,
-            Err(e) => {
-                let arced_error = Arc::new(e);
-                for req in requests {
-                    results.push((
-                        req.idx,
-                        Err(IoError::FileOperation {
-                            operation: "read",
-                            path: file_path.clone(),
-                            source: Arc::clone(&arced_error),
-                            kind: arced_error.kind(),
-                        }
-                        .into()),
-                    ));
-                }
-                return results;
-            }
-        };
-
-        let file_content = match String::from_utf8(bytes) {
+        // Read and parse file once using helpers
+        let file_content = match read_file_to_string_abs(&file_path).await {
             Ok(s) => s,
             Err(e) => {
+                let err = e.clone();
                 for req in requests {
-                    results.push((
-                        req.idx,
-                        Err(IoError::Utf8 {
-                            path: file_path.clone(),
-                            source: e.clone(),
-                        }
-                        .into()),
-                    ));
+                    results.push((req.idx, Err(err.clone().into())));
                 }
                 return results;
             }
         };
 
-        // Parse the file content to a token stream
-        let file_tokens = match syn::parse_file(&file_content) {
-            Ok(parsed) => parsed.into_token_stream(),
+        let file_tokens = match parse_tokens_from_str(&file_content, &file_path) {
+            Ok(tokens) => tokens,
             Err(e) => {
+                let err = e.clone();
                 for req in requests {
-                    results.push((
-                        req.idx,
-                        Err(IoError::ParseError {
-                            path: file_path.clone(),
-                            message: e.to_string(),
-                        }
-                        .into()),
-                    ));
+                    results.push((req.idx, Err(err.clone().into())));
                 }
                 return results;
             }
@@ -458,42 +474,15 @@ impl IoManager {
                 continue;
             }
 
-            // Validate byte order and bounds first
-            if req.request.start_byte > req.request.end_byte
-                || req.request.end_byte > file_content.len()
-            {
-                results.push((
-                    req.idx,
-                    Err(IoError::OutOfRange {
-                        path: file_path.clone(),
-                        start_byte: req.request.start_byte,
-                        end_byte: req.request.end_byte,
-                        file_len: file_content.len(),
-                    }
-                    .into()),
-                ));
-                continue;
+            match extract_snippet_str(
+                &file_content,
+                req.request.start_byte,
+                req.request.end_byte,
+                &file_path,
+            ) {
+                Ok(snippet) => results.push((req.idx, Ok(snippet))),
+                Err(e) => results.push((req.idx, Err(e.into()))),
             }
-
-            // Safe UTF-8 boundary check
-            if !file_content.is_char_boundary(req.request.start_byte)
-                || !file_content.is_char_boundary(req.request.end_byte)
-            {
-                results.push((
-                    req.idx,
-                    Err(IoError::InvalidCharBoundary {
-                        path: file_path.clone(),
-                        start_byte: req.request.start_byte,
-                        end_byte: req.request.end_byte,
-                    }
-                    .into()),
-                ));
-                continue;
-            }
-
-            let snippet =
-                file_content[req.request.start_byte..req.request.end_byte].to_string();
-            results.push((req.idx, Ok(snippet)));
         }
 
         results
@@ -545,27 +534,8 @@ impl IoManager {
             .acquire()
             .await
             .map_err(|_| IoError::ShutdownInitiated)?;
-        if !file_data.file_path.is_absolute() {
-            return Err(IoError::FileOperation {
-                operation: "read",
-                path: file_data.file_path.clone(),
-                source: Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "path must be absolute",
-                )),
-                kind: std::io::ErrorKind::InvalidInput,
-            }
-            .into());
-        }
-        let bytes = tokio::fs::read(&file_data.file_path)
-            .await
-            .map_err(|e| ploke_error::FatalError::from((e, "read", file_data.file_path.clone())))?;
-        let tokens = syn::parse_file(&String::from_utf8_lossy(&bytes))
-            .map_err(|e| IoError::ParseError {
-                path: file_data.file_path.clone(),
-                message: e.to_string(),
-            })?
-            .into_token_stream();
+        let file_content = read_file_to_string_abs(&file_data.file_path).await?;
+        let tokens = parse_tokens_from_str(&file_content, &file_data.file_path)?;
 
         let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);
 
@@ -1637,6 +1607,91 @@ mod tests {
 
     fn percent(i: usize, t: usize) -> f32 {
         i as f32 / (t as f32) * 100.0
+    }
+
+    #[tokio::test]
+    async fn test_large_file_snippet_extraction() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("large.rs");
+
+        // Build a ~2MB file of ASCII-safe content to ensure char boundaries align with bytes
+        let mut content = String::new();
+        for i in 0..200_000 {
+            content.push_str(&format!("const A_{:06}: usize = {};\n", i, i));
+        }
+        std::fs::write(&file_path, &content).unwrap();
+
+        let namespace = uuid::Uuid::nil();
+        let start = content.find("A_000100").unwrap();
+        let end = start + "A_000100".len();
+
+        let req = EmbeddingData {
+            file_path: file_path.clone(),
+            file_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
+            node_tracking_hash: tracking_hash_with_path_ns(&content, &file_path, namespace),
+            start_byte: start,
+            end_byte: end,
+            id: uuid::Uuid::new_v4(),
+            name: "A_000100".to_string(),
+            namespace,
+        };
+
+        let results = io_manager.get_snippets_batch(vec![req]).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].as_ref().unwrap(), "A_000100");
+    }
+
+    #[tokio::test]
+    async fn test_mixed_batch_hash_mismatch_per_request() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("mixed.rs");
+        let content = r#"
+            fn alpha() {}
+            fn beta() {}
+        "#;
+        std::fs::write(&file_path, content).unwrap();
+
+        let namespace = uuid::Uuid::new_v4();
+        let good_hash = tracking_hash_with_path_ns(content, &file_path, namespace);
+        let bad_hash = TrackingHash(uuid::Uuid::new_v4());
+
+        let alpha_start = content.find("alpha").unwrap();
+        let alpha_end = alpha_start + "alpha".len();
+        let beta_start = content.find("beta").unwrap();
+        let beta_end = beta_start + "beta".len();
+
+        let reqs = vec![
+            EmbeddingData {
+                file_path: file_path.clone(),
+                file_tracking_hash: good_hash,
+                node_tracking_hash: good_hash,
+                start_byte: alpha_start,
+                end_byte: alpha_end,
+                id: uuid::Uuid::new_v4(),
+                name: "alpha".to_string(),
+                namespace,
+            },
+            EmbeddingData {
+                file_path: file_path.clone(),
+                file_tracking_hash: bad_hash,
+                node_tracking_hash: bad_hash,
+                start_byte: beta_start,
+                end_byte: beta_end,
+                id: uuid::Uuid::new_v4(),
+                name: "beta".to_string(),
+                namespace,
+            },
+        ];
+
+        let results = io_manager.get_snippets_batch(reqs).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].as_ref().unwrap(), "alpha");
+        assert!(matches!(
+            results[1].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::ContentMismatch { .. })
+        ));
     }
 
     // pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {
