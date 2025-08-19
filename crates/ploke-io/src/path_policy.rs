@@ -61,3 +61,23 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
 // - symlink policy: follow or deny across root boundaries based on config
 // - clear error mapping for permission/traversal attempts
 
+/// Symlink handling policy placeholder (Phase 7).
+#[derive(Debug, Clone, Copy)]
+pub enum SymlinkPolicy {
+    /// Follow symlinks during normalization.
+    Follow,
+    /// Deny traversals that would escape configured roots via symlinks.
+    DenyCrossRoot,
+}
+
+/// Placeholder for future symlink-aware root checks.
+/// Currently delegates to `path_within_roots` until policy is fully implemented.
+pub(crate) fn path_within_roots_with_policy(
+    path: &Path,
+    roots: &[PathBuf],
+    _policy: SymlinkPolicy,
+) -> bool {
+    // TODO(Phase 7): Implement strict symlink policy evaluation
+    path_within_roots(path, roots)
+}
+

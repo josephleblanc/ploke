@@ -140,7 +140,7 @@ fn map_notify_events(event: Event) -> Vec<(PathBuf, FileEventKind, Option<PathBu
             .into_iter()
             .map(|p| (p, FileEventKind::Created, None))
             .collect(),
-        EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Name(_)) => event
+        EventKind::Modify(ModifyKind::Data(_)) => event
             .paths
             .into_iter()
             .map(|p| (p, FileEventKind::Modified, None))
@@ -178,6 +178,11 @@ fn map_notify_events(event: Event) -> Vec<(PathBuf, FileEventKind, Option<PathBu
                 vec![]
             }
         }
+        EventKind::Modify(ModifyKind::Any) => event
+            .paths
+            .into_iter()
+            .map(|p| (p, FileEventKind::Modified, None))
+            .collect(),
         _ => event
             .paths
             .into_iter()
@@ -192,15 +197,128 @@ fn map_event_kind(kind: &EventKind) -> FileEventKind {
         EventKind::Create(CreateKind::Any | CreateKind::File | CreateKind::Folder) => {
             FileEventKind::Created
         }
-        EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Name(_)) => {
-            FileEventKind::Modified
-        }
-        EventKind::Remove(RemoveKind::Any | RemoveKind::File | RemoveKind::Folder) => {
-            FileEventKind::Removed
-        }
+        // Handle rename variants first so they are not shadowed by broader Modify matches.
         EventKind::Modify(ModifyKind::Name(RenameMode::Both))
         | EventKind::Modify(ModifyKind::Name(RenameMode::From))
         | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => FileEventKind::Renamed,
+        // Specific Modify kinds
+        EventKind::Modify(ModifyKind::Data(_)) => FileEventKind::Modified,
+        EventKind::Modify(ModifyKind::Name(_)) => FileEventKind::Modified,
+        EventKind::Modify(ModifyKind::Any) => FileEventKind::Modified,
+        EventKind::Remove(RemoveKind::Any | RemoveKind::File | RemoveKind::Folder) => {
+            FileEventKind::Removed
+        }
         _ => FileEventKind::Other,
+    }
+}
+
+#[cfg(all(test, feature = "watcher"))]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use tokio::sync::broadcast;
+    use tokio::time::{timeout, Duration};
+    use std::time::Duration as StdDuration;
+
+    async fn recv_kind_within(
+        rx: &mut broadcast::Receiver<FileChangeEvent>,
+        expected_kind: FileEventKind,
+        expected_path: Option<&PathBuf>,
+        max_wait: Duration,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + max_wait;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            match timeout(remaining, rx.recv()).await {
+                Ok(Ok(evt)) => {
+                    let kind_matches = std::mem::discriminant(&evt.kind)
+                        == std::mem::discriminant(&expected_kind);
+                    let path_matches = expected_path.map_or(true, |p| &evt.path == p);
+                    if kind_matches && path_matches {
+                        return true;
+                    }
+                }
+                Ok(Err(_)) => return false,
+                Err(_) => return false,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_watcher_emits_create_modify_remove() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+
+        let (tx, _) = broadcast::channel(128);
+        let debounce = StdDuration::from_millis(100);
+        let _jh = start_watcher(vec![root.clone()], debounce, tx.clone());
+        let mut rx = tx.subscribe();
+
+        let file = root.join("watch_test.txt");
+
+        // Create
+        std::fs::write(&file, b"hello").unwrap();
+        assert!(
+            recv_kind_within(&mut rx, FileEventKind::Created, Some(&file), Duration::from_secs(3)).await,
+            "Did not receive Created event for {}",
+            file.display()
+        );
+
+        // Modify
+        std::fs::write(&file, b"world").unwrap();
+        assert!(
+            recv_kind_within(&mut rx, FileEventKind::Modified, Some(&file), Duration::from_secs(3)).await,
+            "Did not receive Modified event for {}",
+            file.display()
+        );
+
+        // Remove
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            recv_kind_within(&mut rx, FileEventKind::Removed, Some(&file), Duration::from_secs(3)).await,
+            "Did not receive Removed event for {}",
+            file.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_watcher_emits_rename() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+
+        let (tx, _) = broadcast::channel(128);
+        let debounce = StdDuration::from_millis(100);
+        let _jh = start_watcher(vec![root.clone()], debounce, tx.clone());
+        let mut rx = tx.subscribe();
+
+        let old_path = root.join("old_name.txt");
+        let new_path = root.join("new_name.txt");
+
+        std::fs::write(&old_path, b"data").unwrap();
+        // Wait for initial create to clear the pipeline
+        let _ = recv_kind_within(&mut rx, FileEventKind::Created, Some(&old_path), Duration::from_secs(3)).await;
+
+        std::fs::rename(&old_path, &new_path).unwrap();
+
+        // Accept either form (rename events can surface with 'to' or 'from' depending on backend)
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut seen = false;
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(evt) = timeout(Duration::from_millis(500), rx.recv()).await {
+                if let Ok(evt) = evt {
+                    if let FileEventKind::Renamed = evt.kind {
+                        // Path may be either old or new depending on platform
+                        if evt.path == new_path || evt.path == old_path {
+                            seen = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen, "Did not receive Renamed event for rename {} -> {}", old_path.display(), new_path.display());
     }
 }
