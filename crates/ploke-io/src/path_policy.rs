@@ -56,6 +56,43 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
     }
 }
 
+/// Normalize a path against configured roots using a symlink policy.
+/// Currently enforces strict canonicalization, then checks containment using the provided policy.
+///
+/// Note: Until full policy is implemented, this defers to `path_within_roots_with_policy` which
+/// currently delegates to `path_within_roots`.
+pub(crate) fn normalize_against_roots_with_policy(
+    path: &Path,
+    roots: &[PathBuf],
+    policy: SymlinkPolicy,
+) -> Result<PathBuf, IoError> {
+    if !path.is_absolute() {
+        return Err(IoError::FileOperation {
+            operation: "read",
+            path: path.to_path_buf(),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    }
+    let canon = canonicalize_strict(path, "read")?;
+    if path_within_roots_with_policy(&canon, roots, policy) {
+        Ok(canon)
+    } else {
+        Err(IoError::FileOperation {
+            operation: "read",
+            path: canon,
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path outside configured roots",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        })
+    }
+}
+
 // Future enhancements (Phase 7):
 // - canonicalize paths and compare against configured roots
 // - symlink policy: follow or deny across root boundaries based on config

@@ -41,3 +41,15 @@ Next Steps
 References
 - docs/production_plan.md
 - src/{watcher.rs, path_policy.rs, write.rs}
+
+Progress Update — 2025-08-19 (Phase 5 wiring + Symlink policy in builder)
+- Phase 5 scaffolding integrated into actor:
+  - Added IoRequest::WriteSnippetBatch with handler delegating to write::write_snippets_batch (stub).
+  - This prepares the actor message surface for the upcoming write path without exposing a public API yet.
+- Phase 7 builder wiring:
+  - IoManagerBuilder gained with_symlink_policy(...) and carries an optional SymlinkPolicy.
+  - IoManager now stores an optional symlink_policy and enforces it when roots are configured.
+  - Added normalize_against_roots_with_policy(...) which performs strict canonicalization and root checks using the policy hook.
+- Notes:
+  - Current SymlinkPolicy behavior still delegates to path_within_roots; a stricter policy will be implemented in a follow-up.
+  - Backwards compatibility preserved; defaults remain unchanged unless explicitly configured.

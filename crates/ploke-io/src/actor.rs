@@ -1,6 +1,7 @@
 use crate::{
-    path_policy::normalize_against_roots,
-    read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs}, 
+    path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
+    read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
+    write::{write_snippets_batch, WriteResult, WriteSnippetData},
 };
 #[cfg(test)]
 use crate::scan::test_instrumentation;
@@ -11,6 +12,7 @@ pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
     roots: Option<Arc<Vec<PathBuf>>>,
+    symlink_policy: Option<SymlinkPolicy>,
 }
 
 /// A message that can be sent to the IoManager.
@@ -31,6 +33,10 @@ pub enum IoRequest {
     ScanChangeBatch {
         requests: Vec<FileData>,
         responder: oneshot::Sender<Result<Vec<Option<ChangedFileData>>, PlokeError>>,
+    },
+    WriteSnippetBatch {
+        requests: Vec<WriteSnippetData>,
+        responder: oneshot::Sender<Vec<Result<WriteResult, PlokeError>>>,
     },
 }
 
@@ -59,6 +65,7 @@ impl IoManager {
             request_receiver,
             semaphore: Arc::new(Semaphore::new(limit)),
             roots: None,
+            symlink_policy: None,
         }
     }
 
@@ -67,11 +74,13 @@ impl IoManager {
         request_receiver: mpsc::Receiver<IoManagerMessage>,
         semaphore_permits: usize,
         roots: Option<Vec<PathBuf>>,
+        symlink_policy: Option<SymlinkPolicy>,
     ) -> Self {
         Self {
             request_receiver,
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
             roots: roots.map(Arc::new),
+            symlink_policy,
         }
     }
 
@@ -93,9 +102,10 @@ impl IoManager {
             } => {
                 let semaphore = self.semaphore.clone();
                 let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
                 tokio::spawn(async move {
                     let results =
-                        Self::handle_read_snippet_batch_with_roots(requests, semaphore, roots)
+                        Self::handle_read_snippet_batch_with_roots(requests, semaphore, roots, symlink_policy)
                             .await;
                     let _ = responder.send(results);
                 });
@@ -106,9 +116,16 @@ impl IoManager {
             } => {
                 let semaphore = self.semaphore.clone();
                 let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
                 tokio::spawn(async move {
                     let results =
-                        Self::handle_scan_batch_with_roots(requests, semaphore, roots).await;
+                        Self::handle_scan_batch_with_roots(requests, semaphore, roots, symlink_policy).await;
+                    let _ = responder.send(results);
+                });
+            }
+            IoRequest::WriteSnippetBatch { requests, responder } => {
+                tokio::spawn(async move {
+                    let results = write_snippets_batch(requests).await;
                     let _ = responder.send(results);
                 });
             }
@@ -179,6 +196,7 @@ impl IoManager {
         requests: Vec<EmbeddingData>,
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
+        symlink_policy: Option<SymlinkPolicy>,
     ) -> Vec<Result<String, PlokeError>> {
         let total_requests = requests.len();
 
@@ -201,8 +219,9 @@ impl IoManager {
         let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
             let semaphore = semaphore.clone();
             let roots = roots.clone();
+            let symlink_policy = symlink_policy.clone();
             tokio::spawn(async move {
-                Self::process_file_with_roots(path, reqs, semaphore, roots).await
+                Self::process_file_with_roots(path, reqs, semaphore, roots, symlink_policy).await
             })
         });
 
@@ -334,9 +353,15 @@ impl IoManager {
         requests: Vec<OrderedRequest>,
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
+        symlink_policy: Option<SymlinkPolicy>,
     ) -> Vec<(usize, Result<String, PlokeError>)> {
         let normalized_path = if let Some(roots) = roots.as_ref() {
-            match normalize_against_roots(&file_path, roots) {
+            let norm = if let Some(policy) = symlink_policy {
+                normalize_against_roots_with_policy(&file_path, roots, policy)
+            } else {
+                normalize_against_roots(&file_path, roots)
+            };
+            match norm {
                 Ok(p) => p,
                 Err(err) => {
                     return requests
@@ -408,6 +433,7 @@ impl IoManager {
         requests: Vec<FileData>,
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
+        symlink_policy: Option<SymlinkPolicy>,
     ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
 
@@ -418,10 +444,11 @@ impl IoManager {
             futures::stream::iter(requests.into_iter().enumerate().map(|(idx, file_data)| {
                 let sem = semaphore.clone();
                 let roots = roots.clone();
+                let symlink_policy = symlink_policy.clone();
                 async move {
                     (
                         idx,
-                        Self::check_file_hash_with_roots(file_data, sem, roots).await,
+                        Self::check_file_hash_with_roots(file_data, sem, roots, symlink_policy).await,
                     )
                 }
             }))
@@ -485,9 +512,15 @@ impl IoManager {
         file_data: FileData,
         semaphore: Arc<Semaphore>,
         roots: Option<Arc<Vec<PathBuf>>>,
+        symlink_policy: Option<SymlinkPolicy>,
     ) -> Result<Option<ChangedFileData>, PlokeError> {
         let normalized_file_data = if let Some(roots) = roots.as_ref() {
-            match normalize_against_roots(&file_data.file_path, roots) {
+            let norm = if let Some(policy) = symlink_policy {
+                normalize_against_roots_with_policy(&file_data.file_path, roots, policy)
+            } else {
+                normalize_against_roots(&file_data.file_path, roots)
+            };
+            match norm {
                 Ok(p) => {
                     let mut fd = file_data;
                     fd.file_path = p;

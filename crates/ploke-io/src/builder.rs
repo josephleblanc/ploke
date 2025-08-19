@@ -48,6 +48,7 @@ pub struct IoManagerBuilder {
     semaphore_permits: Option<usize>,
     fd_limit: Option<usize>,
     roots: Vec<PathBuf>,
+    symlink_policy: Option<path_policy::SymlinkPolicy>,
     #[cfg(feature = "watcher")]
     enable_watcher: bool,
     #[cfg(feature = "watcher")]
@@ -83,6 +84,12 @@ impl IoManagerBuilder {
     #[cfg(feature = "watcher")]
     pub fn enable_watcher(mut self, enabled: bool) -> Self {
         self.enable_watcher = enabled;
+        self
+    }
+
+    /// Configure symlink handling policy for root normalization (Phase 7).
+    pub fn with_symlink_policy(mut self, policy: path_policy::SymlinkPolicy) -> Self {
+        self.symlink_policy = Some(policy);
         self
     }
 
@@ -152,7 +159,13 @@ impl IoManagerBuilder {
             }
 
             rt.block_on(async {
-                let manager = IoManager::new_with(rx, effective_permits, roots_opt);
+                // Only apply symlink policy when roots are configured
+                let symlink_policy_opt = if self.roots.is_empty() {
+                    None
+                } else {
+                    self.symlink_policy
+                };
+                let manager = IoManager::new_with(rx, effective_permits, roots_opt, symlink_policy_opt);
                 manager.run().await;
             });
         });
