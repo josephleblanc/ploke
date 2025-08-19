@@ -340,7 +340,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
-            AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
