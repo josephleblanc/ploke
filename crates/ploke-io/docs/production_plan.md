@@ -216,3 +216,55 @@ Progress Update — 2025-08-18
 - Path policy basics enforced: when roots are configured, read and scan requests for files outside the roots are rejected early with InvalidInput errors (Phase 1).
 - Phase 3: scan_changes_batch preserves input order deterministically while maintaining bounded concurrency; added internal test instrumentation to measure concurrent scan operations without affecting production behavior.
 - Blocker: Adding scan ordering/concurrency unit tests requires constructing ploke_core::FileData in tests; please add the FileData definition (fields or builder) to enable creating test inputs, or expose a helper to construct FileData for tests.
+```rust
+// from crates/ploke-core/src/mod.rs
+#[derive(Debug, Clone)]
+pub struct EmbeddingData {
+    pub id: Uuid,
+    pub name: String,
+    pub file_path: PathBuf,
+    pub file_tracking_hash: TrackingHash,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub node_tracking_hash: TrackingHash,
+    pub namespace: Uuid,
+}
+
+// TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
+#[derive(Debug, Clone)]
+pub struct FileData {
+    /// Uuid is of the owner file-level module
+    pub id: Uuid,
+    pub namespace: Uuid,
+    pub file_tracking_hash: TrackingHash,
+    pub file_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChangedFileData {
+    /// Uuid is of the owner file-level module
+    pub id: Uuid,
+    pub namespace: Uuid,
+    pub old_tracking_hash: TrackingHash,
+    pub new_tracking_hash: TrackingHash,
+    pub file_path: PathBuf,
+}
+
+impl ChangedFileData {
+    pub fn from_file_data(value: FileData, new_tracking_hash: TrackingHash) -> Self {
+        let FileData {
+            id,
+            namespace,
+            file_tracking_hash,
+            file_path,
+        } = value;
+        Self {
+            id,
+            namespace,
+            old_tracking_hash: file_tracking_hash,
+            new_tracking_hash,
+            file_path,
+        }
+    }
+}
+```
