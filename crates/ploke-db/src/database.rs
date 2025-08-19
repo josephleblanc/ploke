@@ -8,11 +8,11 @@ use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
+use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::Deserialize;
 use tracing::instrument;
 use uuid::Uuid;
-use ploke_error::Error as PlokeError;
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
@@ -732,11 +732,13 @@ impl Database {
             has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span, embedding @ 'NOW' }}, !is_null(embedding)
             "#)
         }).join("\n");
-        let script = format!(r#"
+        let script = format!(
+            r#"
         {has_embedding_rule}
 
         ?[id, name, hash, span] := has_embedding[id, name, hash, span]
-        "#);
+        "#
+        );
 
         self.raw_query(&script).map_err(PlokeError::from)
     }
@@ -757,10 +759,7 @@ impl Database {
     /// or an error if the query fails.
     /// This is useful for retrieving the `EmbeddingData` required to retrieve code snippets from
     /// files after finding the Ids via a search method (dense embedding search, bm25 search)
-    pub fn get_nodes_ordered(
-        &self,
-        nodes: Vec<Uuid>,
-    ) -> Result<Vec<EmbeddingData>, PlokeError> {
+    pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
         let ancestor_rules = Self::ANCESTOR_RULES;
         let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
             let rel = ty.relation_str();
@@ -1493,7 +1492,6 @@ mod tests {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         assert_eq!(result.rows.len(), 2);
-
 
         // Verify the first document
         if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {

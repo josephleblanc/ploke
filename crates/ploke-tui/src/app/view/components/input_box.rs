@@ -1,12 +1,12 @@
+use crate::app::AppEvent;
+use crate::app::types::Mode;
+use crate::app::view::EventSubscriber;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
-use ratatui::Frame;
 use textwrap;
-use crate::app::types::Mode;
-use crate::app::view::EventSubscriber;
-use crate::app::AppEvent;
 
 /// Encapsulates input box rendering and state (scroll, cursor).
 #[derive(Debug, Clone, Default)]
@@ -18,14 +18,7 @@ pub struct InputView {
 }
 
 impl InputView {
-    pub fn render(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        buffer: &str,
-        mode: Mode,
-        title: &str,
-    ) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, buffer: &str, mode: Mode, title: &str) {
         // Wrap text to area width minus borders
         let input_width = area.width.saturating_sub(2);
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
@@ -40,11 +33,8 @@ impl InputView {
 
         // Count trailing spaces only after the last explicit newline
         let tail_segment = buffer.rsplit('\n').next().unwrap_or("");
-        let trailing_spaces: u16 = tail_segment
-            .chars()
-            .rev()
-            .take_while(|&c| c == ' ')
-            .count() as u16;
+        let trailing_spaces: u16 =
+            tail_segment.chars().rev().take_while(|&c| c == ' ').count() as u16;
 
         // Start from the wrapped baseline, then add trailing spaces with width-based wrapping.
         let mut row = input_lines.saturating_sub(1);

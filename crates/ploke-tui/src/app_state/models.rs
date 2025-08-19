@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) async fn switch_model(state: &Arc<AppState>, event_bus: &Arc<EventBus>, alias_or_id: String) {
+pub(super) async fn switch_model(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    alias_or_id: String,
+) {
     tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
 
     let mut cfg = state.config.write().await;

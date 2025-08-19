@@ -217,7 +217,8 @@ mod tests {
         // run the parser
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         // merge results from all files
-        let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
         // build module tree
         let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {

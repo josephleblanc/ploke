@@ -142,15 +142,18 @@ impl NodeType {
         let star: &'static str = " *";
         let left: &'static str = " {";
         let right: &'static str = " }";
-        let rhs = NodeType::primary_nodes().iter().map(|n| {
-            [star]
-                .iter()
-                .chain(&[n.relation_str()])
-                .chain(&[left])
-                .chain(n.fields())
-                .chain(&[right])
-                .join("")
-        }).join(" or ");
+        let rhs = NodeType::primary_nodes()
+            .iter()
+            .map(|n| {
+                [star]
+                    .iter()
+                    .chain(&[n.relation_str()])
+                    .chain(&[left])
+                    .chain(n.fields())
+                    .chain(&[right])
+                    .join("")
+            })
+            .join(" or ");
         rhs
     }
     pub fn embeddable_nodes_now() -> String {
@@ -158,19 +161,26 @@ impl NodeType {
         let left: &'static str = " {";
         let right: &'static str = " @ 'NOW' }";
         let hash: &'static str = "hash";
-        let rhs = NodeType::primary_nodes().iter().map(|n| {
-            [star]
-                .iter()
-                .chain(&[n.relation_str()])
-                .chain(&[left])
-                .chain(n.fields().iter()
-                    .filter(|s| ["id", "name", "tracking_hash", "span", "embedding"].contains(s))
-                    // replace tracking_hash for simplicity in `get_nodes_ordered`
-                    .map(|th| if *th == "tracking_hash" { &hash } else { th })
-                )
-                .chain(&[right])
-                .join("")
-        }).join(" or ");
+        let rhs = NodeType::primary_nodes()
+            .iter()
+            .map(|n| {
+                [star]
+                    .iter()
+                    .chain(&[n.relation_str()])
+                    .chain(&[left])
+                    .chain(
+                        n.fields()
+                            .iter()
+                            .filter(|s| {
+                                ["id", "name", "tracking_hash", "span", "embedding"].contains(s)
+                            })
+                            // replace tracking_hash for simplicity in `get_nodes_ordered`
+                            .map(|th| if *th == "tracking_hash" { &hash } else { th }),
+                    )
+                    .chain(&[right])
+                    .join("")
+            })
+            .join(" or ");
         rhs
     }
 }

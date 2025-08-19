@@ -27,8 +27,8 @@ pub enum Action {
     // Text entry / command handling
     InsertChar(char),
     Backspace,
-    Submit,          // Enter in Insert mode
-    ExecuteCommand,  // Enter in Command mode
+    Submit,         // Enter in Insert mode
+    ExecuteCommand, // Enter in Command mode
 
     // Navigation (list/branches)
     NavigateListUp,
@@ -45,11 +45,11 @@ pub enum Action {
     GotoSequenceG, // 'g' (first press; App decides if this becomes 'gg')
 
     // Command palette openers
-    OpenCommand,        // '/', or ':hybrid' starter depending on style
-    OpenCommandColon,   // ':' (Neovim style)
-    OpenQuickModel,     // 'm'
-    OpenHelp,           // '?'
-    TogglePreview,      // 'P'
+    OpenCommand,      // '/', or ':hybrid' starter depending on style
+    OpenCommandColon, // ':' (Neovim style)
+    OpenQuickModel,   // 'm'
+    OpenHelp,         // '?'
+    TogglePreview,    // 'P'
 
     // Input widget scrolling (testing/dev keys)
     InputScrollPrev, // Ctrl+Up
@@ -75,7 +75,9 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 Some(Action::InsertChar(c))
             }
             (m, KeyCode::Up) if m.contains(KeyModifiers::CONTROL) => Some(Action::InputScrollPrev),
-            (m, KeyCode::Down) if m.contains(KeyModifiers::CONTROL) => Some(Action::InputScrollNext),
+            (m, KeyCode::Down) if m.contains(KeyModifiers::CONTROL) => {
+                Some(Action::InputScrollNext)
+            }
             _ => None,
         },
         Mode::Command => match (key.modifiers, key.code) {

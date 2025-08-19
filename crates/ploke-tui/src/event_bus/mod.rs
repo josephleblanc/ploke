@@ -1,11 +1,11 @@
-use tracing::instrument;
-use std::sync::Arc;
 use color_eyre::Result;
+use std::sync::Arc;
+use tracing::instrument;
 
 use ploke_embed::indexer::{self, IndexStatus};
 use tokio::sync::broadcast;
 
-use crate::{error::ErrorSeverity, AppEvent};
+use crate::{AppEvent, error::ErrorSeverity};
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {

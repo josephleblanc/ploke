@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
-use crate::{llm, EventBus};
 use crate::utils::helper::truncate_string;
+use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
@@ -37,7 +37,7 @@ pub async fn update_message(
 }
 
 pub async fn add_user_message(
-    state: &Arc< AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     new_msg_id: Uuid,
     content: String,
@@ -48,7 +48,7 @@ pub async fn add_user_message(
 }
 
 pub async fn add_message(
-    state: &Arc< AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     child_id: Uuid,
@@ -69,7 +69,7 @@ pub async fn add_message(
 }
 
 pub async fn navigate_list(
-    state: &Arc< AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     direction: commands::ListNavigation,
 ) {
@@ -79,7 +79,7 @@ pub async fn navigate_list(
 }
 
 pub async fn create_assistant_message(
-    state: &Arc< AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     responder: oneshot::Sender<Uuid>,
@@ -102,7 +102,7 @@ pub async fn prune_history() {
 
 #[instrument(skip(state))]
 pub async fn add_msg_immediate(
-    state: &Arc< AppState>,
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     new_msg_id: Uuid,
     content: String,

@@ -8,7 +8,6 @@ use crate::{
     resolve::module_tree::ModuleTree,
 };
 
-
 lazy_static! {
     /// Parsed data for the "fixture_nodes" crate.
     /// Contains various node types for individual node parsing tests.

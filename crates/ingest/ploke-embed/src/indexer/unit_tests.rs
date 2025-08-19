@@ -12,7 +12,10 @@ use std::{
 
 use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
-use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer}, hnsw_all_types, CallbackManager, Database, DbError, NodeType};
+use ploke_db::{
+    bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
+    hnsw_all_types, CallbackManager, Database, DbError, NodeType,
+};
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
 use ploke_test_utils::{setup_db_full, setup_db_full_crate};
@@ -33,7 +36,9 @@ use crate::{
     local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
 };
 
-pub fn init_test_tracing(level: impl Into<LevelFilter> + Into<Level> + Copy) -> tracing::subscriber::DefaultGuard {
+pub fn init_test_tracing(
+    level: impl Into<LevelFilter> + Into<Level> + Copy,
+) -> tracing::subscriber::DefaultGuard {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     let filter = tracing_subscriber::filter::Targets::new()
@@ -186,8 +191,7 @@ async fn setup_local_model_config(
     Ok(model)
 }
 
-async fn setup_local_model_embedding_processor(
-) -> Result<EmbeddingProcessor, ploke_error::Error> {
+async fn setup_local_model_embedding_processor() -> Result<EmbeddingProcessor, ploke_error::Error> {
     let model = setup_local_model_config("fixture_nodes").await?;
     let source = EmbeddingSource::Local(model);
     Ok(EmbeddingProcessor { source })
@@ -245,7 +249,8 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         Arc::new(embedding_processor),
         cancellation_token,
         batch_size,
-    ).with_bm25_tx(bm25_cmd.clone());
+    )
+    .with_bm25_tx(bm25_cmd.clone());
     let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
     let progress_tx_arc = Arc::new(progress_tx_nonarc);
     let (control_tx, control_rx) = mpsc::channel(4);
@@ -389,18 +394,23 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         let (tx, rx) = tokio::sync::oneshot::channel();
         let name_str = name.get_str().expect("name must be a string");
         tracing::info!("using bm25 to find name: {name_str}");
-        bm25_cmd.send(Bm25Cmd::Search { 
-            query: name_str.to_string(), 
-            top_k: 2, 
-            resp: tx 
-        }).await.expect("Channel should be open");
+        bm25_cmd
+            .send(Bm25Cmd::Search {
+                query: name_str.to_string(),
+                top_k: 2,
+                resp: tx,
+            })
+            .await
+            .expect("Channel should be open");
         let ret = rx.await.expect("Must return result for correctly indexed item. This should always happen after the dense vector embedding.");
         tracing::debug!("return of bm25 search: {:?}", ret);
         if let DataValue::Uuid(UuidWrapper(uuid_id)) = idx {
-            let ret_id = ret.iter().find(|(bm_id, bm_score)| {bm_id == uuid_id});
+            let ret_id = ret.iter().find(|(bm_id, bm_score)| bm_id == uuid_id);
             assert!(ret_id.is_some());
             tracing::debug!("found id: {ret_id:?}");
-        } else { panic!("The idx must be a uuid")}
+        } else {
+            panic!("The idx must be a uuid")
+        }
     }
     tracing::info!(
         "updated rows: {}, pending db callback: {}",
@@ -472,13 +482,17 @@ fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<Atom
 async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_error::Error> {
     tracing::info!("Starting test_next_batch: {target_crate}");
 
-    let cozo_db = if target_crate.starts_with("fixture") { 
+    let cozo_db = if target_crate.starts_with("fixture") {
         setup_db_full(target_crate)
     } else if target_crate.starts_with("crates") {
         let crate_name = target_crate.trim_start_matches("crates/");
         setup_db_full_crate(crate_name)
-    } else { 
-        return Err(ploke_error::Error::Fatal(ploke_error::FatalError::SyntaxError("Incorrect usage of test_next_batch_ss test input.".to_string())));
+    } else {
+        return Err(ploke_error::Error::Fatal(
+            ploke_error::FatalError::SyntaxError(
+                "Incorrect usage of test_next_batch_ss test input.".to_string(),
+            ),
+        ));
     }?;
     let db = Arc::new(Database::new(cozo_db));
     let total_count = db.count_unembedded_nonfiles()?;
@@ -502,7 +516,8 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         Arc::new(embedding_processor),
         cancellation_token,
         batch_size,
-    ).with_bm25_tx(bm25_cmd.clone());
+    )
+    .with_bm25_tx(bm25_cmd.clone());
     let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
     let progress_tx_arc = Arc::new(progress_tx_nonarc);
     let (control_tx, control_rx) = mpsc::channel(4);
@@ -864,4 +879,3 @@ async fn test_batch_ss_test_utils() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/test-utils").await
 }
-

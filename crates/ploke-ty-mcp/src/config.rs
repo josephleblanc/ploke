@@ -164,7 +164,10 @@ priority = 10
         assert_eq!(ctx.id.0, "context7", "id should default from table key");
         assert_eq!(ctx.command, "npx");
         assert_eq!(ctx.args, vec!["-y", "@upstash/context7-mcp"]);
-        assert!(!ctx.autostart, "autostart defaults to false when not provided");
+        assert!(
+            !ctx.autostart,
+            "autostart defaults to false when not provided"
+        );
         assert_eq!(ctx.priority, 1);
         assert_eq!(ctx.default_timeout_ms, Some(15_000));
 

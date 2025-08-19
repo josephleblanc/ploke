@@ -18,5 +18,5 @@ pub enum WarningError {
     },
 
     #[error("ploke-db error: {0}")]
-    PlokeDb(String)
+    PlokeDb(String),
 }

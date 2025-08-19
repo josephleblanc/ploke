@@ -2,12 +2,12 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::{app_state::database, error::ErrorExt as _, AppEvent, EventBus};
+use crate::{AppEvent, EventBus, app_state::database, error::ErrorExt as _};
 
 use crate::AppState;
 
 pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    use ploke_db::{create_index_warn, replace_index_warn, NodeType};
+    use ploke_db::{NodeType, create_index_warn, replace_index_warn};
     use tokio::time;
 
     let start = time::Instant::now();
@@ -37,7 +37,9 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                             ty.relation_str()
                         );
                     }
-                    Err(_) => tracing::warn!("The attempt to replace the index at the database failed"),
+                    Err(_) => {
+                        tracing::warn!("The attempt to replace the index at the database failed")
+                    }
                 }
                 tracing::warn!("The attempt to create the index at the database failed")
             }
@@ -94,9 +96,12 @@ pub async fn batch_prompt_search(
 ) {
     match database::batch_prompt_search(state, prompt_file, out_file, max_hits, threshold).await {
         Ok(embed_data) => {
-            tracing::info!("Batch prompt search succeeded with {} results.", embed_data.len());
-        },
-        Err(e) =>{
+            tracing::info!(
+                "Batch prompt search succeeded with {} results.",
+                embed_data.len()
+            );
+        }
+        Err(e) => {
             tracing::error!(
                 error = %e,
                 error_chain = ?e.chain().collect::<Vec<_>>(),
@@ -106,11 +111,7 @@ pub async fn batch_prompt_search(
     }
 }
 
-pub async fn load_db(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    crate_name: String,
-) {
+pub async fn load_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>, crate_name: String) {
     if let Err(e) = database::load_db(state, event_bus, crate_name).await {
         match e {
             ploke_error::Error::Fatal(_) => e.emit_fatal(),

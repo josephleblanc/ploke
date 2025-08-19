@@ -150,7 +150,11 @@ fn stable_dedup_ids_ordered(ids: &[Uuid]) -> (Vec<Uuid>, usize) {
     (out, removed)
 }
 
-fn trim_text_to_tokens(text: &str, max_tokens: usize, tokenizer: &dyn TokenCounter) -> (String, bool) {
+fn trim_text_to_tokens(
+    text: &str,
+    max_tokens: usize,
+    tokenizer: &dyn TokenCounter,
+) -> (String, bool) {
     let mut truncated = false;
     let mut candidate = text.to_string();
     if max_tokens == 0 {
@@ -208,7 +212,8 @@ pub async fn assemble_context(
     let (dedup_ids, dedup_removed) = stable_dedup_ids_ordered(&ordered_ids);
 
     // Fetch embedding metadata in the requested order.
-    let nodes: Vec<EmbeddingData> = db.get_nodes_ordered(dedup_ids.clone())
+    let nodes: Vec<EmbeddingData> = db
+        .get_nodes_ordered(dedup_ids.clone())
         .map_err(|e| RagError::Embed(e.to_string()))?;
 
     // Batch fetch snippets.
@@ -263,21 +268,27 @@ pub async fn assemble_context(
     match policy.ordering {
         Ordering::FusedScoreThenStructure => {
             parts.sort_by(|a, b| {
-                match b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal) {
+                match b
+                    .score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
                     std::cmp::Ordering::Equal => a.id.as_bytes().cmp(b.id.as_bytes()),
                     other => other,
                 }
             });
         }
         Ordering::ByFileThenScore => {
-            parts.sort_by(|a, b| {
-                match a.file_path.cmp(&b.file_path) {
-                    std::cmp::Ordering::Equal => match b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal) {
-                        std::cmp::Ordering::Equal => a.id.as_bytes().cmp(b.id.as_bytes()),
-                        other => other,
-                    },
+            parts.sort_by(|a, b| match a.file_path.cmp(&b.file_path) {
+                std::cmp::Ordering::Equal => match b
+                    .score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
+                    std::cmp::Ordering::Equal => a.id.as_bytes().cmp(b.id.as_bytes()),
                     other => other,
-                }
+                },
+                other => other,
             });
         }
     }
@@ -301,11 +312,12 @@ pub async fn assemble_context(
     for mut part in parts {
         // Enforce per-part cap via trimming.
         let original_tokens = tokenizer.count(&part.text);
-        let (maybe_trimmed, truncated) = if budget.per_part_max > 0 && original_tokens > budget.per_part_max {
-            trim_text_to_tokens(&part.text, budget.per_part_max, tokenizer)
-        } else {
-            (part.text.clone(), false)
-        };
+        let (maybe_trimmed, truncated) =
+            if budget.per_part_max > 0 && original_tokens > budget.per_part_max {
+                trim_text_to_tokens(&part.text, budget.per_part_max, tokenizer)
+            } else {
+                (part.text.clone(), false)
+            };
 
         let part_tokens = tokenizer.count(&maybe_trimmed);
         if truncated {
@@ -380,7 +392,10 @@ mod tests {
             Uuid::from_u128(2),
         ];
         let (out, removed) = stable_dedup_ids_ordered(&ids);
-        assert_eq!(out, vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)]);
+        assert_eq!(
+            out,
+            vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)]
+        );
         assert_eq!(removed, 2);
     }
 }

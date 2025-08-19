@@ -1,10 +1,10 @@
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
+use crate::app::AppEvent;
 use crate::app::message_item::{measure_messages, render_messages};
 use crate::app::types::RenderMsg;
 use crate::app::view::EventSubscriber;
-use crate::app::AppEvent;
 
 /// Encapsulates conversation view state: scroll, auto-follow, and item heights.
 #[derive(Debug, Default, Clone)]
@@ -19,21 +19,21 @@ pub struct ConversationView {
 }
 
 impl ConversationView {
-    pub fn prepare<'a, I, T: RenderMsg + 'a >(
+    pub fn prepare<'a, I, T: RenderMsg + 'a>(
         &mut self,
         path: I,
         path_len: usize,
         conversation_width: u16,
         viewport_height: u16,
         selected_index_opt: Option<usize>,
-    )
-    where
+    ) where
         I: IntoIterator<Item = &'a T>,
     {
         self.last_viewport_height = viewport_height;
 
         // 1) Measure
-        let (total_height, heights) = measure_messages(path, conversation_width, selected_index_opt);
+        let (total_height, heights) =
+            measure_messages(path, conversation_width, selected_index_opt);
         self.content_height = total_height;
         self.item_heights = heights;
 
@@ -99,8 +99,7 @@ impl ConversationView {
         conversation_width: u16,
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
-    )
-    where
+    ) where
         I: IntoIterator<Item = &'a T>,
     {
         render_messages(
@@ -143,7 +142,9 @@ impl ConversationView {
     }
 
     pub fn scroll_lines_down(&mut self, lines: u16) {
-        let max_offset = self.content_height.saturating_sub(self.last_viewport_height);
+        let max_offset = self
+            .content_height
+            .saturating_sub(self.last_viewport_height);
         let new_offset = self.offset_y.saturating_add(lines);
         self.offset_y = new_offset.min(max_offset);
     }

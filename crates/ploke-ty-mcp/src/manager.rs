@@ -2,18 +2,18 @@ use crate::{
     config::{McpConfig, ServerSpec},
     types::{McpError, ServerId, ToolDescriptor, ToolResult},
 };
-use rmcp::{
-    service::{RunningService, ServiceExt},
-    transport::{child_process::TokioChildProcess, ConfigureCommandExt},
-    RoleClient,
-};
-use rmcp::model::CallToolRequestParam;
 use dashmap::DashMap;
 use itertools::Itertools;
-use tokio::process::Command;
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
 use rand::Rng;
+use rmcp::model::CallToolRequestParam;
+use rmcp::{
+    RoleClient,
+    service::{RunningService, ServiceExt},
+    transport::{ConfigureCommandExt, child_process::TokioChildProcess},
+};
+use std::time::{Duration, Instant};
+use tokio::process::Command;
+use tracing::{debug, error, info, warn};
 use which::which;
 
 /// Orchestrates lifecycle (start/stop/cancel) for multiple MCP servers.
@@ -111,7 +111,8 @@ impl McpManager {
             .get(id)
             .and_then(|s| s.default_timeout_ms)
             .unwrap_or(30_000);
-        self.do_call_tool(id, name, args, Duration::from_millis(timeout_ms)).await
+        self.do_call_tool(id, name, args, Duration::from_millis(timeout_ms))
+            .await
     }
 
     /// Call a tool with an explicit timeout, overriding any configured default.
@@ -137,11 +138,7 @@ impl McpManager {
         // Ensure the server is started
         self.ensure_started(id).await?;
 
-        let restart_on_exit = self
-            .cfg
-            .get(id)
-            .map(|s| s.restart_on_exit)
-            .unwrap_or(false);
+        let restart_on_exit = self.cfg.get(id).map(|s| s.restart_on_exit).unwrap_or(false);
 
         let start_total = Instant::now();
         let max_attempts = if restart_on_exit { 2 } else { 1 };
@@ -162,10 +159,9 @@ impl McpManager {
             // Get a handle to the running service (drop guard before potential respawn)
             let result = {
                 let svc = {
-                    let svc_guard = self
-                        .registry
-                        .get(id)
-                        .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                    let svc_guard = self.registry.get(id).ok_or_else(|| {
+                        McpError::NotFound(format!("Server '{}' is not running", id))
+                    })?;
                     svc_guard.clone()
                 };
 
@@ -212,7 +208,11 @@ impl McpManager {
                         return Err(err);
                     }
                     // Try to respawn and retry once if allowed
-                    warn!("Tool call failed; attempting respawn of '{}' and retry once: {}", id, format!("{err:?}"));
+                    warn!(
+                        "Tool call failed; attempting respawn of '{}' and retry once: {}",
+                        id,
+                        format!("{err:?}")
+                    );
                     if let Some(spec) = self.cfg.get(id).cloned() {
                         // Best-effort respawn with backoff
                         if let Err(respawn_err) = self.respawn_with_backoff(id, &spec).await {
@@ -239,7 +239,10 @@ impl McpManager {
             .iter()
             .filter_map(|t| {
                 let name = t.get("name").and_then(|n| n.as_str())?;
-                let desc = t.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+                let desc = t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(|s| s.to_string());
                 Some(ToolDescriptor {
                     name: name.to_string(),
                     description: desc,
@@ -255,21 +258,16 @@ impl McpManager {
         // Ensure the server is started
         self.ensure_started(id).await?;
 
-        let restart_on_exit = self
-            .cfg
-            .get(id)
-            .map(|s| s.restart_on_exit)
-            .unwrap_or(false);
+        let restart_on_exit = self.cfg.get(id).map(|s| s.restart_on_exit).unwrap_or(false);
         let max_attempts = if restart_on_exit { 2 } else { 1 };
         let mut attempt = 0usize;
 
         loop {
             let result = {
                 let svc = {
-                    let svc_guard = self
-                        .registry
-                        .get(id)
-                        .ok_or_else(|| McpError::NotFound(format!("Server '{}' is not running", id)))?;
+                    let svc_guard = self.registry.get(id).ok_or_else(|| {
+                        McpError::NotFound(format!("Server '{}' is not running", id))
+                    })?;
                     svc_guard.clone()
                 };
 
@@ -297,7 +295,11 @@ impl McpManager {
                     if attempt >= max_attempts {
                         return Err(err);
                     }
-                    warn!("list_tools failed; attempting respawn of '{}' and retry once: {}", id, format!("{err:?}"));
+                    warn!(
+                        "list_tools failed; attempting respawn of '{}' and retry once: {}",
+                        id,
+                        format!("{err:?}")
+                    );
                     if let Some(spec) = self.cfg.get(id).cloned() {
                         if let Err(respawn_err) = self.respawn_with_backoff(id, &spec).await {
                             error!("Respawn failed for '{}': {}", id, respawn_err);
@@ -348,17 +350,28 @@ impl McpManager {
     }
 
     /// Perform a basic health check on a newly started service by calling list_tools within a timeout.
-    async fn health_check(id: &ServerId, svc: &RunningService<RoleClient, ()>, timeout: Duration) -> Result<(), McpError> {
+    async fn health_check(
+        id: &ServerId,
+        svc: &RunningService<RoleClient, ()>,
+        timeout: Duration,
+    ) -> Result<(), McpError> {
         debug!("Health checking '{}'", id);
         let fut = svc.list_tools(Default::default());
         tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| McpError::Timeout)
-            .and_then(|r| r.map(|_| ()).map_err(|e| McpError::Protocol(format!("health_check list_tools on '{}' failed: {}", id, e))))
+            .and_then(|r| {
+                r.map(|_| ()).map_err(|e| {
+                    McpError::Protocol(format!("health_check list_tools on '{}' failed: {}", id, e))
+                })
+            })
     }
 
     /// Spawn a service with bounded exponential backoff and jitter, including an initial health check.
-    async fn spawn_with_backoff(spec: &ServerSpec, id: &ServerId) -> Result<RunningService<RoleClient, ()>, McpError> {
+    async fn spawn_with_backoff(
+        spec: &ServerSpec,
+        id: &ServerId,
+    ) -> Result<RunningService<RoleClient, ()>, McpError> {
         let mut attempt: u32 = 0;
         let max_attempts: u32 = 5;
         let mut last_err: Option<McpError> = None;
@@ -367,13 +380,17 @@ impl McpManager {
             match Self::spawn_service(spec).await {
                 Ok(service) => {
                     // Health check (list_tools) with a short timeout to verify responsiveness
-                    let hc_timeout = Duration::from_millis(spec.default_timeout_ms.unwrap_or(30_000).min(5_000));
+                    let hc_timeout =
+                        Duration::from_millis(spec.default_timeout_ms.unwrap_or(30_000).min(5_000));
                     match Self::health_check(id, &service, hc_timeout).await {
                         Ok(()) => return Ok(service),
                         Err(e) => {
                             // Best-effort cancel on failed health check and retry with backoff
                             let _ = service.cancel().await;
-                            warn!("Health check failed for '{}': {}. Will retry with backoff.", id, e);
+                            warn!(
+                                "Health check failed for '{}': {}. Will retry with backoff.",
+                                id, e
+                            );
                             last_err = Some(e);
                         }
                     }
@@ -386,7 +403,8 @@ impl McpManager {
 
             attempt += 1;
             if attempt >= max_attempts {
-                return Err(last_err.unwrap_or_else(|| McpError::Spawn(format!("Failed to start '{}'", id))));
+                return Err(last_err
+                    .unwrap_or_else(|| McpError::Spawn(format!("Failed to start '{}'", id))));
             }
 
             // Exponential backoff with jitter: base 500ms, cap ~8s
@@ -395,7 +413,10 @@ impl McpManager {
                 .min(8_000);
             let jitter: u64 = rand::thread_rng().gen_range(0..=250);
             let sleep_ms = backoff_ms + jitter;
-            debug!("Backoff sleeping for {} ms before retrying '{}'", sleep_ms, id);
+            debug!(
+                "Backoff sleeping for {} ms before retrying '{}'",
+                sleep_ms, id
+            );
             tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
         }
     }
@@ -412,7 +433,12 @@ impl McpManager {
 
     #[tracing::instrument(skip(spec), fields(server_id = %spec.id, command = %spec.command))]
     async fn spawn_service(spec: &ServerSpec) -> Result<RunningService<RoleClient, ()>, McpError> {
-        debug!("Launching '{}' with args {:?} and {} env vars", spec.command, spec.args, spec.env.len());
+        debug!(
+            "Launching '{}' with args {:?} and {} env vars",
+            spec.command,
+            spec.args,
+            spec.env.len()
+        );
         // Preflight: if command is not a path, ensure it exists on PATH for clearer errors
         if !spec.command.contains(std::path::MAIN_SEPARATOR) {
             if which::which(&spec.command).is_err() {
@@ -422,24 +448,21 @@ impl McpManager {
                 )));
             }
         }
-        let child = TokioChildProcess::new(
-            Command::new(&spec.command).configure(|cmd| {
-                if !spec.args.is_empty() {
-                    cmd.args(&spec.args);
+        let child = TokioChildProcess::new(Command::new(&spec.command).configure(|cmd| {
+            if !spec.args.is_empty() {
+                cmd.args(&spec.args);
+            }
+            if !spec.env.is_empty() {
+                for (k, v) in &spec.env {
+                    cmd.env(k, v);
                 }
-                if !spec.env.is_empty() {
-                    for (k, v) in &spec.env {
-                        cmd.env(k, v);
-                    }
-                }
-            }),
-        )
+            }
+        }))
         .map_err(|e| McpError::Spawn(format!("Failed to launch '{}': {}", spec.command, e)))?;
 
-        let service = ()
-            .serve(child)
-            .await
-            .map_err(|e| McpError::Transport(format!("Failed to connect to '{}': {}", spec.id, e)))?;
+        let service = ().serve(child).await.map_err(|e| {
+            McpError::Transport(format!("Failed to connect to '{}': {}", spec.id, e))
+        })?;
 
         info!("Connected to server process");
         Ok(service)

@@ -159,9 +159,9 @@ impl CallbackManager {
                     break;
                 }
             }
-            if self.shutdown.try_recv().is_ok() { 
+            if self.shutdown.try_recv().is_ok() {
                 tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", "");
-                break
+                break;
             }
         }
         Ok(())
@@ -187,7 +187,8 @@ impl Drop for CallbackManager {
             tracing::debug!(
                 "Unregistering callback for NodeType::{:?} | unregistered? {}",
                 node_type,
-                self.db_arc.unregister_callback(*code)
+                self.db_arc
+                    .unregister_callback(*code)
                     .then(|| {
                         tracing::error!("Failed to unregister callback for {:?}", node_type,);
                     })

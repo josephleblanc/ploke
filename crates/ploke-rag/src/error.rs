@@ -48,4 +48,3 @@ impl From<RagError> for ploke_error::Error {
         }
     }
 }
-

@@ -26,10 +26,10 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use itertools::Itertools;
- // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
+// use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
 use ratatui::widgets::Gauge;
- // use textwrap::wrap; // moved into InputView
+// use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
@@ -275,7 +275,7 @@ impl App {
     }
 
     /// Renders the user interface.
-    fn draw<'a, I1, I2, T: RenderMsg + 'a >(
+    fn draw<'a, I1, I2, T: RenderMsg + 'a>(
         &mut self,
         frame: &mut Frame,
         path_for_measure: I1,
@@ -379,8 +379,13 @@ impl App {
         };
 
         // Render input box via InputView
-        self.input_view
-            .render(frame, input_area, &self.input_buffer, self.mode, input_title);
+        self.input_view.render(
+            frame,
+            input_area,
+            &self.input_buffer,
+            self.mode,
+            input_title,
+        );
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
@@ -670,11 +675,9 @@ impl App {
         }
     }
 
-
     fn handle_backspace(&mut self) {
         let _ = self.input_buffer.pop();
     }
-
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
@@ -735,7 +738,6 @@ impl App {
             new_msg_id: Uuid::new_v4(),
         });
     }
-
 
     /// Set running to false to quit the application.
     fn quit(&mut self) {

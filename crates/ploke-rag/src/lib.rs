@@ -102,7 +102,6 @@ use std::sync::Arc;
 #[cfg(not(test))]
 static TRACER_INIT: std::sync::Once = std::sync::Once::new();
 
-
 #[cfg(test)]
 static _TRACE_MARKER: () = ();
 
@@ -127,21 +126,23 @@ use ploke_db::{
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{timeout, sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
 pub mod error;
 pub mod fusion;
-pub use fusion::{normalize_scores, ScoreNorm, RrfConfig, MmrConfig, Similarity, rrf_fuse, mmr_select};
 pub use error::RagError;
+pub use fusion::{
+    mmr_select, normalize_scores, rrf_fuse, MmrConfig, RrfConfig, ScoreNorm, Similarity,
+};
 pub mod context;
 pub use context::{
-    TokenBudget, ContextPartKind, Modality, ContextPart, ContextStats, AssembledContext,
-    AssemblyPolicy, Ordering, TokenCounter, ApproxCharTokenizer, assemble_context,
+    assemble_context, ApproxCharTokenizer, AssembledContext, AssemblyPolicy, ContextPart,
+    ContextPartKind, ContextStats, Modality, Ordering, TokenBudget, TokenCounter,
 };
 pub mod core;
-pub use core::{RagService, RagConfig, RetrievalStrategy, Reranker, NoopReranker};
+pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};
 pub use ploke_db::bm25_index::bm25_service::Bm25Status;
 
 const BM25_TIMEOUT_MS: u64 = 250;

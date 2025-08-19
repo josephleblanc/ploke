@@ -132,7 +132,7 @@ fn process_module_def(
                 (schema.owner_id().to_string(), cozo_owner),
                 (schema.file_path().to_string(), cozo_file_path.into()),
                 (schema.items().to_string(), cozo_items),
-                (schema.namespace().to_string(), cozo_namespace)
+                (schema.namespace().to_string(), cozo_namespace),
             ]);
             let put_script = schema.script_put(&params);
             db.run_script(&put_script, params, ScriptMutability::Mutable)?;

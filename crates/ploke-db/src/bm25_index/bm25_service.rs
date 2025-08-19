@@ -24,20 +24,34 @@ pub enum Bm25Cmd {
     /// Rebuild the index from source of truth (placeholder; no-op for now).
     Rebuild,
     /// Finalize the seed/build phase; commit metadata and return ack.
-    FinalizeSeed { resp: oneshot::Sender<Result<(), String>> },
+    FinalizeSeed {
+        resp: oneshot::Sender<Result<(), String>>,
+    },
     /// Search the index and respond via oneshot with (id, score) pairs.
-    Search { query: String, top_k: usize, resp: oneshot::Sender<Vec<(Uuid, f32)>> },
+    Search {
+        query: String,
+        top_k: usize,
+        resp: oneshot::Sender<Vec<(Uuid, f32)>>,
+    },
     /// Get current lifecycle/status of the BM25 actor/index.
-    Status { resp: oneshot::Sender<Result<Bm25Status, DbError>> },
+    Status {
+        resp: oneshot::Sender<Result<Bm25Status, DbError>>,
+    },
     /// Persist lightweight index metadata to disk (placeholder; sidecar only).
-    Save { path: std::path::PathBuf, resp: oneshot::Sender<Result<(), DbError>> },
+    Save {
+        path: std::path::PathBuf,
+        resp: oneshot::Sender<Result<(), DbError>>,
+    },
     /// Load persisted state or rebuild from DB as a functional fallback.
-    Load { path: std::path::PathBuf, resp: oneshot::Sender<Result<(), DbError>> },
+    Load {
+        path: std::path::PathBuf,
+        resp: oneshot::Sender<Result<(), DbError>>,
+    },
 }
 
 /// Start the BM25 actor with a given avgdl parameter.
 /// Returns an mpsc::Sender<Bm25Cmd> handle for issuing commands.
-pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , DbError> {
+pub fn start(db: Arc<Database>, avgdl: f32) -> Result<mpsc::Sender<Bm25Cmd>, DbError> {
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
     let mut status = Bm25Status::Uninitialized;
@@ -86,7 +100,10 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                             } else {
                                 Bm25Status::Ready { docs }
                             };
-                            tracing::info!("BM25 Rebuild: completed successfully with {} docs", docs);
+                            tracing::info!(
+                                "BM25 Rebuild: completed successfully with {} docs",
+                                docs
+                            );
                         }
                         Err(e) => {
                             let msg = e.to_string();
@@ -114,7 +131,9 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
                     if resp.send(results).is_err() {
-                        tracing::warn!("BM25 search response receiver dropped before sending results");
+                        tracing::warn!(
+                            "BM25 search response receiver dropped before sending results"
+                        );
                     }
                 }
                 Bm25Cmd::Status { resp } => {
@@ -122,7 +141,11 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                 }
                 Bm25Cmd::Save { path, resp } => {
                     let docs = indexer.doc_count();
-                    let content = format!(r#"{{"version":"{}","docs":{}}}"#, super::TOKENIZER_VERSION, docs);
+                    let content = format!(
+                        r#"{{"version":"{}","docs":{}}}"#,
+                        super::TOKENIZER_VERSION,
+                        docs
+                    );
                     let result = (|| -> Result<(), std::io::Error> {
                         if let Some(dir) = path.parent() {
                             if !dir.as_os_str().is_empty() {
@@ -131,7 +154,8 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
                         }
                         std::fs::write(&path, content)?;
                         Ok(())
-                    })().map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
+                    })()
+                    .map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
                     let _ = resp.send(result);
                 }
                 Bm25Cmd::Load { path, resp } => {
@@ -162,12 +186,11 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , D
         tracing::info!("BM25 service actor loop ended");
     });
 
-    Ok( tx )
+    Ok(tx)
 }
 
-
 /// Convenience starter with a reasonable default avgdl.
-pub fn start_default(db: Arc<Database>) -> Result< mpsc::Sender<Bm25Cmd>, DbError > {
+pub fn start_default(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError> {
     start(db, 10.0)
 }
 
@@ -195,7 +218,11 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
         let mut indexer = indexer;
         let mut status = {
             let docs = indexer.doc_count();
-            if docs == 0 { Bm25Status::Empty } else { Bm25Status::Ready { docs } }
+            if docs == 0 {
+                Bm25Status::Empty
+            } else {
+                Bm25Status::Ready { docs }
+            }
         };
         while let Some(cmd) = rx.recv().await {
             match cmd {
@@ -240,7 +267,10 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                             } else {
                                 Bm25Status::Ready { docs }
                             };
-                            tracing::info!("BM25 Rebuild: completed successfully with {} docs", docs);
+                            tracing::info!(
+                                "BM25 Rebuild: completed successfully with {} docs",
+                                docs
+                            );
                         }
                         Err(e) => {
                             let msg = e.to_string();
@@ -266,7 +296,9 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                     let results: Vec<(uuid::Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
                     if resp.send(results).is_err() {
-                        tracing::warn!("BM25 search response receiver dropped before sending results");
+                        tracing::warn!(
+                            "BM25 search response receiver dropped before sending results"
+                        );
                     }
                 }
                 Bm25Cmd::Status { resp } => {
@@ -274,7 +306,11 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                 }
                 Bm25Cmd::Save { path, resp } => {
                     let docs = indexer.doc_count();
-                    let content = format!(r#"{{"version":"{}","docs":{}}}"#, super::TOKENIZER_VERSION, docs);
+                    let content = format!(
+                        r#"{{"version":"{}","docs":{}}}"#,
+                        super::TOKENIZER_VERSION,
+                        docs
+                    );
                     let result = (|| -> Result<(), std::io::Error> {
                         if let Some(dir) = path.parent() {
                             if !dir.as_os_str().is_empty() {
@@ -283,7 +319,8 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                         }
                         std::fs::write(&path, content)?;
                         Ok(())
-                    })().map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
+                    })()
+                    .map_err(|e| DbError::Cozo(format!("bm25 save error: {}", e)));
                     let _ = resp.send(result);
                 }
                 Bm25Cmd::Load { path, resp } => {

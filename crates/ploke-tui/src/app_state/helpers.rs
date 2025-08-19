@@ -1,9 +1,9 @@
+use itertools::Itertools;
 use syn_parser::GraphAccess;
 use syn_parser::parser::nodes::AsAnyNodeId;
-use itertools::Itertools;
 use syn_parser::{
-    parser::nodes::{AnyNodeId, GraphNode, ModuleNodeId},
     ModuleTree,
+    parser::nodes::{AnyNodeId, GraphNode, ModuleNodeId},
 };
 
 pub fn print_module_set(

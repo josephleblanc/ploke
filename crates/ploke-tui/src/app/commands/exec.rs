@@ -24,8 +24,9 @@ fn spawn_update(app: &App) {
         let _ = cmd_tx.send(StateCommand::ScanForChange { scan_tx }).await;
 
         let files = match scan_rx.await {
-            Ok(files) => files
-                .map(|v| v.into_iter().map(|f| format!("{}", f.display())).join("\n")),
+            Ok(files) => {
+                files.map(|v| v.into_iter().map(|f| format!("{}", f.display())).join("\n"))
+            }
             Err(_) => None,
         };
         let mut msg = String::from("Updating database with files:\n  ");
@@ -152,27 +153,25 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             });
             app.send_cmd(StateCommand::SaveState);
         }
-        cmd if cmd.starts_with("load crate") => {
-            match cmd.trim_start_matches("load crate").trim() {
-                crate_name if !crate_name.contains(' ') => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Attempting to load code graph for {crate_name}..."),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                    app.send_cmd(StateCommand::LoadDb {
-                        crate_name: crate_name.to_string(),
-                    });
-                }
-                _ => {
-                    app.send_cmd(StateCommand::AddMessageImmediate {
+        cmd if cmd.starts_with("load crate") => match cmd.trim_start_matches("load crate").trim() {
+            crate_name if !crate_name.contains(' ') => {
+                app.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: format!("Attempting to load code graph for {crate_name}..."),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                });
+                app.send_cmd(StateCommand::LoadDb {
+                    crate_name: crate_name.to_string(),
+                });
+            }
+            _ => {
+                app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });
-                }
             }
-        }
+        },
         "query load" | "ql" => {
             app.send_cmd(StateCommand::ReadQuery {
                 query_name: "default".to_string(),
@@ -302,7 +301,8 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
 
             if query.is_empty() {
                 app.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: "Usage: 'bm25 search <query> [top_k]' or 'hybrid <query> [top_k]'".to_string(),
+                    msg: "Usage: 'bm25 search <query> [top_k]' or 'hybrid <query> [top_k]'"
+                        .to_string(),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 });

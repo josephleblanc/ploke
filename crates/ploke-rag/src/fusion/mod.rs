@@ -8,8 +8,8 @@
 //! - [`mmr_select`]: diversity-aware selection using cosine similarity on normalized vectors.
 //!
 //! The algorithms are intentionally small, well-documented, and pure (no I/O) to aid testing and reuse.
-use uuid::Uuid;
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Score normalization strategies for making scores comparable across modalities.
 #[derive(Debug, Clone)]
@@ -162,11 +162,7 @@ impl Default for RrfConfig {
 /// - Ranks are 1-based within each list.
 /// - Missing ranks contribute 0 to the fused score.
 /// - Stable tie-breaking by UUID ascending if fused scores are equal.
-pub fn rrf_fuse(
-    bm25: &[(Uuid, f32)],
-    dense: &[(Uuid, f32)],
-    cfg: &RrfConfig,
-) -> Vec<(Uuid, f32)> {
+pub fn rrf_fuse(bm25: &[(Uuid, f32)], dense: &[(Uuid, f32)], cfg: &RrfConfig) -> Vec<(Uuid, f32)> {
     let mut fused: HashMap<Uuid, f32> = HashMap::new();
 
     for (i, (id, _)) in bm25.iter().enumerate() {
@@ -311,7 +307,8 @@ pub fn mmr_select(
             let obj = cfg.lambda * (*rel) - (1.0 - cfg.lambda) * diversity_penalty;
 
             if obj > best_obj
-                || (obj == best_obj && cid.as_bytes().cmp(best_id.as_bytes()) == std::cmp::Ordering::Less)
+                || (obj == best_obj
+                    && cid.as_bytes().cmp(best_id.as_bytes()) == std::cmp::Ordering::Less)
             {
                 best_obj = obj;
                 best_idx = i;
@@ -342,7 +339,13 @@ mod tests {
             (Uuid::from_u128(2), 20.0),
             (Uuid::from_u128(3), 15.0),
         ];
-        let out = normalize_scores(&s, &ScoreNorm::MinMax { clamp: true, epsilon: 1e-6 });
+        let out = normalize_scores(
+            &s,
+            &ScoreNorm::MinMax {
+                clamp: true,
+                epsilon: 1e-6,
+            },
+        );
         assert_eq!(out.len(), 3);
         assert!(approx_eq(out[0].1, 0.0, 1e-6));
         assert!(approx_eq(out[1].1, 1.0, 1e-6));
@@ -352,7 +355,13 @@ mod tests {
     #[test]
     fn test_minmax_all_equal_uses_epsilon() {
         let s = vec![(Uuid::from_u128(1), 5.0), (Uuid::from_u128(2), 5.0)];
-        let out = normalize_scores(&s, &ScoreNorm::MinMax { clamp: true, epsilon: 1e-6 });
+        let out = normalize_scores(
+            &s,
+            &ScoreNorm::MinMax {
+                clamp: true,
+                epsilon: 1e-6,
+            },
+        );
         assert_eq!(out.len(), 2);
         // With (max - min) ~ 0, result becomes (x - min)/epsilon = 0.
         assert!(approx_eq(out[0].1, 0.0, 1e-6));

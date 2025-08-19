@@ -60,16 +60,16 @@ pub enum FatalError {
         source: std::string::FromUtf8Error,
     },
     #[error("{msg}")]
-    DefaultConfigDir{ msg: &'static str }
+    DefaultConfigDir { msg: &'static str },
 }
 
 // TODO: Cumbersome, make this better.
-impl From<( std::io::Error, &'static str, PathBuf )> for FatalError {
-    fn from((source, operation, path): ( std::io::Error, &'static str, PathBuf )) -> Self {
+impl From<(std::io::Error, &'static str, PathBuf)> for FatalError {
+    fn from((source, operation, path): (std::io::Error, &'static str, PathBuf)) -> Self {
         FatalError::FileOperation {
             operation,
             path,
-            source: Arc::new(source)
+            source: Arc::new(source),
         }
     }
 }
@@ -123,7 +123,7 @@ impl Clone for FatalError {
                 file_tracking_hash,
                 namespace,
                 path,
-            } => Self::ContentMismatch { 
+            } => Self::ContentMismatch {
                 path: path.clone(),
                 name: name.clone(),
                 id: *id,
@@ -135,7 +135,7 @@ impl Clone for FatalError {
                 path: path.clone(),
                 source: source.clone(),
             },
-            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg }
+            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg },
         }
     }
 }

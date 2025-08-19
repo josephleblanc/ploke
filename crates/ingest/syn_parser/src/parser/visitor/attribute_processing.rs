@@ -122,9 +122,10 @@ use crate::parser::visitor::cfg_evaluator::{ActiveCfg, CfgAtom, CfgExpr};
 pub(crate) fn should_include_item(attrs: &[syn::Attribute], active_cfg: &ActiveCfg) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("cfg")
-            && parse_cfg_attribute(attr).map_or_else(|| false, |expr| {
-                expr == CfgExpr::Atom(CfgAtom::Feature("test".into()))
-            })
+            && parse_cfg_attribute(attr).map_or_else(
+                || false,
+                |expr| expr == CfgExpr::Atom(CfgAtom::Feature("test".into())),
+            )
     }) || attrs
         .iter()
         .filter(|attr| attr.path().is_ident("cfg"))

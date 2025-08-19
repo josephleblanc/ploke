@@ -53,8 +53,11 @@ pub struct VisitorState {
 }
 
 impl VisitorState {
-    pub(crate) fn new(crate_namespace: Uuid, current_file_path: PathBuf, crate_context: &CrateContext) 
-    -> Self {
+    pub(crate) fn new(
+        crate_namespace: Uuid,
+        current_file_path: PathBuf,
+        crate_context: &CrateContext,
+    ) -> Self {
         Self {
             code_graph: CodeGraph {
                 functions: Vec::new(),
@@ -83,7 +86,9 @@ impl VisitorState {
             current_secondary_defn_scope: Vec::new(),
             current_assoc_defn_scope: Vec::new(),
             #[cfg(feature = "cfg_eval")]
-            active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg::from_crate_context(crate_context),
+            active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg::from_crate_context(
+                crate_context,
+            ),
         }
     }
 

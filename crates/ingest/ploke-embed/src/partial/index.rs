@@ -13,7 +13,10 @@ use tokio::{
 };
 use tracing::instrument;
 
-use crate::{error::{truncate_string, EmbedError}, indexer::{log_stuff, IndexStatus, IndexerCommand, IndexerTask, IndexingStatus}};
+use crate::{
+    error::{truncate_string, EmbedError},
+    indexer::{log_stuff, IndexStatus, IndexerCommand, IndexerTask, IndexingStatus},
+};
 
 // TODO: Consider returning a reset version of Self instead of consuming self here.
 // In the same vein consider not dropping the callback item.
@@ -21,7 +24,7 @@ use crate::{error::{truncate_string, EmbedError}, indexer::{log_stuff, IndexStat
 #[cfg(feature = "update_embeds")]
 pub async fn index_files(
     task: Arc<IndexerTask>,
-    workspace_dir: &[ String ],
+    workspace_dir: &[String],
     // db_callback: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), EmbedError>>
     progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
     mut progress_rx: broadcast::Receiver<IndexingStatus>,

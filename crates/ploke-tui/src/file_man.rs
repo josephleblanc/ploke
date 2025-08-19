@@ -7,8 +7,8 @@ use tokio::{fs, sync::mpsc};
 use tracing::{error, info, warn};
 
 use crate::error::ErrorSeverity;
-use crate::{ErrorEvent, RagEvent};
 use crate::{AppEvent, EventBus, system::SystemEvent};
+use crate::{ErrorEvent, RagEvent};
 
 pub struct FileManager {
     io_handle: ploke_io::IoManagerHandle,
@@ -65,18 +65,30 @@ impl FileManager {
                     info!("Save Suceeded: {:?}", &path);
                 }
             }
-            AppEvent::System(SystemEvent::ReadQuery{ file_name, query_name }) => {
+            AppEvent::System(SystemEvent::ReadQuery {
+                file_name,
+                query_name,
+            }) => {
                 let path = match std::env::current_dir() {
                     Ok(pwd_path) => pwd_path.join("query").join(file_name),
-                    Err(e) => { self.send_path_error(e); return; }
+                    Err(e) => {
+                        self.send_path_error(e);
+                        return;
+                    }
                 };
                 let query_content = match tokio::fs::read_to_string(path).await {
                     Ok(s) => s,
-                    Err(e) => {self.send_path_error(e); return;}
+                    Err(e) => {
+                        self.send_path_error(e);
+                        return;
+                    }
                 };
-                self.realtime_event_tx.send(AppEvent::System(SystemEvent::WriteQuery{  query_content, query_name }))
+                self.realtime_event_tx
+                    .send(AppEvent::System(SystemEvent::WriteQuery {
+                        query_content,
+                        query_name,
+                    }))
                     .expect("Invariant Violated: AppEvent rx closed before FileManager Dropped");
-
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
                 // tracing::info!(
@@ -124,10 +136,12 @@ impl FileManager {
     fn send_path_error(&mut self, e: std::io::Error) {
         let message = e.to_string();
         warn!("Failed to load query from file {}", message);
-        self.event_tx.send(AppEvent::Error(ErrorEvent {
-            message,
-            severity: ErrorSeverity::Warning
-        })).expect("Invariant violated: ReadQuery event after AppEvent reader closed");
+        self.event_tx
+            .send(AppEvent::Error(ErrorEvent {
+                message,
+                severity: ErrorSeverity::Warning,
+            }))
+            .expect("Invariant violated: ReadQuery event after AppEvent reader closed");
     }
 
     /// Saves content to disk atomically in a temp location then moves to final path
@@ -175,4 +189,3 @@ impl FileManager {
 // let path = try_or_return!(self, std::env::current_dir().map(|p|
 // p.join("query").join(file)));
 // let content = try_or_return!(self, tokio::fs::read_to_string(path).await);
-

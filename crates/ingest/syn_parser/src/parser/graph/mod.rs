@@ -2,9 +2,9 @@ use crate::parser::nodes::AsAnyNodeId;
 mod code_graph;
 mod parsed_graph;
 
+use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 
 pub use code_graph::CodeGraph;
 use colored::Colorize;
@@ -43,7 +43,7 @@ pub trait GraphAccess {
     fn modules(&self) -> &[ModuleNode];
     fn consts(&self) -> &[ConstNode]; // Added
     fn statics(&self) -> &[StaticNode]; // Added
-    // Removed values()
+                                        // Removed values()
     fn macros(&self) -> &[MacroNode];
     fn use_statements(&self) -> &[ImportNode];
 
@@ -56,7 +56,7 @@ pub trait GraphAccess {
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode>;
     fn consts_mut(&mut self) -> &mut Vec<ConstNode>; // Added
     fn statics_mut(&mut self) -> &mut Vec<StaticNode>; // Added
-    // Removed values_mut()
+                                                       // Removed values_mut()
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
 
@@ -103,10 +103,12 @@ pub trait GraphAccess {
             debug!(target: "dup", "{:#?}", dup);
             if let Err(e) = self.find_node_unique(dup.target()) {
                 match ImplNodeId::try_from(dup.target()) {
-                    Ok(id)  => {
+                    Ok(id) => {
                         let dup_impls = self.impls().iter().filter(|imp| imp.id() == id).inspect(|imp| debug!(target: "debug_dup", "dup impls | span: {:?}, name: {}, id: {}", imp.span(), imp.name(), imp.id())).map(|imp| (imp.id(), imp.span()));
-                        let unique_spans = dup_impls.clone().collect::<HashSet<(ImplNodeId, (usize, usize) )>>();
-                        // Check if all the non-unique rels have different spans. 
+                        let unique_spans = dup_impls
+                            .clone()
+                            .collect::<HashSet<(ImplNodeId, (usize, usize))>>();
+                        // Check if all the non-unique rels have different spans.
                         // Count the number of duplicated items and ensure that there is the same
                         // number of duplicates of that relation.
                         let count_non_unique = usize::max(1, unique_spans.len() - 1);
@@ -119,52 +121,76 @@ dup_accounted: {}",
                             ( dup_count / 2 ),
                             unique_spans.len(),
                             dup_accounted);
-                        if !dup_accounted {panic!("impl with same span and id: {id}, dup_accounted: {dup_accounted}")}
+                        if !dup_accounted {
+                            panic!(
+                                "impl with same span and id: {id}, dup_accounted: {dup_accounted}"
+                            )
+                        }
                         // if dup_impls.count() != unique_spans.len() {panic!("impl with same span and id: {id}")}
                         // if dup_impls.count() != unique_spans.iter().inspect(|( id, span )| debug!(target: "debug_dup", "hashset impls | span: {:?}, id: {}", span, id) ).count() {panic!("impl with same span and id: {id}")}
                         debug!(target: "debug_dup", "continuing after checking impl dup for {id}");
                         valid_impl_dup += count_non_unique;
                         continue;
-                    },
-                    _ => panic!("Expected unique relations, found invalid duplicate with error: {}", e),
+                    }
+                    _ => panic!(
+                        "Expected unique relations, found invalid duplicate with error: {}",
+                        e
+                    ),
                 }
-            } 
-            let target = self.find_node_unique(dup.target())
-                .unwrap_or_else(|e| {
+            }
+            let target = self.find_node_unique(dup.target()).unwrap_or_else(|e| {
                 self.debug_relationships();
-                panic!("Expected unique relations, found duplicate with error: {}", e);
+                panic!(
+                    "Expected unique relations, found duplicate with error: {}",
+                    e
+                );
             });
             // if let Err(e) = self.find_node_unique(dup.source()) {
             //     match ImplNodeId::try_from(dup.source()) {
             //         Ok(id) if 1 == self.impls().iter().filter(|imp| imp.impl_id() == id).map(|imp| imp.span).count() => {continue;},
             //         _ => panic!(),
             //     }
-            // } 
-            let source = self.find_node_unique(dup.source())
-                .unwrap_or_else(|e| {
+            // }
+            let source = self.find_node_unique(dup.source()).unwrap_or_else(|e| {
                 self.debug_relationships();
-                panic!("Expected unique relations, found duplicate with error: {}", e);
+                panic!(
+                    "Expected unique relations, found duplicate with error: {}",
+                    e
+                );
             });
             target.log_node_debug();
             source.log_node_debug();
             if let Some(m_target) = target.as_module() {
                 debug!(target: "debug_dup", "{:#?}", m_target);
-                for (i, node ) in self.modules().iter().filter(|m| m.path == m_target.path ).enumerate() {
+                for (i, node) in self
+                    .modules()
+                    .iter()
+                    .filter(|m| m.path == m_target.path)
+                    .enumerate()
+                {
                     debug!(target: "debug_dup","{}: {} | {}", "Find by Path:".log_header(), i, node.name());
                 }
             }
             if let Some(module_source_node) = source.as_module() {
                 debug!(target: "debug_dup","{:#?}", module_source_node);
             }
-            for (i, module ) in self.modules().iter().filter(|m| m.any_id() == source.any_id()).enumerate() {
+            for (i, module) in self
+                .modules()
+                .iter()
+                .filter(|m| m.any_id() == source.any_id())
+                .enumerate()
+            {
                 debug!(target: "debug_dup","{}: {} | {}", "Counting source:".log_header(), i, module.name());
             }
 
-
-            for (i, module ) in self.modules().iter().filter(|m| m.id.as_any() == target.any_id()).enumerate() {
+            for (i, module) in self
+                .modules()
+                .iter()
+                .filter(|m| m.id.as_any() == target.any_id())
+                .enumerate()
+            {
                 debug!(target: "debug_dup","{}: {} | {}", "Counting target:".log_header(), i, module.name());
             }
-
         }
         let n_unique = unique_rels.len();
         let n_unique_with_impl_dups = n_unique + valid_impl_dup;
@@ -233,23 +259,26 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         }
     }
 
-
     #[cfg(feature = "type_bearing_ids")]
-    fn get_child_modules(&self, module_id: ModuleNodeId) -> impl Iterator< Item = &ModuleNode >  {
+    fn get_child_modules(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
         use itertools::Itertools;
 
         let mut ids = self.ids_contained_by(module_id);
-        self.modules().iter().filter(move |m| ids.contains(&m.id.to_pid()))
+        self.modules()
+            .iter()
+            .filter(move |m| ids.contains(&m.id.to_pid()))
     }
     #[cfg(feature = "type_bearing_ids")]
-    fn ids_contained_by(&self, module_id: ModuleNodeId) -> impl Iterator<Item = PrimaryNodeId>  {
+    fn ids_contained_by(&self, module_id: ModuleNodeId) -> impl Iterator<Item = PrimaryNodeId> {
         self.relations()
             .iter()
             .filter_map(move |rel| rel.contains_target(module_id))
     }
 
-    fn get_child_modules_inline(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
-
+    fn get_child_modules_inline(
+        &self,
+        module_id: ModuleNodeId,
+    ) -> impl Iterator<Item = &ModuleNode> {
         self.get_child_modules(module_id)
             .filter(|m| matches!(m.module_def, ModuleKind::Inline { .. }))
     }
@@ -270,14 +299,18 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     /// - `Ok(&ModuleNode)` if exactly one match is found.
     /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
-    fn find_mods_by_kind_path_checked(&self,kind: ModDisc, path: &[String]) -> Result<&ModuleNode, SynParserError> {
-        let mut matches = self.modules().iter().filter(|m| { 
-            m.path == path 
-            && match kind {
-                ModDisc::FileBased => m.is_file_based(),
-                ModDisc::Inline => m.is_inline(),
-                ModDisc::Declaration => m.is_decl(),
-            }
+    fn find_mods_by_kind_path_checked(
+        &self,
+        kind: ModDisc,
+        path: &[String],
+    ) -> Result<&ModuleNode, SynParserError> {
+        let mut matches = self.modules().iter().filter(|m| {
+            m.path == path
+                && match kind {
+                    ModDisc::FileBased => m.is_file_based(),
+                    ModDisc::Inline => m.is_inline(),
+                    ModDisc::Declaration => m.is_decl(),
+                }
         });
         let first = matches.next();
         if matches.next().is_some() {
@@ -291,10 +324,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     /// Finds a module node *definition* (FileBased or Inline) by its definition path,
     /// returning an error if not found or if duplicates exist.
     /// Excludes ModuleKind::Declaration nodes.
-    fn find_module_by_path_checked(
-        &self,
-        path: &[String],
-    ) -> Result<&ModuleNode, SynParserError> {
+    fn find_module_by_path_checked(&self, path: &[String]) -> Result<&ModuleNode, SynParserError> {
         debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Searching for path:".cyan(), path.join("::").yellow());
         let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
             .modules()
@@ -363,19 +393,32 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
 
     /// Creates an iterator over all of the items at a given path that match a given kind.
     /// This is useful in finding the items contained by a module.
-    fn iter_pid_pathkind(&self, path: &[String], kind: ItemKind) -> impl Iterator<Item = PrimaryNodeId> {
-        self.modules().iter().filter(move |m| m.path == path)
+    fn iter_pid_pathkind(
+        &self,
+        path: &[String],
+        kind: ItemKind,
+    ) -> impl Iterator<Item = PrimaryNodeId> {
+        self.modules()
+            .iter()
+            .filter(move |m| m.path == path)
             .filter_map(|m| m.items()) // Filters out both empty modules and module declarations
             .flatten()
             .copied()
             .filter(move |pid| pid.kind() == kind)
     }
 
-    fn find_pid_pathkind_checked(&self, path: &[String], kind: ItemKind) -> Result<PrimaryNodeId, SynParserError> {
+    fn find_pid_pathkind_checked(
+        &self,
+        path: &[String],
+        kind: ItemKind,
+    ) -> Result<PrimaryNodeId, SynParserError> {
         let mut iter_pid = self.iter_pid_pathkind(path, kind);
-            let first = iter_pid.next()
+        let first = iter_pid
+            .next()
             .ok_or_else(|| SynParserError::ModulePathNotFound(path.to_vec()));
-        iter_pid.next().ok_or_else(|| SynParserError::DuplicateModulePath(path.to_vec()))?;
+        iter_pid
+            .next()
+            .ok_or_else(|| SynParserError::DuplicateModulePath(path.to_vec()))?;
         first
     }
 
@@ -439,7 +482,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             ))
         })
     }
-
 
     fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         self.type_graph().iter().find(|t| t.id == type_id)
@@ -527,7 +569,10 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     /// - `Ok(&TypeAliasNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn get_type_alias_checked(&self, id: TypeAliasNodeId) -> Result<&TypeAliasNode, SynParserError> {
+    fn get_type_alias_checked(
+        &self,
+        id: TypeAliasNodeId,
+    ) -> Result<&TypeAliasNode, SynParserError> {
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
             TypeDefNode::TypeAlias(t) if t.id == id => Some(t), // Compare TypeAliasNodeId == TypeAliasNodeId
             _ => None,
@@ -575,18 +620,20 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         // New implementation using NodeId
         let mut all_ids: Vec<(&str, AnyNodeId)> = vec![];
         all_ids.extend(self.functions().iter().map(|n| (n.name(), n.id.as_any()))); // Standalone functions
-        all_ids.extend(self.impls().iter().flat_map(|n| { // Methods within impls
+        all_ids.extend(self.impls().iter().flat_map(|n| {
+            // Methods within impls
             n.methods.iter().map(move |m| (m.name(), m.id.as_any()))
         }));
-        all_ids.extend(self.traits().iter().flat_map(|n| { // Methods within traits (if stored directly)
-             // Assuming TraitNode also has a 'methods' field similar to ImplNode
-             // If not, adjust accordingly or remove this part if methods aren't stored on TraitNode
-             n.methods.iter().map(move |m| (m.name(), m.id.as_any()))
+        all_ids.extend(self.traits().iter().flat_map(|n| {
+            // Methods within traits (if stored directly)
+            // Assuming TraitNode also has a 'methods' field similar to ImplNode
+            // If not, adjust accordingly or remove this part if methods aren't stored on TraitNode
+            n.methods.iter().map(move |m| (m.name(), m.id.as_any()))
         }));
         all_ids.extend(self.modules().iter().map(|n| (n.name(), n.id.as_any())));
         all_ids.extend(self.consts().iter().map(|n| (n.name(), n.id.as_any()))); // Use consts()
         all_ids.extend(self.statics().iter().map(|n| (n.name(), n.id.as_any()))); // Use statics()
-        // Removed values()
+                                                                                  // Removed values()
         all_ids.extend(self.macros().iter().map(|n| (n.name(), n.id.as_any())));
         all_ids.extend(self.defined_types().iter().map(|def| match def {
             TypeDefNode::Struct(s) => (s.name(), s.id.as_any()),
@@ -604,10 +651,11 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         // } // Removed corresponding closing brace if block was removed
     }
 
-
     fn find_containing_mod(&self, item_id: PrimaryNodeId) -> &ModuleNode {
         // Find the module that contains this item
-        let module_id_maybe: Option< ModuleNodeId > = self.relations().iter()
+        let module_id_maybe: Option<ModuleNodeId> = self
+            .relations()
+            .iter()
             .find_map(|rel| rel.source_contains(item_id));
 
         if let Some(module_id) = module_id_maybe {
@@ -623,7 +671,9 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
 
     // A simple wrapper around source_contains. Might remove later.
     fn find_containing_mod_id(&self, any_id: PrimaryNodeId) -> Option<ModuleNodeId> {
-        self.relations().iter().find_map(|r| r.source_contains(any_id))
+        self.relations()
+            .iter()
+            .find_map(|r| r.source_contains(any_id))
     }
 
     // Not sure how I want to deal with this. Leaving it for now. It is only being used in a couple
@@ -638,7 +688,9 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                 self.defined_types().iter().find_map(|n| match n {
                     TypeDefNode::Struct(s) if s.id.as_any() == item_id => Some(s as &dyn GraphNode),
                     TypeDefNode::Enum(e) if e.id.as_any() == item_id => Some(e as &dyn GraphNode),
-                    TypeDefNode::TypeAlias(t) if t.id.as_any() == item_id => Some(t as &dyn GraphNode),
+                    TypeDefNode::TypeAlias(t) if t.id.as_any() == item_id => {
+                        Some(t as &dyn GraphNode)
+                    }
                     TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
                     _ => None,
                 })
@@ -655,13 +707,15 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
-            .or_else(|| { // Search Consts
+            .or_else(|| {
+                // Search Consts
                 self.consts()
                     .iter()
                     .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
-            .or_else(|| { // Search Statics
+            .or_else(|| {
+                // Search Statics
                 self.statics()
                     .iter()
                     .find(|n| n.id.as_any() == item_id)
@@ -673,7 +727,8 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
-            .or_else(|| { // Search Methods within Impls
+            .or_else(|| {
+                // Search Methods within Impls
                 self.impls().iter().find_map(|i| {
                     i.methods
                         .iter()
@@ -681,7 +736,8 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
-             .or_else(|| { // Search Methods within Traits (assuming similar structure)
+            .or_else(|| {
+                // Search Methods within Traits (assuming similar structure)
                 self.traits().iter().find_map(|t| {
                     t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
                         .iter()
@@ -689,7 +745,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
-           // --- Add ImportNode search ---
+            // --- Add ImportNode search ---
             .or_else(|| {
                 self.use_statements()
                     .iter()
@@ -720,12 +776,12 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
             .filter(move |n| n.id.as_any() == item_id)
             .map(|n| n as &dyn GraphNode)
             .inspect(|n| {
-        trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}", 
-            item_id.as_any().to_string().log_id(),
-            n.name().log_name(),
-            n.kind().log_spring_green_debug(),
-            n.visibility().log_vis_debug(),
-        );
+                trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}",
+                    item_id.as_any().to_string().log_id(),
+                    n.name().log_name(),
+                    n.kind().log_spring_green_debug(),
+                    n.visibility().log_vis_debug(),
+                );
             })
             .chain(self.defined_types().iter().filter_map(move |n| match n {
                 TypeDefNode::Struct(s) if s.id.as_any() == item_id => Some(s as &dyn GraphNode),
@@ -746,13 +802,15 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
-            .chain( // Search Consts
+            .chain(
+                // Search Consts
                 self.consts()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
-            .chain( // Search Statics
+            .chain(
+                // Search Statics
                 self.statics()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
@@ -764,25 +822,28 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
-            .chain( // <--- ADD THIS CHAIN
+            .chain(
+                // <--- ADD THIS CHAIN
                 self.impls()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
-             .chain(self.impls().iter().flat_map(move |i| { // Search Methods in Impls
+            .chain(self.impls().iter().flat_map(move |i| {
+                // Search Methods in Impls
                 i.methods
                     .iter()
                     .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
-             .chain(self.traits().iter().flat_map(move |t| { // Search Methods in Traits
+            .chain(self.traits().iter().flat_map(move |t| {
+                // Search Methods in Traits
                 t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
                     .iter()
                     .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
-           // --- Add ImportNode search ---
+            // --- Add ImportNode search ---
             .chain(
                 self.use_statements()
                     .iter()
@@ -794,7 +855,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         let first = matches_iter.next();
         let second = matches_iter.next();
 
-
         match (first, second) {
             (Some(node), None) => Ok(node), // Exactly one match found
             (None, _) => Err(SynParserError::NotFound(item_id.as_any())), // No matches found
@@ -802,8 +862,10 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         }
     }
 
-
-    fn get_children_ids_iter<T: PrimaryNodeIdTrait>(&self, module_id: ModuleNodeId) -> impl Iterator<Item = T>  {
+    fn get_children_ids_iter<T: PrimaryNodeIdTrait>(
+        &self,
+        module_id: ModuleNodeId,
+    ) -> impl Iterator<Item = T> {
         self.relations()
             .iter()
             .copied()
@@ -814,7 +876,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         // Check if module directly contains the item
         self.ids_contained_by(module_id).contains(&item_id)
     }
-
 
     // --- FunctionNode Getters ---
 
@@ -832,7 +893,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         }
         first.ok_or(SynParserError::NotFound(id.as_any()))
     }
-
 
     // --- ImplNode Getters ---
 
@@ -886,7 +946,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
-
     // --- ConstNode Getters ---
 
     /// Finds a const node by its ID.
@@ -920,7 +979,6 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         }
         first.ok_or(SynParserError::NotFound(id.as_any()))
     }
-
 
     // --- MacroNode Getters ---
 
@@ -956,10 +1014,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
         }
         first.ok_or(SynParserError::NotFound(id.as_any()))
     }
-
 }
-
-
 
 /// Core trait for all graph nodes
 pub trait GraphNode {
@@ -1043,13 +1098,11 @@ pub trait GraphNode {
         }
     }
 
-    fn as_disc(&self ) -> Option< ModDisc > {
-        self.as_module().map(|m| {
-            match m.module_def {
-                ModuleKind::FileBased {..} => ModDisc::FileBased,
-                ModuleKind::Inline {..} => ModDisc::Inline,
-                ModuleKind::Declaration {..} => ModDisc::Declaration,
-            }
+    fn as_disc(&self) -> Option<ModDisc> {
+        self.as_module().map(|m| match m.module_def {
+            ModuleKind::FileBased { .. } => ModDisc::FileBased,
+            ModuleKind::Inline { .. } => ModDisc::Inline,
+            ModuleKind::Declaration { .. } => ModDisc::Declaration,
         })
     }
 

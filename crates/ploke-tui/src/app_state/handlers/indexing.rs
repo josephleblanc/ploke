@@ -120,12 +120,16 @@ pub async fn pause(state: &Arc<AppState>) {
 
 pub async fn resume(state: &Arc<AppState>) {
     if let Some(ctrl) = &mut *state.indexing_control.lock().await {
-        let _ = ctrl.send(ploke_embed::indexer::IndexerCommand::Resume).await;
+        let _ = ctrl
+            .send(ploke_embed::indexer::IndexerCommand::Resume)
+            .await;
     }
 }
 
 pub async fn cancel(state: &Arc<AppState>) {
     if let Some(ctrl) = &mut *state.indexing_control.lock().await {
-        let _ = ctrl.send(ploke_embed::indexer::IndexerCommand::Cancel).await;
+        let _ = ctrl
+            .send(ploke_embed::indexer::IndexerCommand::Cancel)
+            .await;
     }
 }

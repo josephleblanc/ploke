@@ -9,14 +9,14 @@ use crate::system::SystemEvent;
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
 
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::{
-    cap_messages_by_chars, GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage,
-    ToolDefinition, ToolVendor,
-};
 use super::tool_call;
+use super::{
+    GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage, ToolDefinition,
+    ToolVendor, cap_messages_by_chars,
+};
 use crate::EventBus;
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
@@ -58,11 +58,11 @@ impl<'a> RequestSession<'a> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
 
         loop {
-            let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget {
+            let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget
+            {
                 budget
             } else {
-                self
-                    .params
+                self.params
                     .max_tokens
                     .map(|t| (t as usize).saturating_mul(4))
                     .unwrap_or(12000)
@@ -167,8 +167,9 @@ impl<'a> RequestSession<'a> {
                                     oc.function.name,
                                     oc.function.arguments
                                 );
-                                let arguments = serde_json::from_str::<Value>(&oc.function.arguments)
-                                    .unwrap_or(json!({ "raw": oc.function.arguments }));
+                                let arguments =
+                                    serde_json::from_str::<Value>(&oc.function.arguments)
+                                        .unwrap_or(json!({ "raw": oc.function.arguments }));
                                 specs.push(tool_call::ToolCallSpec {
                                     name: oc.function.name.clone(),
                                     arguments,
@@ -196,14 +197,13 @@ impl<'a> RequestSession<'a> {
 
                     // Execute supported tool calls concurrently and append in stable order by call_id
                     if !specs.is_empty() {
-                        let outcomes =
-                            tool_call::execute_tool_calls(
-                                &self.event_bus,
-                                self.parent_id,
-                                specs,
-                                self.params.tool_timeout_secs.unwrap_or(30),
-                            )
-                            .await;
+                        let outcomes = tool_call::execute_tool_calls(
+                            &self.event_bus,
+                            self.parent_id,
+                            specs,
+                            self.params.tool_timeout_secs.unwrap_or(30),
+                        )
+                        .await;
                         for (spec, result) in outcomes {
                             match result {
                                 Ok(content) => {
@@ -228,7 +228,8 @@ impl<'a> RequestSession<'a> {
                         self.messages.push(RequestMessage::new_system(
                             "Unsupported tool call format".to_string(),
                         ));
-                        self.messages.push(RequestMessage::new_tool(err_json, call_id));
+                        self.messages
+                            .push(RequestMessage::new_tool(err_json, call_id));
                     }
 
                     if self.attempts > max_retries {
@@ -314,9 +315,9 @@ mod tests {
 
     use tokio::time::sleep;
 
+    use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
-    use crate::AppEvent;
     use crate::system::SystemEvent;
     use uuid::Uuid;
 

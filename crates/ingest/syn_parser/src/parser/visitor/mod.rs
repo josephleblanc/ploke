@@ -5,10 +5,10 @@ use quote::ToTokens;
 use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 mod attribute_processing;
+mod cfg_evaluator;
 mod code_visitor;
 mod state;
 mod type_processing;
-mod cfg_evaluator;
 
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
@@ -98,7 +98,7 @@ pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller
     logical_module_path: Vec<String>, // NEW: The derived logical path for this file
-    crate_context: &crate::discovery::CrateContext
+    crate_context: &crate::discovery::CrateContext,
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
 
@@ -116,14 +116,16 @@ pub fn analyze_file_phase2(
             format!("Failed to read file {}: {}", file_path.display(), e),
         )
     })?;
-        // .expect("This is the primary problem? line 118 of visitor/mod.rs");
+    // .expect("This is the primary problem? line 118 of visitor/mod.rs");
     // TODO: Add real error handling here.
     // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
-    let file = syn::parse_file(&file_content).inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
-        // .expect(&msg);
+    let file = syn::parse_file(&file_content)
+        .inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
+    // .expect(&msg);
 
     // 1. Create VisitorState with the provided context
-    let mut state = state::VisitorState::new(crate_namespace, file_path.to_path_buf(), crate_context);
+    let mut state =
+        state::VisitorState::new(crate_namespace, file_path.to_path_buf(), crate_context);
     // Set the correct initial module path for the visitor
     state.current_module_path = logical_module_path.clone();
 

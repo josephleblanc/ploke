@@ -1,5 +1,5 @@
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ploke_tui::app::input::keymap::to_action;
 use ploke_tui::app::types::Mode;
 use ploke_tui::user_config::CommandStyle;

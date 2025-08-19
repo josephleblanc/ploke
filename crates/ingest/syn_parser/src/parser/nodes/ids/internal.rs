@@ -58,17 +58,16 @@ impl ToUuidString for ModuleNodeId {
     }
 }
 
-
 pub trait ToCozoUuid {
     fn to_cozo_uuid(self) -> DataValue;
 }
 
 impl ToCozoUuid for AnyNodeId {
     fn to_cozo_uuid(self) -> DataValue {
-    match self.base_id() {
-        NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
-        NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
-    }
+        match self.base_id() {
+            NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+            NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+        }
     }
 }
 
@@ -100,8 +99,7 @@ pub mod test_ids {
         fn new_test(id: NodeId) -> Self;
     }
 
-
-    macro_rules! make_id_testable{
+    macro_rules! make_id_testable {
         ($SpecificId:ty) => {
             impl TestIds for $SpecificId {
                 #[inline]
@@ -115,29 +113,28 @@ pub mod test_ids {
             }
         };
     }
-make_id_testable!(FunctionNodeId);
-make_id_testable!(StructNodeId);
-make_id_testable!(EnumNodeId);
-make_id_testable!(UnionNodeId);
-make_id_testable!(TypeAliasNodeId);
-make_id_testable!(TraitNodeId);
-make_id_testable!(ImplNodeId);
-make_id_testable!(ConstNodeId);
-make_id_testable!(StaticNodeId);
-make_id_testable!(MacroNodeId);
-make_id_testable!(ImportNodeId);
-make_id_testable!(ModuleNodeId);
-// Associated Items
-make_id_testable!(MethodNodeId);
-// Secondary Nodes
-make_id_testable!(FieldNodeId);
-make_id_testable!(VariantNodeId);
-make_id_testable!(ParamNodeId);
-make_id_testable!(GenericParamNodeId);
-// Other IDs
-make_id_testable!(ReexportNodeId);
+    make_id_testable!(FunctionNodeId);
+    make_id_testable!(StructNodeId);
+    make_id_testable!(EnumNodeId);
+    make_id_testable!(UnionNodeId);
+    make_id_testable!(TypeAliasNodeId);
+    make_id_testable!(TraitNodeId);
+    make_id_testable!(ImplNodeId);
+    make_id_testable!(ConstNodeId);
+    make_id_testable!(StaticNodeId);
+    make_id_testable!(MacroNodeId);
+    make_id_testable!(ImportNodeId);
+    make_id_testable!(ModuleNodeId);
+    // Associated Items
+    make_id_testable!(MethodNodeId);
+    // Secondary Nodes
+    make_id_testable!(FieldNodeId);
+    make_id_testable!(VariantNodeId);
+    make_id_testable!(ParamNodeId);
+    make_id_testable!(GenericParamNodeId);
+    // Other IDs
+    make_id_testable!(ReexportNodeId);
 }
-
 
 /// Convenience trait to help be more explicit about converting into AnyNodeId.
 /// Relies on `Into<AnyNodeId>` being implemented on the base type on a case by case basis.
@@ -149,7 +146,6 @@ where
         self.into()
     }
 }
-
 
 impl<T> AsAnyNodeId for T where T: AnyTypedId + Into<AnyNodeId> {}
 
@@ -171,12 +167,20 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> AnyNodeId;
 
-    fn log_id_gen(&self, name: &str, item_kind: ItemKind, cfg_bytes: Option<&[u8]>, primary_parent_scope_id: Option<NodeId>) {
+    fn log_id_gen(
+        &self,
+        name: &str,
+        item_kind: ItemKind,
+        cfg_bytes: Option<&[u8]>,
+        primary_parent_scope_id: Option<NodeId>,
+    ) {
         if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
-            if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug) 
-            && debug_target_item == name // allow for filtering by command env variable
-            { // Check if specific log is enabled
-                debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " VisitorState Id Generation ".log_header()); 
+            if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
+                && debug_target_item == name
+            // allow for filtering by command env variable
+            {
+                // Check if specific log is enabled
+                debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " VisitorState Id Generation ".log_header());
                 debug!(target: LOG_TEST_ID_REGEN,
                     "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
                     name.log_name(), // item name being processed by visitor
@@ -209,7 +213,7 @@ impl GeneratesAnyNodeId for VisitorState {
         let primary_parent_scope_id = self
             .current_primary_defn_scope
             .last()
-         .copied()
+            .copied()
             .map(|p_id| p_id.base_id());
 
         // MODIFIED CONDITION FOR LOGGING:
@@ -264,7 +268,7 @@ pub(in crate::parser) trait GenerateTypeId {
     /// Helper to generate a synthetic NodeId using the current visitor state.
     /// Uses the last ID pushed onto `current_primary_defn_scope` as the parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
-    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[ TypeId ]) -> TypeId;
+    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[TypeId]) -> TypeId;
 }
 impl GenerateTypeId for VisitorState {
     /// Generates the `TypeId::Synthetic` for a parsed item. This `TypeId`, while not necessarily
@@ -296,12 +300,12 @@ impl GenerateTypeId for VisitorState {
             "Invalid State: Visitor.self's current_primary_defn_scope should not be empty during type processing",
         );
         // 3. Generate the new Synthetic Type ID using structural info AND parent scope
-        
+
         TypeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
-            type_kind,                       // Pass the determined TypeKind
-            related_types,                   // Pass the determined related TypeIds
+            type_kind,                 // Pass the determined TypeKind
+            related_types,             // Pass the determined related TypeIds
             parent_scope_id.base_id(), // NOTE: This used to be an Option for no good reason
         )
     }
@@ -749,7 +753,6 @@ define_internal_node_id!(
 ); // No specific category yet, just TypedId
    // --- Category ID Enums ---
 
-
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 
 /// Error type for failed TryFrom<PrimaryNodeId> conversions.
@@ -841,7 +844,9 @@ pub trait CategoricalTypedId: AnyTypedId {}
 // Define the marker traits themselves here.
 // Implementations are generated by the define_internal_node_id! macro.
 // Marker traits for categories of typed ids
-pub trait PrimaryNodeIdTrait: AnyTypedId + TryFrom<PrimaryNodeId> + Into<PrimaryNodeId> + Into<AnyNodeId> {
+pub trait PrimaryNodeIdTrait:
+    AnyTypedId + TryFrom<PrimaryNodeId> + Into<PrimaryNodeId> + Into<AnyNodeId>
+{
     fn to_pid(self) -> PrimaryNodeId {
         self.into()
     }
@@ -849,7 +854,7 @@ pub trait PrimaryNodeIdTrait: AnyTypedId + TryFrom<PrimaryNodeId> + Into<Primary
 pub trait AssociatedItemNodeIdTrait: AnyTypedId + TryFrom<AssociatedItemNodeId> {} // Marker for associated item IDs
 pub trait SecondaryNodeIdTrait: AnyTypedId + TryFrom<SecondaryNodeId> {} // Marker for secondary node IDs (fields, params, etc.)
 
-// impl<T> TryFrom<PrimaryNodeId> for T 
+// impl<T> TryFrom<PrimaryNodeId> for T
 //     where T: PrimaryNodeIdTrait + PrimaryNodeId
 // {
 //

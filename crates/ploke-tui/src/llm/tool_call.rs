@@ -4,9 +4,9 @@ use serde_json::Value;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::{system::SystemEvent, AppEvent, EventBus};
+use crate::{AppEvent, EventBus, system::SystemEvent};
 
-use super::{session::await_tool_result, ToolVendor};
+use super::{ToolVendor, session::await_tool_result};
 
 #[derive(Clone, Debug)]
 pub struct ToolCallSpec {

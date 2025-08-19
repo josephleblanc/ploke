@@ -5,16 +5,18 @@ mod models;
 use super::*;
 
 // Internal modules for a modularized AppState
-mod core;
 pub mod commands;
-mod events;
+mod core;
 mod dispatcher;
-mod helpers;
+mod events;
 pub mod handlers;
+mod helpers;
 
 // Public re-exports to keep external API stable
-pub use core::{AppState, ChatState, Config, ConfigState, IndexingState, SystemState, SystemStatus};
 pub use commands::{ListNavigation, StateCommand, StateError};
+pub use core::{
+    AppState, ChatState, Config, ConfigState, IndexingState, SystemState, SystemStatus,
+};
 pub use dispatcher::state_manager;
 pub use events::MessageUpdatedEvent;
 

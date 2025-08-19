@@ -65,7 +65,9 @@ async fn git_status_e2e() {
     }
 
     let mgr = McpManager::from_config(cfg_git()).await.expect("manager");
-    mgr.ensure_started(&ServerId("git".into())).await.expect("start git");
+    mgr.ensure_started(&ServerId("git".into()))
+        .await
+        .expect("start git");
 
     let git = mgr.client_git().expect("git client");
     let status = git.status(".").await.expect("git status");
@@ -89,7 +91,9 @@ async fn context7_resolve_e2e() {
         return;
     }
 
-    let mgr = McpManager::from_config(cfg_context7()).await.expect("manager");
+    let mgr = McpManager::from_config(cfg_context7())
+        .await
+        .expect("manager");
     mgr.ensure_started(&ServerId("context7".into()))
         .await
         .expect("start context7");

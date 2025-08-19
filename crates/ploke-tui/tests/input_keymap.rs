@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use ploke_tui::app::input::keymap::{to_action, Action};
+use ploke_tui::app::input::keymap::{Action, to_action};
 use ploke_tui::app::types::Mode;
 use ploke_tui::user_config::CommandStyle;
 

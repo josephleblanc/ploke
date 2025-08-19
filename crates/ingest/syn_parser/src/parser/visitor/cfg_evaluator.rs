@@ -102,7 +102,7 @@ impl ActiveCfg {
         // Parse target triple from environment or use defaults
         // TODO: Replace the fallback triple with a more complete target-triple parser.
         let target_triple =
-        std::env::var("TARGET").unwrap_or_else(|_| "x86_64-unknown-linux-gnu".to_string());
+            std::env::var("TARGET").unwrap_or_else(|_| "x86_64-unknown-linux-gnu".to_string());
         let parts: Vec<&str> = target_triple.split('-').collect();
 
         let target_arch = parts.first().unwrap_or(&"x86_64").to_string();

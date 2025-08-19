@@ -159,7 +159,7 @@ pub enum StateCommand {
     ProcessWithRag {
         user_query: String,
         strategy: RetrievalStrategy,
-        budget: TokenBudget
+        budget: TokenBudget,
     },
 }
 

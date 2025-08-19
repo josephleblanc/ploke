@@ -32,6 +32,7 @@ Core Preconditions
     - 0 <= start <= end <= file_len
     - is_char_boundary(start) and is_char_boundary(end)
   - If anchoring by node/content signature, resolve anchors to a concrete byte range before write; fail if not uniquely resolvable.
+    - USER NOTE: We are planning to implement a second kind of NodeId, `CanonId`, which will not depend on the byte range of the node contents in the target files, but rather on: crate_namespace, file_path, logical_item_path (e.g. canonical path), item_kind (e.g. function, struct), cfg (cfg attributes).
 - Path policy and permissions:
   - Reject relative paths or paths containing ..; optionally require canonicalized absolute paths within a repository root.
   - Pre-check read/write permissions; map to deterministic ploke-error variants.
@@ -181,6 +182,7 @@ Testing Plan (Essentials)
 
 Open Questions for Product/Architecture
 - Should IO verify node-level hashes on write, or should that belong to higher layers?
+  - IO should verify, report errors upstream with ctx
 - Should we support a patch/diff API instead of splice by offsets?
 - Do we allow policy-driven normalization (formatting, newline, BOM) at IO-layer, or leave it to higher layers?
 - Do we need a global transaction spanning multiple files (two-phase commit) for coordinated agent edits?

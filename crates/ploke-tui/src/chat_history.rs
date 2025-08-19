@@ -3,8 +3,8 @@ use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
 
 use std::collections::HashMap;
-use std::io::Write as _;
 use std::fmt;
+use std::io::Write as _;
 
 use color_eyre::Result;
 
@@ -365,7 +365,9 @@ impl ChatHistory {
 
     /// Returns an iterator of Messages on the cached root -> tail path.
     pub fn iter_path(&self) -> impl Iterator<Item = &Message> {
-        self.path_cache.iter().filter_map(|id| self.messages.get(id))
+        self.path_cache
+            .iter()
+            .filter_map(|id| self.messages.get(id))
     }
 
     /// Fast path length (root -> tail).
@@ -711,7 +713,7 @@ impl ChatHistory {
     ///
     /// This function traverses backwards from the current message through its parent chain,
     /// looking for the first (nearest to current) message with `MessageKind::User`.
-    /// 
+    ///
     /// # Returns
     /// - `Ok(Some((id, content)))` - The UUID and content of the most recent user message
     /// - `Ok(None)` - No user message found in the chain (only possible with root message)
@@ -738,9 +740,7 @@ pub(crate) async fn atomic_write(
     path: &std::path::Path,
     content: String,
 ) -> Result<(), std::io::Error> {
-    let dir = path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let mut temp = NamedTempFile::new_in(dir)?;
     temp.write_all(content.as_bytes())?;
     // Map PersistError into a plain io::Error to satisfy the return type

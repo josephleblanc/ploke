@@ -4,25 +4,21 @@ mod tool_call;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use thiserror::Error;
+use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{
-    mpsc,
-    oneshot,
-    broadcast,
-};
+use thiserror::Error;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::app_state::handlers::rag as rag_handlers;
+use crate::app_state::{AppState, StateCommand};
+use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
     system::SystemEvent,
     user_config::ProviderConfig,
 };
-use crate::app_state::handlers::rag as rag_handlers;
-use crate::{AppEvent, EventBus};
-use crate::app_state::{AppState, StateCommand};
 
 // API and Config
 
@@ -209,7 +205,9 @@ pub async fn llm_manager(
                 let guard = state.config.read().await;
                 let maybe_provider = guard.provider_registry.get_active_provider();
                 if maybe_provider.is_none() {
-                    tracing::warn!("Could not find active provider in registry, continuing event loop");
+                    tracing::warn!(
+                        "Could not find active provider in registry, continuing event loop"
+                    );
                     continue;
                 }
                 let provider_config = maybe_provider
@@ -258,13 +256,27 @@ pub async fn llm_manager(
                     }
                 });
             }
-            AppEvent::Llm(Event::ToolCall { request_id, parent_id, name, arguments, vendor, call_id }) => {
+            AppEvent::Llm(Event::ToolCall {
+                request_id,
+                parent_id,
+                name,
+                arguments,
+                vendor,
+                call_id,
+            }) => {
                 let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
                 tracing::info!(
                     "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
-                    vendor, request_id, parent_id, call_id, name, arguments
+                    vendor,
+                    request_id,
+                    parent_id,
+                    call_id,
+                    name,
+                    arguments
                 );
-                tracing::warn!("DEPRECATED: Routing tool calls via SystemEvent::ToolCallRequested; this path will be replaced by dedicated tool events in a future EventBus refactor.");
+                tracing::warn!(
+                    "DEPRECATED: Routing tool calls via SystemEvent::ToolCallRequested; this path will be replaced by dedicated tool events in a future EventBus refactor."
+                );
                 event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                     request_id,
                     parent_id,
@@ -274,22 +286,28 @@ pub async fn llm_manager(
                     call_id,
                 }));
             }
-            AppEvent::System(SystemEvent::ToolCallRequested { request_id, parent_id, vendor, name, arguments, call_id }) => {
-                tracing::info!("Dispatching ToolCallRequested in system handler: name={}", name);
-                tracing::warn!("DEPRECATED PATH: SystemEvent::ToolCallRequested handling is deprecated and will be refactored into dedicated event types; retained for compatibility.");
+            AppEvent::System(SystemEvent::ToolCallRequested {
+                request_id,
+                parent_id,
+                vendor,
+                name,
+                arguments,
+                call_id,
+            }) => {
+                tracing::info!(
+                    "Dispatching ToolCallRequested in system handler: name={}",
+                    name
+                );
+                tracing::warn!(
+                    "DEPRECATED PATH: SystemEvent::ToolCallRequested handling is deprecated and will be refactored into dedicated event types; retained for compatibility."
+                );
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
                     rag_handlers::handle_tool_call_requested(
-                        &state,
-                        &event_bus,
-                        request_id,
-                        parent_id,
-                        vendor,
-                        name,
-                        arguments,
-                        call_id,
-                    ).await;
+                        &state, &event_bus, request_id, parent_id, vendor, name, arguments, call_id,
+                    )
+                    .await;
                 });
             }
             _ => {}
@@ -344,29 +362,36 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context, &event_bus, parent_id)
-        .await
-        .map(|content| StateCommand::UpdateMessage {
+    let update_cmd = prepare_and_run_llm_call(
+        &state,
+        &client,
+        &provider_config,
+        context,
+        &event_bus,
+        parent_id,
+    )
+    .await
+    .map(|content| StateCommand::UpdateMessage {
+        id: assistant_message_id,
+        update: MessageUpdate {
+            content: Some(content),
+            status: Some(MessageStatus::Completed),
+            ..Default::default()
+        },
+    })
+    .unwrap_or_else(|e| {
+        let err_string = e.to_string();
+        StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
-                content: Some(content),
-                status: Some(MessageStatus::Completed),
+                content: Some(format!("Error: {}", err_string)),
+                status: Some(MessageStatus::Error {
+                    description: err_string,
+                }),
                 ..Default::default()
             },
-        })
-        .unwrap_or_else(|e| {
-            let err_string = e.to_string();
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(format!("Error: {}", err_string)),
-                    status: Some(MessageStatus::Error {
-                        description: err_string,
-                    }),
-                    ..Default::default()
-                },
-            }
-        });
+        }
+    });
 
     // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {
@@ -472,7 +497,10 @@ async fn prepare_and_run_llm_call(
     session.run().await
 }
 
-pub(super) fn cap_messages_by_chars<'a>(messages: &'a [RequestMessage<'a>], budget: usize) -> Vec<RequestMessage<'a>> {
+pub(super) fn cap_messages_by_chars<'a>(
+    messages: &'a [RequestMessage<'a>],
+    budget: usize,
+) -> Vec<RequestMessage<'a>> {
     // Walk from the tail so we keep the most recent context, then reverse to restore order
     let mut used = 0usize;
     let mut kept: Vec<&RequestMessage> = Vec::new();
@@ -498,8 +526,6 @@ struct RequestCodeContextArgs {
 }
 
 // Example tool-call handler (stub)
-
-
 
 // --- Supporting Types ---
 

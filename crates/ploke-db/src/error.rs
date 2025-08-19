@@ -26,7 +26,7 @@ pub enum DbError {
     CallbackSetCheck,
 
     #[error("Error receiving message: {0}")]
-    CrossBeamSend(String)
+    CrossBeamSend(String),
 }
 
 #[derive(Error, Debug)]

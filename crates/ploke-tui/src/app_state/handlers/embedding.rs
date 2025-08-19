@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::{app_state::AppState, chat_history::Message, error::ResultExt as _, RagEvent};
-use ploke_db::{search_similar, NodeType};
+use crate::{RagEvent, app_state::AppState, chat_history::Message, error::ResultExt as _};
+use ploke_db::{NodeType, search_similar};
 
 pub async fn handle_embed_message(
     state: &Arc<AppState>,
@@ -39,7 +39,9 @@ pub async fn handle_embed_message(
             }
             tracing::info!("Finished waiting on parsing target crate");
 
-            if let Err(e) = embedding_search_similar(state, context_tx, new_msg_id, embeddings).await {
+            if let Err(e) =
+                embedding_search_similar(state, context_tx, new_msg_id, embeddings).await
+            {
                 tracing::error!("error during embedding search: {}", e);
             };
         }
@@ -58,7 +60,8 @@ async fn embedding_search_similar(
     new_msg_id: Uuid,
     embeddings: Vec<f32>,
 ) -> color_eyre::Result<()> {
-    let ty_embed_data = search_similar(&state.db, embeddings, 100, 200, NodeType::Function).emit_error()?;
+    let ty_embed_data =
+        search_similar(&state.db, embeddings, 100, 200, NodeType::Function).emit_error()?;
     tracing::info!("search_similar Success! with result {:?}", ty_embed_data);
 
     let snippets = state

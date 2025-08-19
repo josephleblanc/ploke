@@ -23,13 +23,22 @@ impl<'a> Context7Client<'a> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr
-            .call_tool(&self.id, "resolve-library-id", json!({ "libraryName": name }))
+            .call_tool(
+                &self.id,
+                "resolve-library-id",
+                json!({ "libraryName": name }),
+            )
             .await?;
         Ok(result.text)
     }
 
     /// Fetch documentation for a given Context7-compatible library ID.
-    pub async fn get_library_docs(&self, id: &str, tokens: usize, topic: &str) -> Result<String, McpError> {
+    pub async fn get_library_docs(
+        &self,
+        id: &str,
+        tokens: usize,
+        topic: &str,
+    ) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr
@@ -53,12 +62,21 @@ impl<'a> crate::types::DocsLookup for Context7Client<'a> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr
-            .call_tool(&self.id, "resolve-library-id", json!({ "libraryName": name }))
+            .call_tool(
+                &self.id,
+                "resolve-library-id",
+                json!({ "libraryName": name }),
+            )
             .await?;
         Ok(result.text)
     }
 
-    async fn get_library_docs(&self, id: &str, tokens: usize, topic: &str) -> Result<String, McpError> {
+    async fn get_library_docs(
+        &self,
+        id: &str,
+        tokens: usize,
+        topic: &str,
+    ) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr

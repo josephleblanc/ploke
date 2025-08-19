@@ -1,20 +1,20 @@
-use std::ops::ControlFlow;
-use std::path::PathBuf;
-use std::sync::Arc;
 use ploke_rag::AssembledContext;
 use ploke_rag::RagService;
 use ploke_rag::RetrievalStrategy;
 use ploke_rag::RrfConfig;
+use std::ops::ControlFlow;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use crate::AppEvent;
+use crate::EventBus;
 use crate::chat_history::Message;
 use crate::chat_history::MessageKind;
 use crate::error::ErrorExt;
 use crate::llm;
-use crate::AppEvent;
-use crate::EventBus;
 use crate::system::SystemEvent;
 
 use crate::AppState;
@@ -67,16 +67,24 @@ pub async fn handle_tool_call_requested(
     arguments: serde_json::Value,
     call_id: String,
 ) {
-    tracing::info!("handle_tool_call_requested: vendor={:?}, name={}", vendor, name);
-    tracing::warn!("DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility.");
+    tracing::info!(
+        "handle_tool_call_requested: vendor={:?}, name={}",
+        vendor,
+        name
+    );
+    tracing::warn!(
+        "DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility."
+    );
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
-        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-            request_id,
-            parent_id,
-            call_id,
-            error: format!("Unsupported tool: {}", name),
-        }));
+        let _ = event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id,
+                error: format!("Unsupported tool: {}", name),
+            }));
         return;
     }
 
@@ -86,12 +94,14 @@ pub async fn handle_tool_call_requested(
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
     if token_budget.is_none() || token_budget == Some(0) {
-        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-            request_id,
-            parent_id,
-            call_id,
-            error: "Invalid or missing token_budget".to_string(),
-        }));
+        let _ = event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id,
+                error: "Invalid or missing token_budget".to_string(),
+            }));
         return;
     }
     let token_budget = token_budget.unwrap();
@@ -112,12 +122,15 @@ pub async fn handle_tool_call_requested(
     };
 
     if query.trim().is_empty() {
-        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-            request_id,
-            parent_id,
-            call_id,
-            error: "No query available (no hint provided and no recent user message)".to_string(),
-        }));
+        let _ = event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id,
+                error: "No query available (no hint provided and no recent user message)"
+                    .to_string(),
+            }));
         return;
     }
 
@@ -139,33 +152,40 @@ pub async fn handle_tool_call_requested(
                 })
                 .to_string();
 
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id,
-                    parent_id,
-                    call_id,
-                    content,
-                }));
+                let _ =
+                    event_bus
+                        .realtime_tx
+                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            parent_id,
+                            call_id,
+                            content,
+                        }));
             }
             Err(e) => {
                 let msg = format!("RAG hybrid_search failed: {}", e);
                 tracing::warn!("{}", msg);
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id,
-                    error: msg,
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id,
+                        error: msg,
+                    }));
             }
         }
     } else {
         let msg = "RAG service unavailable".to_string();
         tracing::warn!("{}", msg);
-        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-            request_id,
-            parent_id,
-            call_id,
-            error: msg,
-        }));
+        let _ = event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id,
+                error: msg,
+            }));
     }
 }
 
@@ -181,10 +201,10 @@ fn calc_top_k_for_budget(token_budget: u32) -> usize {
 }
 
 pub async fn process_with_rag(
-    state: &Arc<AppState>, 
+    state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
-    new_msg_id: Uuid, 
+    new_msg_id: Uuid,
     completion_rx: oneshot::Receiver<()>,
 ) {
     if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
@@ -200,18 +220,21 @@ pub async fn process_with_rag(
         )
     };
     if let Some(rag) = &state.rag {
-        let guard = state.chat.read().await; 
+        let guard = state.chat.read().await;
 
-        let ( msg_id, user_msg ) = {
+        let (msg_id, user_msg) = {
             match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
                 Ok(maybe_msg) => match maybe_msg {
                     Some(msg) => msg,
                     None => {
-                        tracing::warn!("Attempting to submit empty user message"); 
+                        tracing::warn!("Attempting to submit empty user message");
                         return;
-                    },
+                    }
                 },
-                Err(e) => {e.emit_error(); return;}
+                Err(e) => {
+                    e.emit_error();
+                    return;
+                }
             }
         };
         let messages: Vec<Message> = guard.clone_current_path_conv();
@@ -219,10 +242,13 @@ pub async fn process_with_rag(
         // TODO: Add this to the program config
         let top_k = 15;
         let retrieval_strategy = RetrievalStrategy::Hybrid {
-                    rrf: RrfConfig::default(),
-                    mmr: None,
-                };
-        let rag_ctx = match rag.get_context(&user_msg, top_k, budget, retrieval_strategy).await {
+            rrf: RrfConfig::default(),
+            mmr: None,
+        };
+        let rag_ctx = match rag
+            .get_context(&user_msg, top_k, budget, retrieval_strategy)
+            .await
+        {
             Ok(res) => res,
             Err(e) => {
                 e.emit_error();
@@ -253,7 +279,7 @@ fn construct_context_from_rag(
     ]);
 
     // Add assembled context parts as system messages
-    let text = ctx.parts.into_iter().map(|p| ( MessageKind::System, p.text ));
+    let text = ctx.parts.into_iter().map(|p| (MessageKind::System, p.text));
     base.extend(text);
 
     // Add conversation messages

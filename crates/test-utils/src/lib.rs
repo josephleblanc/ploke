@@ -43,11 +43,10 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
         .collect()
 }
 
-
 #[cfg(feature = "test_setup")]
 pub fn try_run_phases_and_collect_path(
     project_root: &Path,
-    crate_path: PathBuf
+    crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
     let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
 
@@ -66,14 +65,15 @@ pub fn try_run_phases_and_collect_path(
 use syn_parser::ModuleTree;
 
 #[cfg(feature = "test_setup")]
-pub fn parse_and_build_tree(crate_name: &str) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
-
+pub fn parse_and_build_tree(
+    crate_name: &str,
+) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
     let project_root = workspace_root(); // Use workspace root for context
     let crate_path = workspace_root().join("crates").join(crate_name);
     let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
     let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
     let tree = merged.build_tree_and_prune()?;
-    Ok((merged, tree ))
+    Ok((merged, tree))
 }
 
 #[cfg(feature = "test_setup")]
@@ -107,7 +107,10 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     tracing::info!("{}: Initialize", "Database".log_step());
     db.initialize().expect("Failed to initialize database");
     // create and insert schema for all nodes
-    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
     ploke_transform::schema::create_schema_all(&db)?;
 
     // run the parse
@@ -129,7 +132,10 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 
     tracing::info!("{}: transform graph into db", "Transform".log_step());
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
-    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
     Ok(db)
 }
 
@@ -137,7 +143,9 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 /// Uses the crates in the `ploke` workspace itself as the target.
 /// As such, cannot rely on stable inputs over time, but is a more robust example to test against
 /// than the fixtures, which usually have various examples but may not have many nodes in total.
-pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+pub fn setup_db_full_crate(
+    crate_name: &'static str,
+) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
     tracing::info!("Settup up database with setup_db_full_crate");
@@ -146,16 +154,25 @@ pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStora
     tracing::info!("{}: Initialize", "Database".log_step());
     db.initialize().expect("Failed to initialize database");
     // create and insert schema for all nodes
-    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
     ploke_transform::schema::create_schema_all(&db)?;
 
     // run the parse
-    tracing::info!("{}: run the parser, merge graphs, build tree", "Parse".log_step());
+    tracing::info!(
+        "{}: run the parser, merge graphs, build tree",
+        "Parse".log_step()
+    );
     let (merged, tree) = parse_and_build_tree(crate_name)?;
 
     tracing::info!("{}: transform graph into db", "Transform".log_step());
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
-    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
     Ok(db)
 }
 
@@ -234,7 +251,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_level(true) // Show log level
         .without_time() // Remove timestamps
         .with_ansi(true)
-        .pretty(); 
+        .pretty();
     tracing_subscriber::registry()
         .with(layer)
         .with(filter)

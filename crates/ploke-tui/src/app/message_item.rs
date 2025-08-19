@@ -51,9 +51,9 @@ fn render_one_message<'a>(
 
     (lines.len() as u16, lines)
 }
- // ---------- main replacement -------------------------------------------------
+// ---------- main replacement -------------------------------------------------
 #[instrument(skip(renderable_msg), level = "trace")]
-pub fn measure_messages<'a, I, T: RenderMsg + 'a >(
+pub fn measure_messages<'a, I, T: RenderMsg + 'a>(
     renderable_msg: I,
     conversation_width: u16,
     _selected_index: Option<usize>,
@@ -75,7 +75,7 @@ where
 }
 
 #[instrument(skip(frame, renderable_msg, heights), level = "trace")]
-pub fn render_messages<'a, I, T: RenderMsg + 'a >(
+pub fn render_messages<'a, I, T: RenderMsg + 'a>(
     frame: &mut Frame,
     renderable_msg: I,
     conversation_width: u16,
@@ -83,13 +83,15 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a >(
     offset_y: u16,
     heights: &[u16],
     selected_index: Option<usize>,
-)
-where
+) where
     I: IntoIterator<Item = &'a T>,
 {
     // 1) Clamp offset
     let viewport_height = conversation_area.height;
-    let total_height: u16 = heights.iter().copied().fold(0u16, |acc, h| acc.saturating_add(h));
+    let total_height: u16 = heights
+        .iter()
+        .copied()
+        .fold(0u16, |acc, h| acc.saturating_add(h));
     let clamped_offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
 
     // 2) Render visible slice

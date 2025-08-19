@@ -6,12 +6,15 @@
 // - Adds Cozo client trait + an index_batch_with_cozo method that upserts doc metadata into Cozo
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
+use cozo::{DataValue, UuidWrapper};
 use ploke_core::{EmbeddingData, TrackingHash};
 use uuid::Uuid;
-use cozo::{DataValue, UuidWrapper};
 
 use crate::{Database, DbError, NodeType};
 
@@ -538,7 +541,11 @@ impl Bm25Indexer {
                 },
             );
 
-        let avgdl = if n == 0 { 0.0 } else { (sum as f32) / (n as f32) };
+        let avgdl = if n == 0 {
+            0.0
+        } else {
+            (sum as f32) / (n as f32)
+        };
         let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
         let mut scorer = Scorer::<Uuid, u32>::new();
         let mut staged_meta = HashMap::with_capacity(n);
@@ -713,8 +720,10 @@ pub(crate) fn collect_rebuild_sources(
         let rel = node.relation_str();
         // Pull id, name and tracking_hash from each primary relation.
         // We keep the script minimal to avoid unnecessary allocations and conversions.
-        let script =
-            format!("?[id, name, tracking_hash] := *{} {{ id, name, tracking_hash }}", rel);
+        let script = format!(
+            "?[id, name, tracking_hash] := *{} {{ id, name, tracking_hash }}",
+            rel
+        );
         let res = db.raw_query(&script)?;
         for row in res.rows.iter() {
             if row.len() < 3 {

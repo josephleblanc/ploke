@@ -26,4 +26,3 @@ async fn main() -> color_eyre::Result<()> {
     tracing::info!("Application exited normally");
     Ok(())
 }
-

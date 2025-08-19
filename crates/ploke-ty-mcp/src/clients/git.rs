@@ -29,7 +29,11 @@ impl<'a> GitClient<'a> {
     }
 
     /// Get `git diff` for a repository. Optional args mirror CLI flags (e.g., ["--staged"]).
-    pub async fn diff(&self, repo_path: &str, args: Option<Vec<String>>) -> Result<String, McpError> {
+    pub async fn diff(
+        &self,
+        repo_path: &str,
+        args: Option<Vec<String>>,
+    ) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let mut payload = serde_json::Map::new();
         payload.insert("repo_path".to_string(), json!(repo_path));
@@ -61,7 +65,12 @@ impl<'a> GitClient<'a> {
     }
 
     /// Run `git commit` with a message. If `all` is true, includes `-a`.
-    pub async fn commit(&self, repo_path: &str, message: &str, all: bool) -> Result<String, McpError> {
+    pub async fn commit(
+        &self,
+        repo_path: &str,
+        message: &str,
+        all: bool,
+    ) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr
@@ -79,7 +88,12 @@ impl<'a> GitClient<'a> {
     }
 
     /// Run `git checkout` to switch or create a branch.
-    pub async fn checkout(&self, repo_path: &str, branch: &str, create: bool) -> Result<String, McpError> {
+    pub async fn checkout(
+        &self,
+        repo_path: &str,
+        branch: &str,
+        create: bool,
+    ) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self
             .mgr
@@ -125,7 +139,12 @@ impl<'a> crate::types::GitOps for GitClient<'a> {
         GitClient::commit(self, repo_path, message, all).await
     }
 
-    async fn checkout(&self, repo_path: &str, branch: &str, create: bool) -> Result<String, McpError> {
+    async fn checkout(
+        &self,
+        repo_path: &str,
+        branch: &str,
+        create: bool,
+    ) -> Result<String, McpError> {
         GitClient::checkout(self, repo_path, branch, create).await
     }
 

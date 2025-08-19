@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{chat_history::ChatHistory, RagEvent};
 use crate::llm::LLMParameters;
 use crate::user_config::ProviderRegistry;
+use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagService, TokenBudget};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 #[derive(Debug)]
 pub struct AppState {
@@ -26,7 +26,7 @@ pub struct AppState {
     pub io_handle: IoManagerHandle,
 
     // RAG stuff
-    pub rag: Option< Arc<ploke_rag::RagService> >,
+    pub rag: Option<Arc<ploke_rag::RagService>>,
     pub budget: TokenBudget,
     // pub rag_tx: mpsc::Sender<RagEvent>,
 }
@@ -120,7 +120,7 @@ impl AppState {
             db,
             embedder,
             io_handle,
-            rag: Some( rag ),
+            rag: Some(rag),
             budget,
             // rag_tx,
         }

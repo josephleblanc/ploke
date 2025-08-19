@@ -4,13 +4,13 @@ pub mod app;
 pub mod app_state;
 pub mod chat_history;
 pub mod error;
+pub mod event_bus;
 pub mod file_man;
 pub mod llm;
 pub mod parser;
 pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
-pub mod event_bus;
 pub use event_bus::*;
 
 #[cfg(test)]
@@ -24,7 +24,7 @@ use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use llm::llm_manager;
 use parser::run_parse;
-use ploke_db::bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer};
+use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
@@ -120,15 +120,16 @@ pub async fn try_main() -> color_eyre::Result<()> {
         Arc::clone(&proc_arc), // Use configured processor
         CancellationToken::new().0,
         8,
-    ).with_bm25_tx(bm25_cmd);
+    )
+    .with_bm25_tx(bm25_cmd);
     let indexer_task = Arc::new(indexer_task);
 
     // Initialize RAG orchestration service with full capabilities (BM25 + dense + IoManager)
     let rag = match ploke_rag::RagService::new_full(
-        db_handle.clone(), 
-        Arc::clone(&proc_arc), 
+        db_handle.clone(),
+        Arc::clone(&proc_arc),
         io_handle.clone(),
-        ploke_rag::RagConfig::default()
+        ploke_rag::RagConfig::default(),
     ) {
         Ok(svc) => Some(Arc::new(svc)),
         Err(e) => {
@@ -168,8 +169,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
         rag_event_tx.clone(),
         event_bus.realtime_tx.clone(),
     );
-
-
 
     tokio::spawn(file_manager.run());
 
@@ -230,10 +229,10 @@ impl std::fmt::Display for UiError {
 pub mod system {
     use std::{borrow::Cow, sync::Arc};
 
-    use ploke_db::TypedEmbedData;
-    use uuid::Uuid;
-    use serde_json::Value;
     use crate::llm::ToolVendor;
+    use ploke_db::TypedEmbedData;
+    use serde_json::Value;
+    use uuid::Uuid;
 
     use crate::UiError;
 
@@ -360,4 +359,3 @@ impl AppEvent {
         matches!(self, AppEvent::System(_))
     }
 }
-

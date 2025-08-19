@@ -1,5 +1,5 @@
-pub mod parser;
 mod exec;
+pub mod parser;
 
 use crate::app::App;
 pub use exec::HELP_COMMANDS;

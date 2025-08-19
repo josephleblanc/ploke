@@ -12,7 +12,6 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
-
 use std::path::PathBuf;
 
 // Add top-level serde imports for derives
@@ -29,7 +28,7 @@ pub struct EmbeddingData {
     pub start_byte: usize,
     pub end_byte: usize,
     pub node_tracking_hash: TrackingHash,
-    pub namespace: Uuid
+    pub namespace: Uuid,
 }
 
 // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
@@ -54,8 +53,19 @@ pub struct ChangedFileData {
 
 impl ChangedFileData {
     pub fn from_file_data(value: FileData, new_tracking_hash: TrackingHash) -> Self {
-        let FileData { id, namespace, file_tracking_hash, file_path } = value;
-        Self { id, namespace, old_tracking_hash: file_tracking_hash, new_tracking_hash, file_path }
+        let FileData {
+            id,
+            namespace,
+            file_tracking_hash,
+            file_path,
+        } = value;
+        Self {
+            id,
+            namespace,
+            old_tracking_hash: file_tracking_hash,
+            new_tracking_hash,
+            file_path,
+        }
     }
 }
 

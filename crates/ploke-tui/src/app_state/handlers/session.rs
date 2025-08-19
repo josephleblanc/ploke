@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{app_state::AppState, AppEvent, EventBus};
+use crate::{AppEvent, EventBus, app_state::AppState};
 
 pub async fn save_state(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let serialized_content = {

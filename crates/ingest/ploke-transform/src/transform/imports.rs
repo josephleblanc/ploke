@@ -69,8 +69,6 @@ pub(super) fn transform_imports(
                 schema.log_create_script();
             })
             .map_err(log_db_error)?;
-
-
     }
 
     Ok(())
@@ -189,7 +187,6 @@ mod tests {
         // create and insert attribute schema
         // create_attribute_schema(&db)?;
 
-
         pub(crate) fn create_import_schema(
             db: &Db<MemStorage>,
         ) -> Result<(), Box<dyn std::error::Error>> {
@@ -207,10 +204,8 @@ mod tests {
         }
         create_import_schema(&db)?;
 
-
         // transform and insert impls into cozo
         transform_imports(&db, merged.graph.use_statements)?;
-
 
         Ok(())
     }
