@@ -90,11 +90,10 @@ async fn process_one_write(
         req.file_path.clone()
     };
 
-    // Acquire per-file async lock to serialize writes to the same path
-    let _write_lock_guard = {
-        let lock = get_file_lock(&file_path);
-        lock.lock().await
-    };
+    // Acquire per-file async lock to serialize writes to the same path.
+    // Keep the Arc<Mutex<()>> binding alive as long as the guard to satisfy borrow checker.
+    let lock = get_file_lock(&file_path);
+    let _write_lock_guard = lock.lock().await;
 
     // 1) Read current content (absolute-path enforced by helper)
     let content = read_file_to_string_abs(&file_path).await?;
