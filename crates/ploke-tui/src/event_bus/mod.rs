@@ -134,7 +134,8 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                             continue;
                         }
                         IndexStatus::Failed(err) => {
-                            let _ = event_bus.realtime_tx.send(AppEvent::Error(ErrorEvent {
+                            // Send failure notification to background channel; realtime gets a single SSOT event
+                            event_bus.send(AppEvent::Error(ErrorEvent {
                                 message: format!("Indexing failed: {}", err),
                                 severity: ErrorSeverity::Error,
                             }));
