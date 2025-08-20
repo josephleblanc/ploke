@@ -100,12 +100,9 @@ pub async fn handle_tool_call_requested(
                     request_id
                 );
                 // Bridge + typed failure for idempotent duplicate
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Duplicate request_id".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(tool_call_failed("Duplicate request_id".to_string()));
                 event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                     request_id,
                     parent_id,
@@ -562,12 +559,7 @@ pub async fn handle_tool_call_requested(
         tracing::warn!("{}", msg);
         let _ = event_bus
             .realtime_tx
-            .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                error: msg.clone(),
-            }));
+            .send(tool_call_failed(msg.clone()));
         event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
             request_id,
             parent_id,
