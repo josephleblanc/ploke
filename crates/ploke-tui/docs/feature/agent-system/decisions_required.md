@@ -15,12 +15,16 @@ Resolved decisions (2025-08-19)
 New questions (to resolve pre-M0 where feasible)
 - Q1: Tool-call relation modeling in Cozo
   - Proposal: Make tool_call time-travel-enabled with the last key part typed as Validity (… , at: Validity). Record lifecycle via new asserted rows (requested → completed/failed), not in-place updates. Accept this as the contract?
+    - USER: Yes, Accept.
 - Q2: Relation naming (singular vs plural)
   - Proposal: Use singular relation names (tool_call, conversation_turn, code_edit_proposal) to align with current schema style. Accept?
+    - USER: Yes, Accept.
 - Q3: Namespace semantics
   - Proposal: Use PROJECT_NAMESPACE_UUID by default for observability rows; allow provider-specific overrides later. Accept?
+    - USER: Yes, Accept. This is pending updates to the way the PROJECT_NAMESPACE_UUID is calculated in the `syn_parser` crate. Fine during development, consider as blocker before prod-ready. Required for future integrations between target parsed crates to be integrated in code graph in database (outside scope of `ploke-tui`).
 - Q4: Redaction toggles
   - Proposal: A ploke-db config toggle (and/or per-call parameter) controlling whether arguments_json/outcome_json are stored as Json or redacted. Default: redacted (store only hash, status, and metadata). Accept?
+    - USER: No, for now we will store everything for debugging as we rapidly develop the project. Consider this again during pre prod-ready checks and address as blocker to full prod-readiness.
 
 Purpose
 - This file is the single queue for blockers and directional decisions that require USER approval.

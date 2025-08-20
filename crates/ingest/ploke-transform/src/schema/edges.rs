@@ -15,101 +15,6 @@ use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::resolve::Colorize;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 
-// #[macro_export]
-// macro_rules! define_edge_schema {
-//     ($schema_name:ident {
-//         $relation:literal,
-//         $($field_name:ident: $dv:literal),+
-//         $(,)?
-//     }) => {
-//         pub struct $schema_name {
-//             pub relation: &'static str,
-//             $($field_name: CozoField),+
-//         }
-//
-//         impl $schema_name {
-//             pub const SCHEMA: Self = Self {
-//                 relation: $relation,
-//                 $($field_name: CozoField { st: stringify!($field_name), dv: $dv }),+
-//             };
-//
-//             $(pub fn $field_name(&self) -> &str {
-//                 self.$field_name.st()
-//             })*
-//
-//             /// Returns the source field name, which should be present in all edge schemas
-//             pub fn source_field(&self) -> &str {
-//                 self.source_id.st()
-//             }
-//
-//             /// Returns the target field name, which should be present in all edge schemas
-//             pub fn target_field(&self) -> &str {
-//                 self.target_id.st()
-//             }
-//         }
-//
-//         impl $schema_name {
-//             pub fn script_create(&self) -> String {
-//                 let fields = vec![
-//                     $(format!("{}: {}", self.$field_name.st(), self.$field_name.dv())),+
-//                 ];
-//                 format!(":create {} {{ {} }}", $relation, fields.join(", "))
-//             }
-//
-//             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-//                 let entry_names = params.keys().join(", ");
-//                 let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
-//                 format!(
-//                     "?[{}] <- [[{}]] :put {}",
-//                     entry_names, param_names, self.relation
-//                 )
-//             }
-//
-//             pub fn log_create_script(&self) {
-//                 tracing::info!(target: "db",
-//                     "{} {}: {:?}",
-//                     "Printing edge schema".log_header(),
-//                     $relation.log_name(),
-//                     self.script_create()
-//                 );
-//             }
-//
-//             pub(crate) fn create_and_insert(
-//                 &self,
-//                 db: &Db<MemStorage>,
-//             ) -> Result<(), Box<TransformError>> {
-//                 let const_schema = Self::SCHEMA;
-//                 let db_result = db.run_script(
-//                     &const_schema.script_create(),
-//                     BTreeMap::new(),
-//                     cozo::ScriptMutability::Mutable,
-//                 )?;
-//                 self.log_create_script();
-//                 log_db_result(db_result);
-//                 Ok(())
-//             }
-//
-//             /// NOTE: Not clear that this is valid cozo. Use with care.
-//             /// Creates a traversal query that follows this edge type from a given source node
-//             pub fn traverse_from(&self, source_param: &str) -> String {
-//                 format!(
-//                     "?[target] := *{}[source, target], source = ${} :limit 1000",
-//                     self.relation, source_param
-//                 )
-//             }
-//
-//             /// NOTE: Not clear that this is valid cozo. Use with care.
-//             /// Creates a traversal query that follows this edge type to a given target node
-//             pub fn traverse_to(&self, target_param: &str) -> String {
-//                 format!(
-//                     "?[source] := *{}[source, target], target = ${} :limit 1000",
-//                     self.relation, target_param
-//                 )
-//             }
-//         }
-//     };
-// }
-
 define_schema!(SyntacticRelationSchema {
     "syntax_edge",
     source_id: "Uuid",
@@ -119,26 +24,6 @@ define_schema!(SyntacticRelationSchema {
     target_kind: "String"
 });
 
-// NOTE: WIP
-// Example sketch
-// macro_rules! relation_transformer {
-// ($variant, $source_kind:ident, $target_kind:ident) => {
-//     match $enum {
-//         $enum::
-//     }
-//     SyntacticRelation::$variant { source, target } => {
-//         let params = BTreeMap::from([
-//             ("source_id", source.uuid().into()),
-//             ("target_id", target.uuid().into()),
-//             ("relation_variant", stringify!($variant).into()),
-//             ("source_kind", $source_kind.as_any().to_cozo_uuid()),
-//             ("target_kind", $target_kind.as_any().to_cozo_uuid()),
-//         ]);
-//         params
-//     }
-// };
-// }
-//
 impl SyntacticRelationSchema {
     /// Transforms a SyntacticRelation into parameters for database insertion
     pub fn relation_to_params(

@@ -14,6 +14,13 @@ Core eventing and telemetry
 - crates/ploke-tui/src/tracing_setup.rs
   - Default EnvFilter and file logging.
 
+Copy/paste-friendly list:
+crates/ploke-tui/src/event_bus/mod.rs
+crates/ploke-tui/src/app_state/handlers/indexing.rs
+crates/ploke-tui/src/app/events.rs
+crates/ploke-tui/src/error.rs
+crates/ploke-tui/src/tracing_setup.rs
+
 Tool-call bridge (compat path for M0)
 - crates/ploke-tui/src/llm/tool_call.rs
 - crates/ploke-tui/src/llm/session.rs
