@@ -125,6 +125,7 @@ Progress update (2025-08-20)
 - Phase 3 initial: code-block previews implemented with truncation; optional unified diff path added via "similar" crate (config-driven).
 - Phase 4 partial: approval flow implemented; optional auto-approval gating added via config (disabled by default).
 - Dispatcher and command wiring for Approve/Deny complete.
+- Back-compat fix: introduced app_state::Config wrapper and made ConfigState::new generic over Into<core::Config>; this allows legacy tests constructing Config via struct literal to compile without specifying the new `editing` field.
 
 References
 - Tool schema: crates/ploke-tui/src/llm/mod.rs (apply_code_edit tool).

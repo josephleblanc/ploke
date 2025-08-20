@@ -56,8 +56,8 @@ impl std::ops::Deref for ChatState {
 pub struct ConfigState(RwLock<Config>);
 
 impl ConfigState {
-    pub fn new(config: Config) -> Self {
-        ConfigState(RwLock::new(config))
+    pub fn new<C: Into<Config>>(config: C) -> Self {
+        ConfigState(RwLock::new(config.into()))
     }
 }
 
@@ -65,6 +65,12 @@ impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl From<Config> for Config {
+    fn from(value: Config) -> Self {
+        value
     }
 }
 
