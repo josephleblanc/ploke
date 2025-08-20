@@ -164,6 +164,10 @@ Key: Document the mapping expectations and keep them consistent. DomainError ena
   - Enables rich user-facing reports in `ploke-tui` while core crates remain lean
 - Feature: serde
   - Derive Serialize/Deserialize for Error and subtypes where feasible to enable structured logging and telemetry
+- Feature: tracing
+  - Integrate with the `tracing` crate for structured, leveled emission.
+  - Provide an extension trait to emit events with `Severity` mapped to tracing levels (Warning -> warn, Error/Internal/Domain -> error, Fatal -> error with marker).
+  - Keep behind a feature flag so core libraries don’t pull `tracing` by default. Recommended for applications (e.g., `ploke-tui`).
 
 ### 5) Helpers and Macros
 
@@ -174,6 +178,18 @@ Key: Document the mapping expectations and keep them consistent. DomainError ena
   - internal!(...) -> Error::Internal(InternalError::...)
   - domain!(Ui, "...") -> Error::Domain(DomainError::Ui { message: ... })
 - Keep macros minimal to maintain clarity.
+
+### 6) Policy Layer (Severity classification and event emission)
+
+- Introduce an `ErrorPolicy` trait (Send + Sync) that dependent crates can implement to:
+  - classify(&Error) -> Severity to downgrade/upgrade Domain errors (and, when appropriate, Warning/Internal) at runtime without changing core error types.
+  - emit(&Error) to route errors to logs/event bus instead of short-circuiting control flow in long-running loops.
+- Provide a default `NoopPolicy`. In `ploke-tui`, implement a policy that:
+  - emits via `tracing` when the "tracing" feature is enabled,
+  - renders via `miette` when the "diagnostic" feature is enabled.
+- Best practices:
+  - Libraries: Prefer returning `Result<T, ploke_error::Error>`; avoid global emission.
+  - Applications/binaries: Apply an `ErrorPolicy` at subsystem boundaries to decide when to emit or escalate.
 
 ---
 
@@ -260,9 +276,10 @@ Phase 1: Conversions and Uniformity
 - Introduce new `From` impls in dependent crates to map into:
   - Domain errors where applicable (`Ui`, `Transform`, `Db`, `Io`, etc.)
   - Internal vs Fatal consistently based on documented rules.
+- Introduce and adopt an `ErrorPolicy` in application crates (e.g., `ploke-tui`) to classify Domain errors into Warning/Error/Fatal at runtime and to emit events via `tracing`/`miette` when features are enabled.
 - Update `ploke-tui` to render `miette::Diagnostic` when `diagnostic` feature is enabled.
 - Update read-only conversions in workspace gradually to the new mappings.
-- Document mapping rules in this crate’s docs.
+- Document mapping rules and policy guidance in this crate’s docs.
 
 Phase 2: Deprecations
 - Deprecate `UiError` and `TransformError` variants in `Error` with a clear message:
@@ -307,6 +324,9 @@ Provide explicit mapping tables in crate docs for each workspace crate to mainta
 - `use super::*` dependency for PathBuf in context.rs: Tight coupling; prefer explicit imports in each module.
 - Optional `miette`: Keep feature-gated to avoid pulling it into core crates unnecessarily.
 - Avoid anyhow/color_eyre in core: confine to UI crates; core uses `thiserror` + optional `miette`.
+- Forward OS error codes: When converting `std::io::Error`, forward `raw_os_error()` into diagnostics (e.g., as a code or extra field) and include in Display where appropriate. Do not invent synthetic codes for other domains.
+- Thread safety: `ErrorPolicy` and any event-emission trait must be `Send + Sync` to support cross-thread use in long-running services.
+- Source mapping reliability: "Reliable source mapping" refers to the ability to map internal items to file/byte/line positions even through transformations (e.g., macro expansion). We will not track macro expansion; `SourceSpan` will be best-effort and record file, optional byte offsets, and optional line/col, plus an optional snippet.
 
 ---
 
@@ -321,16 +341,21 @@ Provide explicit mapping tables in crate docs for each workspace crate to mainta
 
 ---
 
-## Open Questions
+## Decisions and Clarifications
 
-- Should NotFound be Warning or Domain(Db/Transform) by default?
-  - USER: Depends. If an item is not found in a database search, then it is a warning. If an item is not found when the item is a node that is expected to exist during parsing, then that represents an invalid state and indicates that we should end the process. While we want to make most errors recoverable, if there are serious internal errors such as duplicate node ids or edges (which should NEVER happen), then we want to panic as we strive to make invalid states unrepresentable. However, under other circumstances (e.g. the parsed code itself is malformed) we want to end the parsing process and bubble up the error for the caller in `ploke-tui` to report to logging and/or the user and continue the overall process of the UI.
-- Do we need error codes (e.g., E1001) for supportability? If yes, where to encode (DomainError/Diagnostic impl)?
-  - USER: Some errors, e.g. IO errors, report an error code from the OS. In that case we should forward the error code, but we don't need to report the exact error code in other circumstances.
-- How much of SourceSpan do we need (byte offsets vs line/col)? Do we have reliable source mapping?
-  - USER: Not sure what "reliable source mapping" means exactly. If the question is whether we are somehow tracking things like macro expansion for sources then no we are not, but I'm not sure exactly what this question means, please clarify and educate me on this point.
-- Should we expose a policy layer for mapping (e.g., treat certain Domain errors as warnings at runtime)?
-  - Rather than decide within the `ploke-error` crate that certain Domain errors are warnings at runtime, provide a trait that can be configured in the dependent crate to suite the use-case for that crate. Include a trait with Safe + Send to allow for thread-safe errors to be consumed and emitted as events rather than returned (potentially ending loops intended to run for the life of the program), which can report informative and revelant context in logging. Provide recommendations on preparing the `ploke-error` crate to be compatible with `miette` and/or `tracing` crates, and advise on the best practices for library vs. application use cases.
+- NotFound policy:
+  - Database search “not found” is Warning severity. Represent as a Warning (e.g., reuse `WarningError::UnresolvedRef` or add a dedicated `WarningError::NotFound { what, where }` during implementation).
+  - Parser/graph “expected node missing” indicates an invalid internal state and should terminate that pipeline. Map to `InternalError::InvalidState` (or a dedicated internal variant) and surface as Error severity (or Fatal if the application policy dictates).
+  - Malformed user code ends the parsing task, bubbles up a clear error (typically `FatalError::SyntaxError` or a domain-specific ingest error), and allows the UI to continue running.
+- Error codes:
+  - Forward OS error codes when available (e.g., `std::io::Error::raw_os_error()`). We do not invent synthetic numeric codes for other domains.
+  - Include OS codes in diagnostics (as `miette::Diagnostic::code` or related metadata) and optionally in Display strings where it aids supportability.
+- SourceSpan and “reliable source mapping”:
+  - By “reliable” we mean accuracy through transformations like macro expansion and re-exports. We will not attempt macro-expansion mapping; `SourceSpan` is best-effort and records file, optional byte offsets, and optional line/col, with optional snippet capture.
+  - Provide conversions from `proc_macro2::Span` when present; otherwise allow callers to construct `SourceSpan` from known file/offsets.
+- Policy layer:
+  - Add an `ErrorPolicy` trait (Send + Sync) for runtime classification of errors into severities and for event emission without forcing return-based control flow.
+  - Provide guidance and a default no-op implementation; recommend that applications (e.g., `ploke-tui`) implement a policy that emits via `tracing` and renders via `miette` when features are enabled.
 
 ---
 
