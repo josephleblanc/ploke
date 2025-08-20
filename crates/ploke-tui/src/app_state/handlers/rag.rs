@@ -186,7 +186,7 @@ pub async fn handle_tool_call_requested(
                     .map(|(res, path)| match res {
                         Ok(write_res) => serde_json::json!({
                             "file_path": path.display().to_string(),
-                            "new_file_hash": write_res.new_file_hash.to_string(),
+                            "new_file_hash": write_res.new_file_hash.0.to_string(),
                         }),
                         Err(err) => serde_json::json!({
                             "file_path": path.display().to_string(),

@@ -16,7 +16,7 @@ Non-goals (for now)
 - IDE-level UX; keep the TUI focused, predictable, and scriptable.
 
 Implementation logging and decision tracking
-- Maintain sequential implementation logs named implementation-log-NNN.md under crates/ploke-tui/docs/, where each log records:
+- Maintain sequential implementation logs named implementation-log-NNN.md under crates/ploke-tui/docs/agent-system/impl-log, where each log records:
   - The problem statement, options considered, chosen approach, and rationale.
   - Cross-references to PRs/commits and any metrics or test evidence.
   - Any deviations from the plan and why (for observability).

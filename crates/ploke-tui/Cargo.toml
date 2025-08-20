@@ -81,6 +81,8 @@ cozo = { workspace = true }
 rand = "0.9"
 insta = "1.39.0"
 criterion = "0.5"
+quote = { workspace = true }
+syn = { workspace = true }
 
 [features]
 default = ["custom_list"]

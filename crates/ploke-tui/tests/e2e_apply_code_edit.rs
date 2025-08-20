@@ -4,12 +4,7 @@ use ploke_tui::{
     app_state::{
         commands::StateCommand,
         core::{AppState, ChatState, Config, ConfigState, SystemState},
-    },
-    event_bus::EventBusCaps,
-    llm::{self, LLMParameters, ToolVendor},
-    user_config::{default_model, ProviderConfig, ProviderRegistry, ProviderType},
-    system::SystemEvent,
-    AppEvent, EventBus, RagEvent,
+    }, event_bus::EventBusCaps, llm::{self, LLMParameters, ToolVendor}, system::SystemEvent, tracing_setup::init_tracing, user_config::{default_model, ProviderConfig, ProviderRegistry, ProviderType}, AppEvent, EventBus, RagEvent
 };
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use quote::ToTokens;
@@ -23,6 +18,7 @@ async fn e2e_apply_code_edit_real_llm() {
         eprintln!("Skipping e2e_apply_code_edit_real_llm (set PLOKE_TUI_E2E_LLM=1 to enable).");
         return;
     }
+    let _guard = init_tracing();
     // Require a real OpenRouter API key in the environment.
     let api_key = match std::env::var("OPENROUTER_API_KEY") {
         Ok(k) if !k.is_empty() => k,

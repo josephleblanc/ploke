@@ -6,7 +6,7 @@ use super::*;
 
 // Internal modules for a modularized AppState
 pub mod commands;
-mod core;
+pub mod core;
 mod dispatcher;
 mod events;
 pub mod handlers;

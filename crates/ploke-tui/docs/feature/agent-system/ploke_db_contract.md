@@ -19,7 +19,9 @@ Data model (logical)
   - message_id: Uuid (local message id from TUI)
   - kind: enum("user","assistant","system","sysinfo","tool")
   - content: string
-  - created_at: timestamp
+  - at: Validity
+  - ~~created_at: timestamp~~
+    - superseded by cozo's Validity field type for time-travel
   - thread_id: Uuid (optional: future multi-thread support)
   - indexes: by (message_id), by (created_at DESC), by (thread_id, created_at)
 - tool_calls
@@ -31,31 +33,42 @@ Data model (logical)
   - args_sha256: string (hash of canonicalized arguments JSON)
   - arguments_json: string (optional, may be redacted)
   - status: enum("requested","completed","failed")
-  - started_at: timestamp
+  - started_at: Validity
+  - ~~started_at: timestamp~~
+    - superseded by cozo's Validity field type for time-travel
   - ended_at: timestamp (nullable until completion)
   - latency_ms: integer (nullable until completion)
-  - outcome_json: string (on completed; redacted if needed)
+  - outcome_json: Json (on completed; redacted if needed)
   - error_kind: string (on failed)
   - error_msg: string (on failed)
   - indexes: unique (request_id, call_id), by (parent_id, started_at DESC), by (status)
 - code_edit_proposals (for M1, defined now to stabilize schema)
   - request_id: Uuid
-  - diffs_json: string
+  - diffs_json: Json (cozo datatype)
   - confidence: float (nullable)
   - status: enum("pending","approved","denied","applied","reverted")
-  - created_at, decided_at, applied_at: timestamps (nullable)
+  - created_at: Validity
+  - ~~created_at~~, decided_at, applied_at: timestamps (nullable)
+    - created_at superseded by cozo's Validity field type for time-travel
   - commit_hash: string (nullable; git integration later)
   - indexes: by (status), by (created_at DESC)
+- re: Cozo's treatment of Json, see cozo docs [here](../../../../../docs/dependency_details/cozo/types/json.md)
+
 
 Rust API (trait sketch)
 ```rust
+// Should implement From on cozo datatype
+pub struct Validity {
+    pub at: i64, // epoch millis
+    pub is_valid: bool, // is asserted or retracted statement
+}
 pub struct ConversationTurn {
     pub id: uuid::Uuid,
     pub parent_id: Option<uuid::Uuid>,
     pub message_id: uuid::Uuid,
     pub kind: String,      // "user" | "assistant" | "system" | "sysinfo" | "tool"
     pub content: String,
-    pub created_at: i64,   // epoch millis
+    pub created_at: Validity,   // epoch millis
     pub thread_id: Option<uuid::Uuid>,
 }
 
@@ -67,18 +80,24 @@ pub struct ToolCallReq {
     pub tool_name: String,
     pub args_sha256: String,
     pub arguments_json: Option<String>,
-    pub started_at: i64,
+    pub started_at: Validity,
+}
+
+// Should implement serialize/deserialize for strongly typed database conversion
+pub enum ToolStatus {
+    Completed,
+    Failed
 }
 
 pub struct ToolCallDone {
     pub request_id: uuid::Uuid,
     pub call_id: String,
-    pub ended_at: i64,
+    pub ended_at: Validity,
     pub latency_ms: i64,
     pub outcome_json: Option<String>,  // on completed
     pub error_kind: Option<String>,    // on failed
     pub error_msg: Option<String>,     // on failed
-    pub status: String,                // "completed" | "failed"
+    pub status: ToolStatus,                // "completed" | "failed"
 }
 
 pub trait ObservabilityStore {
