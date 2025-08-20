@@ -15,33 +15,91 @@ Non-goals (for now)
 - Infinite provider integrations; focus on the minimal set that enables the flywheel.
 - IDE-level UX; keep the TUI focused, predictable, and scriptable.
 
+Implementation logging and decision tracking
+- Maintain sequential implementation logs named implementation-log-NNN.md under crates/ploke-tui/docs/, where each log records:
+  - The problem statement, options considered, chosen approach, and rationale.
+  - Cross-references to PRs/commits and any metrics or test evidence.
+  - Any deviations from the plan and why (for observability).
+- Maintain crates/ploke-tui/docs/decisions_required.md as the single queue of items that require USER review before proceeding.
+  - Only add items that are blocking or significantly directional.
+  - Each entry must include: context, options with tradeoffs, recommended default, and a deadline (if any).
+
 -------------------------------------------------------------------------------
 Milestone 0: Baseline hardening and observability
 Goal: Make existing paths reliable, observable, and reversible.
 
-Scope
-- Eventing:
-  - Single source of truth for indexing completion events (avoid duplicates).
-  - Replace deprecated SystemEvent::ToolCallRequested with typed LlmToolEvent (internal refactor).
-- Persistence:
-  - Persist conversation + tool calls + tool results to the database (with timestamps, call_id, request_id).
-  - Save chat histories reliably (fix FileManager atomic save and final rename path).
-- Logging and telemetry:
-  - Structured logs for tool calls (name, args hash, latency, outcome).
-  - Trace IDs (request_id) flow across subsystems (LLM -> Tool -> IO -> DB).
-- Safety envelope:
-  - Enforce absolute path policy in ploke-io; surface errors and user guidance consistently.
+Workstreams and tasks (granular)
+
+A) Eventing: single source of truth for indexing and typed tool events
+- A1. De-duplicate indexing completion:
+  - Choose run_event_bus() as the single forwarder of IndexingStatus → AppEvent.
+  - Remove direct AppEvent::IndexingCompleted/Failed emissions from handlers/indexing.rs; only emit IndexingStatus via event_bus.index_tx and let run_event_bus bridge.
+  - Add a regression test: start a minimal IndexerTask, simulate Completed, and assert exactly one AppEvent::IndexingCompleted is received.
+- A2. Introduce typed tool events (internal design for M0; implementation can land behind a feature flag):
+  - Define AppEvent::LlmTool(ToolEvent) (e.g., ToolEvent::Requested, ::Completed, ::Failed) with structured fields {request_id, parent_id, call_id, name, vendor, args_hash}.
+  - Keep a compatibility bridge from SystemEvent::ToolCallRequested → LlmToolEvent for one milestone to avoid breaking flows.
+  - Emit both event types in M0 (behind cfg or config flag); remove SystemEvent path in M1.
+- A3. Correlation IDs:
+  - Standardize request_id (Uuid v4) and provider call_id (string) as correlation keys across LLM session → tool dispatch → handler → DB logging.
+  - Update tracing spans to include %request_id and %call_id at all tool boundaries.
+
+B) Persistence: conversations, tool calls, and chat history (atomic)
+- B1. Database persistence (see ploke_db_contract.md):
+  - ploke-db must expose functions to record ToolCallRequested/Completed/Failed with timestamps and latency, and to persist conversation turns (user/assistant/sysinfo).
+  - Enforce idempotency on (request_id, call_id) upserts to prevent duplicates under retries.
+- B2. Chat history persistence:
+  - Fix FileManager::save_content to write to a final file path using atomic write (temp + fsync + rename).
+  - Default save location: current working directory joined with ".ploke_history.md" (requires USER decision; tracked in decisions_required.md).
+  - Emit SysInfo with the final file path on success; structured error on failure.
+
+C) Logging and telemetry (structured, correlated)
+- C1. Tool-call telemetry:
+  - Log fields: request_id, call_id, vendor, tool_name, args_sha256 (of canonicalized JSON), started_at, ended_at, latency_ms, outcome (ok/err), error_kind, error_msg.
+  - Use tracing::info_span to measure latency; record at completion.
+- C2. Subsystem propagation:
+  - Ensure request_id flows from llm::session through tool_call::dispatch_and_wait to handlers::rag::handle_tool_call_requested and down to ploke-io where applicable.
+- C3. Toggle tracing:
+  - Initialize tracing by default with EnvFilter; write file logs to logs/ploke.log (already scaffolded). Keep ANSI off in file logs.
+
+D) Safety envelope: IO path policy and user guidance
+- D1. Enforce absolute paths and symlink policy in ploke-io (already the default); surface violations as user-friendly SysInfo with remediation.
+- D2. Config surface (read-only in M0): document editing.roots and symlink policy; implementation of policy changes can wait for M1.
+
+E) Backpressure and capacity hygiene
+- E1. Broadcast channel capacities (EventBusCaps):
+  - Validate defaults under load; add metrics for lag via RecvError::Lagged counters.
+  - Recommendation: keep realtime small (100), background larger (1000), index large (1000).
+- E2. Avoid .expect() on send paths; convert to warnings and continue.
+
+F) Documentation and review artifacts
+- F1. Observability guide:
+  - Document how to trace a tool call end-to-end (grep request_id), where to find logs, and how to query DB for a given request_id/call_id.
+- F2. Implementation logs:
+  - Start with crates/ploke-tui/docs/implementation-log-001.md for M0. Record key decisions and the evidence used.
+- F3. Decision queue:
+  - Maintain crates/ploke-tui/docs/decisions_required.md with only blocking/directional items.
 
 Deliverables
-- Structured telemetry for tool calls and outcomes.
-- Reliable chat history saving (atomic temp + rename).
-- Clean event routing without duplicates or deprecated variants.
-- Doc: Observability guide (how to inspect actions, diffs, and results).
+- Code:
+  - Event dedup: IndexingCompleted/Failed fired once via run_event_bus.
+  - Typed tool events defined and compatibility bridge in place (or flag-guarded).
+  - FileManager::save_content fixed to persist to an actual file using atomic rename.
+  - Telemetry fields logged for tool calls with correlation IDs.
+- Docs:
+  - milestone0_hardening_plan.md (this granular plan).
+  - ploke_db_contract.md (DB function/behavior contract).
+  - Observability guide (minimal).
+  - decisions_required.md created and populated with initial items.
 
-Acceptance
-- All tool executions are visible in logs and in the database.
-- No duplicate IndexingCompleted events under load.
-- Chat histories are persisted predictably.
+Acceptance (M0 exit)
+- All tool executions are visible in logs and persisted in the DB with request_id/call_id correlation.
+- No duplicate AppEvent::IndexingCompleted under normal and high-load test scenarios.
+- Chat histories are persisted deterministically to a visible file path via atomic rename.
+- Typed tool events exist (design complete), and a migration plan to retire SystemEvent::ToolCallRequested is documented.
+
+Notes
+- Some changes (typed LlmToolEvent migration) can be completed in M1 if needed; M0 must ship telemetry, persistence, and event dedup with minimal risk.
+- See crates/ploke-tui/docs/ploke_db_contract.md for required DB functions and idempotency semantics.
 
 -------------------------------------------------------------------------------
 Milestone 1: Safe editing pipeline (human-in-the-loop)
