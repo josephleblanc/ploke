@@ -77,7 +77,7 @@ pub struct ToolCallDone {
     pub status: ToolStatus,           // Completed | Failed
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct CodeEditProposal {
     pub request_id: uuid::Uuid,
     pub diffs_json: Option<String>,
@@ -345,7 +345,7 @@ impl ObservabilityStore for Database {
         let arguments_json_value = match &req.arguments_json {
             Some(json_str) => {
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(v) => DataValue::Json(v),
+                    Ok(v) => DataValue::Json(cozo::JsonData(v)),
                     Err(_) => DataValue::Null,
                 }
             }
@@ -455,7 +455,7 @@ impl ObservabilityStore for Database {
         // Handle JSON data properly
         let arguments_json_value = match &req_meta.arguments_json {
             Some(json_str) => match serde_json::from_str::<serde_json::Value>(json_str) {
-                Ok(v) => DataValue::Json(v),
+                Ok(v) => DataValue::Json(cozo::JsonData(v)),
                 Err(_) => DataValue::Null,
             },
             None => DataValue::Null,
@@ -465,7 +465,7 @@ impl ObservabilityStore for Database {
         // Handle outcome JSON properly
         let outcome_json_value = match &done.outcome_json {
             Some(json_str) => match serde_json::from_str::<serde_json::Value>(json_str) {
-                Ok(v) => DataValue::Json(v),
+                Ok(v) => DataValue::Json(cozo::JsonData(v)),
                 Err(_) => DataValue::Null,
             },
             None => DataValue::Null,
@@ -718,7 +718,7 @@ impl ObservabilityStore for Database {
         self.ensure_observability_schema()?;
 
         let diffs_val = match serde_json::from_str::<serde_json::Value>(diffs_json) {
-            Ok(v) => DataValue::Json(v),
+            Ok(v) => DataValue::Json(cozo::JsonData(v)),
             Err(_) => DataValue::Null,
         };
         let mut params = BTreeMap::new();
@@ -808,7 +808,7 @@ impl ObservabilityStore for Database {
         self.ensure_observability_schema()?;
 
         let results_val = match serde_json::from_str::<serde_json::Value>(results_json) {
-            Ok(v) => DataValue::Json(v),
+            Ok(v) => DataValue::Json(cozo::JsonData(v)),
             Err(_) => DataValue::Null,
         };
 
