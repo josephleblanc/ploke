@@ -1,4 +1,5 @@
 pub mod registry;
+pub mod openrouter_catalog;
 mod session;
 mod tool_call;
 
@@ -177,6 +178,8 @@ fn apply_code_edit_tool_def() -> ToolDefinition {
 #[derive(Deserialize, Debug)]
 pub(super) struct OpenAiResponse {
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: Option<TokenUsage>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -431,7 +434,7 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = prepare_and_run_llm_call(
+    let update_cmd = match prepare_and_run_llm_call(
         &state,
         &client,
         &provider_config,
@@ -440,27 +443,37 @@ pub async fn process_llm_request(
         parent_id,
     )
     .await
-    .map(|content| StateCommand::UpdateMessage {
-        id: assistant_message_id,
-        update: MessageUpdate {
-            content: Some(content),
-            status: Some(MessageStatus::Completed),
-            ..Default::default()
-        },
-    })
-    .unwrap_or_else(|e| {
-        let err_string = e.to_string();
-        StateCommand::UpdateMessage {
+    {
+        Ok(content) => StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
-                content: Some(format!("Error: {}", err_string)),
-                status: Some(MessageStatus::Error {
-                    description: err_string,
-                }),
+                content: Some(content),
+                status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
+        },
+        Err(e) => {
+            let err_string = e.to_string();
+            // Inform the user in-chat so the "Pending..." isn't left hanging without context.
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: format!("LLM request failed: {}", err_string),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+
+            // Avoid invalid status transition by finalizing the assistant message with a failure note.
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(format!("Request failed: {}", err_string)),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
+            }
         }
-    });
+    };
 
     // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {

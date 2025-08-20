@@ -57,6 +57,10 @@ impl<'a> RequestSession<'a> {
     /// Execute the request loop until completion or error.
     pub async fn run(mut self) -> Result<String, LlmError> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
+        // Some OpenRouter provider endpoints don't support tool calls even if the model does.
+        // Start with tools if configured, but be ready to retry once without tools on a 404 error.
+        let mut use_tools: bool = !self.tools.is_empty();
+        let mut tools_fallback_attempted = false;
 
         loop {
             let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget
@@ -78,8 +82,16 @@ impl<'a> RequestSession<'a> {
                 max_tokens: self.params.max_tokens,
                 top_p: self.params.top_p,
                 stream: false,
-                tools: Some(self.tools.clone()),
-                tool_choice: Some("auto".to_string()),
+                tools: if use_tools {
+                    Some(self.tools.clone())
+                } else {
+                    None
+                },
+                tool_choice: if use_tools {
+                    Some("auto".to_string())
+                } else {
+                    None
+                },
             };
 
             let response = self
@@ -97,6 +109,22 @@ impl<'a> RequestSession<'a> {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Could not retrieve error body".to_string());
+
+                // Fallback for provider endpoints lacking tool support, e.g.:
+                // {"error":{"message":"No endpoints found that support tool use.", "code":404}}
+                if status == 404
+                    && use_tools
+                    && !tools_fallback_attempted
+                    && error_text.to_lowercase().contains("support tool")
+                {
+                    tracing::warn!(
+                        "Provider endpoint does not support tool calls for this model. Retrying without tools."
+                    );
+                    use_tools = false;
+                    tools_fallback_attempted = true;
+                    // Retry immediately without failing the whole request
+                    continue;
+                }
 
                 let user_friendly_msg = if status == 401 {
                     format!(

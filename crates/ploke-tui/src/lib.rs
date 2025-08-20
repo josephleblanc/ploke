@@ -91,6 +91,11 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // Merge curated defaults with user overrides
     config.registry = config.registry.with_defaults();
 
+    // Refresh OpenRouter model registry (capabilities, pricing) for better routing/validation.
+    if let Err(e) = config.registry.refresh_from_openrouter().await {
+        tracing::warn!("Failed to refresh OpenRouter model registry: {}", e);
+    }
+
     // Apply API keys from environment variables to all providers
     // config.registry.load_api_keys();
     tracing::debug!("Registry after merge: {:#?}", config.registry);

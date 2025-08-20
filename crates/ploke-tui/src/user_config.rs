@@ -43,7 +43,7 @@ use ploke_embed::{
     local::{DevicePreference, EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder},
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
-use reqwest::Request;
+use reqwest::Client;
 use serde::Deserialize;
 
 use crate::llm::{self, RequestMessage};
@@ -167,6 +167,8 @@ pub struct ProviderRegistry {
     pub active_provider: String,
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, String>,
+    #[serde(skip)]
+    pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -246,6 +248,14 @@ impl ProviderConfig {
         self.api_key = self.resolve_api_key();
         self
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModelCapabilities {
+    pub supports_tools: bool,
+    pub context_length: Option<u32>,
+    pub input_cost_per_million: Option<f64>,
+    pub output_cost_per_million: Option<f64>,
 }
 
 impl ProviderRegistry {
@@ -361,6 +371,50 @@ impl ProviderRegistry {
             })
             .collect()
     }
+
+    /// Query OpenRouter for current model capabilities and pricing and cache them.
+    pub async fn refresh_from_openrouter(&mut self) -> color_eyre::Result<()> {
+        // Find an API key to use
+        let api_key = self
+            .providers
+            .iter()
+            .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
+            .map(|p| p.resolve_api_key())
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .unwrap_or_default();
+
+        if api_key.is_empty() {
+            tracing::warn!(
+                "OPENROUTER_API_KEY not set and no OpenRouter provider configured; skipping model registry refresh"
+            );
+            return Ok(());
+        }
+
+        let client = Client::new();
+        let models =
+            crate::llm::openrouter_catalog::fetch_models(&client, OPENROUTER_URL, &api_key).await?;
+
+        self.capabilities.clear();
+        for m in models {
+            let caps = ModelCapabilities {
+                supports_tools: m
+                    .capabilities
+                    .as_ref()
+                    .and_then(|c| c.tools)
+                    .unwrap_or(false),
+                context_length: m.context_length,
+                input_cost_per_million: m.pricing.as_ref().and_then(|p| p.input),
+                output_cost_per_million: m.pricing.as_ref().and_then(|p| p.output),
+            };
+            self.capabilities.insert(m.id, caps);
+        }
+        Ok(())
+    }
+
+    /// Helper to check if a specific model is known to support tools.
+    pub fn model_supports_tools(&self, model: &str) -> Option<bool> {
+        self.capabilities.get(model).map(|c| c.supports_tools)
+    }
 }
 
 pub fn default_active_provider() -> String {
@@ -401,6 +455,7 @@ impl Default for ProviderRegistry {
             }],
             active_provider: default_active_provider(),
             aliases: std::collections::HashMap::new(),
+            capabilities: std::collections::HashMap::new(),
         };
 
         // Always include the curated defaults
