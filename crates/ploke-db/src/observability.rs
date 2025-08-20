@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
 use serde::{Deserialize, Serialize};
+use smartstring::SmartString;
 
 use crate::{
     database::{to_string, to_uuid},
@@ -294,7 +295,7 @@ impl ObservabilityStore for Database {
             Some(json_str) => {
                 // Try to parse as JSON, if it fails, store as string
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Ok(_) => DataValue::Str(SmartString::from(json_str.clone())),
                     Err(_) => DataValue::Null,
                 }
             }
@@ -306,14 +307,14 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(req.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(req.call_id.into()));
+        params.insert("call_id".into(), DataValue::Str(SmartString::from(req.call_id)));
         params.insert(
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req.vendor.into()));
-        params.insert("tool_name".into(), DataValue::Str(req.tool_name.into()));
-        params.insert("args_sha256".into(), DataValue::Str(req.args_sha256.into()));
+        params.insert("vendor".into(), DataValue::Str(SmartString::from(req.vendor)));
+        params.insert("tool_name".into(), DataValue::Str(SmartString::from(req.tool_name)));
+        params.insert("args_sha256".into(), DataValue::Str(SmartString::from(req.args_sha256)));
         params.insert("arguments_json".into(), arguments_json_value);
 
         // Upsert requested state
@@ -381,31 +382,31 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(done.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(done.call_id.into()));
+        params.insert("call_id".into(), DataValue::Str(SmartString::from(done.call_id)));
         params.insert("ended_at_ms".into(), DataValue::from(done.ended_at.at));
         params.insert("latency_ms".into(), DataValue::from(done.latency_ms));
-        params.insert("status".into(), DataValue::Str(done.status.as_str().into()));
+        params.insert("status".into(), DataValue::Str(SmartString::from(done.status.as_str())));
 
         // Carry forward metadata from the original requested call
         params.insert(
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req_meta.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req_meta.vendor.into()));
+        params.insert("vendor".into(), DataValue::Str(SmartString::from(req_meta.vendor)));
         params.insert(
             "tool_name".into(),
-            DataValue::Str(req_meta.tool_name.into()),
+            DataValue::Str(SmartString::from(req_meta.tool_name)),
         );
         params.insert(
             "args_sha256".into(),
-            DataValue::Str(req_meta.args_sha256.into()),
+            DataValue::Str(SmartString::from(req_meta.args_sha256)),
         );
 
         // Handle JSON data properly
         let arguments_json_value = match &req_meta.arguments_json {
             Some(json_str) => {
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Ok(_) => DataValue::Str(SmartString::from(json_str.clone())),
                     Err(_) => DataValue::Null,
                 }
             }
@@ -417,7 +418,7 @@ impl ObservabilityStore for Database {
         let outcome_json_value = match &done.outcome_json {
             Some(json_str) => {
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Ok(_) => DataValue::Str(SmartString::from(json_str.clone())),
                     Err(_) => DataValue::Null,
                 }
             }
@@ -429,14 +430,14 @@ impl ObservabilityStore for Database {
             "error_kind".into(),
             done.error_kind
                 .clone()
-                .map(|s| DataValue::Str(s.into()))
+                .map(|s| DataValue::Str(SmartString::from(s)))
                 .unwrap_or(DataValue::Null),
         );
         params.insert(
             "error_msg".into(),
             done.error_msg
                 .clone()
-                .map(|s| DataValue::Str(s.into()))
+                .map(|s| DataValue::Str(SmartString::from(s)))
                 .unwrap_or(DataValue::Null),
         );
 
@@ -478,7 +479,7 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(call_id.into()));
+        params.insert("call_id".into(), DataValue::Str(SmartString::from(call_id.to_string())));
 
         // Use dump_json to return JSON strings to the client
         let script = r#"
