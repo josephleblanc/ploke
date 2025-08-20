@@ -11,6 +11,7 @@ pub mod parser;
 pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
+pub mod observability;
 pub use event_bus::*;
 
 #[cfg(test)]
@@ -192,6 +193,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+    tokio::spawn(observability::run_observability(event_bus.clone(), state.clone()));
 
     let terminal = ratatui::init();
     let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
