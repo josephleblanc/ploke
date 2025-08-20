@@ -206,7 +206,13 @@ mod tests {
         let mut rx = bus.realtime_tx.subscribe();
 
         // Inject a single Completed status into the indexing channel
-        let _ = bus.index_tx.send(IndexStatus::Completed.into());
+        let _ = bus.index_tx.send(indexer::IndexingStatus {
+            status: IndexStatus::Completed,
+            recent_processed: 0,
+            num_not_proc: 0,
+            current_file: None,
+            errors: vec![],
+        });
 
         // Expect exactly one IndexingCompleted event
         let ev = timeout(Duration::from_secs(1), rx.recv())

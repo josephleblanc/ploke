@@ -45,3 +45,9 @@ Tests to add/update
 
 Notes
 - Do not change API surface to consumers in M0; focus on SSoT, telemetry, and DB persistence plan.
+
+Data type watchlist
+- ploke_embed::indexer::IndexingStatus has no Default and no From<IndexStatus> conversion. Construct it explicitly when sending over index_tx, for example:
+  - indexer::IndexingStatus { status: IndexStatus::Completed, recent_processed: 0, num_not_proc: 0, current_file: None, errors: vec![] }
+- IndexStatus::Failed(String) carries an error message; treat IndexStatus::Cancelled as a failure-equivalent in UI for M0.
+- IndexingStatus::calc_progress() returns 0.1 when num_not_proc == 0; do not assume strict 0.0..1.0 semantics when the denominator is zero.
