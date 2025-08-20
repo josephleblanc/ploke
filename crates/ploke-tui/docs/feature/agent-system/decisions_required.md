@@ -129,4 +129,12 @@ New items added 2025-08-19 (accelerated M0)
    - Blocker: No.
       - USER: Agreed with recommendation
 
+11) Type-safety across ploke-db ObservabilityStore (FOLLOW-UP)
+   - Context: TUI now uses typed params and serde_json::Value for tool-call lifecycle. The current ploke-db API accepts Option<String> for arguments_json/outcome_json, requiring string round-trips.
+   - Options:
+     a) Extend ObservabilityStore to accept serde_json::Value (or a Json newtype) and convert internally to Cozo Json; keep String for backward compatibility during transition.
+     b) Keep String-only for M0 and revisit in M1.
+   - Recommended: (a) Adopt typed JSON inputs to reduce error surface and improve compile-time guarantees; provide From<Value> and TryFrom<String> conversions where helpful. Consider newtypes for Validity timestamps and ToolStatus.
+   - Blocker: Not for M0 (strings work), but desirable for M1 to improve type safety and reduce incidental bugs.
+
 Reference: See implementation-log-007.md for related changes and accelerated-pace requirement.

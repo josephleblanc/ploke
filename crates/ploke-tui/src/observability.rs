@@ -17,6 +17,35 @@ use ploke_db::observability::{
     ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
 };
 
+use serde::{Serialize, Deserialize};
+
+/// Parameter bundle for persisting a tool-call "requested" lifecycle event.
+/// Prefer typed fields; serialize to JSON strings only at DB boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ToolRequestPersistParams {
+    request_id: Uuid,
+    parent_id: Uuid,
+    vendor: crate::llm::ToolVendor,
+    tool_name: String,
+    arguments: Value,
+    call_id: String,
+}
+
+/// Parameter bundle for persisting a tool-call terminal lifecycle event.
+/// outcome carries structured JSON; error is a string message when failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ToolDonePersistParams {
+    request_id: Uuid,
+    parent_id: Uuid,
+    call_id: String,
+    outcome: Option<Value>,
+    error: Option<String>,
+    status: ToolStatus,
+}
+
+/// NOTE: These typed params keep conversion at the boundary, moving us toward
+/// more type-safe patterns. Future work: ploke-db to accept Json directly to
+/// avoid string round-trips; track latency by correlating start/end timestamps.
 pub async fn run_observability(event_bus: Arc<EventBus>, state: Arc<AppState>) {
     let mut rt_rx = event_bus.subscribe(EventPriority::Realtime);
     let mut bg_rx = event_bus.subscribe(EventPriority::Background);
@@ -65,9 +94,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             call_id,
             vendor,
         }) => {
-            if let Err(e) =
-                persist_tool_requested(state, request_id, parent_id, &vendor, &name, &arguments, &call_id).await
-            {
+            let params = ToolRequestPersistParams {
+                request_id,
+                parent_id,
+                vendor,
+                tool_name: name,
+                arguments,
+                call_id,
+            };
+            if let Err(e) = persist_tool_requested(state, &params).await {
                 tracing::warn!("observability: record_tool_call_requested failed: {}", e);
             }
         }
@@ -77,18 +112,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             call_id,
             content,
         }) => {
-            if let Err(e) = persist_tool_done(
-                state,
+            let params = ToolDonePersistParams {
                 request_id,
                 parent_id,
-                &call_id,
-                Some(json_string(&content)),
-                None,
-                None,
-                ToolStatus::Completed,
-            )
-            .await
-            {
+                call_id,
+                outcome: Some(Value::String(content)),
+                error: None,
+                status: ToolStatus::Completed,
+            };
+            if let Err(e) = persist_tool_done(state, &params).await {
                 tracing::warn!("observability: record_tool_call_done (completed) failed: {}", e);
             }
         }
@@ -98,18 +130,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             call_id,
             error,
         }) => {
-            if let Err(e) = persist_tool_done(
-                state,
+            let params = ToolDonePersistParams {
                 request_id,
                 parent_id,
-                &call_id,
-                None,
-                None,
-                Some(error),
-                ToolStatus::Failed,
-            )
-            .await
-            {
+                call_id,
+                outcome: None,
+                error: Some(error),
+                status: ToolStatus::Failed,
+            };
+            if let Err(e) = persist_tool_done(state, &params).await {
                 tracing::warn!("observability: record_tool_call_done (failed) failed: {}", e);
             }
         }
@@ -123,9 +152,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             arguments,
             call_id,
         }) => {
-            if let Err(e) =
-                persist_tool_requested(state, request_id, parent_id, &vendor, &name, &arguments, &call_id).await
-            {
+            let params = ToolRequestPersistParams {
+                request_id,
+                parent_id,
+                vendor,
+                tool_name: name,
+                arguments,
+                call_id,
+            };
+            if let Err(e) = persist_tool_requested(state, &params).await {
                 tracing::warn!(
                     "observability: record_tool_call_requested (compat SystemEvent) failed: {}",
                     e
@@ -138,18 +173,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             call_id,
             content,
         }) => {
-            if let Err(e) = persist_tool_done(
-                state,
+            let params = ToolDonePersistParams {
                 request_id,
                 parent_id,
-                &call_id,
-                Some(json_string(&content)),
-                None,
-                None,
-                ToolStatus::Completed,
-            )
-            .await
-            {
+                call_id,
+                outcome: Some(Value::String(content)),
+                error: None,
+                status: ToolStatus::Completed,
+            };
+            if let Err(e) = persist_tool_done(state, &params).await {
                 tracing::warn!(
                     "observability: record_tool_call_done (compat SystemEvent::Completed) failed: {}",
                     e
@@ -162,18 +194,15 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             call_id,
             error,
         }) => {
-            if let Err(e) = persist_tool_done(
-                state,
+            let params = ToolDonePersistParams {
                 request_id,
                 parent_id,
-                &call_id,
-                None,
-                None,
-                Some(error),
-                ToolStatus::Failed,
-            )
-            .await
-            {
+                call_id,
+                outcome: None,
+                error: Some(error),
+                status: ToolStatus::Failed,
+            };
+            if let Err(e) = persist_tool_done(state, &params).await {
                 tracing::warn!(
                     "observability: record_tool_call_done (compat SystemEvent::Failed) failed: {}",
                     e
@@ -206,20 +235,15 @@ async fn persist_conversation_turn(state: &Arc<AppState>, msg: &Message) -> Resu
 
 async fn persist_tool_requested(
     state: &Arc<AppState>,
-    request_id: Uuid,
-    parent_id: Uuid,
-    vendor: &crate::llm::ToolVendor,
-    name: &str,
-    arguments: &Value,
-    call_id: &str,
+    params: &ToolRequestPersistParams,
 ) -> Result<(), String> {
-    let args_json = canonical_json(arguments);
+    let args_json = serde_json::to_string(&params.arguments).unwrap_or_else(|_| "null".to_string());
     let req = ToolCallReq {
-        request_id,
-        call_id: call_id.to_string(),
-        parent_id,
-        vendor: vendor_str(vendor).to_string(),
-        tool_name: name.to_string(),
+        request_id: params.request_id,
+        call_id: params.call_id.clone(),
+        parent_id: params.parent_id,
+        vendor: vendor_str(&params.vendor).to_string(),
+        tool_name: params.tool_name.clone(),
         args_sha256: fnv1a64_hex(&args_json),
         arguments_json: Some(args_json),
         started_at: Validity {
@@ -235,26 +259,24 @@ async fn persist_tool_requested(
 
 async fn persist_tool_done(
     state: &Arc<AppState>,
-    request_id: Uuid,
-    _parent_id: Uuid,
-    call_id: &str,
-    outcome_json: Option<String>,
-    error_kind: Option<String>,
-    error_msg: Option<String>,
-    status: ToolStatus,
+    params: &ToolDonePersistParams,
 ) -> Result<(), String> {
+    let outcome_json = match &params.outcome {
+        Some(v) => Some(serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())),
+        None => None,
+    };
     let done = ToolCallDone {
-        request_id,
-        call_id: call_id.to_string(),
+        request_id: params.request_id,
+        call_id: params.call_id.clone(),
         ended_at: Validity {
             at: now_ms(),
             is_valid: true,
         },
         latency_ms: 0, // M0: not tracked; future: measure from requested->done
         outcome_json,
-        error_kind,
-        error_msg,
-        status,
+        error_kind: None,
+        error_msg: params.error.clone(),
+        status: params.status,
     };
     state
         .db
@@ -284,10 +306,6 @@ fn vendor_str(v: &crate::llm::ToolVendor) -> &'static str {
     }
 }
 
-// Deterministic JSON serialization for hashing/persistence
-fn canonical_json(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())
-}
 
 // M0: FNV-1a 64-bit hex as a lightweight stand-in for SHA-256 to avoid new deps here.
 // Replace with real SHA-256 at a later pass when Cargo changes are allowed.
@@ -302,10 +320,6 @@ fn fnv1a64_hex(s: &str) -> String {
     format!("fnv1a64:{:016x}", hash)
 }
 
-// Quote arbitrary string as JSON string for parse_json on the DB side
-fn json_string(s: &str) -> String {
-    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
-}
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
