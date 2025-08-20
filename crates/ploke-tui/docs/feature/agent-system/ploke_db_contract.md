@@ -1,6 +1,23 @@
 # ploke-db contract for Milestone 0 (observability and persistence)
 
 Purpose
+
+Update 2025-08-19: Cozo v0.7 semantics and decisions
+- Time-travel via Validity (v0.7):
+  - Any evolving relation should use a last key part typed as Validity. We will treat tool_call and conversation_turn as time-travel-enabled relations.
+  - Use literals 'ASSERT'/'RETRACT' on insertion to get a transaction-stable timestamp for all rows in the same transaction. Use '@ NOW' or '@ <RFC3339>' for queries; 'END' is the logical end-of-time.
+  - When two rows share identical non-Validity keys and identical timestamps but differ in assert flags, 'true' (assert) wins at that exact timestamp.
+- Tool-call lifecycle modeling:
+  - Relation key: (request_id, call_id, at: Validity). Lifecycle is represented by successive assertions with updated status and metadata. No in-place updates; status transitions are new facts.
+  - Recommended columns: request_id (Uuid), call_id (String), parent_id (Uuid), vendor (String), tool_name (String), args_sha256 (String), arguments_json (Json?), status (String: "requested" | "completed" | "failed"), ended_at_ms (Int?), latency_ms (Int?), outcome_json (Json?), error_kind (String?), error_msg (String?).
+  - The presence of an asserted row with status="completed"/"failed" at a later timestamp supersedes earlier "requested" facts when querying '@ NOW'.
+- Json fields (cozo Json type):
+  - Prefer typed Json columns over stringified JSON. Use json()/parse_json()/dump_json() as needed, and json path helpers (get/maybe_get/set_json_path/remove_json_path) for partial updates.
+  - For privacy and minimal storage, default to redaction (store args_sha256 only); allow storing arguments_json/outcome_json when explicitly enabled.
+- Paths:
+  - Persist project-relative paths instead of absolute paths. ploke-io continues to enforce absolute-path and symlink policies; ploke-db stores normalized relative paths for portability and privacy.
+- Practical query helpers:
+  - Use format_timestamp(at) to render Validity timestamps; to_bool(at) and to_int(at) for flag/timestamp extraction.
 - Define the minimal API and behavior that ploke-db must provide to support M0:
   - Persist conversation turns.
   - Persist tool call lifecycle (requested → completed/failed) with idempotency.

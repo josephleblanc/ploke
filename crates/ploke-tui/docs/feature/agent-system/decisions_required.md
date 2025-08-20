@@ -1,5 +1,27 @@
 # Decisions requiring USER review
 
+Resolved decisions (2025-08-19)
+- 1) Chat history persistence
+  - Decision: Persist chat history to the database with metadata (not to a filesystem path) as the primary mechanism. File export remains optional and can be added later via a configurable command. M0 deliverables and tests should reflect DB persistence first. FileManager fixes remain useful as a fallback/export path only.
+- 2) Typed LLM tool events
+  - Decision: Adopt (a) bridge approach in M0. Introduce typed tool events and keep a compatibility bridge from SystemEvent::ToolCallRequested for one milestone. Remove the deprecated path in M1.
+- 3) Tool-call payload persistence and paths
+  - Decision: Default to storing hashes only (args_sha256) for privacy. Persist arguments_json/outcome_json as cozo Json only when explicitly enabled. Normalize file paths to project-relative (workspace-root-relative) paths for persistence; keep absolute-path requirement enforced at IO (ploke-io) level. Record root mapping for later reconstruction as needed.
+- 4) EventBus capacities
+  - Decision: Keep current defaults (realtime=100, background=1000, index=1000). Add metrics/logging for lag observations; consider config later.
+- 5) Observability log retention
+  - Decision: Daily rotation, keep 7 days by default; make configurable in a later milestone.
+
+New questions (to resolve pre-M0 where feasible)
+- Q1: Tool-call relation modeling in Cozo
+  - Proposal: Make tool_call time-travel-enabled with the last key part typed as Validity (… , at: Validity). Record lifecycle via new asserted rows (requested → completed/failed), not in-place updates. Accept this as the contract?
+- Q2: Relation naming (singular vs plural)
+  - Proposal: Use singular relation names (tool_call, conversation_turn, code_edit_proposal) to align with current schema style. Accept?
+- Q3: Namespace semantics
+  - Proposal: Use PROJECT_NAMESPACE_UUID by default for observability rows; allow provider-specific overrides later. Accept?
+- Q4: Redaction toggles
+  - Proposal: A ploke-db config toggle (and/or per-call parameter) controlling whether arguments_json/outcome_json are stored as Json or redacted. Default: redacted (store only hash, status, and metadata). Accept?
+
 Purpose
 - This file is the single queue for blockers and directional decisions that require USER approval.
 - Only add items that block progress or significantly determine future direction.
