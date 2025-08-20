@@ -275,7 +275,7 @@ impl ObservabilityStore for Database {
             if existing_done.is_some() {
                 return Ok(());
             }
-            // If the requested state matches (ignoring started_at), it's a no-op
+            // If the requested state matches (ignoring started_at which is volatile), it's a no-op
             if existing_req.request_id == req.request_id
                 && existing_req.call_id == req.call_id
                 && existing_req.parent_id == req.parent_id
@@ -289,8 +289,17 @@ impl ObservabilityStore for Database {
             // Otherwise, we will assert a new "requested" fact with updated metadata below.
         }
 
-        // Use "null" JSON string when absent so parse_json works
-        let args_json_str = req.arguments_json.unwrap_or_else(|| "null".to_string());
+        // Use DataValue::Json for JSON data, or Null when absent
+        let arguments_json_value = match &req.arguments_json {
+            Some(json_str) => {
+                // Try to parse as JSON, if it fails, store as string
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Err(_) => DataValue::Null,
+                }
+            }
+            None => DataValue::Null,
+        };
 
         let mut params = BTreeMap::new();
         params.insert(
@@ -305,10 +314,7 @@ impl ObservabilityStore for Database {
         params.insert("vendor".into(), DataValue::Str(req.vendor.into()));
         params.insert("tool_name".into(), DataValue::Str(req.tool_name.into()));
         params.insert("args_sha256".into(), DataValue::Str(req.args_sha256.into()));
-        params.insert(
-            "arguments_json".into(),
-            DataValue::Str(args_json_str.into()),
-        );
+        params.insert("arguments_json".into(), arguments_json_value);
 
         // Upsert requested state
         let script = r#"
@@ -321,7 +327,7 @@ impl ObservabilityStore for Database {
         vendor = $vendor,
         tool_name = $tool_name,
         args_sha256 = $args_sha256,
-        arguments_json = parse_json($arguments_json),
+        arguments_json = $arguments_json,
         status = "requested",
         ended_at_ms = null,
         latency_ms = null,
@@ -395,22 +401,30 @@ impl ObservabilityStore for Database {
             DataValue::Str(req_meta.args_sha256.into()),
         );
 
-        // Always prepare strings for parse_json; use "null" when None
-        let args_json_str = req_meta
-            .arguments_json
-            .clone()
-            .unwrap_or_else(|| "null".to_string());
-        params.insert(
-            "arguments_json".into(),
-            DataValue::Str(args_json_str.into()),
-        );
+        // Handle JSON data properly
+        let arguments_json_value = match &req_meta.arguments_json {
+            Some(json_str) => {
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Err(_) => DataValue::Null,
+                }
+            }
+            None => DataValue::Null,
+        };
+        params.insert("arguments_json".into(), arguments_json_value);
 
-        // Always prepare strings for parse_json; use "null" when None
-        let outcome_json = done
-            .outcome_json
-            .clone()
-            .unwrap_or_else(|| "null".to_string());
-        params.insert("outcome_json".into(), DataValue::Str(outcome_json.into()));
+        // Handle outcome JSON properly
+        let outcome_json_value = match &done.outcome_json {
+            Some(json_str) => {
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(_) => DataValue::Str(json_str.clone()),
+                    Err(_) => DataValue::Null,
+                }
+            }
+            None => DataValue::Null,
+        };
+        params.insert("outcome_json".into(), outcome_json_value);
+
         params.insert(
             "error_kind".into(),
             done.error_kind
@@ -436,11 +450,11 @@ impl ObservabilityStore for Database {
         vendor = $vendor,
         tool_name = $tool_name,
         args_sha256 = $args_sha256,
-        arguments_json = parse_json($arguments_json),
+        arguments_json = $arguments_json,
         status = $status,
         ended_at_ms = $ended_at_ms,
         latency_ms = $latency_ms,
-        outcome_json = parse_json($outcome_json),
+        outcome_json = $outcome_json,
         error_kind = $error_kind,
         error_msg = $error_msg
     :put tool_call { request_id, call_id, at => parent_id, vendor, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
@@ -475,8 +489,8 @@ impl ObservabilityStore for Database {
     },
     request_id = $request_id,
     call_id = $call_id,
-    arguments_json_s = dump_json(arguments_json),
-    outcome_json_s = dump_json(outcome_json),
+    arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
+    outcome_json_s = if(is_null(outcome_json), null, dump_json(outcome_json)),
     at_ms = to_int(at),
     at_valid = to_bool(at)
 "#;
@@ -569,8 +583,8 @@ impl ObservabilityStore for Database {
         @ 'NOW'
     },
     parent_id = $parent_id,
-    arguments_json_s = dump_json(arguments_json),
-    outcome_json_s = dump_json(outcome_json),
+    arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
+    outcome_json_s = if(is_null(outcome_json), null, dump_json(outcome_json)),
     at_ms = to_int(at),
     at_valid = to_bool(at)
     :sort at_ms desc
