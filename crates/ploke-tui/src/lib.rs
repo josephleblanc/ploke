@@ -39,7 +39,7 @@ use ui::UiEvent;
 use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, default_model};
 use utils::layout::layout_statusline;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
@@ -153,7 +153,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         db: db_handle,
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
-        proposals: RwLock::new(std::collections::HashMap::new()),
+        proposals: RwLock::new(HashMap::new()),
         rag,
         // TODO: Add TokenBudget fields to Config
         budget: TokenBudget::default(),

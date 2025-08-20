@@ -1,14 +1,20 @@
 use std::{sync::Arc, time::Duration};
 
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
 use ploke_tui::{
+    AppEvent, EventBus, RagEvent,
     app_state::{
         commands::StateCommand,
         core::{AppState, ChatState, Config, ConfigState, SystemState},
-    }, event_bus::EventBusCaps, llm::{self, LLMParameters, ToolVendor}, system::SystemEvent, tracing_setup::init_tracing, user_config::{default_model, ProviderConfig, ProviderRegistry, ProviderType}, AppEvent, EventBus, RagEvent
+    },
+    event_bus::EventBusCaps,
+    llm::{self, LLMParameters, ToolVendor},
+    system::SystemEvent,
+    tracing_setup::init_tracing,
+    user_config::{ProviderConfig, ProviderRegistry, ProviderType, default_model},
 };
-use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use quote::ToTokens;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -102,6 +108,7 @@ async fn e2e_apply_code_edit_real_llm() {
         io_handle: io_handle.clone(),
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
+        proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     // Spawn state manager to handle assistant message creation, etc.
@@ -163,7 +170,10 @@ async fn e2e_apply_code_edit_real_llm() {
     event_bus.send(AppEvent::Llm(llm::Event::PromptConstructed {
         parent_id,
         prompt: vec![
-            (ploke_tui::chat_history::MessageKind::System, system_instr.to_string()),
+            (
+                ploke_tui::chat_history::MessageKind::System,
+                system_instr.to_string(),
+            ),
             (ploke_tui::chat_history::MessageKind::User, user_instr),
         ],
     }));
@@ -200,7 +210,11 @@ async fn e2e_apply_code_edit_real_llm() {
                     .and_then(|n| n.as_u64())
                     .unwrap_or_default();
                 assert!(ok, "ToolCallCompleted.ok should be true, got: {}", content);
-                assert!(applied >= 1, "Expected at least one applied edit, got: {}", content);
+                assert!(
+                    applied >= 1,
+                    "Expected at least one applied edit, got: {}",
+                    content
+                );
                 applied_ok = true;
                 break;
             }
@@ -214,7 +228,10 @@ async fn e2e_apply_code_edit_real_llm() {
         }
     }
 
-    assert!(applied_ok, "Did not receive successful ToolCallCompleted for the request");
+    assert!(
+        applied_ok,
+        "Did not receive successful ToolCallCompleted for the request"
+    );
 
     // Verify file content was changed.
     let updated = std::fs::read_to_string(&file_path).expect("read updated file");

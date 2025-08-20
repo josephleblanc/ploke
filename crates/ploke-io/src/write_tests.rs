@@ -39,7 +39,11 @@ async fn test_write_splice_and_hash_recompute() {
     let handle = IoManagerHandle::new();
     let results = handle.write_snippets_batch(vec![req]).await.unwrap();
     assert_eq!(results.len(), 1);
-    let wr = results.into_iter().next().unwrap().expect("write should succeed");
+    let wr = results
+        .into_iter()
+        .next()
+        .unwrap()
+        .expect("write should succeed");
 
     let new_content = fs::read_to_string(&file_path).unwrap();
     assert_eq!(new_content, "fn bar() {}\n");

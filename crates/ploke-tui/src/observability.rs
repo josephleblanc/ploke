@@ -18,7 +18,7 @@ use ploke_db::observability::{
     ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
 };
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Parameter bundle for persisting a tool-call "requested" lifecycle event.
 /// Prefer typed fields; serialize to JSON strings only at DB boundary.
@@ -122,7 +122,10 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
                 status: ToolStatus::Completed,
             };
             if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!("observability: record_tool_call_done (completed) failed: {}", e);
+                tracing::warn!(
+                    "observability: record_tool_call_done (completed) failed: {}",
+                    e
+                );
             }
         }
         AppEvent::LlmTool(ToolEvent::Failed {
@@ -140,7 +143,10 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
                 status: ToolStatus::Failed,
             };
             if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!("observability: record_tool_call_done (failed) failed: {}", e);
+                tracing::warn!(
+                    "observability: record_tool_call_done (failed) failed: {}",
+                    e
+                );
             }
         }
 
@@ -217,9 +223,9 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
 
 async fn persist_conversation_turn(state: &Arc<AppState>, msg: &Message) -> Result<(), String> {
     let turn = ConversationTurn {
-        id: msg.id,                // Use message id as row id for M0
-        parent_id: msg.parent,     // parent message id if any
-        message_id: msg.id,        // also record as message_id
+        id: msg.id,            // Use message id as row id for M0
+        parent_id: msg.parent, // parent message id if any
+        message_id: msg.id,    // also record as message_id
         kind: kind_str(msg.kind).to_string(),
         content: msg.content.clone(),
         created_at: Validity {
@@ -267,10 +273,7 @@ async fn persist_tool_done(
         None => None,
     };
     let ended_at_ms = now_ms();
-    let started_at_ms = match state
-        .db
-        .get_tool_call(params.request_id, &params.call_id)
-    {
+    let started_at_ms = match state.db.get_tool_call(params.request_id, &params.call_id) {
         Ok(Some((req, _))) => req.started_at.at,
         _ => ended_at_ms,
     };
@@ -320,14 +323,12 @@ fn vendor_str(v: &crate::llm::ToolVendor) -> &'static str {
     }
 }
 
-
 fn sha256_hex(s: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(s.as_bytes());
     let digest = hasher.finalize();
     format!("sha256:{:x}", digest)
 }
-
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()

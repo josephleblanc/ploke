@@ -188,6 +188,7 @@ New items added 2025-08-20 (continued)
      b) Keep code-blocks only in M1; revisit unified diff in M2.
    - Recommended: (a) optional, default off; implement when time permits.
    - Blocker: None.
+      - USER: Agreed
 
 18) DRY AppState construction (FOLLOW-UP)
    - Context: Multiple callsites construct AppState directly, which can drift when fields change (e.g., proposals).
@@ -196,6 +197,7 @@ New items added 2025-08-20 (continued)
      b) Keep ad-hoc construction; update callsites as fields evolve.
    - Recommended: (a) in a follow-up PR to reduce technical debt.
    - Blocker: None.
+      - USER: Agreed, follow-up in PR
 
 19) Observability typed JSON inputs (FOLLOW-UP)
    - Context: ObservabilityStore currently accepts Option<String> for JSON payloads.
@@ -204,3 +206,4 @@ New items added 2025-08-20 (continued)
      b) Keep String for M1; migrate later.
    - Recommended: (a) for type-safety and fewer round-trips.
    - Blocker: None (strings still work).
+      - USER: Agreed, follow-up in PR

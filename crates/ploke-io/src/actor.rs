@@ -1,11 +1,11 @@
-use ploke_core::{WriteResult, WriteSnippetData};
+#[cfg(test)]
+use crate::scan::test_instrumentation;
 use crate::{
     path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
     write::write_snippets_batch,
 };
-#[cfg(test)]
-use crate::scan::test_instrumentation;
+use ploke_core::{WriteResult, WriteSnippetData};
 
 use super::*;
 
@@ -80,8 +80,9 @@ impl IoManager {
         semaphore_permits: usize,
         roots: Option<Vec<PathBuf>>,
         symlink_policy: Option<SymlinkPolicy>,
-        #[cfg(feature = "watcher")]
-        events_tx: Option<tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>>,
+        #[cfg(feature = "watcher")] events_tx: Option<
+            tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>,
+        >,
     ) -> Self {
         Self {
             request_receiver,
@@ -113,9 +114,13 @@ impl IoManager {
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
                 tokio::spawn(async move {
-                    let results =
-                        Self::handle_read_snippet_batch_with_roots(requests, semaphore, roots, symlink_policy)
-                            .await;
+                    let results = Self::handle_read_snippet_batch_with_roots(
+                        requests,
+                        semaphore,
+                        roots,
+                        symlink_policy,
+                    )
+                    .await;
                     let _ = responder.send(results);
                 });
             }
@@ -127,18 +132,27 @@ impl IoManager {
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
                 tokio::spawn(async move {
-                    let results =
-                        Self::handle_scan_batch_with_roots(requests, semaphore, roots, symlink_policy).await;
+                    let results = Self::handle_scan_batch_with_roots(
+                        requests,
+                        semaphore,
+                        roots,
+                        symlink_policy,
+                    )
+                    .await;
                     let _ = responder.send(results);
                 });
             }
-            IoRequest::WriteSnippetBatch { requests, responder } => {
+            IoRequest::WriteSnippetBatch {
+                requests,
+                responder,
+            } => {
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
                 #[cfg(feature = "watcher")]
                 let events_tx = self.events_tx.clone();
                 tokio::spawn(async move {
-                    let results = write_snippets_batch(requests.clone(), roots, symlink_policy).await;
+                    let results =
+                        write_snippets_batch(requests.clone(), roots, symlink_policy).await;
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {
@@ -474,7 +488,8 @@ impl IoManager {
                 async move {
                     (
                         idx,
-                        Self::check_file_hash_with_roots(file_data, sem, roots, symlink_policy).await,
+                        Self::check_file_hash_with_roots(file_data, sem, roots, symlink_policy)
+                            .await,
                     )
                 }
             }))

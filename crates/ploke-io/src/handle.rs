@@ -267,7 +267,10 @@ impl IoManagerHandle {
         requests: Vec<WriteSnippetData>,
     ) -> Result<Vec<Result<WriteResult, PlokeError>>, IoError> {
         let (responder, response_rx) = oneshot::channel();
-        let request = IoRequest::WriteSnippetBatch { requests, responder };
+        let request = IoRequest::WriteSnippetBatch {
+            requests,
+            responder,
+        };
         self.request_sender
             .send(IoManagerMessage::Request(request))
             .await

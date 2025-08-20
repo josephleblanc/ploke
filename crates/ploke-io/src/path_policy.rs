@@ -164,4 +164,3 @@ pub(crate) fn path_within_roots_with_policy(
     // TODO(Phase 7): Implement strict symlink policy evaluation
     path_within_roots(path, roots)
 }
-

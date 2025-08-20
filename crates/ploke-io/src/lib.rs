@@ -155,10 +155,10 @@
 //! See docs/production_plan.md for a full roadmap and design details.
 use ploke_core::PROJECT_NAMESPACE_UUID;
 mod actor;
-use builder::IoManagerBuilder;
 pub use actor::IoManager;
 use actor::IoManagerMessage;
 use actor::IoRequest;
+use builder::IoManagerBuilder;
 mod builder;
 pub mod errors;
 pub use errors::IoError;
@@ -172,8 +172,8 @@ pub mod scan;
 pub mod watcher;
 #[cfg(feature = "watcher")]
 pub use watcher::{FileChangeEvent, FileEventKind};
-mod write;
 mod tests_skeleton;
+mod write;
 #[cfg(test)]
 mod write_tests;
 use futures::future::join_all;

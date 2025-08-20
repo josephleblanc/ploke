@@ -4024,6 +4024,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "syn 2.0.100",
  "syn_parser",
  "tempfile",

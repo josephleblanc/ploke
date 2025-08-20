@@ -14,12 +14,14 @@ Notes:
 */
 
 use super::*;
-use std::path::{Path, PathBuf};
-use ploke_core::{WriteResult, WriteSnippetData};
-use tokio::io::AsyncWriteExt;
-use crate::path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy};
+use crate::path_policy::{
+    normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy,
+};
 use dashmap::DashMap;
 use lazy_static::lazy_static;
+use ploke_core::{WriteResult, WriteSnippetData};
+use std::path::{Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 // `WriteSnippetData` and `WriteResult` moved to ploke-core
@@ -163,14 +165,15 @@ async fn process_one_write(
 
     // Create and write
     {
-        let mut f = tokio::fs::File::create(&tmp_path)
-            .await
-            .map_err(|e| IoError::FileOperation {
-                operation: "write",
-                path: tmp_path.clone(),
-                kind: e.kind(),
-                source: Arc::new(e),
-            })?;
+        let mut f =
+            tokio::fs::File::create(&tmp_path)
+                .await
+                .map_err(|e| IoError::FileOperation {
+                    operation: "write",
+                    path: tmp_path.clone(),
+                    kind: e.kind(),
+                    source: Arc::new(e),
+                })?;
         f.write_all(new_content.as_bytes())
             .await
             .map_err(|e| IoError::FileOperation {

@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use crate::TrackingHash;
 
-
 #[derive(Debug, Clone)]
 pub struct EmbeddingData {
     pub id: Uuid,

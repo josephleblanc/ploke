@@ -67,11 +67,11 @@ impl FileManager {
                     Ok(final_path) => {
                         info!("Chat history saved to {}", final_path.display());
                         // Inform UI via realtime channel
-                        let _ = self
-                            .realtime_event_tx
-                            .send(AppEvent::System(SystemEvent::HistorySaved {
+                        let _ = self.realtime_event_tx.send(AppEvent::System(
+                            SystemEvent::HistorySaved {
                                 file_path: final_path.display().to_string(),
-                            }));
+                            },
+                        ));
                     }
                     Err(e) => {
                         error!("Save failed: {}", e);
@@ -101,17 +101,14 @@ impl FileManager {
                         return;
                     }
                 };
-                if let Err(e) = self
-                    .realtime_event_tx
-                    .send(AppEvent::System(SystemEvent::WriteQuery {
-                        query_content,
-                        query_name,
-                    }))
+                if let Err(e) =
+                    self.realtime_event_tx
+                        .send(AppEvent::System(SystemEvent::WriteQuery {
+                            query_content,
+                            query_name,
+                        }))
                 {
-                    warn!(
-                        "Failed to forward WriteQuery to realtime channel: {}",
-                        e
-                    );
+                    warn!("Failed to forward WriteQuery to realtime channel: {}", e);
                 }
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {

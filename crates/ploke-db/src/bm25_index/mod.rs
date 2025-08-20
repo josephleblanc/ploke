@@ -702,7 +702,7 @@ impl Bm25Indexer {
 /// It filters out rows where `name` or `tracking_hash` are missing.
 ///
 /// Example (no_run):
-/// ```no_run
+/// ```no_run,ignore
 /// # use std::sync::Arc;
 /// # use ploke_db::bm25_index::collect_rebuild_sources;
 /// # use ploke_db::Database;

@@ -4,8 +4,8 @@ use serde_json::Value;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::{AppEvent, EventBus};
 use crate::llm::ToolEvent;
+use crate::{AppEvent, EventBus};
 
 use super::{ToolVendor, session::await_tool_result};
 

@@ -1,6 +1,4 @@
-use ploke_db::{
-    Database, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
-};
+use ploke_db::{Database, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity};
 
 #[test]
 fn tool_call_requested_idempotent() {
