@@ -275,8 +275,15 @@ impl ObservabilityStore for Database {
             if existing_done.is_some() {
                 return Ok(());
             }
-            // If the requested state matches exactly, it's a no-op
-            if existing_req == req {
+            // If the requested state matches (ignoring started_at), it's a no-op
+            if existing_req.request_id == req.request_id
+                && existing_req.call_id == req.call_id
+                && existing_req.parent_id == req.parent_id
+                && existing_req.vendor == req.vendor
+                && existing_req.tool_name == req.tool_name
+                && existing_req.args_sha256 == req.args_sha256
+                && existing_req.arguments_json == req.arguments_json
+            {
                 return Ok(());
             }
             // Otherwise, we will assert a new "requested" fact with updated metadata below.
@@ -333,15 +340,15 @@ impl ObservabilityStore for Database {
     fn record_tool_call_done(&self, done: ToolCallDone) -> Result<(), DbError> {
         self.ensure_observability_schema()?;
 
-        // Enforce lifecycle rules and idempotency
-        match self.get_tool_call(done.request_id, &done.call_id)? {
+        // Enforce lifecycle rules and idempotency, and capture request metadata
+        let req_meta = match self.get_tool_call(done.request_id, &done.call_id)? {
             None => {
                 // Must have an existing requested row to transition to done
                 return Err(DbError::InvalidLifecycle(
                     "Cannot record completion without a prior requested row".into(),
                 ));
             }
-            Some((_req, Some(existing_done))) => {
+            Some((req, Some(existing_done))) => {
                 // Already completed/failed
                 if existing_done == done {
                     // exact same payload -> no-op
@@ -353,12 +360,14 @@ impl ObservabilityStore for Database {
                         "Cannot change terminal status once recorded".into(),
                     ));
                 }
-                // Same terminal status but different payload: assert updated fact below
+                // Same terminal status but different payload: proceed with update
+                req
             }
-            Some((_req, None)) => {
+            Some((req, None)) => {
                 // Ok to proceed and assert terminal status below
+                req
             }
-        }
+        };
 
         // Prepare params for commit
         let mut params = BTreeMap::new();
@@ -370,6 +379,32 @@ impl ObservabilityStore for Database {
         params.insert("ended_at_ms".into(), DataValue::from(done.ended_at.at));
         params.insert("latency_ms".into(), DataValue::from(done.latency_ms));
         params.insert("status".into(), DataValue::Str(done.status.as_str().into()));
+
+        // Carry forward metadata from the original requested call
+        params.insert(
+            "parent_id".into(),
+            DataValue::Uuid(UuidWrapper(req_meta.parent_id)),
+        );
+        params.insert("vendor".into(), DataValue::Str(req_meta.vendor.into()));
+        params.insert(
+            "tool_name".into(),
+            DataValue::Str(req_meta.tool_name.into()),
+        );
+        params.insert(
+            "args_sha256".into(),
+            DataValue::Str(req_meta.args_sha256.into()),
+        );
+
+        // Always prepare strings for parse_json; use "null" when None
+        let args_json_str = req_meta
+            .arguments_json
+            .clone()
+            .unwrap_or_else(|| "null".to_string());
+        params.insert(
+            "arguments_json".into(),
+            DataValue::Str(args_json_str.into()),
+        );
+
         // Always prepare strings for parse_json; use "null" when None
         let outcome_json = done
             .outcome_json
@@ -397,14 +432,17 @@ impl ObservabilityStore for Database {
         at = 'ASSERT',
         request_id = $request_id,
         call_id = $call_id,
+        parent_id = $parent_id,
+        vendor = $vendor,
+        tool_name = $tool_name,
+        args_sha256 = $args_sha256,
+        arguments_json = parse_json($arguments_json),
         status = $status,
         ended_at_ms = $ended_at_ms,
         latency_ms = $latency_ms,
         outcome_json = parse_json($outcome_json),
         error_kind = $error_kind,
-        error_msg = $error_msg,
-        // Carry forward latest requested metadata if present
-        *tool_call{ request_id, call_id, parent_id, vendor, tool_name, args_sha256, arguments_json @ 'NOW' }
+        error_msg = $error_msg
     :put tool_call { request_id, call_id, at => parent_id, vendor, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
 }
 "#;
