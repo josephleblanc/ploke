@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     database::{to_string, to_uuid},
@@ -36,7 +37,7 @@ pub struct ToolCallReq {
     pub started_at: Validity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Serialize, Deserialize)]
 pub enum ToolStatus {
     Completed,
     Failed,
