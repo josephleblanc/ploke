@@ -5,7 +5,8 @@ use ploke_tui::{
     AppEvent, EventBus, RagEvent,
     app_state::{
         commands::StateCommand,
-        core::{AppState, ChatState, Config, ConfigState, SystemState},
+        core::{AppState, ChatState, ConfigState, SystemState},
+        Config,
     },
     event_bus::EventBusCaps,
     llm::{self, LLMParameters, ToolVendor},

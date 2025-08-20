@@ -132,3 +132,39 @@ References
 - Current handler: crates/ploke-tui/src/app_state/handlers/rag.rs (apply_code_edit path).
 - Types: ploke-core WriteSnippetData; ploke-io write_snippets_batch.
 - Related doc: milestones/m1_context_files.md
+
+Status summary (checkpoint 2025-08-20)
+- Implemented:
+  - Proposal staging: apply_code_edit requests are staged, not immediately applied; preview generated (code-blocks by default, unified diff optional via "similar").
+  - Approval/denial: approve_edits and deny_edits handlers wired; idempotent terminal states with SysInfo confirmations.
+  - Runtime controls: edit preview mode, preview line cap, and auto-approval toggles; commands parsed and dispatched.
+  - Eventing: SystemEvent::ToolCallRequested compatibility path retained; LlmTool bridge present.
+  - Tests: added unit and flow tests for parser, staging, approve, and deny.
+- Deviations and rationale:
+  - Kept SystemEvent bridge in M1 for stability and reduced risk; removal planned for M2 once typed tool events are primary.
+  - Preview default set to code-blocks with truncation for readability; unified diff supported but opt-in (performance/UX considerations).
+  - Persistence to ploke-db for proposals/outcomes deferred until ObservabilityStore APIs are fully stabilized; tracked in decisions_required.md.
+
+Pre-M2 checklist
+- Automated tests to add/verify:
+  - Hash-mismatch handling in approve_edits returns per-file errors and preserves disk state.
+  - Overlapping edit ranges rejected per file (already validated in handler; add unit to assert).
+  - Auto-approval path applies successfully under config.editing.auto_confirm_edits=true.
+  - Large previews are truncated deterministically according to config.editing.max_preview_lines.
+- Manual validation (one pass per platform recommended):
+  - Stage small rename edit; verify preview and explicit approval apply change atomically.
+  - Stage multi-file edits; verify non-overlapping validation and unified diff mode.
+  - Deny staged edits; verify no on-disk changes; status transitions to Denied.
+  - Stage with incorrect expected_file_hash; verify clear error on apply and no changes.
+  - Toggle preview mode and line caps at runtime; confirm SysInfo confirmations and preview output.
+  - Exercise idempotency: double approval or double denial yields a no-op with SysInfo notice.
+  - Hybrid/BM25 searches still functional; no regressions in RAG features.
+- Readiness gates before M2:
+  - Add DB persistence for conversation turns and tool-call lifecycle (requested/completed/failed) per ploke_db_contract.md.
+  - Wire code_edit_proposal/outcome persistence once APIs land.
+  - Basic git branch/commit/revert wrapper for applied edits (M1 acceptance).
+  - Trace correlation IDs end-to-end; confirm in logs with request_id and call_id.
+
+Notes for M2
+- With M1 stable, proceed to richer context/navigation tools and budget controls.
+- Plan validation gates (fmt/clippy/test) to run automatically before apply in M3; design interface now to minimize churn later.
