@@ -20,7 +20,7 @@ macro_rules! crate_test_transform {
 
             Ok(())
         }
-    }
+    };
 }
 
 crate_test_transform!(test_transform_syn, "ingest/syn_parser");
@@ -52,4 +52,3 @@ crate_test_transform!(test_transform_, "test-utils");
 //
 //     Ok(())
 // }
-

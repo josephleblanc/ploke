@@ -29,14 +29,25 @@ pub(super) fn transform_functions(
             let param_params = process_params(&function, param_schema, i, param);
             let script = script_put(&param_params, param_schema.relation);
 
-            tracing::trace!("{}: {}\n{}\n{:#?}", "transform_functions".log_step(), "script", script, param_params);
+            tracing::trace!(
+                "{}: {}\n{}\n{:#?}",
+                "transform_functions".log_step(),
+                "script",
+                script,
+                param_params
+            );
             db.run_script(&script, param_params, ScriptMutability::Mutable)?;
         }
 
         // Add generic parameters
         for (i, generic_param) in function.generic_params.into_iter().enumerate() {
             let (params, script) = process_generic_params(function_any_id, i as i64, generic_param);
-            tracing::trace!("{}: {}\n{}", "transform_functions".log_step(), "script", script);
+            tracing::trace!(
+                "{}: {}\n{}",
+                "transform_functions".log_step(),
+                "script",
+                script
+            );
             db.run_script(&script, params, ScriptMutability::Mutable)?;
         }
 
@@ -136,7 +147,7 @@ fn process_func(
         // May remove this. Might be useful for debugging, less sure about in queries vs. the
         // `Contains` edge. Needs testing in `ploke-db`
         (schema.module_id().to_string(), module_id.into()),
-        (schema.embedding().to_string(), DataValue::Null)
+        (schema.embedding().to_string(), DataValue::Null),
     ]);
     func_params
 }
@@ -144,23 +155,35 @@ fn process_func(
 fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
     // let entry_names = params.keys().join(", ");
     let id_keywords = &["id", "function_id"];
-    
-    let key_names = params.keys().filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at").join(", ");
-    let entry_names = params.keys().filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at").join(", ");
+
+    let key_names = params
+        .keys()
+        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+        .join(", ");
+    let entry_names = params
+        .keys()
+        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+        .join(", ");
     // let entry_names = params.keys().filter(|k| k.as_str() != "id" && k.as_str() != "at").join(", ");
 
     // let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
-    
-    let key_param_names = params.keys().filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at").map(|k| format!("${}", k)).join(", ");
-    let param_names = params.keys().filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at").map(|k| format!("${}", k)).join(", ");
+
+    let key_param_names = params
+        .keys()
+        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+        .map(|k| format!("${}", k))
+        .join(", ");
+    let param_names = params
+        .keys()
+        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+        .map(|k| format!("${}", k))
+        .join(", ");
 
     // Should come out looking like:
     // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
     let script = format!(
         "?[at, {}, {}] <- [['ASSERT', {}, {}]] :put {}",
-        key_names, entry_names, 
-        key_param_names, param_names, 
-        relation_name
+        key_names, entry_names, key_param_names, param_names, relation_name
     );
     script
 }
@@ -211,7 +234,8 @@ mod test {
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_types");
-        let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
         let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
             tracing::error!(target: "transform_function",
                 "Error building tree: {}",
@@ -257,7 +281,8 @@ mod test {
             script,
         );
 
-        let db_result = db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)
+        let db_result = db
+            .run_script(&script, func_params, cozo::ScriptMutability::Mutable)
             .inspect_err(|e| {
                 for link in e.chain() {
                     tracing::error!("{}", link);

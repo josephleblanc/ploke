@@ -5,8 +5,8 @@
 pub mod error;
 pub mod macro_traits;
 pub mod schema;
-pub mod transform;
 pub mod tests;
+pub mod transform;
 
 // -- crate-wide imports --
 pub mod utils;

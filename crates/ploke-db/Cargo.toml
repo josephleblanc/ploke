@@ -12,6 +12,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
 uuid = { workspace = true }
+clap = { version = "4.5.17", features = ["derive"] }
 
 # error handling
 ploke-error = { path = "../ploke-error" }
@@ -28,6 +29,9 @@ crossbeam-channel = "0.5.15"
 # logging
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# bm 25
+bm25 = "2.3.1"
 
 [dev-dependencies]
 ploke-test-utils = { path = "../test-utils" }

@@ -33,8 +33,6 @@ This leverages Rust's type system to enforce the processing order at compile tim
 - Section 5: Component Details (implies different data representations between components/stages)
 - Section 7: Concurrency Model (distinct types help manage state across boundaries)
 - Section 8: Potential Risks and Mitigations (addresses risks related to inconsistent state)
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections:
 - C-CUSTOM-TYPE: Arguments convey meaning through types.
 - Type safety: Leverages the type system effectively.
 - Dependability: Makes it less likely to do the wrong thing.
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A

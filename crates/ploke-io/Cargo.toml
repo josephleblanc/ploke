@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { workspace = true }
-tokio-stream = "0.1"
-thiserror = "1.0"
+thiserror = { workspace = true }
 futures = "0.3"
 rlimit = "0.10"
 ploke-error = { path = "../ploke-error" }
@@ -18,18 +17,21 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-error = "0.2"
+notify = { version = "6", optional = true }
 
 ploke-common = { path = "../common" }
 syn_parser = { path = "../ingest/syn_parser" }
 itertools = { workspace = true }
-
+dashmap = { workspace = true }
+lazy_static = { workspace = true }
 
 [dev-dependencies]
 ploke-db = { path = "../ploke-db" }
 ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.10.1"
 mockall = "0.12"
-seahash = "4.1"                               # For hash operations in examples
 
-# [features]
+[features]
+default = []
+watcher = ["notify"]
 # testing = ["ploke-test-utils/test_setup"]

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
-use ploke_core::NodeId;
+pub use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::nodes::TypeDefNode;
@@ -43,11 +43,10 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
         .collect()
 }
 
-
 #[cfg(feature = "test_setup")]
 pub fn try_run_phases_and_collect_path(
     project_root: &Path,
-    crate_path: PathBuf
+    crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
     let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
 
@@ -66,17 +65,39 @@ pub fn try_run_phases_and_collect_path(
 use syn_parser::ModuleTree;
 
 #[cfg(feature = "test_setup")]
-pub fn parse_and_build_tree(crate_name: &str) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
-
+pub fn parse_and_build_tree(
+    crate_name: &str,
+) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
     let project_root = workspace_root(); // Use workspace root for context
     let crate_path = workspace_root().join("crates").join(crate_name);
     let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
     let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
     let tree = merged.build_tree_and_prune()?;
-    Ok((merged, tree ))
+    Ok((merged, tree))
 }
 
 #[cfg(feature = "test_setup")]
+// Available fixture crates may be selected by using the directory name as input to setup_db_full:
+//
+// tests/fixture_crates/duplicate_name_fixture_1
+// tests/fixture_crates/duplicate_name_fixture_2
+// tests/fixture_crates/example_crate
+// tests/fixture_crates/file_dir_detection
+// tests/fixture_crates/fixture_attributes
+// tests/fixture_crates/fixture_conflation
+// tests/fixture_crates/fixture_cyclic_types
+// tests/fixture_crates/fixture_edge_cases
+// tests/fixture_crates/fixture_generics
+// tests/fixture_crates/fixture_macros
+// tests/fixture_crates/fixture_nodes
+// tests/fixture_crates/fixture_path_resolution
+// tests/fixture_crates/fixture_spp_edge_cases
+// tests/fixture_crates/fixture_spp_edge_cases_no_cfg
+// tests/fixture_crates/fixture_tracking_hash
+// tests/fixture_crates/fixture_types
+// tests/fixture_crates/fixture_update_embed
+// tests/fixture_crates/simple_crate
+// tests/fixture_crates/subdir
 pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
@@ -86,7 +107,10 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     tracing::info!("{}: Initialize", "Database".log_step());
     db.initialize().expect("Failed to initialize database");
     // create and insert schema for all nodes
-    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
     ploke_transform::schema::create_schema_all(&db)?;
 
     // run the parse
@@ -108,12 +132,20 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 
     tracing::info!("{}: transform graph into db", "Transform".log_step());
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
-    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
     Ok(db)
 }
 
 #[cfg(feature = "test_setup")]
-pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+/// Uses the crates in the `ploke` workspace itself as the target.
+/// As such, cannot rely on stable inputs over time, but is a more robust example to test against
+/// than the fixtures, which usually have various examples but may not have many nodes in total.
+pub fn setup_db_full_crate(
+    crate_name: &'static str,
+) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
     tracing::info!("Settup up database with setup_db_full_crate");
@@ -122,16 +154,25 @@ pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStora
     tracing::info!("{}: Initialize", "Database".log_step());
     db.initialize().expect("Failed to initialize database");
     // create and insert schema for all nodes
-    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
     ploke_transform::schema::create_schema_all(&db)?;
 
     // run the parse
-    tracing::info!("{}: run the parser, merge graphs, build tree", "Parse".log_step());
+    tracing::info!(
+        "{}: run the parser, merge graphs, build tree",
+        "Parse".log_step()
+    );
     let (merged, tree) = parse_and_build_tree(crate_name)?;
 
     tracing::info!("{}: transform graph into db", "Transform".log_step());
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
-    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
     Ok(db)
 }
 
@@ -192,14 +233,14 @@ pub fn init_test_tracing(level: tracing::Level) {
         // .with_target("debug_dup", Level::ERROR)
         .with_target("db", Level::ERROR)
         .with_target("ploke_tui::app_state", Level::INFO)
-        .with_target("ploke_embed", Level::TRACE)
-        .with_target("specific_target", Level::TRACE)
-        .with_target("file_hashes", Level::INFO)
-        // .with_target("ploke", level)
-        // .with_target("ploke-db", level)
-        // .with_target("ploke-embed", level)
-        // .with_target("ploke-io", level)
-        // .with_target("ploke-transform", level)
+        .with_target("ploke_embed", Level::ERROR)
+        .with_target("specific_target", Level::ERROR)
+        .with_target("file_hashes", Level::ERROR)
+        .with_target("ploke", level)
+        .with_target("ploke-db", level)
+        .with_target("ploke-embed", level)
+        .with_target("ploke-io", level)
+        .with_target("ploke-transform", level)
         .with_target("cozo", Level::ERROR);
 
     let layer = tracing_subscriber::fmt::layer()
@@ -210,7 +251,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_level(true) // Show log level
         .without_time() // Remove timestamps
         .with_ansi(true)
-        .pretty(); 
+        .pretty();
     tracing_subscriber::registry()
         .with(layer)
         .with(filter)

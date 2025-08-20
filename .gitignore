@@ -22,15 +22,22 @@ router/
 # Test ouput file
 tests/data/code_graph.ron
 
+# Data input/output
+crates/ploke-tui/data/
+
 # Ignore temp file for random stuff
 temp.md
 .temp/
+*.bak
 
 # entertainment
 .bored/
 
 # backups of old implementations
 *.back
+
+# backups of test fixtures for unit tests
+tests/backup_dbs/
 
 CARGO_TEST_OUTPUT.txt
 

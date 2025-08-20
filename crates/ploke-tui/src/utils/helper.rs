@@ -15,11 +15,14 @@ pub async fn find_file_by_prefix(
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         if let Some(name_str) = name.to_str() {
-            tracing::debug!("
+            tracing::debug!(
+                "
 checking file to load:                  | {name_str}
 name_str.starts_with(prefix):           | {}
 name_str.len() == prefix.len() + 1 + 36 | {}
-", name_str.starts_with(prefix), name_str.len() == prefix.len() + 1 + 36
+",
+                name_str.starts_with(prefix),
+                name_str.len() == prefix.len() + 1 + 36
             );
             if name_str.starts_with(prefix) && name_str.len() == prefix.len() + 1 + 36 {
                 tracing::debug!("passes checks: {}", name_str);

@@ -1,6 +1,6 @@
 pub mod builder;
-pub mod semantic;
 pub mod callbacks;
+pub mod semantic;
 
-pub use builder::QueryBuilder;
 pub use builder::FieldValue;
+pub use builder::QueryBuilder;

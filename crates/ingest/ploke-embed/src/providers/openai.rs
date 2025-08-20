@@ -1,4 +1,7 @@
-use crate::{config::OpenAIConfig, error::{EmbedError, truncate_string}};
+use crate::{
+    config::OpenAIConfig,
+    error::{truncate_string, EmbedError},
+};
 
 // OpenAI backend implementation
 #[derive(Debug)]
@@ -17,10 +20,7 @@ impl OpenAIBackend {
         }
     }
 
-    pub async fn compute_batch(
-        &self,
-        snippets: Vec<String>
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    pub async fn compute_batch(&self, snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
         let client = reqwest::Client::new();
         let request = OpenAIEmbedRequest {
             model: self.model.clone(),
@@ -45,9 +45,12 @@ impl OpenAIBackend {
             });
         }
 
-        let response = res.json::<OpenAIEmbedResponse>()
-            .await
-            .map_err(|e| EmbedError::Network(format!("Deserialization failed: {}", truncate_string(&e.to_string(), 60))))?;
+        let response = res.json::<OpenAIEmbedResponse>().await.map_err(|e| {
+            EmbedError::Network(format!(
+                "Deserialization failed: {}",
+                truncate_string(&e.to_string(), 60)
+            ))
+        })?;
         Ok(response.data.into_iter().map(|d| d.embedding).collect())
     }
 }
@@ -68,4 +71,3 @@ struct OpenAIEmbedding {
 struct OpenAIEmbedResponse {
     data: Vec<OpenAIEmbedding>,
 }
-

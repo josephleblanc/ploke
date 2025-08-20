@@ -15,12 +15,13 @@
 // TODO: add to docs:
 // - types
 pub mod assoc_nodes;
+pub mod crate_node;
 pub mod edges;
+pub mod meta;
 pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
-pub mod crate_node;
 
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
@@ -28,12 +29,13 @@ use cozo::{Db, MemStorage};
 use crate_node::CrateContextSchema;
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
+use meta::Bm25MetaSchema;
 use primary_nodes::*;
 use secondary_nodes::*;
-use types::create_and_insert_types;
 use std::collections::BTreeMap;
 use subnode_variants::FileModuleNodeSchema;
 use syn_parser::utils::LogStyle;
+use types::create_and_insert_types;
 
 // TODO: use lazy_static and SmartString
 // &str for now,
@@ -84,8 +86,6 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     // -- special handling --
     FileModuleNodeSchema::create_and_insert_schema(db)?;
 
-
-
     // -- associated nodes --
     MethodNodeSchema::create_and_insert_schema(db)?;
 
@@ -97,24 +97,27 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;
+
+    // -- bm25_doc_meta --
+    Bm25MetaSchema::create_and_insert_schema(db)?;
     Ok(())
 }
 
-pub const ID_KEYWORDS: [&str; 6] = [ 
-    "id", 
-    "function_id", 
-    "owner_id", 
-    "source_id", 
+pub const ID_KEYWORDS: [&str; 6] = [
+    "id",
+    "function_id",
+    "owner_id",
+    "source_id",
     "target_id",
-    "type_id"
+    "type_id",
 ];
 pub const ID_VAL_KEYWORDS: [&str; 6] = [
-    "id: Uuid", 
-    "function_id: Uuid", 
+    "id: Uuid",
+    "function_id: Uuid",
     "owner_id: Uuid",
     "source_id: Uuid",
     "target_id: Uuid",
-    "type_id: Uuid"
+    "type_id: Uuid",
 ];
 
 /// Example
@@ -234,7 +237,7 @@ macro_rules! define_schema {
                 log_db_result(db_result);
                 Ok(())
             }
-            
+
             pub(crate) fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
                 let schema = &Self::SCHEMA;
                 let script_create = &schema.script_create();
@@ -266,7 +269,3 @@ pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
         db_result,
     );
 }
-
-
-
-

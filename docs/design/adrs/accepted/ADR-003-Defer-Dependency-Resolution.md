@@ -37,7 +37,5 @@ Resolution of references *to* items defined in external dependencies will be han
     - The multi-phase batch processing model itself is still appropriate.
 
 ## Compliance
-- [PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items: N/A (This ADR refines implementation strategy, not core architecture).
-- [IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections: C-GOOD-ERR (Error handling for unresolved types), C-DEBUG (Representation of unresolved IDs).
-- [CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: Error handling (Result types for resolution attempts).
+- [PROPOSED_ARCH_V3.md](./../../../../PROPOSED_ARCH_V3.md) Items: N/A (This ADR refines implementation strategy, not core architecture).
 - Relates to: [UUID Refactor Overview](docs/plans/uuid_refactor/00_overview_batch_processing_model.md) (Phases 2, 3, 5, ID States Table).

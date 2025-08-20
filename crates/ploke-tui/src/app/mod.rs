@@ -1,60 +1,38 @@
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
+pub mod commands;
+pub mod events;
+pub mod input;
 pub mod message_item;
+pub mod types;
+pub mod utils;
+pub mod view;
 
 use super::*;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::app::input::keymap::{Action, to_action};
+use crate::app::types::{Mode, RenderMsg};
+use crate::app::utils::truncate_uuid;
+use crate::app::view::components::conversation::ConversationView;
+use crate::app::view::components::input_box::InputView;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use message_item::render_messages;
-use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
-use textwrap::wrap;
+use crossterm::event::{
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton,
+    MouseEvent, MouseEventKind,
+};
+use crossterm::execute;
+use itertools::Itertools;
+// use message_item::{measure_messages, render_messages}; // now handled by ConversationView
+use ploke_db::search_similar;
+use ratatui::widgets::Gauge;
+// use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-
-static HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory
-                              (defaults to current dir)
-    index pause - Pause indexing
-    index resume - Resume indexing
-    index cancel - Cancel indexing
-    check api - Check API key configuration
-    model list - List available models
-    help - Show this help
-
-    Keyboard shortcuts (Normal mode):
-    q - Quit
-    i - Enter insert mode
-    : - Enter command mode (vim-style)
-    m - Quick model selection
-    ? - Show this help
-    j/↓ - Navigate down
-    k/↑ - Navigate up
-    J - Jump to bottom
-    K - Jump to top
-    h/← - Navigate branch previous
-    l/→ - Navigate branch next"#;
-
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Mode {
-    Normal,
-    #[default]
-    Insert,
-    Command,
-}
-
-impl std::fmt::Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Normal => write!(f, "Normal"),
-            Mode::Insert => write!(f, "Insert"),
-            Mode::Command => write!(f, "Command"),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct App {
@@ -77,15 +55,14 @@ pub struct App {
     pub mode: Mode,
     command_style: CommandStyle,
     indexing_state: Option<indexer::IndexingStatus>,
-    input_vscroll: u16,
-    input_scrollstate: ScrollbarState,
-    convo_vscroll: u16,
-    convo_scrollstate: ScrollbarState,
+    conversation: ConversationView,
+    input_view: InputView,
     active_model_indicator: Option<(String, Instant)>,
     active_model_id: String,
-    input_cursor_row: u16,
-    input_cursor_col: u16,
-    is_trailing_whitespace: bool,
+    // Scrolling/UI helpers
+    pending_char: Option<char>,
+    needs_redraw: bool,
+    show_context_preview: bool,
 }
 
 impl App {
@@ -108,15 +85,14 @@ impl App {
             command_style,
             indexing_state: None,
 
-            input_vscroll: 0,
-            input_scrollstate: ScrollbarState::default(),
-            convo_vscroll: 0,
-            convo_scrollstate: ScrollbarState::default(),
+            conversation: ConversationView::default(),
+            input_view: InputView::default(),
             active_model_indicator: None,
             active_model_id,
-            input_cursor_row: 0,
-            input_cursor_col: 0,
-            is_trailing_whitespace: false,
+            // Scrolling/UI helpers
+            pending_char: None,
+            needs_redraw: true,
+            show_context_preview: false,
         }
     }
 
@@ -131,33 +107,41 @@ impl App {
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
         let mut crossterm_events = crossterm::event::EventStream::new();
+        if let Err(e) = execute!(
+            std::io::stdout(),
+            EnableBracketedPaste,
+            EnableFocusChange,
+            EnableMouseCapture
+        ) {
+            tracing::warn!("Failed to enable terminal modes: {}", e);
+        }
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
 
         // let mut frame_counter = 0;
         while self.running {
-            // 1. Prepare data for this frame by reading from AppState.
-            let history_guard = self.state.chat.0.read().await;
-            let current_path = history_guard.get_full_path();
-            let current_id = history_guard.current;
+            if self.needs_redraw {
+                // Prepare data for this frame by reading from AppState without allocating per-frame.
+                let app_state = Arc::clone(&self.state);
+                let history_guard = app_state.chat.0.read().await;
+                let path_len = history_guard.path_len();
+                let current_id = history_guard.current;
 
-            // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
-            // Could it be made to?
-            let renderable_messages = current_path
-                .iter()
-                .map(|m| RenderableMessage {
-                    id: m.id,
-                    kind: m.kind,
-                    content: m.content.clone(),
-                })
-                .collect::<Vec<RenderableMessage>>();
-            drop(history_guard);
+                // Draw the UI using iterators over the cached path.
+                terminal.draw(|frame| {
+                    self.draw(
+                        frame,
+                        history_guard.iter_path(),
+                        history_guard.iter_path(),
+                        path_len,
+                        current_id,
+                    )
+                })?;
+                self.needs_redraw = false;
+            }
 
-            // 2. Draw the UI with the prepared data.
-            terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
-
-            // 3. Handle all incoming events (user input, state changes).
+            // Handle all incoming events (user input, state changes).
             tokio::select! {
             // Prioritize Ui responsiveness
             biased;
@@ -166,166 +150,142 @@ impl App {
             maybe_event = crossterm_events.next().fuse() => {
                 if let Some(Ok(event)) = maybe_event {
                     match event {
-                        Event::Key(key_event) =>{ self.on_key_event(key_event); }
+                        Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
                         Event::FocusGained => {},
                         Event::FocusLost => {},
-                        Event::Mouse(mouse_event) => {},
+                        Event::Mouse(mouse_event) => {
+                            match mouse_event.kind {
+                                MouseEventKind::ScrollUp => {
+                                    self.conversation.scroll_lines_up(3);
+                                    self.conversation.set_free_scrolling(true);
+                                    self.pending_char = None;
+                                    self.needs_redraw = true;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    self.conversation.scroll_lines_down(3);
+                                    self.conversation.set_free_scrolling(true);
+                                    self.pending_char = None;
+                                    self.needs_redraw = true;
+                                }
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    // Hit-test inside chat area to select message on click
+                                    let area = self.conversation.last_chat_area();
+                                    let x = mouse_event.column;
+                                    let y = mouse_event.row;
+                                    if x >= area.x
+                                        && x < area.x.saturating_add(area.width)
+                                        && y >= area.y
+                                        && y < area.y.saturating_add(area.height)
+                                    {
+                                        let rel_y = y.saturating_sub(area.y);
+                                        let virtual_line = self.conversation.offset().saturating_add(rel_y);
+
+                                        let mut acc = 0u16;
+                                        let mut target_idx_opt: Option<usize> = None;
+                                        for (i, h) in self.conversation.item_heights().iter().enumerate() {
+                                            let next_acc = acc.saturating_add(*h);
+                                            if virtual_line < next_acc {
+                                                target_idx_opt = Some(i);
+                                                break;
+                                            }
+                                            acc = next_acc;
+                                        }
+                                        let len = self.conversation.item_heights().len();
+                                        if len > 0 {
+                                            let target_idx = target_idx_opt.unwrap_or_else(|| len.saturating_sub(1));
+
+                                            // Update UI selection immediately
+                                            let prev_sel = self.list.selected();
+                                            self.list.select(Some(target_idx));
+                                            self.conversation.set_free_scrolling(false);
+                                            self.pending_char = None;
+
+                                            // Sync AppState selection using existing navigation commands
+                                            match prev_sel {
+                                                Some(prev) if target_idx > prev => {
+                                                    for _ in 0..(target_idx - prev) {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Down,
+                                                        });
+                                                    }
+                                                }
+                                                 Some(prev) if prev > target_idx => {
+                                                    for _ in 0..(prev - target_idx) {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Up,
+                                                        });
+                                                    }
+                                                }
+                                                // do nothing if selecting the current item.
+                                                Some(_) => {},
+                                                None => {
+                                                    // Choose shortest path via Top/Bottom
+                                                    if target_idx < len / 2 {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Top,
+                                                        });
+                                                        for _ in 0..target_idx {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Down,
+                                                            });
+                                                        }
+                                                    } else {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Bottom,
+                                                        });
+                                                        for _ in 0..(len.saturating_sub(1).saturating_sub(target_idx)) {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Up,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    self.needs_redraw = true;
+                                }
+                                _ => {}
+                            }
+                        },
                         Event::Paste(_) => {},
-                        Event::Resize(_, _) => {},
+                        Event::Resize(_, _) => { self.needs_redraw = true; },
                     }
                 }
             }
 
             // Application events
             Ok(app_event) = self.event_rx.recv() => {
-                match app_event {
-                    AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
-                        self.sync_list_selection().await;
-                    }
-                    AppEvent::IndexingProgress(state)=>{
-                        self.indexing_state = Some(state);
-                    }
-                    AppEvent::Ui(ui_event) => {},
-                    AppEvent::Llm(event) => {},
-                    AppEvent::Rag(rag_event) => {},
-                    AppEvent::Error(error_event) => {
-                        let msg = format!("Error: {}", error_event.message);
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg,
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        });
-                    },
-                    AppEvent::IndexingStarted => {
-                    },
-                    AppEvent::IndexingCompleted => {
-                        tracing::info!("Indexing Succeeded!");
-                        self.indexing_state = None;
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: String::from("Indexing Succeeded"),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        });
-                        self.send_cmd(StateCommand::UpdateDatabase)
-                    },
-                    AppEvent::IndexingFailed => {
-                        tracing::error!("Indexing Failed");
-                        self.indexing_state = None;
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: String::from("Indexing Failed"),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                    },
-                    // AppEvent::System(system_event) => {},
-                    // NOTE: This system event handling is a bad pattern. This should probably be
-                    // managed by the event_bus system instead.
-                    AppEvent::System(system_event) => {
-                        match system_event {
-                            system::SystemEvent::ModelSwitched(new_model)=>{
-                                tracing::debug!("SystemEvent::ModelSwitched {}", new_model);
-                                self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("model changed from {} to {}",self.active_model_id, new_model),
-                                    kind: MessageKind::SysInfo,
-                                    new_msg_id: Uuid::new_v4(),
-                                });
-                                self.active_model_indicator = Some((new_model.clone(), Instant::now()));
-                                self.active_model_id = new_model;
-                            },
-                            SystemEvent::ReadQuery{ file_name, query_name } => {
-                                tracing::debug!("App receives event: {}", file_name);
-                                self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("Reading file for query called {query_name}:\n\t{file_name}"),
-                                    kind: MessageKind::SysInfo,
-                                    new_msg_id: Uuid::new_v4(),
-                                });
-
-                            },
-                            SystemEvent::LoadQuery{ query_name, query_content } => {
-                                tracing::debug!("App receives LoadQuery from FileManager for {query_name}:\n{query_content}");
-                                let shortened_query = query_content.chars().take(20).collect::<String>();
-                                self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("Query read from file with query name {query_name}:\n\t{shortened_query}..."),
-                                    kind: MessageKind::SysInfo,
-                                    new_msg_id: Uuid::new_v4(),
-                                });
-                                self.send_cmd(StateCommand::LoadQuery {
-                                    query_name,
-                                    query_content,
-                                });
-                            },
-                            SystemEvent::BackupDb {file_dir, is_success, .. } if is_success => {
-                                // TODO: Add crate name to data type and require in command
-                                tracing::debug!("App receives BackupDb successful db save to file: {}", &file_dir);
-                                    self.send_cmd(StateCommand::AddMessageImmediate {
-                                        msg: format!("Success: Cozo data for code graph saved successfully to {file_dir}"),
-                                        kind: MessageKind::SysInfo,
-                                        new_msg_id: Uuid::new_v4(),
-                                    });
-
-                            },
-                            SystemEvent::BackupDb {file_dir, is_success, error } if !is_success => {
-                                // TODO: Add crate name to data type and require in command
-                                tracing::debug!("App receives BackupDb unsuccessful event: {}\nwith error: {:?}", &file_dir, &error);
-                                    if let Some(error_str) = error {
-                                        self.send_cmd(StateCommand::AddMessageImmediate {
-                                            msg: format!("Error: Cozo data for code graph not saved to {file_dir}\n\tFailed with error: {}", &error_str),
-                                            kind: MessageKind::SysInfo,
-                                            new_msg_id: Uuid::new_v4(),
-                                        });
-                                    }
-                            },
-                            SystemEvent::LoadDb {crate_name, file_dir, is_success, .. } if is_success => {
-                                tracing::debug!("App receives LoadDb successful db save to file: {:?}", 
-                                    display_file_info(file_dir.as_ref()), 
-                                );
-                                self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}", 
-                                        display_file_info(file_dir.as_ref()), 
-                                    ),
-                                    kind: MessageKind::SysInfo,
-                                    new_msg_id: Uuid::new_v4(),
-                                });
-                            },
-                            SystemEvent::LoadDb {crate_name, file_dir, is_success, error } if !is_success => {
-                                // TODO: Add crate name to data type and require in command
-                                tracing::debug!("App receives LoadDb unsuccessful event: {}\nwith error: {:?}", 
-                                    display_file_info(file_dir.as_ref()), 
-                                    &error
-                                );
-                                if let Some(error_str) = error {
-                                    self.send_cmd(StateCommand::AddMessageImmediate {
-                                        msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", 
-                                            display_file_info(file_dir.as_ref()), 
-                                            &error_str),
-                                        kind: MessageKind::SysInfo,
-                                        new_msg_id: Uuid::new_v4(),
-                                    });
-                                }
-                            },
-                            SystemEvent::ReIndex { workspace } => {
-                                    self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: false });
-                                }
-                            other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
-                        }
-                    }
-                    AppEvent::GenerateContext(id) => {
-                        // self.send_cmd( StateCommand::)
-                    }
-                }
+                events::handle_event(&mut self, app_event).await;
+                self.needs_redraw = true;
             }
 
             }
         }
 
-        fn display_file_info(file: Option<&Arc<std::path::PathBuf>>) -> String {
-            file.map(|f| f.display().to_string()).unwrap_or("File not found.".to_string())
+        if let Err(e) = execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture
+        ) {
+            tracing::warn!("Failed to disable terminal modes: {}", e);
         }
         Ok(())
     }
 
     /// Renders the user interface.
-    fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
+    fn draw<'a, I1, I2, T: RenderMsg + 'a>(
+        &mut self,
+        frame: &mut Frame,
+        path_for_measure: I1,
+        path_for_render: I2,
+        path_len: usize,
+        current_id: Uuid,
+    ) where
+        I1: IntoIterator<Item = &'a T>,
+        I2: IntoIterator<Item = &'a T>,
+    {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
 
@@ -357,21 +317,60 @@ impl App {
             .split(frame.area());
 
         let model_info_area = main_layout[0];
-        let chat_area = main_layout[1];
+        let chat_area_full = main_layout[1];
         let input_area = main_layout[2];
         let status_area = main_layout[3];
 
-        let status_line_area = layout_statusline(5, status_area);
+        // Optionally split chat into conversation (left) and context preview (right)
+        let (chat_area, preview_area_opt) = if self.show_context_preview {
+            let chat_columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(chat_area_full);
+            (chat_columns[0], Some(chat_columns[1]))
+        } else {
+            (chat_area_full, None)
+        };
 
-        // ---------- Scroll State -------------
-        // let convo_length = convo.height;
-        // self.convo_scrollstate = self.convo_scrollstate.content_length(convo_length as usize);
+        // Remember conversation area for mouse hit-testing is handled by ConversationView.
+
+        let status_line_area = layout_statusline(5, status_area);
 
         // ---------- Prepare Widgets ----------
         // Render message tree
-        let conversation_width = main_layout[0].width.saturating_sub(6);
+        let conversation_width = chat_area.width.saturating_sub(6);
+        let viewport_height = chat_area.height;
 
-        render_messages(self, frame, path, conversation_width, chat_area);
+        // Clamp selected index to valid range to avoid OOB when the path shrinks between frames.
+        let selected_index_opt = self
+            .list
+            .selected()
+            .map(|i| i.min(path_len.saturating_sub(1)));
+
+        // Prepare and render conversation via ConversationView
+        self.conversation.prepare(
+            path_for_measure,
+            path_len,
+            conversation_width,
+            viewport_height,
+            selected_index_opt,
+        );
+        self.conversation.set_last_chat_area(chat_area);
+        self.conversation.render(
+            frame,
+            path_for_render,
+            conversation_width,
+            chat_area,
+            selected_index_opt,
+        );
+
+        // Right-side context preview (placeholder until wired to Rag events)
+        if let Some(preview_area) = preview_area_opt {
+            let preview = Paragraph::new("Context Preview\nWaiting for results…")
+                .block(Block::bordered().title(" Context Preview "));
+            frame.render_widget(preview, preview_area);
+        }
+
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
@@ -379,29 +378,14 @@ impl App {
             _ => "Input",
         };
 
-        // Guess at the amount of scroll needed:
-
-        // ---------- Text Wrap ----------------
-        let input_width = input_area.width.saturating_sub(2);
-        let input_wrapped = textwrap::wrap(self.input_buffer.as_str(), input_width as usize);
-        self.input_scrollstate = self.input_scrollstate.content_length(input_wrapped.len());
-
-        // -- Get cursor position
-        if !self.is_trailing_whitespace {
-            self.input_cursor_col = input_wrapped.last().map(|line| line.len()).unwrap_or(0) as u16;
-        }
-        self.input_cursor_row = (input_wrapped.len().saturating_sub(1)) as u16;
-        // --
-
-        let input_text = Text::from_iter(input_wrapped);
-        let input = Paragraph::new(input_text)
-            .scroll((self.input_vscroll, 0))
-            .block(Block::bordered().title(input_title))
-            .style(match self.mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-                Mode::Command => Style::default().fg(Color::Cyan),
-            });
+        // Render input box via InputView
+        self.input_view.render(
+            frame,
+            input_area,
+            &self.input_buffer,
+            self.mode,
+            input_title,
+        );
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
@@ -428,7 +412,7 @@ impl App {
 
         // ---------- Render widgets in layout ----------
         // -- top level
-        frame.render_widget(input, input_area);
+        // InputView rendered above.
         // frame.render_stateful_widget(
         //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
         //         .begin_symbol(Some("↑"))
@@ -470,19 +454,7 @@ impl App {
             }
         }
 
-        match self.mode {
-            Mode::Insert | Mode::Command => {
-                // Position cursor at end of input buffer
-                frame.set_cursor_position((
-                    input_area.x + 1 + self.input_cursor_col,
-                    input_area.y + 1 + self.input_cursor_row,
-                ));
-            }
-            Mode::Normal => {
-                // Hide cursor in normal mode
-                // - By not calling `set_cursor_position`, the cursor is automatically hidden
-            }
-        }
+        // Cursor position is handled by InputView.
     }
 
     fn create_branch(&mut self) {
@@ -509,95 +481,35 @@ impl App {
         }
     } // The read lock `guard` is dropped here.
 
-    /// Handles the key events and updates the state of [`App`]
+    /// Handles the key events and updates application state via high-level Actions.
+    ///
+    /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
-        // Global quit command - this is a UI-local action
-        // Question: Why is this a UI-local action? Shouldn't this send a message to the rest of
-        // the application to shut down, e.g. the other tokio runtimes?
-        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            self.quit();
-            return;
+        if let Some(action) = to_action(self.mode, key, self.command_style) {
+            self.handle_action(action);
         }
-
-        match self.mode {
-            Mode::Normal => self.handle_normal_mode(key),
-            Mode::Insert => self.handle_insert_mode(key),
-            Mode::Command => self.handle_command_mode(key),
-        }
+        self.needs_redraw = true;
     }
 
-    fn handle_insert_mode(&mut self, key: KeyEvent) {
-        if key.modifiers == KeyModifiers::CONTROL {
-            match key.code {
-                // NOTE: This is here just for testing, remove it when we actually want to release
-                // this.
-                KeyCode::Char('a') => {
-                    self.input_buffer
-                        .push_str("Agnostic anthromoporcine agrippa");
-                }
-                // FIX: testing
-                KeyCode::Up => {
-                    self.input_scrollstate.prev();
-                }
-                KeyCode::Down => {
-                    self.input_scrollstate.next();
-                }
-                _ => {}
-            }
-        }
-        match key.code {
-            // 1. UI-Local State Change: Switch mode
-            KeyCode::Esc => self.mode = Mode::Normal,
+    /// Centralized Action handler. This consolidates the previous per-mode handlers
+    /// into a single, testable entrypoint.
+    fn handle_action(&mut self, action: Action) {
+        use crate::chat_history::NavigationDirection::{Next, Previous};
 
-            // 2. Shared State Change: Send a command
-            KeyCode::Enter => {
-                if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
-                    // Somewhat complex implementation here, could use some work.
-                    // - Basically, we first start adding the user message, which is then updated
-                    // after we have embedded the user message.
-                    // - The currently selected crate is then parsed, checking to see if we need to
-                    // update the database or not. Currently this is quite coarse, such that we
-                    // reparse the entire directory if any file changes are noticed. However, we
-                    // only update the embeddings of the changed files.
-                    // - Concurrently with the parsing, the user's message is embedded, then once
-                    // the oneshot is sent to signify that the parsing has finished and database
-                    // has been updated (if needed), then the user's message is used with semantic
-                    // search to query the database, and continues into context building and
-                    // finally sending the message to the LLM.
-                    let (completion_tx, completion_rx) = oneshot::channel();
-                    let (scan_tx, scan_rx) = oneshot::channel();
-                    let new_msg_id = Uuid::new_v4();
-                    self.send_cmd(StateCommand::AddUserMessage {
-                        // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
-                        // instead.
-                        content: self.input_buffer.clone(),
-                        new_msg_id,
-                        completion_tx,
-                    });
-                    self.send_cmd(StateCommand::ScanForChange { scan_tx });
-                    // TODO: Expand EmbedMessage to include other types of message
-                    self.send_cmd(StateCommand::EmbedMessage {
-                        new_msg_id,
-                        completion_rx,
-                        scan_rx
-                    });
-                    self.send_cmd(StateCommand::AddMessage {
-                        kind: MessageKind::SysInfo,
-                        content: "Embedding User Message".to_string(),
-                        target: llm::ChatHistoryTarget::Main,
-                        parent_id: new_msg_id,
-                        child_id: Uuid::new_v4(),
-                    });
-                    // self.send_cmd(StateCommand::ForwardContext { new_msg_id });
-                    // Clear the UI-local buffer after sending the command
-                    self.input_buffer.clear();
-                }
+        match action {
+            Action::Quit => {
+                self.quit();
             }
 
-            // 3. UI-Local State Change: Modify input buffer
-            KeyCode::Char(c) => {
-                // Handle command prefix for slash mode
-                if self.command_style == CommandStyle::Slash
+            Action::SwitchMode(new_mode) => {
+                self.mode = new_mode;
+                self.pending_char = None;
+            }
+
+            Action::InsertChar(c) => {
+                // Special-case: Slash style treats leading '/' as entering Command mode.
+                if self.mode == Mode::Insert
+                    && self.command_style == CommandStyle::Slash
                     && c == '/'
                     && self.input_buffer.is_empty()
                 {
@@ -607,176 +519,177 @@ impl App {
                     self.add_input_char(c);
                 }
             }
-            KeyCode::Backspace => self.handle_backspace(),
-            // FIX: testing
-            KeyCode::Up => {
-                self.convo_scrollstate.next();
-            }
-            KeyCode::Down => {
-                self.convo_scrollstate.prev();
-            }
-            _ => {}
-        }
-    }
 
-    fn handle_backspace(&mut self) {
-        let last_char = self.input_buffer.pop();
-        self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
-        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
-    }
-
-    pub fn handle_command_mode(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-            }
-            KeyCode::Enter => {
-                self.execute_command();
-                self.input_buffer.clear();
-                self.mode = Mode::Insert;
-            }
-            KeyCode::Char(c) => self.add_input_char(c),
-            KeyCode::Backspace => {
-                if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
+            Action::Backspace => {
+                if self.mode == Mode::Command
+                    && self.input_buffer.len() == 1
+                    && self.input_buffer.starts_with('/')
+                {
                     self.mode = Mode::Insert;
                 }
                 self.handle_backspace();
             }
-            _ => {}
+
+            Action::Submit => {
+                // Enter in Insert mode: send the user's message via StateCommands.
+                if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
+                    let (completion_tx, completion_rx) = oneshot::channel();
+                    let (scan_tx, scan_rx) = oneshot::channel();
+                    let new_msg_id = Uuid::new_v4();
+                    self.send_cmd(StateCommand::AddUserMessage {
+                        content: self.input_buffer.clone(),
+                        new_msg_id,
+                        completion_tx,
+                    });
+                    self.send_cmd(StateCommand::ScanForChange { scan_tx });
+                    self.send_cmd(StateCommand::EmbedMessage {
+                        new_msg_id,
+                        completion_rx,
+                        scan_rx,
+                    });
+                    self.send_cmd(StateCommand::AddMessage {
+                        kind: MessageKind::SysInfo,
+                        content: "Embedding User Message".to_string(),
+                        target: llm::ChatHistoryTarget::Main,
+                        parent_id: new_msg_id,
+                        child_id: Uuid::new_v4(),
+                    });
+                    self.input_buffer.clear();
+                }
+            }
+
+            Action::ExecuteCommand => {
+                self.execute_command();
+                self.input_buffer.clear();
+                self.mode = Mode::Insert;
+            }
+
+            Action::NavigateListUp => {
+                self.conversation.set_free_scrolling(false);
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Up,
+                });
+            }
+            Action::NavigateListDown => {
+                self.conversation.set_free_scrolling(false);
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Down,
+                });
+            }
+
+            Action::PageDown => {
+                self.conversation.page_down();
+                self.conversation.set_free_scrolling(true);
+                self.pending_char = None;
+            }
+            Action::PageUp => {
+                self.conversation.page_up();
+                self.conversation.set_free_scrolling(true);
+                self.pending_char = None;
+            }
+
+            Action::BranchPrev => {
+                self.conversation.set_free_scrolling(false);
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateBranch {
+                    direction: Previous,
+                });
+            }
+            Action::BranchNext => {
+                self.conversation.set_free_scrolling(false);
+                self.pending_char = None;
+                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+            }
+
+            Action::ScrollLineDown => {
+                self.conversation.scroll_line_down();
+                self.conversation.set_free_scrolling(true);
+                self.pending_char = None;
+            }
+            Action::ScrollLineUp => {
+                self.conversation.scroll_line_up();
+                self.conversation.set_free_scrolling(true);
+                self.pending_char = None;
+            }
+
+            Action::GotoSequenceG => {
+                if matches!(self.pending_char, Some('g')) {
+                    // gg -> bottom (preserve existing behavior)
+                    self.send_cmd(StateCommand::NavigateList {
+                        direction: ListNavigation::Top,
+                    });
+                    self.conversation.request_bottom();
+                    self.conversation.set_free_scrolling(false);
+                    self.pending_char = None;
+                } else {
+                    self.pending_char = Some('g');
+                }
+            }
+            Action::JumpTop => {
+                // 'G' -> top (preserve existing behavior)
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Bottom,
+                });
+                self.conversation.request_top();
+                self.conversation.set_free_scrolling(false);
+                self.pending_char = None;
+            }
+
+            Action::OpenCommand => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                if self.command_style == CommandStyle::Slash {
+                    self.input_buffer = "/hybrid ".to_string();
+                } else {
+                    self.input_buffer = ":hybrid ".to_string();
+                }
+            }
+            Action::OpenCommandColon => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = ":".to_string();
+            }
+            Action::OpenQuickModel => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = "/model ".to_string();
+            }
+            Action::OpenHelp => {
+                self.pending_char = None;
+                self.mode = Mode::Command;
+                self.input_buffer = "/help".to_string();
+            }
+            Action::TogglePreview => {
+                self.pending_char = None;
+                self.show_context_preview = !self.show_context_preview;
+            }
+
+            Action::InputScrollPrev => {
+                self.input_view.scroll_prev();
+            }
+            Action::InputScrollNext => {
+                self.input_view.scroll_next();
+            }
         }
+    }
+
+    fn handle_backspace(&mut self) {
+        let _ = self.input_buffer.pop();
     }
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
-        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
-        if self.is_trailing_whitespace {
-            self.input_cursor_col += 1;
-        }
     }
 
     fn execute_command(&mut self) {
-        let cmd = self.input_buffer.clone();
-        // Remove command prefix for processing
-        let cmd_str = match self.command_style {
-            CommandStyle::NeoVim => cmd.trim_start_matches(':').trim(),
-            CommandStyle::Slash => cmd.trim_start_matches('/').trim(),
-        };
-
-        match cmd_str {
-            // TODO: Add an indicator that the command is recognized before the user enters the
-            // command. This is one cool benefit of having an immediate mode renderer.
-            "help" => self.show_command_help(),
-            cmd if cmd.starts_with("index start") => {
-                let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
-                let workspace = if parts.len() >= 3 {
-                    parts[2].to_string()
-                } else {
-                    // Default to current directory if no path provided
-                    ".".to_string()
-                };
-
-                // Validate the directory exists
-                match std::fs::metadata(&workspace) {
-                    Ok(metadata) if metadata.is_dir() => {
-                        self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: true });
-                    }
-                    Ok(_) => {
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: format!("Error: '{}' is not a directory", workspace),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        });
-                    }
-                    Err(e) => {
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: format!("Error accessing directory '{}': {}", workspace, e),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        });
-                    }
-                }
-            }
-            "index pause" => self.send_cmd(StateCommand::PauseIndexing),
-            "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
-            "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
-            "check api" => {
-                self.check_api_keys();
-            }
-            "model list" => self.list_models(),
-            cmd if cmd.starts_with("model ") => {
-                let alias = cmd.trim_start_matches("model ").trim();
-                tracing::debug!("StateCommand::SwitchModel {}", alias);
-                if !alias.is_empty() {
-                    self.send_cmd(StateCommand::SwitchModel {
-                        alias_or_id: alias.to_string(),
-                    });
-                }
-            }
-            "save history" => {
-                self.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: "Saving conversation history...".to_string(),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                });
-                self.send_cmd(StateCommand::SaveState);
-            }
-            // Loads a single target backup database from the default config dir into cozo,
-            // overwriting any currently loaded db.
-            // Expects a the command `/load crate`
-            cmd if cmd.starts_with("load crate") => {
-                match cmd.trim_start_matches("load crate").trim() {
-                    crate_name if !crate_name.contains(' ') => {
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: format!("Attempting to load code graph for {crate_name}..."),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        });
-                        self.send_cmd(StateCommand::LoadDb {
-                            crate_name: crate_name.to_string(),
-                        });
-                    }
-                    _ => {
-                        self.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                        });
-                    }
-                }
-            }
-            "query load" | "ql" => {
-                self.send_cmd(StateCommand::ReadQuery {
-                    query_name: "default".to_string(),
-                    file_name: "default.dl".to_string(),
-                });
-            }
-            "save db" | "sd" => {
-                self.send_cmd(StateCommand::SaveDb);
-            }
-            cmd if cmd.starts_with("query load ") => {
-                if let Some((query_name, file_name)) =
-                    cmd.trim_start_matches("query load ").trim().split_once(' ')
-                {
-                    tracing::debug!("Reading Query {} from file {}", query_name, file_name);
-                    self.send_cmd(StateCommand::ReadQuery {
-                        query_name: query_name.to_string(),
-                        file_name: file_name.to_string(),
-                    });
-                }
-            }
-            cmd => {
-                // TODO: Implement `tracing` crate import
-                // Placeholder for command error handling
-                // Add more helpful message here
-                self.show_command_help();
-                tracing::warn!("Unknown command: {}", cmd);
-            }
-        }
+        commands::execute_command(self);
     }
 
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: HELP_COMMANDS.to_string(),
+            msg: commands::HELP_COMMANDS.to_string(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });
@@ -826,76 +739,8 @@ impl App {
         });
     }
 
-    /// This function is responsible for doing something with user input when
-    /// the terminal is in "Normal" Mode.
-    fn handle_normal_mode(&mut self, key: KeyEvent) {
-        use chat_history::NavigationDirection::{Next, Previous};
-
-        match key.code {
-            KeyCode::Char('q') => self.quit(),
-            KeyCode::Char('i') => self.mode = Mode::Insert,
-
-            // --- NAVIGATION ---
-            // Send commands instead of calling local methods
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Up,
-                });
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Down,
-                });
-            }
-            KeyCode::Char('K') => {
-                // Shift-K for Top
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Top,
-                });
-            }
-            KeyCode::Char('J') => {
-                // Shift-J for Bottom
-                self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Bottom,
-                });
-            }
-            KeyCode::Char('h') | KeyCode::Left => self.send_cmd(StateCommand::NavigateBranch {
-                direction: Previous,
-            }),
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
-            }
-
-            // --- COMMANDS ---
-            KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
-                self.mode = Mode::Command;
-                self.input_buffer = ":".to_string();
-            }
-            KeyCode::Char('m') => {
-                self.mode = Mode::Command;
-                self.input_buffer = "/model ".to_string();
-            }
-            KeyCode::Char('?') => {
-                self.mode = Mode::Command;
-                self.input_buffer = "/help".to_string();
-            }
-            _ => {}
-        }
-    }
-
     /// Set running to false to quit the application.
     fn quit(&mut self) {
         self.running = false;
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderableMessage {
-    id: Uuid,
-    kind: MessageKind,
-    content: String, // Add other fields if needed for drawing, e.g. status
-}
-
-fn truncate_uuid(id: Uuid) -> String {
-    id.to_string().chars().take(8).collect()
 }

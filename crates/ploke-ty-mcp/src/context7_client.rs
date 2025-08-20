@@ -88,9 +88,10 @@ pub async fn client() -> Result<()> {
 /// ```
 ///
 /// ## Example Return
+/// ---
 /// LANGUAGE: APIDOC
 /// CODE:
-/// ```
+/// ```text
 /// Entities API Changes:
 ///
 /// 1. Entities::flush
@@ -125,9 +126,10 @@ pub async fn client() -> Result<()> {
 /// DESCRIPTION: This Rust example demonstrates how to observe `CheckChangeTicks` and pass it to a custom schedule stored as a resource. This is useful when manually managing system ticks, ensuring that systems within the schedule correctly update their change ticks when `World::check_change_ticks` is called.
 /// SOURCE: https://github.com/bevyengine/bevy/blob/main/release-content/migration-guides/check_change_ticks.md#_snippet_0
 ///
+/// ---
 /// LANGUAGE: Rust
 /// CODE:
-/// ```
+/// ```text
 /// use bevy_ecs::prelude::*;
 /// use bevy_ecs::component::CheckChangeTicks;
 ///
@@ -170,7 +172,8 @@ pub async fn get_library_docs(
 /// exactly one best choice.
 /// - JL 2025
 ///
-/// ```rust,test
+/// ---
+/// ```rust,ignore
 ///
 /// let service = ()
 ///     .serve(TokioChildProcess::new(Command::new("npx").configure(
@@ -200,8 +203,9 @@ pub async fn get_library_docs(
 /// Ok(())
 /// ```
 ///
+/// ---
 /// ## Tool call info (truncated on description, which is long)
-/// ```rust
+/// ```text
 /// Tool {
 ///     name: "resolve-library-id",
 ///     description: Some(
@@ -290,7 +294,8 @@ pub async fn get_library_docs(
 ///
 /// #[derive(Component)]
 /// struct Position { x: f32, y: f32 }
-/// \`\`\`#
+/// \`\`\`
+/// "#;
 /// ```
 pub async fn resolve_library_id(
     service: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
@@ -317,6 +322,10 @@ mod test {
     use super::*;
     #[tokio::test]
     async fn resolve_library_id_bevy() -> Result<()> {
+        if std::env::var("PLOKE_E2E_MCP").ok().as_deref() != Some("1") {
+            eprintln!("Skipping E2E Context7 test: set PLOKE_E2E_MCP=1 to enable.");
+            return Ok(());
+        }
         let service = ()
             .serve(TokioChildProcess::new(Command::new("npx").configure(
                 |cmd| {
@@ -351,6 +360,10 @@ mod test {
 
     #[tokio::test]
     async fn get_library_docs_bevy() -> Result<()> {
+        if std::env::var("PLOKE_E2E_MCP").ok().as_deref() != Some("1") {
+            eprintln!("Skipping E2E Context7 test: set PLOKE_E2E_MCP=1 to enable.");
+            return Ok(());
+        }
         let service = ()
             .serve(TokioChildProcess::new(Command::new("npx").configure(
                 |cmd| {

@@ -24,4 +24,3 @@ Phase 2 parallel parsing ([`00_overview_batch_processing_model.md`](docs/plans/u
 
 ## Compliance
 - Aligns with multi-phase processing goals ([`PROPOSED_ARCH_V3.md`](PROPOSED_ARCH_V3.md)).
-- Improves debuggability ([`IDIOMATIC_RUST.md`](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md)).

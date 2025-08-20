@@ -17,6 +17,5 @@ pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
 
 pub fn log_db_error(e: cozo::Error) -> TransformError {
     tracing::error!(target: "db", "{}", to_string_pretty(&format_error_as_json(e, None)).unwrap());
-    TransformError::Database( "when executing against relation".to_string() )
+    TransformError::Database("when executing against relation".to_string())
 }
-

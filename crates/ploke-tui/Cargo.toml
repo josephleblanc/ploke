@@ -29,8 +29,9 @@ governor = "0.10"
 
 # embeddings
 ploke-embed = { path = "../ingest/ploke-embed" }
-ploke-io = { path = "../ploke-io" }
+ploke-io = { path = "../ploke-io", features = ["watcher"] }
 ploke-db = { path = "../ploke-db" }
+ploke-rag = { path = "../ploke-rag" }
 
 # common
 ploke-core = { path = "../ploke-core" }
@@ -52,7 +53,7 @@ color-eyre = "0.6"
 
 # integrate workspace error handling
 ploke-error = { path = "../ploke-error" }
-thiserror = "1.0"
+thiserror = { workspace = true }
 log = { workspace = true }
 
 # concurrency logging
@@ -78,7 +79,15 @@ test-context = "0.1"
 fake = "4.3.0"
 cozo = { workspace = true }
 rand = "0.9"
+insta = "1.39.0"
+criterion = "0.5"
+quote = { workspace = true }
+syn = { workspace = true }
 
 [features]
 default = ["custom_list"]
 custom_list = []
+
+[[bench]]
+name = "ui_measure"
+harness = false

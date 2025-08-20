@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::local;
+use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EmbedError {
@@ -32,7 +32,7 @@ pub enum EmbedError {
 
     #[error("Query error: {0}")]
     QueryError(String),
-    
+
     #[error("Ploke core error: {0}")]
     PlokeCore(#[from] ploke_error::Error),
 

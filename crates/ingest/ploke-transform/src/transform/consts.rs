@@ -79,9 +79,6 @@ mod tests {
         schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema},
     };
 
-    use ploke_test_utils::init_test_tracing;
-    use tracing::Level;
-
     use super::transform_consts;
     #[test]
     fn test_transform_consts() -> Result<(), Box<TransformError>> {
@@ -101,10 +98,9 @@ mod tests {
         let const_schema = ConstNodeSchema::SCHEMA;
         tracing::info!("identity script:\n{}", const_schema.script_identity());
         tracing::info!("create script:\n{}", const_schema.script_create());
-        const_schema.create_and_insert(&db)
-            .inspect_err(|e| {
-                tracing::error!("{e}");
-            })?;
+        const_schema.create_and_insert(&db).inspect_err(|e| {
+            tracing::error!("{e}");
+        })?;
 
         let attribute_schema = &AttributeNodeSchema::SCHEMA;
         attribute_schema.create_and_insert(&db)?;

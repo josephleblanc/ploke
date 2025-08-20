@@ -34,4 +34,3 @@ impl Error {
         matches!(self, Error::Warning(_))
     }
 }
-

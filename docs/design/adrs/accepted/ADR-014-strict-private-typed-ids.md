@@ -39,11 +39,8 @@ We will implement typed node identifiers with strict encapsulation using a priva
 ## Compliance
 [PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items:
 - Section 5: Component Details (enforces stricter data hiding within components)
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections:
 - C-NEWTYPE: Newtypes provide static distinctions.
 - C-NEWTYPE-HIDE: Newtypes encapsulate implementation details (taken to a stricter level).
 - C-STRUCT-PRIVATE: Structs have private fields (applied rigorously to the newtype).
 - Type safety: Leverages the type system effectively.
 - Dependability: Crate is unlikely to do the wrong thing (by preventing internal misuse).
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A
-[WORKING_AGREEMENT.md](ai_workflow/AI_Always_Instructions/WORKING_AGREEMENT.md): Aligns with the core goal of idiomatic Rust and leveraging the type system for static guarantees.

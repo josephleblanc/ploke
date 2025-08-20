@@ -7,26 +7,25 @@ use tokio::{fs, sync::mpsc};
 use tracing::{error, info, warn};
 
 use crate::error::ErrorSeverity;
-use crate::ploke_rag::RagEvent;
-use crate::ErrorEvent;
 use crate::{AppEvent, EventBus, system::SystemEvent};
+use crate::{ErrorEvent, RagEvent};
 
 pub struct FileManager {
     io_handle: ploke_io::IoManagerHandle,
-    event_rx: broadcast::Receiver<crate::AppEvent>,
-    event_tx: broadcast::Sender<crate::AppEvent>,
+    event_rx: broadcast::Receiver<AppEvent>,
+    event_tx: broadcast::Sender<AppEvent>,
     context_tx: mpsc::Sender<RagEvent>,
-    realtime_event_tx: broadcast::Sender<crate::AppEvent>,
+    realtime_event_tx: broadcast::Sender<AppEvent>,
 }
 
 impl FileManager {
     /// Creates a new FileManager instance
     pub fn new(
         io_handle: ploke_io::IoManagerHandle,
-        event_rx: broadcast::Receiver<crate::AppEvent>,
-        event_tx: broadcast::Sender<crate::AppEvent>,
+        event_rx: broadcast::Receiver<AppEvent>,
+        event_tx: broadcast::Sender<AppEvent>,
         context_tx: mpsc::Sender<RagEvent>,
-        realtime_event_tx: broadcast::Sender<crate::AppEvent>,
+        realtime_event_tx: broadcast::Sender<AppEvent>,
     ) -> Self {
         Self {
             io_handle,
@@ -45,7 +44,7 @@ impl FileManager {
     }
 
     /// Processes incoming file-related events
-    async fn handle_event(&mut self, event: crate::AppEvent) {
+    async fn handle_event(&mut self, event: AppEvent) {
         match event {
             AppEvent::System(SystemEvent::SaveRequested(content)) => {
                 let path = match std::env::current_dir() {
@@ -56,28 +55,58 @@ impl FileManager {
                             Either cwd does not exist or insufficient permissions, prop error\n{}",
                             e.to_string()
                         );
+                        // Surface to UI
+                        let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
+                            message: format!("Save failed: working directory invalid: {}", e),
+                            severity: ErrorSeverity::Error,
+                        }));
                         return;
                     }
                 };
-                if let Err(e) = self.save_content(&path, &content).await {
-                    error!("Save failed: {}", e);
-                    // TODO: Add response that conversation history is indeed saved
-                } else {
-                    info!("Save Suceeded: {:?}", &path);
+                match self.save_content(&path, &content).await {
+                    Ok(final_path) => {
+                        info!("Chat history saved to {}", final_path.display());
+                    }
+                    Err(e) => {
+                        error!("Save failed: {}", e);
+                        // Surface to UI
+                        let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
+                            message: format!("Save failed: {}", e),
+                            severity: ErrorSeverity::Error,
+                        }));
+                    }
                 }
             }
-            AppEvent::System(SystemEvent::ReadQuery{ file_name, query_name }) => {
+            AppEvent::System(SystemEvent::ReadQuery {
+                file_name,
+                query_name,
+            }) => {
                 let path = match std::env::current_dir() {
                     Ok(pwd_path) => pwd_path.join("query").join(file_name),
-                    Err(e) => { self.send_path_error(e); return; }
+                    Err(e) => {
+                        self.send_path_error(e);
+                        return;
+                    }
                 };
                 let query_content = match tokio::fs::read_to_string(path).await {
                     Ok(s) => s,
-                    Err(e) => {self.send_path_error(e); return;}
+                    Err(e) => {
+                        self.send_path_error(e);
+                        return;
+                    }
                 };
-                self.realtime_event_tx.send(AppEvent::System(SystemEvent::LoadQuery{  query_content, query_name }))
-                    .expect("Invariant Violated: AppEvent rx closed before FileManager Dropped");
-
+                if let Err(e) = self
+                    .realtime_event_tx
+                    .send(AppEvent::System(SystemEvent::WriteQuery {
+                        query_content,
+                        query_name,
+                    }))
+                {
+                    warn!(
+                        "Failed to forward WriteQuery to realtime channel: {}",
+                        e
+                    );
+                }
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
                 // tracing::info!(
@@ -125,26 +154,34 @@ impl FileManager {
     fn send_path_error(&mut self, e: std::io::Error) {
         let message = e.to_string();
         warn!("Failed to load query from file {}", message);
-        self.event_tx.send(AppEvent::Error(ErrorEvent {
-            message,
-            severity: ErrorSeverity::Warning
-        })).expect("Invariant violated: ReadQuery event after AppEvent reader closed");
+        self.event_tx
+            .send(AppEvent::Error(ErrorEvent {
+                message,
+                severity: ErrorSeverity::Warning,
+            }))
+            .expect("Invariant violated: ReadQuery event after AppEvent reader closed");
     }
 
     /// Saves content to disk atomically in a temp location then moves to final path
     async fn save_content(
         &self,
-        path: &std::path::Path,
+        dir: &std::path::Path,
         content: &[u8],
-    ) -> Result<(), std::io::Error> {
-        info!("Trying to save to file: {}", path.display());
-        let temp_path = path.join(".ploke_history").with_extension("md");
+    ) -> Result<std::path::PathBuf, std::io::Error> {
+        let final_path = dir.join(".ploke_history.md");
+        let temp_path = dir.join(".ploke_history.md.tmp");
+
+        info!("Saving chat history atomically to {}", final_path.display());
+
+        // Write to temp file in the same directory
         let mut temp_file = fs::File::create(&temp_path).await?;
         temp_file.write_all(content).await?;
         temp_file.sync_all().await?;
-        // fs::rename(&temp_path, path).await?;
-        info!("Chat history saved to {}", path.display());
-        Ok(())
+
+        // On Unix, rename within the same directory is atomic and replaces the target.
+        fs::rename(&temp_path, &final_path).await?;
+
+        Ok(final_path)
     }
 
     /// Computes default save path for chat history
@@ -176,4 +213,3 @@ impl FileManager {
 // let path = try_or_return!(self, std::env::current_dir().map(|p|
 // p.join("query").join(file)));
 // let content = try_or_return!(self, tokio::fs::read_to_string(path).await);
-

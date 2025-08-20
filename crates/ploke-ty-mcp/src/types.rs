@@ -1,0 +1,116 @@
+use std::fmt;
+use thiserror::Error;
+
+/// Strongly-typed identifier for an MCP server instance.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerId(pub String);
+
+impl ServerId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for ServerId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<String> for ServerId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for ServerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Well-known servers with suggested default priorities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrioritizedServer {
+    Git,
+    Context7,
+}
+
+impl PrioritizedServer {
+    pub fn id(self) -> ServerId {
+        match self {
+            PrioritizedServer::Git => ServerId("git".to_string()),
+            PrioritizedServer::Context7 => ServerId("context7".to_string()),
+        }
+    }
+    pub fn default_priority(self) -> u8 {
+        match self {
+            PrioritizedServer::Git => 0,
+            PrioritizedServer::Context7 => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub text: String,
+}
+
+/// Unified error type for MCP client operations.
+#[derive(Debug, Error)]
+pub enum McpError {
+    #[error("Transport error: {0}")]
+    Transport(String),
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+    #[error("Tool error: {0}")]
+    Tool(String),
+    #[error("Spawn error: {0}")]
+    Spawn(String),
+    #[error("Timeout")]
+    Timeout,
+    #[error("Canceled")]
+    Canceled,
+    #[error("Not found: {0}")]
+    NotFound(String),
+    #[error("Config error: {0}")]
+    Config(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
+}
+
+/// Async traits to decouple typed clients from their backends.
+/// These enable swapping MCP-backed clients for native implementations later.
+#[async_trait::async_trait]
+pub trait GitOps: Send + Sync {
+    async fn status(&self, repo_path: &str) -> Result<String, McpError>;
+    async fn diff(&self, repo_path: &str, args: Option<Vec<String>>) -> Result<String, McpError>;
+    async fn add(&self, repo_path: &str, paths: Vec<String>) -> Result<String, McpError>;
+    async fn commit(&self, repo_path: &str, message: &str, all: bool) -> Result<String, McpError>;
+    async fn checkout(
+        &self,
+        repo_path: &str,
+        branch: &str,
+        create: bool,
+    ) -> Result<String, McpError>;
+    async fn branch(&self, repo_path: &str) -> Result<String, McpError>;
+}
+
+#[async_trait::async_trait]
+pub trait DocsLookup: Send + Sync {
+    async fn resolve_library_id(&self, name: &str) -> Result<String, McpError>;
+    async fn get_library_docs(
+        &self,
+        id: &str,
+        tokens: usize,
+        topic: &str,
+    ) -> Result<String, McpError>;
+}

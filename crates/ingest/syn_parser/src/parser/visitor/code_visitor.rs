@@ -552,7 +552,6 @@ impl<'a> CodeVisitor<'a> {
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
     fn visit_item_fn(&mut self, func: &'ast ItemFn) {
-
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -2018,7 +2017,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
-
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -2157,7 +2155,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
-        let is_in_module_scope = self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module );
+        let is_in_module_scope = self
+            .state
+            .current_primary_defn_scope
+            .last()
+            .is_some_and(|tyid| tyid.kind() == ItemKind::Module);
         log::trace!(target: "some_target",
             "
 is_in_module_scope: {}

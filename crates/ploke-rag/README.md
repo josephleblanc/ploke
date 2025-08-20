@@ -1,5 +1,21 @@
 # ploke-rag
 
+This crate provides the core Retrieval-Augmented Generation (RAG) services for the Ploke ecosystem. It combines dense vector search, sparse keyword search, and graph-based queries to retrieve relevant code context for LLM prompts.
+
+## Current Functionality
+
+The `ploke-rag` crate currently provides a `RagService` that orchestrates hybrid search capabilities.
+
+-   **`RagService`**: The main entry point for performing searches. It requires handles to `ploke-db` and `ploke-embed`.
+-   **BM25 Sparse Search**: Implements keyword-based search using a BM25 index. The service can build the index and perform searches against it.
+-   **Hybrid Search**: Combines the results of dense vector search (from `ploke-db`) and sparse BM25 search to provide more relevant results than either method alone.
+
+This service is used by `ploke-tui` to power the `/bm25 search` and `/hybrid search` commands.
+
+## Planned Flow
+
+The long-term vision for `ploke-rag` is a more sophisticated, multi-stage pipeline that leverages LLMs for query understanding and result reranking.
+
 #### crate flow
 ```mermaid
 ---

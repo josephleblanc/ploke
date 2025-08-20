@@ -55,10 +55,8 @@ We will adopt the "Alternative A" strategy: Evaluate CFG conditions in Rust post
     - Defers handling of `#[cfg_attr(...)]`.
 
 ## Compliance
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections:
 - C-GOOD-ERR: Error handling during `cfg_expr::Expression::parse` (in Phase 3/RAG) should be robust.
 - C-DEBUG: `cfg_expr::Expression` should derive `Debug` for logging/diagnostics when used.
 - C-SERDE: Required for serializing the *final* `Expression` in Phase 3. Assumes `cfg-expr` provides this or we use a stable string format.
 
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A
-[PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items: N/A
+[PROPOSED_ARCH_V3.md](./../../../../../../PROPOSED_ARCH_V3.md) Items: N/A

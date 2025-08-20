@@ -12,7 +12,6 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
-
 use std::path::PathBuf;
 
 // Add top-level serde imports for derives
@@ -20,44 +19,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod graph;
 
-#[derive(Debug, Clone)]
-pub struct EmbeddingData {
-    pub id: Uuid,
-    pub name: String,
-    pub file_path: PathBuf,
-    pub file_tracking_hash: TrackingHash,
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub node_tracking_hash: TrackingHash,
-    pub namespace: Uuid
-}
-
-// TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
-#[derive(Debug, Clone)]
-pub struct FileData {
-    /// Uuid is of the owner file-level module
-    pub id: Uuid,
-    pub namespace: Uuid,
-    pub file_tracking_hash: TrackingHash,
-    pub file_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub struct ChangedFileData {
-    /// Uuid is of the owner file-level module
-    pub id: Uuid,
-    pub namespace: Uuid,
-    pub old_tracking_hash: TrackingHash,
-    pub new_tracking_hash: TrackingHash,
-    pub file_path: PathBuf,
-}
-
-impl ChangedFileData {
-    pub fn from_file_data(value: FileData, new_tracking_hash: TrackingHash) -> Self {
-        let FileData { id, namespace, file_tracking_hash, file_path } = value;
-        Self { id, namespace, old_tracking_hash: file_tracking_hash, new_tracking_hash, file_path }
-    }
-}
+pub mod io_types;
+pub use io_types::{ ChangedFileData, EmbeddingData, FileData, WriteSnippetData, WriteResult };
 
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {

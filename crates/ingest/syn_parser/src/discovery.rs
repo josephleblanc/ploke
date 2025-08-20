@@ -745,11 +745,17 @@ pub fn run_discovery_phase(
         // both of these code graphs into the database at the same time as separate packages in the
         // same crate, but it is beyond our scope for now.
         // - See [known limitation](ploke/docs/plans/uuid_refactor/01b_phase1_known_limitations.md)
-        let files = if files.iter().any(|p| p.file_name().is_some_and(|f| f == "lib.rs")) {
-             files.into_iter()
+        let files = if files
+            .iter()
+            .any(|p| p.file_name().is_some_and(|f| f == "lib.rs"))
+        {
+            files
+                .into_iter()
                 .filter(|p| p.file_name().is_some_and(|f| f != "main.rs"))
                 .collect_vec()
-        } else { files };
+        } else {
+            files
+        };
 
         // --- Combine into CrateContext (Always created, might have empty files) ---
         let context = CrateContext {
@@ -757,10 +763,10 @@ pub fn run_discovery_phase(
             version: crate_version,
             namespace,
             root_path: crate_root_path.clone(),
-            files, // Clone needed for module mapping below
-            features,             // Add the parsed features
-            dependencies,         // Add the parsed dependencies
-            dev_dependencies,     // Add the parsed dev-dependencies
+            files,            // Clone needed for module mapping below
+            features,         // Add the parsed features
+            dependencies,     // Add the parsed dependencies
+            dev_dependencies, // Add the parsed dev-dependencies
         };
 
         // Removed: Initial Module Mapping section (scan_for_mods call)

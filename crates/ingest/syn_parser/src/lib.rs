@@ -75,7 +75,7 @@ pub use resolve::module_tree::ModuleTree;
 /// This function will panic if the initial discovery phase fails (e.g., the
 /// fixture directory or its `Cargo.toml` cannot be found). This is intended
 /// for test environments where fixtures are expected to be present.
-pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph>, SynParserError > {
+pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
     let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
@@ -83,7 +83,7 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
-    // Separate successes and errors
+                                                      // Separate successes and errors
     let (successes, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
     if !errors.is_empty() {
@@ -95,15 +95,20 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph
             return Err(SynParserError::MultipleErrors(error_list));
         } else {
             // Some succeeded - log errors but continue
-            eprintln!( "{} files had errors: {}",
+            eprintln!(
+                "{} files had errors: {}",
                 error_list.len(),
-                error_list.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")
+                error_list
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("")
             );
         }
     }
 
     // Unwrap all successes (we know they're Ok)
-    Ok(successes.into_iter().map(Result::unwrap).collect())   
+    Ok(successes.into_iter().map(Result::unwrap).collect())
 }
 
 /// Runs the full parsing pipeline and returns a `ParserOutput`.
@@ -153,4 +158,3 @@ impl ParserOutput {
         self.module_tree.take()
     }
 }
-

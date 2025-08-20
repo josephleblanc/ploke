@@ -278,7 +278,7 @@ impl ParsedCodeGraph {
     ///
     /// **Note:** The current implementation is intentionally simple and may be
     /// optimized later.
-    /// **Limitations:** 
+    /// **Limitations:**
     /// - Type nodes that are only referenced by the pruned items
     ///   are *not* removed, so the graph may still contain “orphaned” types after
     ///   pruning.
@@ -306,12 +306,16 @@ impl ParsedCodeGraph {
         // this granularity, removing them from the number of items being counted before and after
         // removal, since they are subfields of struct, enum, union, and TypeAlias(?)
         let pruned_item_initial = pruned_items.pruned_item_ids.len();
-        let pruned_item_ids = pruned_items.pruned_item_ids.iter().copied()
-            .filter(|id| !matches!(id, AnyNodeId::Variant(_))
-             && !matches!(id, AnyNodeId::Field(_))
-             && !matches!(id, AnyNodeId::Param(_))
-             && !matches!(id, AnyNodeId::GenericParam(_))
-            )
+        let pruned_item_ids = pruned_items
+            .pruned_item_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                !matches!(id, AnyNodeId::Variant(_))
+                    && !matches!(id, AnyNodeId::Field(_))
+                    && !matches!(id, AnyNodeId::Param(_))
+                    && !matches!(id, AnyNodeId::GenericParam(_))
+            })
             .collect_vec();
         let removed_secondary_ids = pruned_item_initial - pruned_item_ids.len();
         log::info!(target: "debug_dup", "\n{} {}
@@ -345,7 +349,6 @@ Remaining ids to prune: {}",
             format!("{}", defined_types_count_pre - self.defined_types().len() ).log_path(),
             "defined_types",
         );
-
 
         let consts_count_pre = self.consts().len();
         self.consts_mut()
@@ -387,7 +390,10 @@ Remaining ids to prune: {}",
             "use_statements",
         );
 
-        let methods_count_pre = self.impls().iter().flat_map(|imp| imp.methods.iter())
+        let methods_count_pre = self
+            .impls()
+            .iter()
+            .flat_map(|imp| imp.methods.iter())
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         let impls_count_pre = self.impls().len();
@@ -409,7 +415,10 @@ Remaining ids to prune: {}",
             format!("{}", traits_count_pre - self.traits().len() ).log_path(),
             "traits",
         );
-        let methods_count_post = self.impls().iter().flat_map(|imp| imp.methods.iter())
+        let methods_count_post = self
+            .impls()
+            .iter()
+            .flat_map(|imp| imp.methods.iter())
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         total_count_diff += methods_count_pre - methods_count_post;
@@ -418,8 +427,6 @@ Remaining ids to prune: {}",
             format!("{}", methods_count_pre - methods_count_post ).log_path(),
             "methods",
         );
-
-
 
         // -- handle pruning module ids
         // file-based modules
@@ -435,7 +442,8 @@ Remaining ids to prune: {}",
 
         // non-file-based modules (inline and declaration)
         let nonfile_modules_count_pre = self.modules().len();
-        self.modules_mut().retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
+        self.modules_mut()
+            .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         let removed_nonfile_mods_count = nonfile_modules_count_pre - self.modules().len();
         total_count_diff += removed_nonfile_mods_count;
         log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
@@ -464,7 +472,10 @@ Remaining ids to prune: {}",
                     log::trace!(target: "debug_dup", "\nNode removed: {}", item);
                 }
             }
-            for item in pruned_item_ids.iter().filter(|i| !removed_items.contains(i)) {
+            for item in pruned_item_ids
+                .iter()
+                .filter(|i| !removed_items.contains(i))
+            {
                 log::error!(target: "debug_dup", "\nNode not found or removed: {}", item);
             }
             log::info!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
@@ -575,10 +586,14 @@ Remaining ids to prune: {}",
 
     // TODO: This is kind of a hack job, be more thorough.
     pub fn retain_all(&mut self, set: HashSet<AnyNodeId>) {
-        self.graph.use_statements.retain(|n| set.contains(&n.any_id()));
+        self.graph
+            .use_statements
+            .retain(|n| set.contains(&n.any_id()));
         self.graph.impls.retain(|n| set.contains(&n.any_id()));
         self.graph.traits.retain(|n| set.contains(&n.any_id()));
-        self.graph.defined_types.retain(|n| set.contains(&n.any_id()));
+        self.graph
+            .defined_types
+            .retain(|n| set.contains(&n.any_id()));
         self.graph.functions.retain(|n| set.contains(&n.any_id()));
         self.graph.consts.retain(|n| set.contains(&n.any_id()));
         self.graph.modules.retain(|n| set.contains(&n.any_id()));

@@ -81,8 +81,8 @@
 use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
 
-use crate::schema::edges::SyntacticRelationSchema;
 use super::*;
+use crate::schema::edges::SyntacticRelationSchema;
 
 pub(super) fn transform_relations(
     db: &Db<MemStorage>,
@@ -107,9 +107,6 @@ mod tests {
 
     use super::transform_relations;
 
-    use ploke_test_utils::init_test_tracing;
-    use tracing::Level;
-
     #[test]
     fn test_transform_edges() -> Result<(), Box<TransformError>> {
         // init_test_tracing(Level::TRACE);
@@ -128,7 +125,9 @@ mod tests {
         let rel_schema = &SyntacticRelationSchema::SCHEMA;
         tracing::info!("create schema:\n{}", rel_schema.script_create());
         tracing::info!("script_identity:\n{}", rel_schema.script_identity());
-        rel_schema.create_and_insert(&db).inspect_err(|e| tracing::error!("{e}"))?;
+        rel_schema
+            .create_and_insert(&db)
+            .inspect_err(|e| tracing::error!("{e}"))?;
 
         // transform and insert impls into cozo
         transform_relations(&db, merged.graph.relations)?;

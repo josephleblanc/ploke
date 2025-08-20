@@ -1296,7 +1296,7 @@ impl ModuleTree {
         #[cfg(feature = "validate")]
         if !self.validate_unique_rels() {
             log::warn!(target: "debug_dup", "Before pruning: Detected duplicate relations");
-            assert!( self.validate_nonunique_rels() );
+            assert!(self.validate_nonunique_rels());
             log::warn!(target: "debug_dup","Before pruning: Validated non-unique relations");
         }
         self.log_update_path_index_entry_exit(true);
@@ -1406,7 +1406,7 @@ impl ModuleTree {
         #[cfg(feature = "validate")]
         if !self.validate_unique_rels() {
             log::warn!(target: "debug_dup", "After pruning: Detected duplicate relations");
-            assert!( self.validate_nonunique_rels() );
+            assert!(self.validate_nonunique_rels());
             log::warn!(target: "debug_dup","After pruning: Validated non-unique relations");
         }
         Ok(())
@@ -1612,7 +1612,12 @@ impl ModuleTree {
                 .push(index);
         }
 
-        all_prunable_item_ids.retain(|item| !initial_prunable_module_ids.iter().map(|m| m.as_any()).any(|m| m == *item));
+        all_prunable_item_ids.retain(|item| {
+            !initial_prunable_module_ids
+                .iter()
+                .map(|m| m.as_any())
+                .any(|m| m == *item)
+        });
         // --- Step 6: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
@@ -1651,7 +1656,9 @@ impl ModuleTree {
         let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
             if !acc.contains(rel) {
                 acc.push(*rel);
-            } else if rel.rel().is_contains() && TryInto::<ImplNodeId>::try_into(rel.rel().target()).is_ok() {
+            } else if rel.rel().is_contains()
+                && TryInto::<ImplNodeId>::try_into(rel.rel().target()).is_ok()
+            {
                 dup_impls.push(rel);
                 self.log_relation_verbose_target(*rel, "debug_dup");
             }

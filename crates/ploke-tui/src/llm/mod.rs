@@ -1,15 +1,19 @@
 pub mod registry;
+mod session;
+mod tool_call;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{default, sync::Arc, time::Duration};
-use tokio::sync::{
-    mpsc::{self, error::TrySendError},
-    oneshot,
-};
+use serde_json::{Value, json};
+use std::{sync::Arc, time::Duration};
+use thiserror::Error;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::app_state::handlers::rag as rag_handlers;
+use crate::app_state::{AppState, StateCommand};
+use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
     system::SystemEvent,
@@ -31,6 +35,10 @@ pub struct OpenAiRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>, // e.g., "auto"
 }
 
 impl<'a> OpenAiRequest<'a> {
@@ -48,14 +56,18 @@ impl<'a> OpenAiRequest<'a> {
             max_tokens,
             top_p,
             stream: false,
+            tools: None,
+            tool_choice: None,
         }
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct RequestMessage<'a> {
     pub role: &'a str,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl RequestMessage<'_> {
@@ -63,29 +75,149 @@ impl RequestMessage<'_> {
         Self {
             role: "system",
             content,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn new_tool(content: String, tool_call_id: String) -> Self {
+        Self {
+            role: "tool",
+            content,
+            tool_call_id: Some(tool_call_id),
         }
     }
 }
 
+// OpenAI tool/function definition (for request payload)
+#[derive(Serialize, Debug, Clone)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub r#type: &'static str, // "function"
+    pub function: ToolFunctionDef,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ToolFunctionDef {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: Value, // JSON Schema
+}
+
+// Helper to define our example tool
+fn request_code_context_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        r#type: "function",
+        function: ToolFunctionDef {
+            name: "request_code_context",
+            description: "Request additional code context from the repository up to a token budget.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "token_budget": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum tokens of code context to return."
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "Optional hint to guide which code to retrieve."
+                    }
+                },
+                "required": ["token_budget"],
+                "additionalProperties": false
+            }),
+        },
+    }
+}
+
+// New tool definition for applying code edits atomically via ploke-io
+fn apply_code_edit_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        r#type: "function",
+        function: ToolFunctionDef {
+            name: "apply_code_edit",
+            description: "Apply one or more code edits atomically (tempfile + fsync + rename) using ploke-io. Each edit splices bytes [start_byte, end_byte) with replacement.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "description": "Optional model confidence (0.0–1.0) for approval gating."
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Optional namespace UUID for tracking."
+                    },
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": { "type": "string" },
+                                "expected_file_hash": { "type": "string" },
+                                "start_byte": { "type": "integer", "minimum": 0 },
+                                "end_byte": { "type": "integer", "minimum": 0 },
+                                "replacement": { "type": "string" }
+                            },
+                            "required": ["file_path", "expected_file_hash", "start_byte", "end_byte", "replacement"],
+                            "additionalProperties": false
+                        },
+                        "minItems": 1
+                    }
+                },
+                "required": ["edits"],
+                "additionalProperties": false
+            }),
+        },
+    }
+}
+
 #[derive(Deserialize, Debug)]
-struct OpenAiResponse {
+pub(super) struct OpenAiResponse {
     choices: Vec<Choice>,
 }
 
 #[derive(Deserialize, Debug)]
-struct Choice {
+pub(super) struct Choice {
     message: ResponseMessage,
 }
 
 #[derive(Deserialize, Debug)]
-struct ResponseMessage {
-    content: String,
+pub(super) struct ResponseMessage {
+    // When tool_calls are present, content may be null/absent
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<GenericToolCall>>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub(super) enum GenericToolCall {
+    OpenAi(OpenAiToolCall),
+    Other(Value), // Placeholder for other vendor formats
+}
+
+#[derive(Deserialize, Debug)]
+pub(super) struct OpenAiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub r#type: String, // should be "function"
+    pub function: OpenAiToolFunctionCall,
+}
+
+#[derive(Deserialize, Debug)]
+pub(super) struct OpenAiToolFunctionCall {
+    pub name: String,
+    pub arguments: String, // JSON string
 }
 
 pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
     // providers: crate::user_config::ProviderRegistry,
 ) {
     let client = Client::new();
@@ -95,7 +227,7 @@ pub async fn llm_manager(
     while let Ok(event) = event_rx.recv().await {
         match event {
             AppEvent::Llm(
-                request @ llm::Event::Request {
+                request @ Event::Request {
                     parent_id,
                     new_msg_id,
                     ..
@@ -110,15 +242,17 @@ pub async fn llm_manager(
                 );
                 pending_requests.push(request);
             }
-            AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
+            AppEvent::Llm(context @ Event::PromptConstructed { parent_id, .. }) => {
                 tracing::info!("Received context for parent_id: {}", parent_id);
                 ready_contexts.insert(parent_id, context);
 
                 let guard = state.config.read().await;
                 let maybe_provider = guard.provider_registry.get_active_provider();
                 if maybe_provider.is_none() {
-                    tracing::warn!("Could not find active provider in registry, returning early");
-                    return;
+                    tracing::warn!(
+                        "Could not find active provider in registry, continuing event loop"
+                    );
+                    continue;
                 }
                 let provider_config = maybe_provider
                     .expect("Error in unwrapping a value guarenteed to be Some")
@@ -126,17 +260,16 @@ pub async fn llm_manager(
                 drop(guard);
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
-                    if let llm::Event::Request {
-                        new_msg_id: req_parent,
-                        // parent_id: req_parent,
+                    if let Event::Request {
+                        parent_id: req_parent,
                         ..
-                    } = req
+                    } = req.clone()
                     {
                         tracing::info!(
                             "pending_requests found match for req_parent: {}",
                             req_parent
                         );
-                        if let Some(context) = ready_contexts.remove(req_parent) {
+                        if let Some(context) = ready_contexts.remove(&req_parent) {
                             tracing::info!(
                                 "ready_contexts found match for req_parent: {}",
                                 req_parent
@@ -146,22 +279,79 @@ pub async fn llm_manager(
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
+                                event_bus.clone(),
                                 provider_config.to_owned(),
                                 Some(context),
                             ));
                             tracing::info!("removing id from pending_requests");
                             false // Remove from pending
                         } else {
-                            tracing::info!("keep id from pending_requests
+                            tracing::info!(
+                                "keep id from pending_requests
                                 found pending_request but not ready_context
-                                checking if ready_contexts removed req_parent during conditional: {}", 
-                                ready_contexts.contains_key(req_parent));
+                                checking if ready_contexts contains req_parent during conditional: {}",
+                                ready_contexts.contains_key(&req_parent)
+                            );
                             true // Keep waiting
                         }
                     } else {
                         tracing::info!("keep id from pending_requests\nno matched pending_requests");
                         true
                     }
+                });
+            }
+            AppEvent::Llm(Event::ToolCall {
+                request_id,
+                parent_id,
+                name,
+                arguments,
+                vendor,
+                call_id,
+            }) => {
+                let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
+                tracing::info!(
+                    "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
+                    vendor,
+                    request_id,
+                    parent_id,
+                    call_id,
+                    name,
+                    arguments
+                );
+                tracing::warn!(
+                    "DEPRECATED: Routing tool calls via SystemEvent::ToolCallRequested; this path will be replaced by dedicated tool events in a future EventBus refactor."
+                );
+                event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                    request_id,
+                    parent_id,
+                    vendor,
+                    name,
+                    arguments,
+                    call_id,
+                }));
+            }
+            AppEvent::System(SystemEvent::ToolCallRequested {
+                request_id,
+                parent_id,
+                vendor,
+                name,
+                arguments,
+                call_id,
+            }) => {
+                tracing::info!(
+                    "Dispatching ToolCallRequested in system handler: name={}",
+                    name
+                );
+                tracing::warn!(
+                    "DEPRECATED PATH: SystemEvent::ToolCallRequested handling is deprecated and will be refactored into dedicated event types; retained for compatibility."
+                );
+                let state = Arc::clone(&state);
+                let event_bus = Arc::clone(&event_bus);
+                tokio::spawn(async move {
+                    rag_handlers::handle_tool_call_requested(
+                        &state, &event_bus, request_id, parent_id, vendor, name, arguments, call_id,
+                    )
+                    .await;
                 });
             }
             _ => {}
@@ -173,20 +363,21 @@ pub async fn llm_manager(
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
 #[instrument(skip(state, client, provider_config))]
 pub async fn process_llm_request(
-    request: llm::Event,
+    request: Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
+    event_bus: Arc<EventBus>,
     provider_config: crate::user_config::ProviderConfig,
-    context: Option<llm::Event>,
+    context: Option<Event>,
 ) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request {
+        Event::Request {
             parent_id,
-            new_msg_id,
+            new_msg_id: _,
             ..
-        } => new_msg_id,
+        } => parent_id,
         _ => {
             tracing::info!("Not a Request, do nothing");
             return;
@@ -215,29 +406,36 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context)
-        .await
-        .map(|content| StateCommand::UpdateMessage {
+    let update_cmd = prepare_and_run_llm_call(
+        &state,
+        &client,
+        &provider_config,
+        context,
+        &event_bus,
+        parent_id,
+    )
+    .await
+    .map(|content| StateCommand::UpdateMessage {
+        id: assistant_message_id,
+        update: MessageUpdate {
+            content: Some(content),
+            status: Some(MessageStatus::Completed),
+            ..Default::default()
+        },
+    })
+    .unwrap_or_else(|e| {
+        let err_string = e.to_string();
+        StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
-                content: Some(content),
-                status: Some(MessageStatus::Completed),
+                content: Some(format!("Error: {}", err_string)),
+                status: Some(MessageStatus::Error {
+                    description: err_string,
+                }),
                 ..Default::default()
             },
-        })
-        .unwrap_or_else(|e| {
-            let err_string = e.to_string();
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(format!("Error: {}", err_string)),
-                    status: Some(MessageStatus::Error {
-                        description: err_string,
-                    }),
-                    ..Default::default()
-                },
-            }
-        });
+        }
+    });
 
     // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {
@@ -250,7 +448,9 @@ async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     provider: &ProviderConfig,
-    context: Option<llm::Event>,
+    context: Option<Event>,
+    event_bus: &Arc<EventBus>,
+    parent_id: Uuid,
 ) -> Result<String, LlmError> {
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
@@ -272,6 +472,10 @@ async fn prepare_and_run_llm_call(
     );
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
 
+    // Defaults for tool handling
+    let max_retries: u32 = params.tool_max_retries.unwrap_or(2);
+    let token_limit: u32 = params.tool_token_limit.unwrap_or(2048);
+
     // Prepend system prompt if provided
     if let Some(sys) = params.system_prompt.as_ref() {
         messages.push(RequestMessage::new_system(sys.clone()));
@@ -282,8 +486,15 @@ async fn prepare_and_run_llm_call(
         prompt
             .into_iter()
             .map(|(k, c)| RequestMessage {
-                role: k.into(),
+                role: match k {
+                    MessageKind::User => "user",
+                    MessageKind::Assistant => "assistant",
+                    MessageKind::System => "system",
+                    MessageKind::Tool => "tool",
+                    MessageKind::SysInfo => "system",
+                },
                 content: c,
+                tool_call_id: None,
             })
             .collect::<Vec<_>>()
     } else {
@@ -291,15 +502,22 @@ async fn prepare_and_run_llm_call(
             .iter()
             .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
             .map(|msg| RequestMessage {
-                role: msg.kind.into(),
+                role: match msg.kind {
+                    MessageKind::User => "user",
+                    MessageKind::Assistant => "assistant",
+                    MessageKind::System => "system",
+                    MessageKind::Tool => "tool",
+                    MessageKind::SysInfo => "system",
+                },
                 content: msg.content.clone(),
+                tool_call_id: None,
             })
             .collect::<Vec<_>>()
     };
 
     messages.extend(conversation_messages);
 
-    log::info!(
+    tracing::trace!(
         "Sending conversation history message with content: {:#?}",
         messages
     );
@@ -307,151 +525,51 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    tracing::info!(
-        "Inside prepare_and_run_llm_call num2 {:#?}",
-        provider.llm_params
-    );
-    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
-    let request_payload = OpenAiRequest {
-        model: provider.model.as_str(),
+    let tools = vec![request_code_context_tool_def(), apply_code_edit_tool_def()];
+
+    // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
+    let session = session::RequestSession::new(
+        client,
+        provider,
+        Arc::clone(event_bus),
+        parent_id,
         messages,
-        temperature: params.temperature,
-        max_tokens: params.max_tokens,
-        top_p: params.top_p,
-        stream: false,
-    };
-
-    tracing::info!(
-        "Inside prepare_and_run_llm_call num3 {:#?}",
-        request_payload
+        tools,
+        params.clone(),
     );
 
-    let response_test = client
-        .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(provider.resolve_api_key())
-        .json(&request_payload);
-    
-    tracing::info!(
-        "request_payload is {:#?}",
-        request_payload
-    );
+    session.run().await
+}
 
-    let response = client
-        .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(provider.resolve_api_key())
-        .json(&request_payload)
-        .send()
-        .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
-
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
-
-        let user_friendly_msg = if status == 401 {
-            format!(
-                "Authentication failed. Please check your API key configuration.\n\nDetails {}",
-                error_text
-            )
-        } else if status == 429 {
-            format!(
-                "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
-                error_text
-            )
-        } else if status >= 500 {
-            format!(
-                "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
-                error_text
-            )
-        } else {
-            format!("API error (status {}): {}", status, error_text)
-        };
-
-        return Err(LlmError::Api {
-            status,
-            message: user_friendly_msg,
-        });
-    }
-
-    let body = response
-        .text()
-        .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
-    tracing::debug!("raw body: {}", body);
-
-    // OpenRouter sometimes puts errors inside a 200 body
-    if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(err_obj) = err.get("error") {
-            let msg = err_obj
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown OpenRouter error");
-            let code = err_obj.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
-            return Err(LlmError::Api {
-                status: code as u16,
-                message: msg.to_string(),
-            });
+pub(super) fn cap_messages_by_chars<'a>(
+    messages: &'a [RequestMessage<'a>],
+    budget: usize,
+) -> Vec<RequestMessage<'a>> {
+    // Walk from the tail so we keep the most recent context, then reverse to restore order
+    let mut used = 0usize;
+    let mut kept: Vec<&RequestMessage> = Vec::new();
+    for m in messages.iter().rev() {
+        let len = m.content.len();
+        if used.saturating_add(len) > budget && !kept.is_empty() {
+            break;
         }
+        used = used.saturating_add(len);
+        kept.push(m);
     }
-
-    // Now safe to deserialize into OpenAiResponse
-    let response_body: OpenAiResponse = serde_json::from_str(&body)
-        .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
-    tracing::trace!("raw body response to request: {:#?}", body);
-
-    let content = response_body
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .unwrap_or_else(|| "No content received from API.".to_string());
-
-    Ok(content)
+    kept.reverse();
+    // Clone into a fresh vec; RequestMessage owns String content so zero-copy is not possible here
+    kept.into_iter().cloned().collect()
 }
 
-fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
-    match msg.kind {
-        MessageKind::User => "user",
-        MessageKind::Assistant => "assistant",
-        MessageKind::System => "system",
-        MessageKind::Tool => todo!(),
-        MessageKind::SysInfo => "sysinfo",
-    }
+// Example tool-call argument struct
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct RequestCodeContextArgs {
+    pub token_budget: u32,
+    #[serde(default)]
+    pub hint: Option<String>,
 }
 
-// Backpressure-aware command sender
-struct CommandSender {
-    inner: mpsc::Sender<StateCommand>,
-    event_bus: Arc<EventBus>,
-}
-
-impl CommandSender {
-    async fn send(&self, cmd: StateCommand) {
-        match self.inner.try_send(cmd) {
-            Ok(_) => {}
-            Err(TrySendError::Full(cmd)) => {
-                self.event_bus
-                    .send(AppEvent::System(SystemEvent::CommandDropped(
-                        cmd.discriminant(),
-                    )));
-                // Optional retry logic
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                if let Err(e) = self.inner.send(cmd).await {
-                    log::error!("Permanent send failure: {}", e);
-                    // possibly more logging here.
-                }
-            }
-            Err(TrySendError::Closed(_)) => {
-                // TODO: What should go here?
-                // check docs on ratatui? tokio?
-                // Shutting down
-            }
-        }
-    }
-}
+// Example tool-call handler (stub)
 
 // --- Supporting Types ---
 
@@ -509,11 +627,28 @@ pub enum Event {
     ModelChanged {
         new_model: String, // e.g., "claude-3-opus"
     },
+
+    /// Tool/function call emitted by model (OpenAI tools or other)
+    ToolCall {
+        request_id: Uuid,
+        parent_id: Uuid,
+        name: String,
+        arguments: Value,
+        call_id: Option<String>,
+        vendor: ToolVendor,
+    },
+
     /// Prompt constructed to be sent to the LLM
     PromptConstructed {
         prompt: Vec<(MessageKind, String)>,
         parent_id: Uuid,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ToolVendor {
+    OpenAI,
+    Other,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -529,14 +664,12 @@ impl Event {
         match self {
             Event::Request { parent_id, .. } => *parent_id,
             Event::Response { parent_id, .. } => *parent_id,
-            Event::PartialResponse { request_id, delta } => todo!(),
-            Event::Error { request_id, error } => todo!(),
-            Event::Status {
-                active_requests,
-                queue_depth,
-            } => todo!(),
-            Event::ModelChanged { new_model } => todo!(),
-            Event::PromptConstructed { prompt, parent_id } => *parent_id,
+            Event::PartialResponse { .. } => todo!(),
+            Event::Error { .. } => todo!(),
+            Event::Status { .. } => todo!(),
+            Event::ModelChanged { .. } => todo!(),
+            Event::ToolCall { parent_id, .. } => *parent_id,
+            Event::PromptConstructed { parent_id, .. } => *parent_id,
         }
     }
 }
@@ -677,6 +810,22 @@ pub struct LLMParameters {
     /// Optional system prompt to steer the model
     #[serde(default)]
     pub system_prompt: Option<String>,
+
+    /// Maximum number of tool-call retry cycles
+    #[serde(default)]
+    pub tool_max_retries: Option<u32>,
+
+    /// Token limit for tool-provided context (sane default)
+    #[serde(default)]
+    pub tool_token_limit: Option<u32>,
+
+    /// Optional character budget for conversation history before each request
+    #[serde(default)]
+    pub history_char_budget: Option<usize>,
+
+    /// Per-tool call timeout in seconds
+    #[serde(default)]
+    pub tool_timeout_secs: Option<u64>,
 }
 
 /// Metadata about LLM execution
@@ -776,6 +925,10 @@ impl Default for LLMParameters {
             response_format: Default::default(),
             safety_settings: Default::default(),
             system_prompt: None,
+            tool_max_retries: Some(2),
+            tool_token_limit: Some(2048),
+            history_char_budget: Some(12000),
+            tool_timeout_secs: Some(30),
         }
     }
 }
