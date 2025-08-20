@@ -19,6 +19,7 @@ use crate::chat_history::Message;
 use crate::chat_history::MessageKind;
 use crate::error::ErrorExt;
 use crate::llm;
+use crate::llm::ToolEvent;
 use crate::system::SystemEvent;
 
 use crate::AppState;
@@ -90,6 +91,39 @@ pub async fn handle_tool_call_requested(
 
     // Handle atomic code edit application via ploke-io (M1: stage proposal, do not apply immediately)
     if name == "apply_code_edit" {
+        // Idempotency: guard duplicate requests
+        {
+            let reg = state.proposals.read().await;
+            if reg.contains_key(&request_id) {
+                let msg = format!(
+                    "Duplicate apply_code_edit request ignored for request_id {}",
+                    request_id
+                );
+                // Bridge + typed failure for idempotent duplicate
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Duplicate request_id".to_string(),
+                }));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Duplicate request_id".to_string(),
+                }));
+                super::chat::add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    msg,
+                    crate::chat_history::MessageKind::SysInfo,
+                )
+                .await;
+                return;
+            }
+        }
+
         // Parse optional confidence (kept for future gating)
         let _confidence = arguments
             .get("confidence")
@@ -111,8 +145,31 @@ pub async fn handle_tool_call_requested(
             return;
         };
 
+        if edits_arr.is_empty() {
+            let _ = event_bus
+                .realtime_tx
+                .send(tool_call_failed("No edits provided".to_string()));
+            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                error: "No edits provided".to_string(),
+            }));
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                "apply_code_edit: No edits provided".to_string(),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+
         let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(edits_arr.len());
         let mut files_set: std::collections::BTreeSet<std::path::PathBuf> = std::collections::BTreeSet::new();
+        let mut interval_map: std::collections::BTreeMap<std::path::PathBuf, Vec<(usize, usize)>> =
+            std::collections::BTreeMap::new();
 
         for e in edits_arr {
             let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
@@ -139,6 +196,36 @@ pub async fn handle_tool_call_requested(
                     .send(tool_call_failed("Edit missing 'end_byte'".to_string()));
                 return;
             };
+            if end_byte < start_byte {
+                let _ = event_bus
+                    .realtime_tx
+                    .send(tool_call_failed(
+                        "Invalid edit range: end_byte < start_byte".to_string(),
+                    ));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Invalid edit range: end_byte < start_byte".to_string(),
+                }));
+                super::chat::add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    format!(
+                        "apply_code_edit: Invalid range end({}) < start({}) for file {}",
+                        end_byte, start_byte, file_path
+                    ),
+                    crate::chat_history::MessageKind::SysInfo,
+                )
+                .await;
+                return;
+            }
+            // Collect for overlap validation
+            interval_map
+                .entry(std::path::PathBuf::from(file_path))
+                .or_default()
+                .push((start_byte as usize, end_byte as usize));
             let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
                 let _ = event_bus
                     .realtime_tx
@@ -166,6 +253,34 @@ pub async fn handle_tool_call_requested(
             };
             files_set.insert(path_buf);
             edits.push(ws);
+        }
+
+        // Validate non-overlapping ranges per file
+        for (path, ranges) in interval_map.iter_mut() {
+            ranges.sort_by_key(|(s, _)| *s);
+            let mut prev_end = 0usize;
+            for (i, (s, e)) in ranges.iter().enumerate() {
+                if i > 0 && *s < prev_end {
+                    let msg = format!("Overlapping edit ranges for {}", path.display());
+                    let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
+                    event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: msg.clone(),
+                    }));
+                    super::chat::add_msg_immediate(
+                        state,
+                        event_bus,
+                        Uuid::new_v4(),
+                        msg,
+                        crate::chat_history::MessageKind::SysInfo,
+                    )
+                    .await;
+                    return;
+                }
+                prev_end = *e;
+            }
         }
 
         // Compute a simple args hash for auditing
@@ -338,9 +453,16 @@ pub async fn handle_tool_call_requested(
 
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
+        let err = format!("Unsupported tool: {}", name);
         let _ = event_bus
             .realtime_tx
-            .send(tool_call_failed(format!("Unsupported tool: {}", name)));
+            .send(tool_call_failed(err.clone()));
+        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            error: err,
+        }));
         return;
     }
 
@@ -350,9 +472,16 @@ pub async fn handle_tool_call_requested(
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
     if token_budget.is_none() || token_budget == Some(0) {
+        let msg = "Invalid or missing token_budget".to_string();
         let _ = event_bus
             .realtime_tx
-            .send(tool_call_failed("Invalid or missing token_budget".to_string()));
+            .send(tool_call_failed(msg.clone()));
+        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            error: msg,
+        }));
         return;
     }
     let token_budget = token_budget.unwrap();
@@ -373,9 +502,16 @@ pub async fn handle_tool_call_requested(
     };
 
     if query.trim().is_empty() {
+        let msg = "No query available (no hint provided and no recent user message)".to_string();
         let _ = event_bus
             .realtime_tx
-            .send(tool_call_failed("No query available (no hint provided and no recent user message)".to_string()));
+            .send(tool_call_failed(msg.clone()));
+        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            error: msg,
+        }));
         return;
     }
 
@@ -412,7 +548,13 @@ pub async fn handle_tool_call_requested(
                 tracing::warn!("{}", msg);
                 let _ = event_bus
                     .realtime_tx
-                    .send(tool_call_failed(msg));
+                    .send(tool_call_failed(msg.clone()));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: msg,
+                }));
             }
         }
     } else {
@@ -423,9 +565,15 @@ pub async fn handle_tool_call_requested(
             .send(AppEvent::System(SystemEvent::ToolCallFailed {
                 request_id,
                 parent_id,
-                call_id,
-                error: msg,
+                call_id: call_id.clone(),
+                error: msg.clone(),
             }));
+        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+            request_id,
+            parent_id,
+            call_id,
+            error: msg,
+        }));
     }
 }
 
@@ -509,11 +657,19 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             reg.insert(request_id, proposal);
 
             // Bridge: mark tool call completed
+            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
+            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
             let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
                 request_id,
-                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
-                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
-                content,
+                parent_id: parent_id_val,
+                call_id: call_id_val.clone(),
+                content: content.clone(),
+            }));
+            event_bus.send(AppEvent::LlmTool(ToolEvent::Completed {
+                request_id,
+                parent_id: parent_id_val,
+                call_id: call_id_val,
+                content: content.clone(),
             }));
 
             super::chat::add_msg_immediate(
@@ -529,11 +685,20 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             proposal.status = EditProposalStatus::Failed(e.to_string());
             reg.insert(request_id, proposal);
 
+            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
+            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
+            let err_str = format!("Failed to apply edits: {}", e);
             let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
                 request_id,
-                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
-                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
-                error: format!("Failed to apply edits: {}", e),
+                parent_id: parent_id_val,
+                call_id: call_id_val.clone(),
+                error: err_str.clone(),
+            }));
+            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                request_id,
+                parent_id: parent_id_val,
+                call_id: call_id_val,
+                error: err_str.clone(),
             }));
 
             super::chat::add_msg_immediate(
@@ -569,11 +734,20 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
             reg.insert(request_id, proposal);
 
             // Bridge: mark tool call failed with denial
+            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
+            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
+            let err_msg = "Edit proposal denied by user".to_string();
             let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
                 request_id,
-                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
-                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
-                error: "Edit proposal denied by user".to_string(),
+                parent_id: parent_id_val,
+                call_id: call_id_val.clone(),
+                error: err_msg.clone(),
+            }));
+            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                request_id,
+                parent_id: parent_id_val,
+                call_id: call_id_val,
+                error: err_msg.clone(),
             }));
 
             super::chat::add_msg_immediate(
