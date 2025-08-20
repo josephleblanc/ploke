@@ -339,8 +339,12 @@ pub async fn llm_manager(
                 call_id,
             }) => {
                 tracing::info!(
-                    "Dispatching ToolEvent::Requested in LLM manager: name={}",
-                    name
+                    request_id = %request_id,
+                    parent_id = %parent_id,
+                    call_id = %call_id,
+                    vendor = ?vendor,
+                    tool = %name,
+                    "Dispatching ToolEvent::Requested in LLM manager"
                 );
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);

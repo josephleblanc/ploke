@@ -1,7 +1,6 @@
 use super::App;
 use crate::app::view::EventSubscriber;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;

@@ -30,6 +30,13 @@ pub async fn dispatch_and_wait(
 
     // Emit typed tool event to trigger tool execution (compat bridge handled in llm_manager)
     let request_id = Uuid::new_v4();
+    tracing::info!(
+        request_id = %request_id,
+        parent_id = %parent_id,
+        tool = %spec.name,
+        call_id = %spec.call_id,
+        "Emitting LlmTool::Requested"
+    );
     event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
         request_id,
         parent_id,
