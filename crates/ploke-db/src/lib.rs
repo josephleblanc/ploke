@@ -17,7 +17,8 @@ pub use index::hnsw::{
     replace_index_warn, search_similar, search_similar_args, EmbedDataVerbose, SimilarArgs,
 };
 pub use observability::{
-    ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
+    CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,
+    Validity,
 };
 pub use query::{
     builder::FieldValue,

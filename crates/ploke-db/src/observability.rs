@@ -77,6 +77,19 @@ pub struct ToolCallDone {
     pub status: ToolStatus,           // Completed | Failed
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+pub struct CodeEditProposal {
+    pub request_id: uuid::Uuid,
+    pub diffs_json: Option<String>,
+    pub confidence: Option<f64>,
+    pub status: String,
+    pub decided_at_ms: Option<i64>,
+    pub applied_at_ms: Option<i64>,
+    pub commit_hash: Option<String>,
+    pub results_json: Option<String>,
+    pub created_at: Validity,
+}
+
 pub trait ObservabilityStore {
     // Conversation
     fn upsert_conversation_turn(&self, turn: ConversationTurn) -> Result<(), DbError>;
@@ -99,6 +112,23 @@ pub trait ObservabilityStore {
         parent_id: uuid::Uuid,
         limit: usize,
     ) -> Result<Vec<(ToolCallReq, Option<ToolCallDone>)>, DbError>;
+
+    // Edit proposals (M1)
+    fn record_edit_proposed(
+        &self,
+        req_id: uuid::Uuid,
+        diffs_json: &str,
+        confidence: Option<f64>,
+    ) -> Result<(), DbError>;
+    fn record_edit_decision(&self, req_id: uuid::Uuid, status: &str) -> Result<(), DbError>;
+    fn record_edit_applied(
+        &self,
+        req_id: uuid::Uuid,
+        results_json: &str,
+        applied_at_ms: i64,
+        commit_hash: Option<&str>,
+    ) -> Result<(), DbError>;
+    fn get_edit_proposal(&self, req_id: uuid::Uuid) -> Result<Option<CodeEditProposal>, DbError>;
 }
 
 impl Database {
@@ -137,8 +167,24 @@ impl Database {
 }
 "#;
 
+        // code_edit_proposal (time-travel)
+        let create_code_edit = r#"
+:create code_edit_proposal {
+    request_id: Uuid,
+    at: Validity
+    =>
+    diffs_json: Json,
+    confidence: Float?,
+    status: String,
+    decided_at_ms: Int?,
+    applied_at_ms: Int?,
+    commit_hash: String?,
+    results_json: Json?
+}
+"#;
+
         // Attempt to create; ignore errors if already exist
-        for script in [create_conversation, create_tool_call] {
+        for script in [create_conversation, create_tool_call, create_code_edit] {
             if let Err(e) = self.run_script(script, BTreeMap::new(), ScriptMutability::Mutable) {
                 let msg = e.to_string();
                 // Best-effort idempotency: ignore "exists"/"duplicate"/"conflict" errors
@@ -298,9 +344,8 @@ impl ObservabilityStore for Database {
         // Use DataValue::Json for JSON data, or Null when absent
         let arguments_json_value = match &req.arguments_json {
             Some(json_str) => {
-                // Try to parse as JSON, if it fails, store as string
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(_) => DataValue::Str(json_str.into()),
+                    Ok(v) => DataValue::Json(v),
                     Err(_) => DataValue::Null,
                 }
             }
@@ -410,7 +455,7 @@ impl ObservabilityStore for Database {
         // Handle JSON data properly
         let arguments_json_value = match &req_meta.arguments_json {
             Some(json_str) => match serde_json::from_str::<serde_json::Value>(json_str) {
-                Ok(_) => DataValue::Str(json_str.into()),
+                Ok(v) => DataValue::Json(v),
                 Err(_) => DataValue::Null,
             },
             None => DataValue::Null,
@@ -420,7 +465,7 @@ impl ObservabilityStore for Database {
         // Handle outcome JSON properly
         let outcome_json_value = match &done.outcome_json {
             Some(json_str) => match serde_json::from_str::<serde_json::Value>(json_str) {
-                Ok(_) => DataValue::Str(json_str.into()),
+                Ok(v) => DataValue::Json(v),
                 Err(_) => DataValue::Null,
             },
             None => DataValue::Null,
@@ -662,5 +707,229 @@ impl ObservabilityStore for Database {
         }
 
         Ok(out)
+    }
+
+    fn record_edit_proposed(
+        &self,
+        req_id: uuid::Uuid,
+        diffs_json: &str,
+        confidence: Option<f64>,
+    ) -> Result<(), DbError> {
+        self.ensure_observability_schema()?;
+
+        let diffs_val = match serde_json::from_str::<serde_json::Value>(diffs_json) {
+            Ok(v) => DataValue::Json(v),
+            Err(_) => DataValue::Null,
+        };
+        let mut params = BTreeMap::new();
+        params.insert("request_id".into(), DataValue::Uuid(UuidWrapper(req_id)));
+        params.insert("diffs_json".into(), diffs_val);
+        params.insert(
+            "confidence".into(),
+            confidence
+                .map(DataValue::from)
+                .unwrap_or(DataValue::Null),
+        );
+
+        let script = r#"
+{
+    ?[request_id, at, diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json] :=
+        request_id = $request_id,
+        at = 'ASSERT',
+        diffs_json = $diffs_json,
+        confidence = $confidence,
+        status = "proposed",
+        decided_at_ms = null,
+        applied_at_ms = null,
+        commit_hash = null,
+        results_json = null
+    :put code_edit_proposal { request_id, at => diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json }
+}
+"#;
+
+        self.run_script(script, params, ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|e| DbError::Cozo(e.to_string()))
+    }
+
+    fn record_edit_decision(&self, req_id: uuid::Uuid, status: &str) -> Result<(), DbError> {
+        self.ensure_observability_schema()?;
+
+        let status_lc = status.to_lowercase();
+        if status_lc != "approved" && status_lc != "denied" {
+            return Err(DbError::InvalidLifecycle(
+                "record_edit_decision status must be 'approved' or 'denied'".into(),
+            ));
+        }
+
+        let mut params = BTreeMap::new();
+        params.insert("request_id".into(), DataValue::Uuid(UuidWrapper(req_id)));
+        params.insert("status".into(), DataValue::Str(status_lc.into()));
+
+        let script = r#"
+{
+    ?[request_id, at, diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json] :=
+        *code_edit_proposal{
+            request_id,
+            diffs_json: old_diffs,
+            confidence: old_conf,
+            status: _old_status,
+            decided_at_ms: _old_dec,
+            applied_at_ms: old_app,
+            commit_hash: old_commit,
+            results_json: old_res
+            @ 'NOW'
+        },
+        request_id = $request_id,
+        at = 'ASSERT',
+        diffs_json = old_diffs,
+        confidence = old_conf,
+        status = $status,
+        decided_at_ms = to_int(at),
+        applied_at_ms = old_app,
+        commit_hash = old_commit,
+        results_json = old_res
+    :put code_edit_proposal { request_id, at => diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json }
+}
+"#;
+
+        self.run_script(script, params, ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|e| DbError::Cozo(e.to_string()))
+    }
+
+    fn record_edit_applied(
+        &self,
+        req_id: uuid::Uuid,
+        results_json: &str,
+        applied_at_ms: i64,
+        commit_hash: Option<&str>,
+    ) -> Result<(), DbError> {
+        self.ensure_observability_schema()?;
+
+        let results_val = match serde_json::from_str::<serde_json::Value>(results_json) {
+            Ok(v) => DataValue::Json(v),
+            Err(_) => DataValue::Null,
+        };
+
+        let mut params = BTreeMap::new();
+        params.insert("request_id".into(), DataValue::Uuid(UuidWrapper(req_id)));
+        params.insert("applied_at_ms".into(), DataValue::from(applied_at_ms));
+        params.insert("results_json".into(), results_val);
+        params.insert(
+            "commit_hash".into(),
+            commit_hash
+                .map(|s| DataValue::Str(s.into()))
+                .unwrap_or(DataValue::Null),
+        );
+
+        let script = r#"
+{
+    ?[request_id, at, diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json] :=
+        *code_edit_proposal{
+            request_id,
+            diffs_json: old_diffs,
+            confidence: old_conf,
+            status: old_status,
+            decided_at_ms: old_dec,
+            applied_at_ms: _old_applied,
+            commit_hash: _old_commit,
+            results_json: _old_res
+            @ 'NOW'
+        },
+        request_id = $request_id,
+        at = 'ASSERT',
+        diffs_json = old_diffs,
+        confidence = old_conf,
+        status = "applied",
+        decided_at_ms = old_dec,
+        applied_at_ms = $applied_at_ms,
+        commit_hash = $commit_hash,
+        results_json = $results_json
+    :put code_edit_proposal { request_id, at => diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json }
+}
+"#;
+
+        self.run_script(script, params, ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|e| DbError::Cozo(e.to_string()))
+    }
+
+    fn get_edit_proposal(&self, req_id: uuid::Uuid) -> Result<Option<CodeEditProposal>, DbError> {
+        self.ensure_observability_schema()?;
+
+        let mut params = BTreeMap::new();
+        params.insert("request_id".into(), DataValue::Uuid(UuidWrapper(req_id)));
+
+        let script = r#"
+?[request_id, diffs_json_s, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json_s, at_ms, at_valid] :=
+    *code_edit_proposal{ request_id, at, diffs_json, confidence, status, decided_at_ms, applied_at_ms, commit_hash, results_json @ 'NOW' },
+    request_id = $request_id,
+    diffs_json_s = if(is_null(diffs_json), null, dump_json(diffs_json)),
+    results_json_s = if(is_null(results_json), null, dump_json(results_json)),
+    at_ms = to_int(at),
+    at_valid = to_bool(at)
+"#;
+
+        let rows = self
+            .run_script(script, params, ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        if rows.rows.is_empty() {
+            return Ok(None);
+        }
+
+        let hid = rows
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (h.clone(), i))
+            .collect::<std::collections::HashMap<_, _>>();
+        let row = &rows.rows[0];
+
+        let diffs_json = row[*hid.get("diffs_json_s").unwrap()]
+            .get_str()
+            .map(|s| s.to_string())
+            .filter(|s| s != "null");
+
+        let results_json = row[*hid.get("results_json_s").unwrap()]
+            .get_str()
+            .map(|s| s.to_string())
+            .filter(|s| s != "null");
+
+        let confidence = row[*hid.get("confidence").unwrap()]
+            .get_float()
+            .or_else(|| row[*hid.get("confidence").unwrap()].get_int().map(|i| i as f64));
+
+        let status = to_string(&row[*hid.get("status").unwrap()])?;
+        let decided_at_ms = row[*hid.get("decided_at_ms").unwrap()]
+            .get_int()
+            .map(|v| v as i64);
+        let applied_at_ms = row[*hid.get("applied_at_ms").unwrap()]
+            .get_int()
+            .map(|v| v as i64);
+        let commit_hash = row[*hid.get("commit_hash").unwrap()]
+            .get_str()
+            .map(|s| s.to_string());
+
+        let at_ms = row[*hid.get("at_ms").unwrap()].get_int().unwrap_or_default();
+        let at_valid = row[*hid.get("at_valid").unwrap()]
+            .get_bool()
+            .unwrap_or(true);
+
+        Ok(Some(CodeEditProposal {
+            request_id: req_id,
+            diffs_json,
+            confidence,
+            status,
+            decided_at_ms,
+            applied_at_ms,
+            commit_hash,
+            results_json,
+            created_at: Validity {
+                at: at_ms,
+                is_valid: at_valid,
+            },
+        }))
     }
 }

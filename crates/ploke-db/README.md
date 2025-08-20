@@ -109,3 +109,26 @@ Current focus areas:
 - [ ] Performance optimization and caching.
 
 See `PROPOSED_ARCH_V3.md` in the workspace root for the overall system architecture.
+
+## Agent Observability and Edit Proposals (M0/M1)
+
+This crate now exposes minimal, time-travel aware surfaces used by ploke-tui's agent system:
+
+- Conversation store:
+  - upsert_conversation_turn(turn)
+  - list_conversation_since(since_ms, limit)
+- Tool call lifecycle (idempotent-friendly):
+  - record_tool_call_requested(req)
+  - record_tool_call_done(done)
+  - get_tool_call(request_id, call_id) -> Option<(requested, done?)>
+  - list_tool_calls_by_parent(parent_id, limit)
+- Edit proposals (time-travel):
+  - record_edit_proposed(req_id, diffs_json, confidence?)
+  - record_edit_decision(req_id, status: "approved" | "denied")
+  - record_edit_applied(req_id, results_json, applied_at_ms, commit_hash?)
+  - get_edit_proposal(req_id)
+
+Notes
+- JSON payloads are stored as Json in Cozo and returned as strings via dump_json for API ergonomics.
+- Decision timestamps are derived from the Cozo ASSERT timestamp to keep single-transaction consistency.
+- Path policy: payloads should use project-relative paths; absolute-path enforcement stays in ploke-io.
