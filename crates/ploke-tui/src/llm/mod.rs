@@ -330,6 +330,27 @@ pub async fn llm_manager(
                     call_id,
                 }));
             }
+            AppEvent::LlmTool(ToolEvent::Requested {
+                request_id,
+                parent_id,
+                vendor,
+                name,
+                arguments,
+                call_id,
+            }) => {
+                tracing::info!(
+                    "Dispatching ToolEvent::Requested in LLM manager: name={}",
+                    name
+                );
+                let state = Arc::clone(&state);
+                let event_bus = Arc::clone(&event_bus);
+                tokio::spawn(async move {
+                    rag_handlers::handle_tool_call_requested(
+                        &state, &event_bus, request_id, parent_id, vendor, name, arguments, call_id,
+                    )
+                    .await;
+                });
+            }
             AppEvent::System(SystemEvent::ToolCallRequested {
                 request_id,
                 parent_id,
@@ -582,6 +603,30 @@ pub enum ChatHistoryTarget {
     Main,
     /// A secondary history for notes or drafts.
     Scratchpad,
+}
+
+#[derive(Clone, Debug)]
+pub enum ToolEvent {
+    Requested {
+        request_id: Uuid,
+        parent_id: Uuid,
+        name: String,
+        arguments: Value,
+        call_id: String,
+        vendor: ToolVendor,
+    },
+    Completed {
+        request_id: Uuid,
+        parent_id: Uuid,
+        call_id: String,
+        content: String,
+    },
+    Failed {
+        request_id: Uuid,
+        parent_id: Uuid,
+        call_id: String,
+        error: String,
+    },
 }
 
 #[derive(Clone, Debug)]

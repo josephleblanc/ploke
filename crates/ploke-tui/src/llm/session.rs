@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::AppEvent;
+use crate::llm::ToolEvent;
 use crate::system::SystemEvent;
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
@@ -275,6 +276,14 @@ pub async fn await_tool_result(
     let wait = async {
         loop {
             match rx.recv().await {
+                Ok(AppEvent::LlmTool(ToolEvent::Completed {
+                    request_id: rid,
+                    call_id: cid,
+                    content,
+                    ..
+                })) if rid == request_id && cid == call_id => {
+                    break Ok(content);
+                }
                 Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id: rid,
                     call_id: cid,
@@ -282,6 +291,14 @@ pub async fn await_tool_result(
                     ..
                 })) if rid == request_id && cid == call_id => {
                     break Ok(content);
+                }
+                Ok(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id: rid,
+                    call_id: cid,
+                    error,
+                    ..
+                })) if rid == request_id && cid == call_id => {
+                    break Err(error);
                 }
                 Ok(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,

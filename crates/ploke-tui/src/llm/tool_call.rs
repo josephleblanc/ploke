@@ -4,7 +4,8 @@ use serde_json::Value;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::{AppEvent, EventBus, system::SystemEvent};
+use crate::{AppEvent, EventBus};
+use crate::llm::ToolEvent;
 
 use super::{ToolVendor, session::await_tool_result};
 
@@ -27,18 +28,16 @@ pub async fn dispatch_and_wait(
     // Subscribe before sending, to avoid missing fast responses
     let rx = event_bus.realtime_tx.subscribe();
 
-    // Emit System event to trigger tool execution
+    // Emit typed tool event to trigger tool execution (compat bridge handled in llm_manager)
     let request_id = Uuid::new_v4();
-    let _ = event_bus
-        .realtime_tx
-        .send(AppEvent::System(SystemEvent::ToolCallRequested {
-            request_id,
-            parent_id,
-            vendor: spec.vendor.clone(),
-            name: spec.name.clone(),
-            arguments: spec.arguments.clone(),
-            call_id: spec.call_id.clone(),
-        }));
+    event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
+        request_id,
+        parent_id,
+        vendor: spec.vendor.clone(),
+        name: spec.name.clone(),
+        arguments: spec.arguments.clone(),
+        call_id: spec.call_id.clone(),
+    }));
 
     // Await ToolCallCompleted/Failed with correlation (request_id, call_id)
     let res = await_tool_result(rx, request_id, &spec.call_id, timeout_secs).await;

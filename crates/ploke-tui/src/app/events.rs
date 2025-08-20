@@ -25,6 +25,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         }
         AppEvent::Ui(_ui_event) => {}
         AppEvent::Llm(_event) => {}
+        AppEvent::LlmTool(_event) => {}
         AppEvent::Rag(_rag_event) => {}
         AppEvent::Error(error_event) => {
             let msg = format!("Error: {}", error_event.message);

@@ -302,6 +302,7 @@ pub enum RagEvent {
 pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::Event),
+    LlmTool(llm::ToolEvent),
     // TODO:
     // File(file::Event),
     // Rag(rag::Event),
@@ -332,6 +333,12 @@ impl AppEvent {
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
+            AppEvent::LlmTool(ev) => match ev {
+                llm::ToolEvent::Requested { .. } => EventPriority::Background,
+                llm::ToolEvent::Completed { .. } | llm::ToolEvent::Failed { .. } => {
+                    EventPriority::Realtime
+                }
+            },
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,

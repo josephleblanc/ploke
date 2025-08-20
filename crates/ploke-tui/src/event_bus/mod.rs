@@ -188,3 +188,41 @@ impl EventBus {
         self.index_tx.subscribe()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn ssot_forwards_indexing_completed_once() {
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let bus_clone = Arc::clone(&bus);
+        tokio::spawn(async move {
+            let _ = run_event_bus(bus_clone).await;
+        });
+
+        let mut rx = bus.realtime_tx.subscribe();
+
+        // Inject a single Completed status into the indexing channel
+        let _ = bus.index_tx.send(indexer::IndexingStatus {
+            status: IndexStatus::Completed,
+            ..Default::default()
+        });
+
+        // Expect exactly one IndexingCompleted event
+        let ev = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("realtime channel closed");
+
+        match ev {
+            AppEvent::IndexingCompleted => {}
+            other => panic!("expected IndexingCompleted, got {:?}", other),
+        }
+
+        // No additional IndexingCompleted should be received immediately after
+        assert!(rx.try_recv().is_err());
+    }
+}
