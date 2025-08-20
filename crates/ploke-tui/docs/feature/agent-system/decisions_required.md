@@ -14,6 +14,7 @@ Open decisions (M0 focus)
      c) Per-session timestamped files under logs/ (no overwrites, harder to find).
    - Recommended: (a) for M0; add config later.
    - Blocker: minor (unblock M0 once chosen).
+    - USER: Neither, save to database with metadata instead. Later we can add config options for users that may wish to inspect/edit the files, etc.
 
 2) Typed LLM tool events migration timing
    - Context: SystemEvent::ToolCallRequested is deprecated; migration risk to break routing.
@@ -22,6 +23,7 @@ Open decisions (M0 focus)
      b) Defer typed events entirely to M1.
    - Recommended: (a) to get telemetry attached to typed events early.
    - Blocker: none if bridge used; confirm direction.
+    - USER: Agreed, get the longer-term single source of truth working early, avoid tech debt.
 
 3) Tool-call payload persistence (privacy)
    - Context: Storing full arguments_json and outcome_json may include secrets/paths.
@@ -30,6 +32,7 @@ Open decisions (M0 focus)
      b) Store only hashes by default; full payload behind debug flag/config.
    - Recommended: (b) for M0; full payload optional via config in M1.
    - Blocker: affects ploke-db schema defaults.
+    - USER: We should transition out of absolute paths and into local paths instead. This is a longer-term solution that will avoid issues with deserializing the hashed values. May require updating many files, ultimately worth it. Should unify our approach to file-handling in any case to make project more maintainable. Consider cost/benefit of moving all IO logic into `ploke-io` or keeping minimal layer as-is in `ploke-tui` for currently functioning operations.
 
 4) EventBus channel capacities (defaults)
    - Context: Avoid lag; keep realtime snappy.
@@ -38,6 +41,7 @@ Open decisions (M0 focus)
      b) Lower realtime to 64; raise background to 4096 for heavy indexing.
    - Recommended: (a) retain; instrument lag metrics first.
    - Blocker: none.
+    - USER: Confirm. Expose in config for power-users, use sane default (a), change later on evidence from benchmarks (early optimization is the source of all evil, etc - DK)
 
 5) Observability log retention
    - Context: logs/logs/ploke.log rotation schedule and retention.
@@ -46,6 +50,7 @@ Open decisions (M0 focus)
      b) daily rotation, user-configurable retention (M1).
    - Recommended: (a) in M0; add config in M1.
    - Blocker: none.
+    - USER: Agreed
 
 How to use
 - Add new items at the bottom; include the four required parts (context, options, recommendation, blocker).

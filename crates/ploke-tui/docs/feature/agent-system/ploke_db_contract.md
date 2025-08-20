@@ -58,6 +58,7 @@ Data model (logical)
 
 Rust API (trait sketch)
 ```rust
+// USER: Added typed timestamp for better cozo compat
 // Should implement From on cozo datatype
 pub struct Validity {
     pub at: i64, // epoch millis
@@ -84,6 +85,7 @@ pub struct ToolCallReq {
     pub started_at: Validity,
 }
 
+// USER: Added typed ToolStatus
 // Should implement serialize/deserialize for strongly typed database conversion
 pub enum ToolStatus {
     Completed,
@@ -145,3 +147,143 @@ Future extensions (beyond M0)
 Blocking decisions (tracked in decisions_required.md)
 - Whether to persist full arguments_json/outcome_json by default or store only hashes (privacy/PII).
 - Default retention period for tool_calls and conversation_turns.
+
+USER: Note the following `register_callback` and `run_multi_transaction` command for `cozo::Db`, which we can integrate for better observability of database actions for the in-memory, embedded Cozo database (taken from docs.rs/cozo/latest website):
+```rust
+    /// Run a multi-transaction. A command should be sent to `payloads`, and the result should be
+280    /// retrieved from `results`. A transaction ends when it receives a `Commit` or `Abort`,
+281    /// or when a query is not successful. After a transaction ends, sending / receiving from
+282    /// the channels will fail.
+283    ///
+284    /// Write transactions _may_ block other reads, but we guarantee that this does not happen
+285    /// for the RocksDB backend.
+286    pub fn run_multi_transaction(
+287        &'s self,
+288        is_write: bool,
+289        payloads: Receiver<TransactionPayload>,
+290        results: Sender<Result<NamedRows>>,
+291    ) {
+292        let tx = if is_write {
+293            self.transact_write()
+294        } else {
+295            self.transact()
+296        };
+297        let mut cleanups: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+298        let mut tx = match tx {
+299            Ok(tx) => tx,
+300            Err(err) => {
+301                let _ = results.send(Err(err));
+302                return;
+303            }
+304        };
+305
+306        let ts = current_validity();
+307        let callback_targets = self.current_callback_targets();
+308        let mut callback_collector = BTreeMap::new();
+309        let mut write_locks = BTreeMap::new();
+310
+311        for payload in payloads {
+312            match payload {
+313                TransactionPayload::Commit => {
+314                    for (lower, upper) in cleanups {
+315                        if let Err(err) = tx.store_tx.del_range_from_persisted(&lower, &upper) {
+316                            eprintln!("{err:?}")
+317                        }
+318                    }
+319
+320                    let _ = results.send(tx.commit_tx().map(|_| NamedRows::default()));
+321                    #[cfg(not(target_arch = "wasm32"))]
+322                    if !callback_collector.is_empty() {
+323                        self.send_callbacks(callback_collector)
+324                    }
+325
+326                    break;
+327                }
+328                TransactionPayload::Abort => {
+329                    let _ = results.send(Ok(NamedRows::default()));
+330                    break;
+331                }
+332                TransactionPayload::Query((script, params)) => {
+333                    let p =
+334                        match parse_script(&script, &params, &self.fixed_rules.read().unwrap(), ts)
+335                        {
+336                            Ok(p) => p,
+337                            Err(err) => {
+338                                if results.send(Err(err)).is_err() {
+339                                    break;
+340                                } else {
+341                                    continue;
+342                                }
+343                            }
+344                        };
+345
+346                    let p = match p.get_single_program() {
+347                        Ok(p) => p,
+348                        Err(err) => {
+349                            if results.send(Err(err)).is_err() {
+350                                break;
+351                            } else {
+352                                continue;
+353                            }
+354                        }
+355                    };
+356                    if let Some(write_lock_name) = p.needs_write_lock() {
+357                        match write_locks.entry(write_lock_name) {
+358                            Entry::Vacant(e) => {
+359                                let lock = self
+360                                    .obtain_relation_locks(iter::once(e.key()))
+361                                    .pop()
+362                                    .unwrap();
+363                                e.insert(lock);
+364                            }
+365                            Entry::Occupied(_) => {}
+366                        }
+367                    }
+368
+369                    let res = self.execute_single_program(
+370                        p,
+371                        &mut tx,
+372                        &mut cleanups,
+373                        ts,
+374                        &callback_targets,
+375                        &mut callback_collector,
+376                    );
+377                    if results.send(res).is_err() {
+378                        break;
+379                    }
+380                }
+381            }
+382        }
+383    }
+//...
+/// Register callback channel to receive changes when the requested relation are successfully committed.
+752    /// The returned ID can be used to unregister the callback channel.
+753    #[cfg(not(target_arch = "wasm32"))]
+754    pub fn register_callback(
+755        &self,
+756        relation: &str,
+757        capacity: Option<usize>,
+758    ) -> (u32, Receiver<(CallbackOp, NamedRows, NamedRows)>) {
+759        let (sender, receiver) = if let Some(c) = capacity {
+760            bounded(c)
+761        } else {
+762            unbounded()
+763        };
+764        let cb = CallbackDeclaration {
+765            dependent: SmartString::from(relation),
+766            sender,
+767        };
+768
+769        let mut guard = self.event_callbacks.write().unwrap();
+770        let new_id = self.callback_count.fetch_add(1, Ordering::SeqCst);
+771        guard
+772            .1
+773            .entry(SmartString::from(relation))
+774            .or_default()
+775            .insert(new_id);
+776
+777        guard.0.insert(new_id, cb);
+778        (new_id, receiver)
+779    }
+```
+
