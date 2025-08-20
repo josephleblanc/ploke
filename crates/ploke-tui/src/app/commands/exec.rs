@@ -5,6 +5,7 @@ use itertools::Itertools;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use crate::user_config::{Config, ProviderRegistryStrictness};
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
@@ -12,6 +13,142 @@ pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Help => show_command_help(app),
         Command::ModelList => list_models_async(app),
+        Command::ModelUse(alias) => {
+            // Delegate to existing state manager path to broadcast and apply
+            app.send_cmd(StateCommand::SwitchModel {
+                alias_or_id: alias,
+            });
+        }
+        Command::ModelRefresh { remote } => {
+            let state = app.state.clone();
+            let cmd_tx = app.cmd_tx.clone();
+            tokio::spawn(async move {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.provider_registry.load_api_keys();
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: "Reloaded API keys from environment.".to_string(),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                    if remote {
+                        match cfg.provider_registry.refresh_from_openrouter().await {
+                            Ok(_) => {
+                                let _ = cmd_tx
+                                    .send(StateCommand::AddMessageImmediate {
+                                        msg: "Refreshed model capabilities from OpenRouter.".to_string(),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    })
+                                    .await;
+                            }
+                            Err(e) => {
+                                let _ = cmd_tx
+                                    .send(StateCommand::AddMessageImmediate {
+                                        msg: format!("Failed to refresh OpenRouter model registry: {}", e),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        Command::ModelLoad(path_opt) => {
+            let state = app.state.clone();
+            let cmd_tx = app.cmd_tx.clone();
+            tokio::spawn(async move {
+                let default_path = Config::default_config_path();
+                let path_str = path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
+                match Config::load_from_path(std::path::Path::new(&path_str)) {
+                    Ok(mut new_cfg) => {
+                        // Merge curated defaults, reload keys, refresh capabilities if possible
+                        new_cfg.registry = new_cfg.registry.with_defaults();
+                        new_cfg.registry.load_api_keys();
+                        if std::env::var("OPENROUTER_API_KEY").ok().map(|s| !s.is_empty()).unwrap_or(false) {
+                            let _ = new_cfg.registry.refresh_from_openrouter().await;
+                        }
+                        {
+                            let mut guard = state.config.write().await;
+                            *guard = new_cfg;
+                        }
+                        let _ = cmd_tx
+                            .send(StateCommand::AddMessageImmediate {
+                                msg: format!("Loaded configuration from {}", path_str),
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            })
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = cmd_tx
+                            .send(StateCommand::AddMessageImmediate {
+                                msg: format!("Failed to load configuration from {}: {}", path_str, e),
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            })
+                            .await;
+                    }
+                }
+            });
+        }
+        Command::ModelSave { path, with_keys } => {
+            let state = app.state.clone();
+            let cmd_tx = app.cmd_tx.clone();
+            tokio::spawn(async move {
+                let cfg = state.config.read().await.clone();
+                let default_path = Config::default_config_path();
+                let path_buf = path
+                    .map(PathBuf::from)
+                    .unwrap_or(default_path);
+                let redact = !with_keys;
+                match cfg.save_to_path(&path_buf, redact) {
+                    Ok(_) => {
+                        let _ = cmd_tx
+                            .send(StateCommand::AddMessageImmediate {
+                                msg: format!(
+                                    "Saved configuration to {}{}",
+                                    path_buf.display(),
+                                    if redact { " (keys redacted)" } else { "" }
+                                ),
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            })
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = cmd_tx
+                            .send(StateCommand::AddMessageImmediate {
+                                msg: format!("Failed to save configuration: {}", e),
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            })
+                            .await;
+                    }
+                }
+            });
+        }
+        Command::ProviderStrictness(mode) => {
+            let state = app.state.clone();
+            let cmd_tx = app.cmd_tx.clone();
+            tokio::spawn(async move {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.provider_registry.strictness = mode.clone();
+                }
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Provider strictness set to {:?}", mode),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            });
+        }
         Command::Update => spawn_update(app),
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -70,10 +207,17 @@ fn list_models_async(app: &App) {
     tokio::spawn(async move {
         let cfg = state.config.read().await;
 
-        let mut lines = vec!["Available models:".to_string()];
+        let active = cfg.provider_registry.active_provider.clone();
+        let caps_count = cfg.provider_registry.capabilities.len();
+        let mut lines = vec![format!(
+            "Available models (cached capabilities: {}):",
+            caps_count
+        )];
+
         for pc in &cfg.provider_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
-            lines.push(format!("  {:<28}  {}", pc.id, display));
+            let marker = if pc.id == active { "*" } else { " " };
+            lines.push(format!("{} {:<28}  {}", marker, pc.id, display));
         }
 
         let _ = cmd_tx

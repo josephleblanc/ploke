@@ -1,4 +1,4 @@
-use crate::user_config::CommandStyle;
+use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
 use crate::app_state::core::PreviewMode;
 use uuid::Uuid;
 
@@ -8,6 +8,11 @@ use uuid::Uuid;
 pub enum Command {
     Help,
     ModelList,
+    ModelUse(String),
+    ModelRefresh { remote: bool },
+    ModelLoad(Option<String>),
+    ModelSave { path: Option<String>, with_keys: bool },
+    ProviderStrictness(ProviderRegistryStrictness),
     Update,
     EditApprove(Uuid),
     EditDeny(Uuid),
@@ -27,6 +32,49 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
     match trimmed {
         "help" => Command::Help,
         "model list" => Command::ModelList,
+        s if s.starts_with("model use ") => {
+            let alias = s.trim_start_matches("model use ").trim().to_string();
+            if alias.is_empty() {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::ModelUse(alias)
+            }
+        }
+        s if s.starts_with("model refresh") => {
+            // Default to remote refresh unless explicitly disabled by flag
+            let remote = !s.contains("--local");
+            Command::ModelRefresh { remote }
+        }
+        s if s.starts_with("model load") => {
+            let rest = s.trim_start_matches("model load").trim();
+            let path = if rest.is_empty() { None } else { Some(rest.to_string()) };
+            Command::ModelLoad(path)
+        }
+        s if s.starts_with("model save") => {
+            let rest = s.trim_start_matches("model save").trim();
+            let mut path: Option<String> = None;
+            let mut with_keys = false;
+            if !rest.is_empty() {
+                for token in rest.split_whitespace() {
+                    if token == "--with-keys" {
+                        with_keys = true;
+                    } else if path.is_none() {
+                        path = Some(token.to_string());
+                    }
+                }
+            }
+            Command::ModelSave { path, with_keys }
+        }
+        s if s.starts_with("provider strictness ") => {
+            let mode = s.trim_start_matches("provider strictness ").trim().to_lowercase();
+            let strictness = match mode.as_str() {
+                "openrouter-only" | "openrouter_only" | "openrouteronly" => ProviderRegistryStrictness::OpenRouterOnly,
+                "allow-custom" | "allow_custom" | "allowcustom" => ProviderRegistryStrictness::AllowCustom,
+                "allow-any" | "allow_any" | "allowany" => ProviderRegistryStrictness::AllowAny,
+                _ => return Command::Raw(trimmed.to_string()),
+            };
+            Command::ProviderStrictness(strictness)
+        }
         "update" => Command::Update,
         s if s.starts_with("edit preview mode ") => {
             let m = s

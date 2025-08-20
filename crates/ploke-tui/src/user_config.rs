@@ -44,20 +44,20 @@ use ploke_embed::{
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::llm::{self, RequestMessage};
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
 
-#[derive(Debug, Clone, Deserialize, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
     NeoVim,
     #[default]
     Slash,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub registry: ProviderRegistry,
@@ -120,10 +120,53 @@ impl Config {
         };
         Ok(processor)
     }
+
+    /// Save the configuration to the specified path.
+    /// If `redact_keys` is true, provider API keys are removed before saving.
+    pub fn save_to_path(&self, path: &std::path::Path, redact_keys: bool) -> color_eyre::Result<()> {
+        let mut cfg = if redact_keys { self.clone() } else { self.clone() };
+
+        if redact_keys {
+            for p in &mut cfg.registry.providers {
+                p.api_key.clear();
+            }
+        }
+
+        let toml_str = toml::to_string_pretty(&cfg)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let dir = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+        use std::io::Write as _;
+        tmp.write_all(toml_str.as_bytes())?;
+        tmp.flush()?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(path)?;
+        Ok(())
+    }
+
+    /// Load configuration from the specified path.
+    pub fn load_from_path(path: &std::path::Path) -> color_eyre::Result<Config> {
+        let content = std::fs::read_to_string(path)?;
+        let cfg: Config = toml::from_str(&content)?;
+        Ok(cfg)
+    }
+
+    /// Default config.toml path: ~/.config/ploke/config.toml
+    pub fn default_config_path() -> std::path::PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("ploke")
+            .join("config.toml")
+    }
 }
 
 // NEW: Embedding configuration
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct EmbeddingConfig {
     pub local: Option<LocalModelConfig>,
     pub hugging_face: Option<HuggingFaceConfig>,
@@ -131,7 +174,7 @@ pub struct EmbeddingConfig {
     pub cozo: Option<CozoConfig>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct EditingAgentConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -139,7 +182,7 @@ pub struct EditingAgentConfig {
     pub min_confidence: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EditingConfig {
     #[serde(default)]
     pub auto_confirm_edits: bool,
@@ -160,7 +203,7 @@ fn default_agent_min_confidence() -> f32 {
     0.8
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderRegistry {
     pub providers: Vec<ProviderConfig>,
     #[serde(default = "default_active_provider")]
@@ -169,9 +212,11 @@ pub struct ProviderRegistry {
     pub aliases: std::collections::HashMap<String, String>,
     #[serde(skip)]
     pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
+    #[serde(default = "default_strictness")]
+    pub strictness: ProviderRegistryStrictness,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
@@ -197,13 +242,28 @@ pub struct ProviderConfig {
     pub llm_params: Option<crate::llm::LLMParameters>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub enum ProviderType {
     #[default]
     OpenRouter,
     OpenAI,
     Anthropic,
     Custom,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub enum ProviderRegistryStrictness {
+    /// Only allow selecting OpenRouter providers
+    OpenRouterOnly,
+    /// Allow OpenRouter and Custom providers (default)
+    #[default]
+    AllowCustom,
+    /// No restrictions (future-friendly)
+    AllowAny,
+}
+
+pub fn default_strictness() -> ProviderRegistryStrictness {
+    ProviderRegistryStrictness::AllowCustom
 }
 
 impl ProviderConfig {
@@ -340,17 +400,40 @@ impl ProviderRegistry {
             .get(id_or_alias)
             .map(|s| s.as_str())
             .unwrap_or(id_or_alias);
-        if self.providers.iter().any(|p| p.id == *provider_id) {
-            tracing::info!(
-                "Changing provider from {} to {}",
-                self.active_provider,
-                provider_id
-            );
-            self.active_provider = provider_id.to_string();
-            true
+
+        let provider = if let Some(p) = self.providers.iter().find(|p| p.id == *provider_id) {
+            p
         } else {
-            false
+            return false;
+        };
+
+        // Enforce strictness policy
+        let allowed = match self.strictness {
+            ProviderRegistryStrictness::OpenRouterOnly => {
+                matches!(provider.provider_type, ProviderType::OpenRouter)
+            }
+            ProviderRegistryStrictness::AllowCustom => {
+                matches!(provider.provider_type, ProviderType::OpenRouter | ProviderType::Custom)
+            }
+            ProviderRegistryStrictness::AllowAny => true,
+        };
+
+        if !allowed {
+            tracing::warn!(
+                "Provider '{}' not allowed by current strictness setting: {:?}",
+                provider_id,
+                self.strictness
+            );
+            return false;
         }
+
+        tracing::info!(
+            "Changing provider from {} to {}",
+            self.active_provider,
+            provider_id
+        );
+        self.active_provider = provider_id.to_string();
+        true
     }
 
     /// Ensure all providers have their API keys loaded from environment variables
@@ -456,6 +539,7 @@ impl Default for ProviderRegistry {
             active_provider: default_active_provider(),
             aliases: std::collections::HashMap::new(),
             capabilities: std::collections::HashMap::new(),
+            strictness: default_strictness(),
         };
 
         // Always include the curated defaults
