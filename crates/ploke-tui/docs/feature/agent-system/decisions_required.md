@@ -138,3 +138,44 @@ New items added 2025-08-19 (accelerated M0)
    - Blocker: Not for M0 (strings work), but desirable for M1 to improve type safety and reduce incidental bugs.
 
 Reference: See implementation-log-007.md for related changes and accelerated-pace requirement.
+
+New items added 2025-08-20 (M1 start)
+12) Preview mode defaults and truncation (NEEDS DECISION)
+   - Context: Diff previews can be large. We plan code-block previews by default with optional unified diff.
+   - Options:
+     a) Default "codeblock" (before/after) and cap to N lines per file (e.g., 300), with a "...truncated" footer.
+     b) Default "diff" (unified) and cap total preview size (e.g., 2000 lines), with per-file folding.
+   - Recommended: (a) for readability and minimal deps; add unified diff as opt-in later.
+   - Blocker: Minor — affects preview implementation and UI rendering.
+
+13) Auto-confirm edits threshold (QUESTION)
+   - Context: Tool payload can include a "confidence" value (0–1). We may allow auto-confirming above a threshold.
+   - Options:
+     a) Keep manual approval only in M1; ignore confidence.
+     b) Add config editing.auto_confirm_edits and editing.min_confidence (default disabled).
+   - Recommended: (b) as opt-in; default to manual approval.
+   - Blocker: None — requires adding config fields.
+
+14) Tool-call outcome on denial (CONFIRM)
+   - Context: On user denial, we currently emit ToolCallFailed with error_kind "denied by user".
+   - Options:
+     a) Keep as "failed" for observability simplicity.
+     b) Introduce a new "denied" terminal status in DB and eventing.
+   - Recommended: (a) for M1; revisit status semantics when ploke-db adds code_edit_proposal.
+   - Blocker: None — consistency decision for dashboards.
+
+15) Proposal retention policy (QUESTION)
+   - Context: After applied/denied, proposals remain in memory with terminal status.
+   - Options:
+     a) Keep them until session end; allow "edit clear <request_id>" later.
+     b) Evict after N minutes or when count exceeds a cap.
+   - Recommended: (a) for M1 simplicity.
+   - Blocker: None — minor memory considerations.
+
+16) Path normalization for previews (FOLLOW-UP)
+   - Context: Absolute paths can be noisy; we plan workspace-relative paths for display.
+   - Options:
+     a) Normalize paths against current crate focus or configured workspace root in TUI.
+     b) Keep absolute paths; rely on later normalization in DB layer.
+   - Recommended: (a) for UX; not blocking.
+   - Blocker: None.

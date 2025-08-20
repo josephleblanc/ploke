@@ -196,6 +196,12 @@ pub async fn state_manager(
                 )
                 .await
             }
+            StateCommand::ApproveEdits { request_id } => {
+                handlers::rag::approve_edits(&state, &event_bus, request_id).await;
+            }
+            StateCommand::DenyEdits { request_id } => {
+                handlers::rag::deny_edits(&state, &event_bus, request_id).await;
+            }
 
             _ => {}
         };

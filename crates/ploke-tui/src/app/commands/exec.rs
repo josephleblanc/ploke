@@ -13,6 +13,12 @@ pub fn execute(app: &mut App, command: Command) {
         Command::Help => show_command_help(app),
         Command::ModelList => list_models_async(app),
         Command::Update => spawn_update(app),
+        Command::EditApprove(id) => {
+            app.send_cmd(StateCommand::ApproveEdits { request_id: id });
+        }
+        Command::EditDeny(id) => {
+            app.send_cmd(StateCommand::DenyEdits { request_id: id });
+        }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
 }
@@ -372,6 +378,8 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     bm25 search <query> [top_k] - Search with BM25
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
     preview [on|off|toggle] - Toggle context preview panel
+    edit approve <request_id> - Apply staged code edits with this request ID
+    edit deny <request_id> - Deny and discard staged code edits
     help - Show this help
 
     Keyboard shortcuts (Normal mode):

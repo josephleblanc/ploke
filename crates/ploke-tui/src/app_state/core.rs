@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::llm::LLMParameters;
 use crate::user_config::ProviderRegistry;
@@ -24,6 +26,9 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub embedder: Arc<EmbeddingProcessor>,
     pub io_handle: IoManagerHandle,
+
+    // In-memory registry for staged code-edit proposals (M1)
+    pub proposals: RwLock<HashMap<Uuid, EditProposal>>,
 
     // RAG stuff
     pub rag: Option<Arc<ploke_rag::RagService>>,
@@ -101,6 +106,41 @@ pub struct Config {
     pub provider_registry: ProviderRegistry,
 }
 
+#[derive(Debug, Clone)]
+pub enum EditProposalStatus {
+    Pending,
+    Approved,
+    Denied,
+    Applied,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeAfter {
+    pub file_path: PathBuf,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum DiffPreview {
+    CodeBlocks { per_file: Vec<BeforeAfter> },
+    UnifiedDiff { text: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct EditProposal {
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub call_id: String,
+    pub proposed_at_ms: i64,
+    pub edits: Vec<ploke_core::WriteSnippetData>,
+    pub files: Vec<PathBuf>,
+    pub args_hash: String,
+    pub preview: DiffPreview,
+    pub status: EditProposalStatus,
+}
+
 impl AppState {
     pub fn new(
         db: Arc<Database>,
@@ -120,6 +160,7 @@ impl AppState {
             db,
             embedder,
             io_handle,
+            proposals: RwLock::new(HashMap::new()),
             rag: Some(rag),
             budget,
             // rag_tx,

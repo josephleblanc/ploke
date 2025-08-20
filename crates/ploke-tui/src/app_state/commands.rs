@@ -161,6 +161,12 @@ pub enum StateCommand {
         strategy: RetrievalStrategy,
         budget: TokenBudget,
     },
+    ApproveEdits {
+        request_id: Uuid,
+    },
+    DenyEdits {
+        request_id: Uuid,
+    },
 }
 
 impl StateCommand {
@@ -206,6 +212,8 @@ impl StateCommand {
             RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
             ProcessWithRag { .. } => "ProcessWithRag",
+            ApproveEdits { .. } => "ApproveEdits",
+            DenyEdits { .. } => "DenyEdits",
         }
     }
 }

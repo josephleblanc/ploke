@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -77,9 +79,9 @@ pub async fn handle_tool_call_requested(
         "DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility."
     );
 
-    // Handle atomic code edit application via ploke-io
+    // Handle atomic code edit application via ploke-io (M1: stage proposal, do not apply immediately)
     if name == "apply_code_edit" {
-        // Parse optional confidence (currently not used for gating in minimal path)
+        // Parse optional confidence (kept for future gating)
         let _confidence = arguments
             .get("confidence")
             .and_then(|v| v.as_f64())
@@ -106,7 +108,8 @@ pub async fn handle_tool_call_requested(
         };
 
         let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(edits_arr.len());
-        let mut file_paths: Vec<std::path::PathBuf> = Vec::with_capacity(edits_arr.len());
+        let mut files_set: std::collections::BTreeSet<std::path::PathBuf> = std::collections::BTreeSet::new();
+
         for e in edits_arr {
             let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
                 let _ = event_bus
@@ -176,67 +179,101 @@ pub async fn handle_tool_call_requested(
                 return;
             };
 
+            let path_buf = std::path::PathBuf::from(file_path);
             let ws = WriteSnippetData {
                 id: uuid::Uuid::new_v4(),
                 name: "edit".to_string(),
-                file_path: std::path::PathBuf::from(file_path),
+                file_path: path_buf.clone(),
                 expected_file_hash: TrackingHash(hash_uuid),
                 start_byte: start_byte as usize,
                 end_byte: end_byte as usize,
                 replacement: replacement.to_string(),
                 namespace,
             };
-            file_paths.push(ws.file_path.clone());
+            files_set.insert(path_buf);
             edits.push(ws);
         }
 
-        // Apply edits via IoManagerHandle
-        match state.io_handle.write_snippets_batch(edits).await {
-            Ok(results) => {
-                let applied = results.iter().filter(|r| r.is_ok()).count();
-                let results_json: Vec<serde_json::Value> = results
-                    .into_iter()
-                    .zip(file_paths.into_iter())
-                    .map(|(res, path)| match res {
-                        Ok(write_res) => serde_json::json!({
-                            "file_path": path.display().to_string(),
-                            "new_file_hash": write_res.new_file_hash.0.to_string(),
-                        }),
-                        Err(err) => serde_json::json!({
-                            "file_path": path.display().to_string(),
-                            "error": err.to_string(),
-                        }),
-                    })
-                    .collect();
+        // Compute a simple args hash for auditing
+        let mut hasher = Sha256::new();
+        hasher.update(arguments.to_string().as_bytes());
+        let args_hash = format!("{:x}", hasher.finalize());
 
-                let content = serde_json::json!({
-                    "ok": applied > 0,
-                    "applied": applied,
-                    "results": results_json
-                })
-                .to_string();
+        // Build a lightweight preview (code-block stubs for now; unified diff optional in later step)
+        let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
+        for path in files_set.iter() {
+            let before = match tokio::fs::read_to_string(path).await {
+                Ok(s) => s,
+                Err(_) => "<unreadable or binary file>".to_string(),
+            };
 
-                let _ =
-                    event_bus
-                        .realtime_tx
-                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            request_id,
-                            parent_id,
-                            call_id,
-                            content,
-                        }));
+            // Apply all edits for this file in-memory (descending by start to keep indices stable)
+            let mut bytes = before.clone().into_bytes();
+            let mut file_edits: Vec<&WriteSnippetData> = edits.iter().filter(|e| &e.file_path == path).collect();
+            file_edits.sort_by_key(|e| e.start_byte);
+            file_edits.reverse();
+            for e in file_edits {
+                let start = e.start_byte.min(bytes.len());
+                let end = e.end_byte.min(bytes.len());
+                if start > end {
+                    continue;
+                }
+                let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
+                new_bytes.extend_from_slice(&bytes[..start]);
+                new_bytes.extend_from_slice(e.replacement.as_bytes());
+                new_bytes.extend_from_slice(&bytes[end..]);
+                bytes = new_bytes;
             }
-            Err(e) => {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id,
-                        error: format!("Failed to apply edits: {}", e),
-                    }));
-            }
+            let after = String::from_utf8_lossy(&bytes).to_string();
+
+            per_file.push(crate::app_state::core::BeforeAfter {
+                file_path: path.clone(),
+                before,
+                after,
+            });
         }
+
+        let files: Vec<std::path::PathBuf> = files_set.into_iter().collect();
+
+        // Stash proposal into in-memory registry
+        {
+            use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
+            let mut reg = state.proposals.write().await;
+            reg.insert(
+                request_id,
+                EditProposal {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                    edits,
+                    files: files.clone(),
+                    args_hash,
+                    preview: DiffPreview::CodeBlocks { per_file },
+                    status: EditProposalStatus::Pending,
+                },
+            );
+        }
+
+        // Emit a concise SysInfo message with how to approve/deny
+        let summary = format!(
+            "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nApprove:  edit approve {}\nDeny:     edit deny {}",
+            request_id,
+            call_id,
+            files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n  "),
+            request_id,
+            request_id
+        );
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            summary,
+            crate::chat_history::MessageKind::SysInfo,
+        )
+        .await;
+
+        // Do not send Completed/Failed now; wait for user approval
         return;
     }
 
@@ -351,6 +388,185 @@ pub async fn handle_tool_call_requested(
                 call_id,
                 error: msg,
             }));
+    }
+}
+
+pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+    use crate::app_state::core::{EditProposalStatus};
+    let mut reg = state.proposals.write().await;
+    let Some(mut proposal) = reg.get(&request_id).cloned() else {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            format!("No staged edit proposal found for request_id {}", request_id),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+        .await;
+        return;
+    };
+
+    // Idempotency checks
+    match proposal.status {
+        EditProposalStatus::Pending => { /* ok */ }
+        EditProposalStatus::Applied => {
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Edits already applied for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+        EditProposalStatus::Denied => {
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Edits already denied for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+        EditProposalStatus::Approved => {
+            // Treat as attempting to apply again
+        }
+        EditProposalStatus::Failed(_) => {
+            // Allow re-apply attempt
+        }
+    }
+
+    // Apply edits via IoManagerHandle
+    let file_paths = proposal.files.clone();
+    match state.io_handle.write_snippets_batch(proposal.edits.clone()).await {
+        Ok(results) => {
+            let applied = results.iter().filter(|r| r.is_ok()).count();
+            let results_json: Vec<serde_json::Value> = results
+                .into_iter()
+                .zip(file_paths.into_iter())
+                .map(|(res, path)| match res {
+                    Ok(write_res) => serde_json::json!({
+                        "file_path": path.display().to_string(),
+                        "new_file_hash": write_res.new_file_hash.0.to_string(),
+                    }),
+                    Err(err) => serde_json::json!({
+                        "file_path": path.display().to_string(),
+                        "error": err.to_string(),
+                    }),
+                })
+                .collect();
+
+            let content = serde_json::json!({
+                "ok": applied > 0,
+                "applied": applied,
+                "results": results_json
+            })
+            .to_string();
+
+            // Update state: mark applied
+            proposal.status = EditProposalStatus::Applied;
+            reg.insert(request_id, proposal);
+
+            // Bridge: mark tool call completed
+            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                request_id,
+                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
+                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
+                content,
+            }));
+
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Applied edits for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+        }
+        Err(e) => {
+            proposal.status = EditProposalStatus::Failed(e.to_string());
+            reg.insert(request_id, proposal);
+
+            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
+                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
+                error: format!("Failed to apply edits: {}", e),
+            }));
+
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Failed to apply edits for request_id {}: {}", request_id, e),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+        }
+    }
+}
+
+pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+    use crate::app_state::core::EditProposalStatus;
+    let mut reg = state.proposals.write().await;
+    let Some(mut proposal) = reg.get(&request_id).cloned() else {
+        super::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            format!("No staged edit proposal found for request_id {}", request_id),
+            crate::chat_history::MessageKind::SysInfo,
+        )
+        .await;
+        return;
+    };
+
+    match proposal.status {
+        EditProposalStatus::Pending | EditProposalStatus::Approved | EditProposalStatus::Failed(_) => {
+            proposal.status = EditProposalStatus::Denied;
+            reg.insert(request_id, proposal);
+
+            // Bridge: mark tool call failed with denial
+            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id: reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default(),
+                call_id: reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default(),
+                error: "Edit proposal denied by user".to_string(),
+            }));
+
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Denied edits for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+        }
+        EditProposalStatus::Denied => {
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Edits already denied for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+        }
+        EditProposalStatus::Applied => {
+            super::chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Edits already applied for request_id {}", request_id),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+        }
     }
 }
 
