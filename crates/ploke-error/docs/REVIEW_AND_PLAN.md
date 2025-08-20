@@ -324,9 +324,13 @@ Provide explicit mapping tables in crate docs for each workspace crate to mainta
 ## Open Questions
 
 - Should NotFound be Warning or Domain(Db/Transform) by default?
+  - USER: Depends. If an item is not found in a database search, then it is a warning. If an item is not found when the item is a node that is expected to exist during parsing, then that represents an invalid state and indicates that we should end the process. While we want to make most errors recoverable, if there are serious internal errors such as duplicate node ids or edges (which should NEVER happen), then we want to panic as we strive to make invalid states unrepresentable. However, under other circumstances (e.g. the parsed code itself is malformed) we want to end the parsing process and bubble up the error for the caller in `ploke-tui` to report to logging and/or the user and continue the overall process of the UI.
 - Do we need error codes (e.g., E1001) for supportability? If yes, where to encode (DomainError/Diagnostic impl)?
+  - USER: Some errors, e.g. IO errors, report an error code from the OS. In that case we should forward the error code, but we don't need to report the exact error code in other circumstances.
 - How much of SourceSpan do we need (byte offsets vs line/col)? Do we have reliable source mapping?
+  - USER: Not sure what "reliable source mapping" means exactly. If the question is whether we are somehow tracking things like macro expansion for sources then no we are not, but I'm not sure exactly what this question means, please clarify and educate me on this point.
 - Should we expose a policy layer for mapping (e.g., treat certain Domain errors as warnings at runtime)?
+  - Rather than decide within the `ploke-error` crate that certain Domain errors are warnings at runtime, provide a trait that can be configured in the dependent crate to suite the use-case for that crate. Include a trait with Safe + Send to allow for thread-safe errors to be consumed and emitted as events rather than returned (potentially ending loops intended to run for the life of the program), which can report informative and revelant context in logging. Provide recommendations on preparing the `ploke-error` crate to be compatible with `miette` and/or `tracing` crates, and advise on the best practices for library vs. application use cases.
 
 ---
 
