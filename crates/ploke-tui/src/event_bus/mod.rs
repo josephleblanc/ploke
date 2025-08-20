@@ -204,6 +204,8 @@ mod tests {
         });
 
         let mut rx = bus.realtime_tx.subscribe();
+        // Allow run_event_bus to subscribe to index_tx before we send
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         // Inject a single Completed status into the indexing channel
         let _ = bus.index_tx.send(indexer::IndexingStatus {

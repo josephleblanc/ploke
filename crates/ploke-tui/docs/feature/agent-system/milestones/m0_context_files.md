@@ -41,6 +41,7 @@ Docs and contracts
 
 Tests to add/update
 - EventBus SSoT test: inject IndexingStatus::Completed on index_tx, assert exactly one AppEvent::IndexingCompleted.
+  - Testing note: broadcast channels only deliver to currently-subscribed receivers. Ensure run_event_bus has subscribed to index_tx before sending (e.g., await a short sleep or a readiness signal).
 - (Optional) Tool-call await correlation test exists; extend with telemetry span fields.
 
 Notes
