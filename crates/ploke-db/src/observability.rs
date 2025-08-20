@@ -24,7 +24,7 @@ pub struct ConversationTurn {
     pub thread_id: Option<uuid::Uuid>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct ToolCallReq {
     pub request_id: uuid::Uuid,
     pub call_id: String,
@@ -264,6 +264,21 @@ impl ObservabilityStore for Database {
     fn record_tool_call_requested(&self, req: ToolCallReq) -> Result<(), DbError> {
         self.ensure_observability_schema()?;
 
+        // Check current state for idempotency/upsert semantics
+        if let Some((existing_req, existing_done)) =
+            self.get_tool_call(req.request_id, &req.call_id)?
+        {
+            // If already completed/failed, it's a no-op
+            if existing_done.is_some() {
+                return Ok(());
+            }
+            // If the requested state matches exactly, it's a no-op
+            if existing_req == req {
+                return Ok(());
+            }
+            // Otherwise, we will assert a new "requested" fact with updated metadata below.
+        }
+
         // Use "null" JSON string when absent so parse_json works
         let args_json_str = req.arguments_json.unwrap_or_else(|| "null".to_string());
 
@@ -315,10 +330,30 @@ impl ObservabilityStore for Database {
     fn record_tool_call_done(&self, done: ToolCallDone) -> Result<(), DbError> {
         self.ensure_observability_schema()?;
 
-        // First, check current state to implement idempotency
-        if let Some((_, Some(existing))) = self.get_tool_call(done.request_id, &done.call_id)? {
-            if existing == done {
-                return Ok(());
+        // Enforce lifecycle rules and idempotency
+        match self.get_tool_call(done.request_id, &done.call_id)? {
+            None => {
+                // Must have an existing requested row to transition to done
+                return Err(DbError::InvalidLifecycle(
+                    "Cannot record completion without a prior requested row".into(),
+                ));
+            }
+            Some((_req, Some(existing_done))) => {
+                // Already completed/failed
+                if existing_done == done {
+                    // exact same payload -> no-op
+                    return Ok(());
+                }
+                if existing_done.status != done.status {
+                    // requested → completed → failed (or vice versa) is invalid
+                    return Err(DbError::InvalidLifecycle(
+                        "Cannot change terminal status once recorded".into(),
+                    ));
+                }
+                // Same terminal status but different payload: assert updated fact below
+            }
+            Some((_req, None)) => {
+                // Ok to proceed and assert terminal status below
             }
         }
 
