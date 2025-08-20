@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 use sha2::{Digest, Sha256};
+use similar::TextDiff;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::AppEvent;
@@ -174,8 +175,10 @@ pub async fn handle_tool_call_requested(
 
         // Build a lightweight preview (code-block stubs for now; unified diff optional in later step)
         let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
+        let mut unified_diff = String::new();
         // Normalize display paths relative to current crate focus when available
         let crate_root = { state.system.read().await.crate_focus.clone() };
+        let editing_cfg = { state.config.read().await.editing.clone() };
         for path in files_set.iter() {
             let before = match tokio::fs::read_to_string(path).await {
                 Ok(s) => s,
@@ -207,10 +210,22 @@ pub async fn handle_tool_call_requested(
                 path.clone()
             };
             per_file.push(crate::app_state::core::BeforeAfter {
-                file_path: display_path,
-                before,
-                after,
+                file_path: display_path.clone(),
+                before: before.clone(),
+                after: after.clone(),
             });
+            if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+                let header_a = format!("a/{}", display_path.display());
+                let header_b = format!("b/{}", display_path.display());
+                let diff = TextDiff::from_lines(&before, &after)
+                    .unified_diff()
+                    .header(&header_a, &header_b)
+                    .to_string();
+                unified_diff.push_str(&diff);
+                if !unified_diff.ends_with('\n') {
+                    unified_diff.push('\n');
+                }
+            }
         }
 
         let files: Vec<std::path::PathBuf> = files_set.into_iter().collect();
@@ -227,6 +242,42 @@ pub async fn handle_tool_call_requested(
             })
             .collect();
 
+        // Build preview snippet for SysInfo (truncated per config)
+        let preview_label = if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+            "diff"
+        } else {
+            "codeblock"
+        };
+
+        let truncate = |s: &str| -> String {
+            let max = editing_cfg.max_preview_lines;
+            let mut out = String::new();
+            for (i, line) in s.lines().enumerate() {
+                if i >= max {
+                    out.push_str("\n... [truncated]\n");
+                    break;
+                }
+                out.push_str(line);
+                out.push('\n');
+            }
+            out
+        };
+
+        let preview_snippet = if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+            truncate(&unified_diff)
+        } else {
+            let mut buf = String::new();
+            for ba in &per_file {
+                buf.push_str(&format!(
+                    "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
+                    ba.file_path.display(),
+                    truncate(&ba.before),
+                    truncate(&ba.after)
+                ));
+            }
+            buf
+        };
+
         // Stash proposal into in-memory registry
         {
             use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
@@ -241,7 +292,11 @@ pub async fn handle_tool_call_requested(
                     edits,
                     files: files.clone(),
                     args_hash,
-                    preview: DiffPreview::CodeBlocks { per_file },
+                    preview: if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+                        crate::app_state::core::DiffPreview::UnifiedDiff { text: unified_diff.clone() }
+                    } else {
+                        crate::app_state::core::DiffPreview::CodeBlocks { per_file: per_file.clone() }
+                    },
                     status: EditProposalStatus::Pending,
                 },
             );
@@ -249,12 +304,16 @@ pub async fn handle_tool_call_requested(
 
         // Emit a concise SysInfo message with how to approve/deny
         let summary = format!(
-            "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nApprove:  edit approve {}\nDeny:     edit deny {}",
+            "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nPreview (mode={}, first {} lines per section):\n{}\n\nApprove:  edit approve {}\nDeny:     edit deny {}{}",
             request_id,
             call_id,
             display_files.join("\n  "),
+            preview_label,
+            editing_cfg.max_preview_lines,
+            preview_snippet,
             request_id,
-            request_id
+            request_id,
+            if editing_cfg.auto_confirm_edits { "\n\nAuto-approval enabled: applying now..." } else { "" }
         );
         super::chat::add_msg_immediate(
             state,
@@ -265,7 +324,15 @@ pub async fn handle_tool_call_requested(
         )
         .await;
 
-        // Do not send Completed/Failed now; wait for user approval
+        if editing_cfg.auto_confirm_edits {
+            let state2 = Arc::clone(state);
+            let event_bus2 = Arc::clone(event_bus);
+            tokio::spawn(async move {
+                approve_edits(&state2, &event_bus2, request_id).await;
+            });
+        }
+
+        // Do not send Completed/Failed now; wait for user approval (unless auto-approval enabled)
         return;
     }
 

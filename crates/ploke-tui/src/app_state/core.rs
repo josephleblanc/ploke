@@ -100,10 +100,41 @@ impl std::ops::Deref for IndexingState {
     }
 }
 
+// Editing configuration for M1 safe-editing pipeline
+#[derive(Debug, Clone, Copy)]
+pub enum PreviewMode {
+    CodeBlock,
+    Diff,
+}
+
+impl Default for PreviewMode {
+    fn default() -> Self {
+        PreviewMode::CodeBlock
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EditingConfig {
+    pub preview_mode: PreviewMode,
+    pub auto_confirm_edits: bool,
+    pub max_preview_lines: usize,
+}
+
+impl Default for EditingConfig {
+    fn default() -> Self {
+        Self {
+            preview_mode: PreviewMode::CodeBlock,
+            auto_confirm_edits: false,
+            max_preview_lines: 300,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Config {
     pub llm_params: LLMParameters,
     pub provider_registry: ProviderRegistry,
+    pub editing: EditingConfig,
 }
 
 #[derive(Debug, Clone)]

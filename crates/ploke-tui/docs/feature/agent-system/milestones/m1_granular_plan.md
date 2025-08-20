@@ -120,6 +120,12 @@ Implementation order (recommended)
 6) Optional: config surface and unified diff path.
 7) DB integration once available.
 
+Progress update (2025-08-20)
+- Phase 2 complete: in-memory proposal registry added to AppState.
+- Phase 3 initial: code-block previews implemented with truncation; optional unified diff path added via "similar" crate (config-driven).
+- Phase 4 partial: approval flow implemented; optional auto-approval gating added via config (disabled by default).
+- Dispatcher and command wiring for Approve/Deny complete.
+
 References
 - Tool schema: crates/ploke-tui/src/llm/mod.rs (apply_code_edit tool).
 - Current handler: crates/ploke-tui/src/app_state/handlers/rag.rs (apply_code_edit path).
