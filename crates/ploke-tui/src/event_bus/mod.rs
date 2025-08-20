@@ -222,7 +222,7 @@ impl EventBus {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     #[tokio::test]
     async fn ssot_forwards_indexing_completed_once() {
