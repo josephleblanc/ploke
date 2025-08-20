@@ -78,6 +78,14 @@ pub async fn handle_tool_call_requested(
     tracing::warn!(
         "DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility."
     );
+    let tool_call_failed = |error| {
+        AppEvent::System(SystemEvent::ToolCallFailed {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            error,
+        })
+    };
 
     // Handle atomic code edit application via ploke-io (M1: stage proposal, do not apply immediately)
     if name == "apply_code_edit" {
@@ -98,12 +106,7 @@ pub async fn handle_tool_call_requested(
         let Some(edits_arr) = arguments.get("edits").and_then(|v| v.as_array()) else {
             let _ = event_bus
                 .realtime_tx
-                .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id,
-                    error: "Missing or invalid 'edits' array".to_string(),
-                }));
+                .send(tool_call_failed("Missing or invalid 'edits' array".to_string()));
             return;
         };
 
@@ -114,68 +117,38 @@ pub async fn handle_tool_call_requested(
             let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: "Edit missing 'file_path'".to_string(),
-                    }));
+                .send(tool_call_failed("Edit missing 'file_path'".to_string()));
                 return;
             };
             let Some(hash_str) = e.get("expected_file_hash").and_then(|v| v.as_str()) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: "Edit missing 'expected_file_hash'".to_string(),
-                    }));
+                .send(tool_call_failed("Edit missing 'expected_file_hash'".to_string()));
                 return;
             };
             let Some(start_byte) = e.get("start_byte").and_then(|v| v.as_u64()) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: "Edit missing 'start_byte'".to_string(),
-                    }));
+                .send(tool_call_failed("Edit missing 'start_byte'".to_string()));
                 return;
             };
             let Some(end_byte) = e.get("end_byte").and_then(|v| v.as_u64()) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: "Edit missing 'end_byte'".to_string(),
-                    }));
+                    .send(tool_call_failed("Edit missing 'end_byte'".to_string()));
                 return;
             };
             let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: "Edit missing 'replacement'".to_string(),
-                    }));
+                    .send(tool_call_failed("Edit missing 'replacement'".to_string()));
                 return;
             };
 
             let Ok(hash_uuid) = uuid::Uuid::parse_str(hash_str) else {
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: format!("Invalid expected_file_hash UUID: {}", hash_str),
-                    }));
+                .send(tool_call_failed(format!("Invalid expected_file_hash UUID: {}", hash_str)));
                 return;
             };
 
@@ -281,12 +254,7 @@ pub async fn handle_tool_call_requested(
         tracing::warn!("Unsupported tool call: {}", name);
         let _ = event_bus
             .realtime_tx
-            .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id,
-                error: format!("Unsupported tool: {}", name),
-            }));
+            .send(tool_call_failed(format!("Unsupported tool: {}", name)));
         return;
     }
 
@@ -298,12 +266,7 @@ pub async fn handle_tool_call_requested(
     if token_budget.is_none() || token_budget == Some(0) {
         let _ = event_bus
             .realtime_tx
-            .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id,
-                error: "Invalid or missing token_budget".to_string(),
-            }));
+            .send(tool_call_failed("Invalid or missing token_budget".to_string()));
         return;
     }
     let token_budget = token_budget.unwrap();
@@ -326,13 +289,7 @@ pub async fn handle_tool_call_requested(
     if query.trim().is_empty() {
         let _ = event_bus
             .realtime_tx
-            .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id,
-                error: "No query available (no hint provided and no recent user message)"
-                    .to_string(),
-            }));
+            .send(tool_call_failed("No query available (no hint provided and no recent user message)".to_string()));
         return;
     }
 
@@ -360,7 +317,7 @@ pub async fn handle_tool_call_requested(
                         .send(AppEvent::System(SystemEvent::ToolCallCompleted {
                             request_id,
                             parent_id,
-                            call_id,
+                            call_id: call_id.clone(),
                             content,
                         }));
             }
@@ -369,12 +326,7 @@ pub async fn handle_tool_call_requested(
                 tracing::warn!("{}", msg);
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id,
-                        error: msg,
-                    }));
+                    .send(tool_call_failed(msg));
             }
         }
     } else {
@@ -392,7 +344,7 @@ pub async fn handle_tool_call_requested(
 }
 
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
-    use crate::app_state::core::{EditProposalStatus};
+    use crate::app_state::core::EditProposalStatus;
     let mut reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
         super::chat::add_msg_immediate(
