@@ -1,3 +1,4 @@
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_rag::AssembledContext;
 use ploke_rag::RagService;
 use ploke_rag::RetrievalStrategy;
@@ -8,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use ploke_core::{WriteSnippetData, TrackingHash, PROJECT_NAMESPACE_UUID};
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -94,12 +94,14 @@ pub async fn handle_tool_call_requested(
 
         // Parse edits array
         let Some(edits_arr) = arguments.get("edits").and_then(|v| v.as_array()) else {
-            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id,
-                error: "Missing or invalid 'edits' array".to_string(),
-            }));
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id,
+                    error: "Missing or invalid 'edits' array".to_string(),
+                }));
             return;
         };
 
@@ -107,58 +109,70 @@ pub async fn handle_tool_call_requested(
         let mut file_paths: Vec<std::path::PathBuf> = Vec::with_capacity(edits_arr.len());
         for e in edits_arr {
             let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Edit missing 'file_path'".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: "Edit missing 'file_path'".to_string(),
+                    }));
                 return;
             };
             let Some(hash_str) = e.get("expected_file_hash").and_then(|v| v.as_str()) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Edit missing 'expected_file_hash'".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: "Edit missing 'expected_file_hash'".to_string(),
+                    }));
                 return;
             };
             let Some(start_byte) = e.get("start_byte").and_then(|v| v.as_u64()) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Edit missing 'start_byte'".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: "Edit missing 'start_byte'".to_string(),
+                    }));
                 return;
             };
             let Some(end_byte) = e.get("end_byte").and_then(|v| v.as_u64()) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Edit missing 'end_byte'".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: "Edit missing 'end_byte'".to_string(),
+                    }));
                 return;
             };
             let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Edit missing 'replacement'".to_string(),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: "Edit missing 'replacement'".to_string(),
+                    }));
                 return;
             };
 
             let Ok(hash_uuid) = uuid::Uuid::parse_str(hash_str) else {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: format!("Invalid expected_file_hash UUID: {}", hash_str),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: format!("Invalid expected_file_hash UUID: {}", hash_str),
+                    }));
                 return;
             };
 
@@ -202,20 +216,25 @@ pub async fn handle_tool_call_requested(
                 })
                 .to_string();
 
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id,
-                    parent_id,
-                    call_id,
-                    content,
-                }));
+                let _ =
+                    event_bus
+                        .realtime_tx
+                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            parent_id,
+                            call_id,
+                            content,
+                        }));
             }
             Err(e) => {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id,
-                    error: format!("Failed to apply edits: {}", e),
-                }));
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id,
+                        error: format!("Failed to apply edits: {}", e),
+                    }));
             }
         }
         return;
