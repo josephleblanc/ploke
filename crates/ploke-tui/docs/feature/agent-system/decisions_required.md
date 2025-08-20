@@ -179,3 +179,28 @@ New items added 2025-08-20 (M1 start)
      b) Keep absolute paths; rely on later normalization in DB layer.
    - Recommended: (a) for UX; not blocking.
    - Blocker: None.
+
+New items added 2025-08-20 (continued)
+17) Unified diff preview dependency (QUESTION)
+   - Context: Code-block previews are implemented; unified diff is optional for power users and reviewers.
+   - Options:
+     a) Add "similar" crate to generate unified diffs behind a config flag.
+     b) Keep code-blocks only in M1; revisit unified diff in M2.
+   - Recommended: (a) optional, default off; implement when time permits.
+   - Blocker: None.
+
+18) DRY AppState construction (FOLLOW-UP)
+   - Context: Multiple callsites construct AppState directly, which can drift when fields change (e.g., proposals).
+   - Options:
+     a) Introduce an AppState::builder() or AppState::new_full(...) to centralize required fields.
+     b) Keep ad-hoc construction; update callsites as fields evolve.
+   - Recommended: (a) in a follow-up PR to reduce technical debt.
+   - Blocker: None.
+
+19) Observability typed JSON inputs (FOLLOW-UP)
+   - Context: ObservabilityStore currently accepts Option<String> for JSON payloads.
+   - Options:
+     a) Extend APIs to accept serde_json::Value/newtypes with internal conversion to Cozo Json.
+     b) Keep String for M1; migrate later.
+   - Recommended: (a) for type-safety and fewer round-trips.
+   - Blocker: None (strings still work).

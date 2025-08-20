@@ -809,6 +809,7 @@ mod test {
             db: db_handle.clone(),
             embedder: Arc::clone(&proc_arc),
             io_handle: io_handle.clone(),
+            proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             rag: Some(Arc::new(rag)),
             budget: TokenBudget::default(), // rag_tx: rag_event_tx.clone()
         });

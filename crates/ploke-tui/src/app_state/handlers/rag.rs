@@ -174,6 +174,8 @@ pub async fn handle_tool_call_requested(
 
         // Build a lightweight preview (code-block stubs for now; unified diff optional in later step)
         let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
+        // Normalize display paths relative to current crate focus when available
+        let crate_root = { state.system.read().await.crate_focus.clone() };
         for path in files_set.iter() {
             let before = match tokio::fs::read_to_string(path).await {
                 Ok(s) => s,
@@ -199,14 +201,31 @@ pub async fn handle_tool_call_requested(
             }
             let after = String::from_utf8_lossy(&bytes).to_string();
 
+            let display_path = if let Some(root) = crate_root.as_ref() {
+                path.strip_prefix(root).unwrap_or(path.as_path()).to_path_buf()
+            } else {
+                path.clone()
+            };
             per_file.push(crate::app_state::core::BeforeAfter {
-                file_path: path.clone(),
+                file_path: display_path,
                 before,
                 after,
             });
         }
 
         let files: Vec<std::path::PathBuf> = files_set.into_iter().collect();
+        let display_files: Vec<String> = files
+            .iter()
+            .map(|p| {
+                if let Some(root) = crate_root.as_ref() {
+                    p.strip_prefix(root)
+                        .map(|rp| rp.display().to_string())
+                        .unwrap_or_else(|_| p.display().to_string())
+                } else {
+                    p.display().to_string()
+                }
+            })
+            .collect();
 
         // Stash proposal into in-memory registry
         {
@@ -233,7 +252,7 @@ pub async fn handle_tool_call_requested(
             "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nApprove:  edit approve {}\nDeny:     edit deny {}",
             request_id,
             call_id,
-            files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n  "),
+            display_files.join("\n  "),
             request_id,
             request_id
         );

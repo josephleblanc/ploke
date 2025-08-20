@@ -153,6 +153,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         db: db_handle,
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
+        proposals: RwLock::new(std::collections::HashMap::new()),
         rag,
         // TODO: Add TokenBudget fields to Config
         budget: TokenBudget::default(),
