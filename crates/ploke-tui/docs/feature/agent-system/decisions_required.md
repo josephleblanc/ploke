@@ -90,6 +90,8 @@ New items added 2025-08-19 (accelerated M0)
      b) Gate behind feature flag; fall back to no-op when disabled.
    - Recommended: (a) minimal API first to unblock TUI integration.
    - Blocker: Yes — M0 requires this to persist chat history and tool-call lifecycle.
+      - USER: Added `crates/ploke-db/src/observability.rs` as read-only to conversation, unblocked.
+      - Further development coming in `ploke-db` to add tests, etc, but consider API stable
 
 7) Chat history DB persistence trigger (NEEDS DECISION)
    - Context: TUI currently appends SysInfo/user/assistant in memory; FileManager export is optional. We need a consistent trigger for DB writes.
@@ -98,6 +100,7 @@ New items added 2025-08-19 (accelerated M0)
      b) Batch per N updates or on idle (debounce).
    - Recommended: (a) for M0 simplicity; revisit batching in M1 with metrics.
    - Blocker: Minor — requires aligning AppState/state_manager to call into ploke-db when adding/updating messages.
+    - USER: Agree on (a), added a TODO regarding adding a more ergonomic callback method on db to create a callback handler for the database to verify adding/updating messages in future db updates.
 
 8) Tool-call payload persistence default (CLARIFY)
    - Context: Decision updated to store full arguments_json/outcome_json during fast iteration for debugging.
@@ -106,6 +109,7 @@ New items added 2025-08-19 (accelerated M0)
      b) Keep only hashes in M0.
    - Recommended: (a) — store everything in M0; reintroduce redaction defaults pre prod-ready.
    - Blocker: None — but schema and API should accept both for forward-compat.
+      - USER: Migration will occur, all current database items are prototype-only prior to prod-ready ploke-tui
 
 9) EventBus readiness for tests (NICE-TO-HAVE)
    - Context: Broadcast channels only deliver to subscribed receivers; current tests use sleeps.
@@ -114,6 +118,7 @@ New items added 2025-08-19 (accelerated M0)
      b) Keep sleeps in tests, document caveat (current approach).
    - Recommended: (a) in a future PR; (b) acceptable for M0 timeframe.
    - Blocker: No.
+      - USER: Follow recommendation for (b)
 
 10) Channel capacities configurability (FOLLOW-UP)
    - Context: Defaults confirmed; power-user config requested.
@@ -122,5 +127,6 @@ New items added 2025-08-19 (accelerated M0)
      b) Keep as compile-time defaults until benchmarks suggest changes.
    - Recommended: (a) in M1; keep (b) for M0.
    - Blocker: No.
+      - USER: Agreed with recommendation
 
 Reference: See implementation-log-007.md for related changes and accelerated-pace requirement.
