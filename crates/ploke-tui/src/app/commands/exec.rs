@@ -19,6 +19,15 @@ pub fn execute(app: &mut App, command: Command) {
         Command::EditDeny(id) => {
             app.send_cmd(StateCommand::DenyEdits { request_id: id });
         }
+        Command::EditSetPreviewMode(mode) => {
+            app.send_cmd(StateCommand::SetEditingPreviewMode { mode });
+        }
+        Command::EditSetPreviewLines(lines) => {
+            app.send_cmd(StateCommand::SetEditingMaxPreviewLines { lines });
+        }
+        Command::EditSetAutoConfirm(enabled) => {
+            app.send_cmd(StateCommand::SetEditingAutoConfirm { enabled });
+        }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
 }
@@ -378,6 +387,9 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     bm25 search <query> [top_k] - Search with BM25
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
     preview [on|off|toggle] - Toggle context preview panel
+    edit preview mode <code|diff> - Set edit preview mode for proposals
+    edit preview lines <N> - Set max preview lines per section
+    edit auto <on|off> - Toggle auto-approval of staged edits
     edit approve <request_id> - Apply staged code edits with this request ID
     edit deny <request_id> - Deny and discard staged code edits
     help - Show this help

@@ -119,6 +119,57 @@ pub async fn state_manager(
                 handlers::model::switch_model(&state, &event_bus, alias_or_id).await;
             }
 
+            StateCommand::SetEditingPreviewMode { mode } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.preview_mode = mode;
+                }
+                let mode_label = match mode {
+                    crate::app_state::core::PreviewMode::CodeBlock => "codeblock",
+                    crate::app_state::core::PreviewMode::Diff => "diff",
+                };
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!("Edit preview mode set to {}", mode_label),
+                    MessageKind::SysInfo,
+                )
+                .await;
+            }
+            StateCommand::SetEditingMaxPreviewLines { lines } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.max_preview_lines = lines;
+                }
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!("Edit preview lines set to {}", lines),
+                    MessageKind::SysInfo,
+                )
+                .await;
+            }
+            StateCommand::SetEditingAutoConfirm { enabled } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.auto_confirm_edits = enabled;
+                }
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    if enabled {
+                        "Auto-approval of edits enabled".to_string()
+                    } else {
+                        "Auto-approval of edits disabled".to_string()
+                    },
+                    MessageKind::SysInfo,
+                )
+                .await;
+            }
+
             StateCommand::WriteQuery {
                 query_name: _,
                 query_content,

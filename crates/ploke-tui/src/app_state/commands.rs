@@ -161,6 +161,15 @@ pub enum StateCommand {
         strategy: RetrievalStrategy,
         budget: TokenBudget,
     },
+    SetEditingPreviewMode {
+        mode: crate::app_state::core::PreviewMode,
+    },
+    SetEditingMaxPreviewLines {
+        lines: usize,
+    },
+    SetEditingAutoConfirm {
+        enabled: bool,
+    },
     ApproveEdits {
         request_id: Uuid,
     },
@@ -212,6 +221,9 @@ impl StateCommand {
             RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
             ProcessWithRag { .. } => "ProcessWithRag",
+            SetEditingPreviewMode { .. } => "SetEditingPreviewMode",
+            SetEditingMaxPreviewLines { .. } => "SetEditingMaxPreviewLines",
+            SetEditingAutoConfirm { .. } => "SetEditingAutoConfirm",
             ApproveEdits { .. } => "ApproveEdits",
             DenyEdits { .. } => "DenyEdits",
         }
