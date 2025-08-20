@@ -744,6 +744,10 @@ async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_attributes() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_attributes").await
 }
