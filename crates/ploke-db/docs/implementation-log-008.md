@@ -31,3 +31,34 @@ Next steps
 References
 - ploke-tui/docs/feature/agent-system/ploke_db_contract.md
 - Cozo v0.7 time-travel and Json semantics (docs/dependency_details/cozo/types)
+# Implementation Log 008 — Observability Store Refinements
+
+Date: 2025-08-19
+
+Summary
+- Fixed a test failure caused by schema re-creation in `ensure_observability_schema`.
+- Improved idempotency in schema initialization by tolerating more Cozo error messages.
+- Preserved lifecycle and idempotency rules added for `tool_call` relation.
+
+Details
+- Problem: Running tests with `Database::init_with_schema()` pre-creates relations. Our `ensure_observability_schema()` attempted `:create` again and only ignored errors containing "exists"/"duplicate"/"already". Cozo returned "Stored relation conversation_turn conflicts with an existing one", which we did not ignore, causing failures.
+- Change: Broadened the ignore set to include "conflicts with an existing one" and a generic lowercase "conflict" check. This makes `ensure_observability_schema()` idempotent across environments where the relation may already exist.
+
+Type-safety notes and next steps
+- Current API uses:
+  - `ToolStatus` as a Rust enum with `as_str`/`from_str` to bridge to Cozo string values.
+  - `arguments_json`/`outcome_json` as `Option<String>` wrapped JSON; coercion via `parse_json()`/`dump_json()` at the Cozo boundary.
+- Future improvements (planned):
+  - Introduce typed JSON payloads using `serde_json::Value` for arguments/outcome fields and convert at boundaries.
+  - Introduce a `ConversationKind` enum for `ConversationTurn::kind` instead of plain `String`.
+  - Add serde derives for types once the crate’s dependency set confirms availability across workspace.
+
+Testing
+- The updated logic ensures `ensure_observability_schema()` is safe to call even when schemas are already present.
+- Lifecycle and idempotency rules remain tested in `tests/observability_tests.rs`:
+  - requested → requested (same payload) is no-op.
+  - requested → completed (same payload twice) is idempotent.
+  - completed → failed (or vice versa) is rejected.
+
+Rationale
+- We keep changes minimal to unblock development while capturing the direction for stronger type-safety in a follow-up without introducing new dependencies or breaking public types in this iteration.

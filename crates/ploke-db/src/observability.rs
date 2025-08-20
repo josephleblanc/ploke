@@ -135,11 +135,13 @@ impl Database {
         for script in [create_conversation, create_tool_call] {
             if let Err(e) = self.run_script(script, BTreeMap::new(), ScriptMutability::Mutable) {
                 let msg = e.to_string();
-                // Best-effort idempotency: ignore "exists"/"duplicate" errors
+                // Best-effort idempotency: ignore "exists"/"duplicate"/"conflict" errors
                 if !(msg.contains("exists")
                     || msg.contains("duplicate")
                     || msg.contains("Duplicate")
-                    || msg.contains("already"))
+                    || msg.contains("already")
+                    || msg.contains("conflicts with an existing one")
+                    || msg.to_lowercase().contains("conflict"))
                 {
                     return Err(DbError::Cozo(msg));
                 }
