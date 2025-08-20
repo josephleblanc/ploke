@@ -17,6 +17,7 @@ pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Help => show_command_help(app),
         Command::ModelList => list_models_async(app),
+        Command::ModelInfo => show_model_info_async(app),
         Command::ModelUse(alias) => {
             // Delegate to existing state manager path to broadcast and apply
             app.send_cmd(StateCommand::SwitchModel {
@@ -221,6 +222,86 @@ fn spawn_update(app: &App) {
                 new_msg_id: Uuid::new_v4(),
             })
             .await;
+    });
+}
+
+fn show_model_info_async(app: &App) {
+    let state = app.state.clone();
+    let cmd_tx = app.cmd_tx.clone();
+    tokio::spawn(async move {
+        let cfg = state.config.read().await;
+        let reg = &cfg.provider_registry;
+        let active_id = reg.active_provider.clone();
+
+        if let Some(p) = reg.get_active_provider() {
+            let params = p.llm_params.clone().unwrap_or_default();
+            let caps = reg.capabilities.get(&p.model);
+
+            let fmt_opt_f32 = |o: Option<f32>| o.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_u32 = |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_usize = |o: Option<usize>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_u64 = |o: Option<u64>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+
+            let mut lines = vec![
+                "Current model settings:".to_string(),
+                format!("  Active provider id: {}", active_id),
+                format!("  Model: {}", p.model),
+                format!("  Base URL: {}", p.base_url),
+                format!("  Provider type: {:?}", p.provider_type),
+                "".to_string(),
+                "  LLM parameters:".to_string(),
+                format!("    temperature: {}", fmt_opt_f32(params.temperature)),
+                format!("    top_p: {}", fmt_opt_f32(params.top_p)),
+                format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
+                format!("    presence_penalty: {}", fmt_opt_f32(params.presence_penalty)),
+                format!("    frequency_penalty: {}", fmt_opt_f32(params.frequency_penalty)),
+                format!("    stop_sequences: [{}]", params.stop_sequences.join(", ")),
+                format!("    parallel_tool_calls: {}", params.parallel_tool_calls),
+                format!("    response_format: {:?}", params.response_format),
+                format!("    tool_max_retries: {}", fmt_opt_u32(params.tool_max_retries)),
+                format!("    tool_token_limit: {}", fmt_opt_u32(params.tool_token_limit)),
+                format!("    tool_timeout_secs: {}", fmt_opt_u64(params.tool_timeout_secs)),
+                format!("    history_char_budget: {}", fmt_opt_usize(params.history_char_budget)),
+            ];
+
+            if let Some(c) = caps {
+                lines.push("".to_string());
+                lines.push("  Capabilities (cache):".to_string());
+                lines.push(format!("    supports_tools: {}", c.supports_tools));
+                lines.push(format!(
+                    "    context_length: {}",
+                    c.context_length.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())
+                ));
+                lines.push(format!(
+                    "    input_cost_per_million: {}",
+                    c.input_cost_per_million
+                        .map(|v| format!("{:.4}", v))
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                lines.push(format!(
+                    "    output_cost_per_million: {}",
+                    c.output_cost_per_million
+                        .map(|v| format!("{:.4}", v))
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+            }
+
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: lines.join("\n"),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+        } else {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: "No active provider configured.".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+        }
     });
 }
 
@@ -554,6 +635,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     index cancel - Cancel indexing
     check api - Check API key configuration
     model list - List available models
+    model info - Show active model/provider settings
     model <name> - Switch model
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status

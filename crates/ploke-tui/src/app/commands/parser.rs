@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub enum Command {
     Help,
     ModelList,
+    ModelInfo,
     ModelUse(String),
     ModelRefresh { remote: bool },
     ModelLoad(Option<String>),
@@ -32,6 +33,7 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
     match trimmed {
         "help" => Command::Help,
         "model list" => Command::ModelList,
+        "model info" => Command::ModelInfo,
         s if s.starts_with("model use ") => {
             let alias = s.trim_start_matches("model use ").trim().to_string();
             if alias.is_empty() {
