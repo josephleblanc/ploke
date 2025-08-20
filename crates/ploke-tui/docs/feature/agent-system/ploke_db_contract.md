@@ -52,7 +52,8 @@ Data model (logical)
     - created_at superseded by cozo's Validity field type for time-travel
   - commit_hash: string (nullable; git integration later)
   - indexes: by (status), by (created_at DESC)
-- re: Cozo's treatment of Json, see cozo docs [here](../../../../../docs/dependency_details/cozo/types/json.md)
+- re: Cozo's treatment of Json, see cozo docs copied [here](../../../../../docs/dependency_details/cozo/types/json.md)
+- re: Cozo's treatment of Validity in time-travel, see cozo docs copied [here](../../../../../docs/dependency_details/cozo/types/time-travel.md)
 
 
 Rust API (trait sketch)

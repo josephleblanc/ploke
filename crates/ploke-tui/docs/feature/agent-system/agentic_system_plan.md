@@ -114,9 +114,12 @@ Scope
   - Initialize repo if missing; create a working branch for edits (ploke/work-in-progress).
   - Stage edits, commit with structured message (tool-call metadata), lightweight tags.
   - One-click revert last edit set (soft rollback).
+  - Coordinate reverts with database `Validity` timestamps
 - UI/UX:
   - “edit approve <request_id>” / “edit deny <request_id>”.
+    - USER: This is poor UX, instead add a selectable terminal UI button or `/undo` in addition to more granular control in "edit approve/deny..", on selecting possible edit also key "Y" and "N" to approve/deny staged items
   - SysInfo messages: file list, short diffs, expected hash mismatches, outcomes.
+    - USER: Default to code block before/after change, allow changing to diff in config
 - Persistence:
   - Store edit proposals and outcomes (approved, denied, applied, reverted) in DB with pointers to git commit(s).
 
@@ -136,7 +139,9 @@ Goal: Let models “look around” effectively without overfetching.
 Scope
 - Expand tool set:
   - request_code_context (exists) extensions: “containing module”, “siblings”, “implementations”, “callers/callees” (as available from current module tree + DB relations).
+    - USER: We do not have callers/callees or type resolution yet.
   - semantic_search tool: dense (existing RagService), BM25, hybrid (exists), with constraints (token budget).
+    - USER: integrate graph traversal via existing edges, see [edge schema](../../../../ingest/ploke-transform/src/schema/edges.rs)
   - file_content_range tool: fetch byte ranges by path for ground truth verification.
   - symbol_lookup tool: find items by name or fuzzy matching; return IDs and paths.
 - Budget control:
@@ -147,10 +152,12 @@ Scope
 Deliverables
 - Tool definitions + handlers with strong argument validation.
 - Tests for each tool: mapping JSON → DB/IO query → results.
+  - USER: Should we put evals here? Per-LLM model testing against real API endpoints with statistics on accuracy, latency, etc? In M4? When? Pick one and test as baseline?
 
 Acceptance
 - Models can navigate and assemble relevant context in a handful of tool calls.
 - Tool outputs remain within token budgets.
+  - USER: Should we put evals here? Per-LLM model testing against real API endpoints with statistics on accuracy, latency, etc?
 
 -------------------------------------------------------------------------------
 Milestone 3: Automated validation gates
