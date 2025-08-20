@@ -239,6 +239,7 @@ pub mod system {
     #[derive(Clone, Debug)]
     pub enum SystemEvent {
         SaveRequested(Vec<u8>), // Serialized content
+        HistorySaved { file_path: String },
         MutationFailed(UiError),
         CommandDropped(&'static str),
         ReadSnippet(TypedEmbedData),
@@ -344,6 +345,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::WriteQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::HistorySaved { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,

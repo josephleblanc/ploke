@@ -66,6 +66,12 @@ impl FileManager {
                 match self.save_content(&path, &content).await {
                     Ok(final_path) => {
                         info!("Chat history saved to {}", final_path.display());
+                        // Inform UI via realtime channel
+                        let _ = self
+                            .realtime_event_tx
+                            .send(AppEvent::System(SystemEvent::HistorySaved {
+                                file_path: final_path.display().to_string(),
+                            }));
                     }
                     Err(e) => {
                         error!("Save failed: {}", e);

@@ -100,6 +100,14 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         query_content,
                     });
                 }
+                system::SystemEvent::HistorySaved { file_path } => {
+                    tracing::debug!("App receives HistorySaved: {}", file_path);
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Chat history exported to {}", file_path),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                }
                 system::SystemEvent::BackupDb {
                     file_dir,
                     is_success,

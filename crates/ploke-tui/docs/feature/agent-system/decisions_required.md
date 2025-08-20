@@ -81,3 +81,46 @@ Open decisions (M0 focus)
 How to use
 - Add new items at the bottom; include the four required parts (context, options, recommendation, blocker).
 - Reference the related implementation-log-XXX.md entries when a decision is finalized.
+
+New items added 2025-08-19 (accelerated M0)
+6) ObservabilityStore integration (BLOCKER)
+   - Context: ploke-db needs to expose the ObservabilityStore contract (conversation_turn, tool_call with Validity and Json) to unlock DB-first persistence in TUI.
+   - Options:
+     a) Land minimal ObservabilityStore with required methods only; expand later.
+     b) Gate behind feature flag; fall back to no-op when disabled.
+   - Recommended: (a) minimal API first to unblock TUI integration.
+   - Blocker: Yes — M0 requires this to persist chat history and tool-call lifecycle.
+
+7) Chat history DB persistence trigger (NEEDS DECISION)
+   - Context: TUI currently appends SysInfo/user/assistant in memory; FileManager export is optional. We need a consistent trigger for DB writes.
+   - Options:
+     a) Persist on every StateCommand::AddMessageImmediate/UpdateMessage.
+     b) Batch per N updates or on idle (debounce).
+   - Recommended: (a) for M0 simplicity; revisit batching in M1 with metrics.
+   - Blocker: Minor — requires aligning AppState/state_manager to call into ploke-db when adding/updating messages.
+
+8) Tool-call payload persistence default (CLARIFY)
+   - Context: Decision updated to store full arguments_json/outcome_json during fast iteration for debugging.
+   - Options:
+     a) Store full payloads now; add redaction toggles later.
+     b) Keep only hashes in M0.
+   - Recommended: (a) — store everything in M0; reintroduce redaction defaults pre prod-ready.
+   - Blocker: None — but schema and API should accept both for forward-compat.
+
+9) EventBus readiness for tests (NICE-TO-HAVE)
+   - Context: Broadcast channels only deliver to subscribed receivers; current tests use sleeps.
+   - Options:
+     a) Add a small Ready/Started event from run_event_bus after subscribing.
+     b) Keep sleeps in tests, document caveat (current approach).
+   - Recommended: (a) in a future PR; (b) acceptable for M0 timeframe.
+   - Blocker: No.
+
+10) Channel capacities configurability (FOLLOW-UP)
+   - Context: Defaults confirmed; power-user config requested.
+   - Options:
+     a) Add to user config with sane defaults; validate on load.
+     b) Keep as compile-time defaults until benchmarks suggest changes.
+   - Recommended: (a) in M1; keep (b) for M0.
+   - Blocker: No.
+
+Reference: See implementation-log-007.md for related changes and accelerated-pace requirement.
