@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::ProviderRegistry;
+use crate::user_config::{ProviderRegistry, CommandStyle, EmbeddingConfig, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -53,16 +53,16 @@ impl std::ops::Deref for ChatState {
 }
 
 #[derive(Debug, Default)]
-pub struct ConfigState(RwLock<Config>);
+pub struct ConfigState(RwLock<RuntimeConfig>);
 
 impl ConfigState {
-    pub fn new<C: Into<Config>>(config: C) -> Self {
+    pub fn new<C: Into<RuntimeConfig>>(config: C) -> Self {
         ConfigState(RwLock::new(config.into()))
     }
 }
 
 impl std::ops::Deref for ConfigState {
-    type Target = RwLock<Config>;
+    type Target = RwLock<RuntimeConfig>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -126,11 +126,56 @@ impl Default for EditingConfig {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Config {
+#[derive(Debug, Default, Clone)]
+pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
     pub provider_registry: ProviderRegistry,
     pub editing: EditingConfig,
+    pub command_style: CommandStyle,
+    pub embedding: EmbeddingConfig,
+}
+
+impl From<UserConfig> for RuntimeConfig {
+    fn from(uc: UserConfig) -> Self {
+        let mut registry = uc.registry;
+        // Choose LLM params from active provider or default
+        let llm_params = registry
+            .get_active_provider()
+            .and_then(|p| p.llm_params.clone())
+            .unwrap_or_default();
+
+        // Map persisted editing -> runtime editing
+        let editing = EditingConfig {
+            preview_mode: PreviewMode::CodeBlock,
+            auto_confirm_edits: uc.editing.auto_confirm_edits,
+            max_preview_lines: 300,
+        };
+
+        RuntimeConfig {
+            llm_params,
+            provider_registry: registry,
+            editing,
+            command_style: uc.command_style,
+            embedding: uc.embedding,
+        }
+    }
+}
+
+impl RuntimeConfig {
+    /// Convert the live runtime config back into a persisted UserConfig for saving.
+    pub fn to_user_config(&self) -> UserConfig {
+        let editing = crate::user_config::EditingConfig {
+            auto_confirm_edits: self.editing.auto_confirm_edits,
+            agent: crate::user_config::EditingAgentConfig::default(),
+        };
+
+        UserConfig {
+            registry: self.provider_registry.clone(),
+            command_style: self.command_style,
+            embedding: self.embedding.clone(),
+            editing,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

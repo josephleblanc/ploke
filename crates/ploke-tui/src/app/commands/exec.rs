@@ -67,22 +67,46 @@ pub fn execute(app: &mut App, command: Command) {
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
                 let default_path = UserConfig::default_config_path();
-                let path_str = path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
+                let path_str =
+                    path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
                 match UserConfig::load_from_path(std::path::Path::new(&path_str)) {
                     Ok(mut new_cfg) => {
                         // Merge curated defaults, reload keys, refresh capabilities if possible
                         new_cfg.registry = new_cfg.registry.with_defaults();
                         new_cfg.registry.load_api_keys();
-                        if std::env::var("OPENROUTER_API_KEY").ok().map(|s| !s.is_empty()).unwrap_or(false) {
+                        if std::env::var("OPENROUTER_API_KEY")
+                            .ok()
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                        {
                             let _ = new_cfg.registry.refresh_from_openrouter().await;
                         }
+
+                        // Detect if embedding backend changed (we cannot hot-swap embedder safely yet)
+                        let embedding_changed = {
+                            let current = state.config.read().await;
+                            current.embedding != new_cfg.embedding
+                        };
+
+                        // Convert to runtime config and apply
+                        let runtime_cfg: crate::app_state::core::RuntimeConfig =
+                            new_cfg.clone().into();
                         {
                             let mut guard = state.config.write().await;
-                            *guard = new_cfg;
+                            *guard = runtime_cfg;
                         }
+
+                        // Inform user about effects
+                        let mut msg = format!("Loaded configuration from {}", path_str);
+                        if embedding_changed {
+                            msg.push_str(
+                                "\nNote: Embedding backend changed; restart recommended for changes to take effect.",
+                            );
+                        }
+
                         let _ = cmd_tx
                             .send(StateCommand::AddMessageImmediate {
-                                msg: format!("Loaded configuration from {}", path_str),
+                                msg,
                                 kind: MessageKind::SysInfo,
                                 new_msg_id: Uuid::new_v4(),
                             })
@@ -91,7 +115,10 @@ pub fn execute(app: &mut App, command: Command) {
                     Err(e) => {
                         let _ = cmd_tx
                             .send(StateCommand::AddMessageImmediate {
-                                msg: format!("Failed to load configuration from {}: {}", path_str, e),
+                                msg: format!(
+                                    "Failed to load configuration from {}: {}",
+                                    path_str, e
+                                ),
                                 kind: MessageKind::SysInfo,
                                 new_msg_id: Uuid::new_v4(),
                             })
@@ -106,11 +133,11 @@ pub fn execute(app: &mut App, command: Command) {
             tokio::spawn(async move {
                 let cfg = state.config.read().await;
                 let default_path = UserConfig::default_config_path();
-                let path_buf = path
-                    .map(PathBuf::from)
-                    .unwrap_or(default_path);
+                let path_buf = path.map(PathBuf::from).unwrap_or(default_path);
                 let redact = !with_keys;
-                match cfg.save_to_path(&path_buf, redact) {
+
+                let uc = cfg.to_user_config();
+                match uc.save_to_path(&path_buf, redact) {
                     Ok(_) => {
                         let _ = cmd_tx
                             .send(StateCommand::AddMessageImmediate {

@@ -166,7 +166,7 @@ impl UserConfig {
 }
 
 // NEW: Embedding configuration
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct EmbeddingConfig {
     pub local: Option<LocalModelConfig>,
     pub hugging_face: Option<HuggingFaceConfig>,

@@ -20,6 +20,7 @@ mod test_utils;
 use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
+    core::RuntimeConfig,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -99,6 +100,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // Apply API keys from environment variables to all providers
     config.registry.load_api_keys();
     tracing::debug!("Registry after merge: {:#?}", config.registry);
+    let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
@@ -150,7 +152,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
-        config: ConfigState::default(),
+        config: ConfigState::new(runtime_cfg),
         system: SystemState::default(),
         indexing_state: RwLock::new(None), // Initialize as None
         indexer_task: Some(Arc::clone(&indexer_task)),
