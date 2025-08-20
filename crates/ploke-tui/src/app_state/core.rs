@@ -68,12 +68,6 @@ impl std::ops::Deref for ConfigState {
     }
 }
 
-impl From<Config> for Config {
-    fn from(value: Config) -> Self {
-        value
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct SystemState(RwLock<SystemStatus>);
 
@@ -107,17 +101,13 @@ impl std::ops::Deref for IndexingState {
 }
 
 // Editing configuration for M1 safe-editing pipeline
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum PreviewMode {
+    #[default]
     CodeBlock,
     Diff,
 }
 
-impl Default for PreviewMode {
-    fn default() -> Self {
-        PreviewMode::CodeBlock
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct EditingConfig {

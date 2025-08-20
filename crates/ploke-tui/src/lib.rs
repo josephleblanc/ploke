@@ -36,7 +36,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, default_model};
+use user_config::{default_model, ProviderConfig, ProviderType, UserConfig, OPENROUTER_URL};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -85,8 +85,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         )
         .add_source(config::Environment::default().separator("_"))
         .build()?
-        .try_deserialize::<crate::user_config::Config>()
-        .unwrap_or_else(|_| crate::user_config::Config::default());
+        .try_deserialize::<UserConfig>()
+        .unwrap_or_else(|_| UserConfig::default());
 
     // Merge curated defaults with user overrides
     config.registry = config.registry.with_defaults();

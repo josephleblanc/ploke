@@ -5,7 +5,11 @@ use itertools::Itertools;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use crate::user_config::{Config, ProviderRegistryStrictness};
+use crate::user_config::{ProviderRegistryStrictness, UserConfig};
+
+const DATA_DIR: &str = "crates/ploke-tui/data";
+const TEST_QUERY_FILE: &str = "queries.json";
+const TEST_QUERY_RESULTS: &str = "results.json";
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
@@ -62,9 +66,9 @@ pub fn execute(app: &mut App, command: Command) {
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
-                let default_path = Config::default_config_path();
+                let default_path = UserConfig::default_config_path();
                 let path_str = path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
-                match Config::load_from_path(std::path::Path::new(&path_str)) {
+                match UserConfig::load_from_path(std::path::Path::new(&path_str)) {
                     Ok(mut new_cfg) => {
                         // Merge curated defaults, reload keys, refresh capabilities if possible
                         new_cfg.registry = new_cfg.registry.with_defaults();
@@ -100,8 +104,8 @@ pub fn execute(app: &mut App, command: Command) {
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
-                let cfg = state.config.read().await.clone();
-                let default_path = Config::default_config_path();
+                let cfg = state.config.read().await;
+                let default_path = UserConfig::default_config_path();
                 let path_buf = path
                     .map(PathBuf::from)
                     .unwrap_or(default_path);
@@ -556,7 +560,3 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     l/→ - Navigate branch next
     Ctrl+n - Scroll down one line
     Ctrl+p - Scroll up one line"#;
-
-const DATA_DIR: &str = "crates/ploke-tui/data";
-const TEST_QUERY_FILE: &str = "queries.json";
-const TEST_QUERY_RESULTS: &str = "results.json";

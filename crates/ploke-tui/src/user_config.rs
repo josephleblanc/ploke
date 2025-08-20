@@ -58,7 +58,7 @@ pub enum CommandStyle {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct Config {
+pub struct UserConfig {
     #[serde(default)]
     pub registry: ProviderRegistry,
     #[serde(default)]
@@ -69,7 +69,7 @@ pub struct Config {
     pub editing: EditingConfig,
 }
 
-impl Config {
+impl UserConfig {
     pub fn load_embedding_processor(&self) -> Result<EmbeddingProcessor, color_eyre::eyre::Error> {
         let processor = match self.embedding {
             EmbeddingConfig {
@@ -150,9 +150,9 @@ impl Config {
     }
 
     /// Load configuration from the specified path.
-    pub fn load_from_path(path: &std::path::Path) -> color_eyre::Result<Config> {
+    pub fn load_from_path(path: &std::path::Path) -> color_eyre::Result<UserConfig> {
         let content = std::fs::read_to_string(path)?;
-        let cfg: Config = toml::from_str(&content)?;
+        let cfg: UserConfig = toml::from_str(&content)?;
         Ok(cfg)
     }
 
