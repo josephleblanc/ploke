@@ -55,14 +55,26 @@ impl FileManager {
                             Either cwd does not exist or insufficient permissions, prop error\n{}",
                             e.to_string()
                         );
+                        // Surface to UI
+                        let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
+                            message: format!("Save failed: working directory invalid: {}", e),
+                            severity: ErrorSeverity::Error,
+                        }));
                         return;
                     }
                 };
-                if let Err(e) = self.save_content(&path, &content).await {
-                    error!("Save failed: {}", e);
-                    // TODO: Add response that conversation history is indeed saved
-                } else {
-                    info!("Save Suceeded: {:?}", &path);
+                match self.save_content(&path, &content).await {
+                    Ok(final_path) => {
+                        info!("Chat history saved to {}", final_path.display());
+                    }
+                    Err(e) => {
+                        error!("Save failed: {}", e);
+                        // Surface to UI
+                        let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
+                            message: format!("Save failed: {}", e),
+                            severity: ErrorSeverity::Error,
+                        }));
+                    }
                 }
             }
             AppEvent::System(SystemEvent::ReadQuery {
@@ -83,12 +95,18 @@ impl FileManager {
                         return;
                     }
                 };
-                self.realtime_event_tx
+                if let Err(e) = self
+                    .realtime_event_tx
                     .send(AppEvent::System(SystemEvent::WriteQuery {
                         query_content,
                         query_name,
                     }))
-                    .expect("Invariant Violated: AppEvent rx closed before FileManager Dropped");
+                {
+                    warn!(
+                        "Failed to forward WriteQuery to realtime channel: {}",
+                        e
+                    );
+                }
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
                 // tracing::info!(
@@ -147,17 +165,23 @@ impl FileManager {
     /// Saves content to disk atomically in a temp location then moves to final path
     async fn save_content(
         &self,
-        path: &std::path::Path,
+        dir: &std::path::Path,
         content: &[u8],
-    ) -> Result<(), std::io::Error> {
-        info!("Trying to save to file: {}", path.display());
-        let temp_path = path.join(".ploke_history").with_extension("md");
+    ) -> Result<std::path::PathBuf, std::io::Error> {
+        let final_path = dir.join(".ploke_history.md");
+        let temp_path = dir.join(".ploke_history.md.tmp");
+
+        info!("Saving chat history atomically to {}", final_path.display());
+
+        // Write to temp file in the same directory
         let mut temp_file = fs::File::create(&temp_path).await?;
         temp_file.write_all(content).await?;
         temp_file.sync_all().await?;
-        // fs::rename(&temp_path, path).await?;
-        info!("Chat history saved to {}", path.display());
-        Ok(())
+
+        // On Unix, rename within the same directory is atomic and replaces the target.
+        fs::rename(&temp_path, &final_path).await?;
+
+        Ok(final_path)
     }
 
     /// Computes default save path for chat history

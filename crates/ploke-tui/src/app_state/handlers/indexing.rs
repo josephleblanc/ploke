@@ -83,15 +83,12 @@ pub async fn index_workspace(
                 tracing::info!("Indexer task returned");
                 match indexing_result {
                     Ok(_) => {
-                        tracing::info!("Sending Indexing Completed");
-                        event_bus_clone.send(AppEvent::IndexingCompleted)
+                        tracing::info!("Indexer finished successfully");
+                        // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Completed
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "Sending Indexing Failed with error message: {}",
-                            e.to_string()
-                        );
-                        event_bus_clone.send(AppEvent::IndexingFailed)
+                        tracing::warn!("Indexer finished with error: {}", e);
+                        // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Cancelled/Failed
                     }
                 }
             })

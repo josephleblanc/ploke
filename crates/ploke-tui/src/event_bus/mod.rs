@@ -132,11 +132,17 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                         // break;
                     }
                     RecvError::Lagged(lag) => {
-                        tracing::trace!(
-                            "indexing task event channel lagging {} with {} messages",
-                            e.to_string(),
+                        let msg = format!(
+                            "indexing task event channel lagging with {} messages",
                             lag
-                        )
+                        );
+                        tracing::warn!("{}", msg);
+                        let _ = event_bus
+                            .realtime_tx
+                            .send(AppEvent::Error(ErrorEvent {
+                                message: msg,
+                                severity: ErrorSeverity::Warning,
+                            }));
                     }
                 },
             }
