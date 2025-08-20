@@ -742,6 +742,8 @@ async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
     test_next_batch_ss("file_dir_detection").await
 }
 #[tokio::test]
+// AI: Add an env-gated setting to these tests, which are all long-running and should not run with
+// a more broad workspace command like `cargo test` AI!
 // NOTE: passing
 async fn test_batch_ss_attributes() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::INFO);
