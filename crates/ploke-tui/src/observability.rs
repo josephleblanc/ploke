@@ -265,14 +265,27 @@ async fn persist_tool_done(
         Some(v) => Some(serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())),
         None => None,
     };
+    let ended_at_ms = now_ms();
+    let started_at_ms = match state
+        .db
+        .get_tool_call(params.request_id, &params.call_id)
+    {
+        Ok(Some((req, _))) => req.started_at.at,
+        _ => ended_at_ms,
+    };
+    let latency_ms = if ended_at_ms >= started_at_ms {
+        ended_at_ms - started_at_ms
+    } else {
+        0
+    };
     let done = ToolCallDone {
         request_id: params.request_id,
         call_id: params.call_id.clone(),
         ended_at: Validity {
-            at: now_ms(),
+            at: ended_at_ms,
             is_valid: true,
         },
-        latency_ms: 0, // M0: not tracked; future: measure from requested->done
+        latency_ms,
         outcome_json,
         error_kind: None,
         error_msg: params.error.clone(),
