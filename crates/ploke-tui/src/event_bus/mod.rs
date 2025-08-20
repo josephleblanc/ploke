@@ -58,6 +58,8 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     // more here?
     let mut started_sent = false;
     let mut last_lag_warn: Option<Instant> = None;
+    // Signal readiness to subscribers/tests
+    let _ = event_bus.realtime_tx.send(AppEvent::EventBusStarted);
     loop {
         tokio::select! {
         // bg_event = bg_rx.recv() => {
@@ -225,14 +227,24 @@ mod tests {
     #[tokio::test]
     async fn ssot_forwards_indexing_completed_once() {
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.realtime_tx.subscribe();
         let bus_clone = Arc::clone(&bus);
         tokio::spawn(async move {
             let _ = run_event_bus(bus_clone).await;
         });
 
-        let mut rx = bus.realtime_tx.subscribe();
-        // Allow run_event_bus to subscribe to index_tx before we send
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Wait for event bus readiness signal instead of sleeping
+        let _ = timeout(Duration::from_secs(1), async {
+            loop {
+                match rx.recv().await {
+                    Ok(AppEvent::EventBusStarted) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for EventBusStarted");
 
         // Inject a single Completed status into the indexing channel
         let _ = bus.index_tx.send(indexer::IndexingStatus {
@@ -261,14 +273,24 @@ mod tests {
     #[tokio::test]
     async fn ssot_forwards_indexing_failed_once() {
         let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.realtime_tx.subscribe();
         let bus_clone = Arc::clone(&bus);
         tokio::spawn(async move {
             let _ = run_event_bus(bus_clone).await;
         });
 
-        let mut rx = bus.realtime_tx.subscribe();
-        // Allow run_event_bus to subscribe to index_tx before we send
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Wait for event bus readiness signal instead of sleeping
+        let _ = timeout(Duration::from_secs(1), async {
+            loop {
+                match rx.recv().await {
+                    Ok(AppEvent::EventBusStarted) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for EventBusStarted");
 
         // Inject a single Failed status into the indexing channel
         let _ = bus.index_tx.send(indexer::IndexingStatus {

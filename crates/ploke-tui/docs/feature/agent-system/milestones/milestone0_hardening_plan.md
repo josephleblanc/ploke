@@ -99,5 +99,6 @@ References
 Progress update — 2025-08-20
 - Implemented: Observability latency_ms computed from requested→done (DB lookup via get_tool_call).
 - Implemented: SSoT tests for Completed and Failed passing (single forwarder).
+- Implemented: EventBus readiness signal to eliminate sleeps in tests.
+- Implemented: SHA-256 for args_sha256 (replacing FNV-1a placeholder).
 - In progress: Observability E2E tests and observability guide doc.
-- Next: Replace FNV-1a placeholder with SHA-256 for args_sha256; consider run_event_bus readiness signal to remove sleeps in tests.

@@ -11,8 +11,8 @@ Checklist (status)
 - [x] File export path: atomic save with fsync+rename; UI confirmation event HistorySaved.
 - [ ] Observability E2E tests (Requested→Done rows + fields) — ETA 0.5d
 - [ ] Observability guide (audit queries + grep tips) — ETA 0.5d
-- [ ] Replace FNV placeholder with SHA-256 for args_sha256 — ETA 0.25d
-- [ ] Optional: run_event_bus readiness signal for tests — ETA 0.25d (not required for acceptance)
+- [x] Replace FNV placeholder with SHA-256 for args_sha256 — done
+- [x] EventBus readiness signal for tests — done
 
 Risks and notes
 - Test flakiness due to broadcast subscription timing: acceptable for M0; readiness signal reduces sleeps later.

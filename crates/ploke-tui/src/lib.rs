@@ -322,6 +322,7 @@ pub enum AppEvent {
     IndexingStarted,
     IndexingCompleted,
     IndexingFailed,
+    EventBusStarted,
     GenerateContext(Uuid),
 }
 
@@ -363,6 +364,7 @@ impl AppEvent {
             AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
             AppEvent::Rag(_) => EventPriority::Background,
+            AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
         }
     }

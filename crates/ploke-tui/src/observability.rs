@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::select;
 use uuid::Uuid;
 
@@ -244,7 +245,7 @@ async fn persist_tool_requested(
         parent_id: params.parent_id,
         vendor: vendor_str(&params.vendor).to_string(),
         tool_name: params.tool_name.clone(),
-        args_sha256: fnv1a64_hex(&args_json),
+        args_sha256: sha256_hex(&args_json),
         arguments_json: Some(args_json),
         started_at: Validity {
             at: now_ms(),
@@ -320,17 +321,11 @@ fn vendor_str(v: &crate::llm::ToolVendor) -> &'static str {
 }
 
 
-// M0: FNV-1a 64-bit hex as a lightweight stand-in for SHA-256 to avoid new deps here.
-// Replace with real SHA-256 at a later pass when Cargo changes are allowed.
-fn fnv1a64_hex(s: &str) -> String {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    let mut hash = FNV_OFFSET;
-    for b in s.as_bytes() {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    format!("fnv1a64:{:016x}", hash)
+fn sha256_hex(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    let digest = hasher.finalize();
+    format!("sha256:{:x}", digest)
 }
 
 
