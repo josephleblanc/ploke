@@ -7,9 +7,9 @@ use crate::{
     Database, DbError,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub struct Validity {
-    pub at: i64,       // epoch millis
+    pub at: i64,        // epoch millis
     pub is_valid: bool, // asserted or retracted
 }
 
@@ -18,7 +18,7 @@ pub struct ConversationTurn {
     pub id: uuid::Uuid,
     pub parent_id: Option<uuid::Uuid>,
     pub message_id: uuid::Uuid,
-    pub kind: String,   // "user" | "assistant" | "system" | "sysinfo" | "tool"
+    pub kind: String, // "user" | "assistant" | "system" | "sysinfo" | "tool"
     pub content: String,
     pub created_at: Validity,
     pub thread_id: Option<uuid::Uuid>,
@@ -36,7 +36,7 @@ pub struct ToolCallReq {
     pub started_at: Validity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum ToolStatus {
     Completed,
     Failed,
@@ -58,7 +58,7 @@ impl ToolStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct ToolCallDone {
     pub request_id: uuid::Uuid,
     pub call_id: String,
@@ -132,12 +132,14 @@ impl Database {
 
         // Attempt to create; ignore errors if already exist
         for script in [create_conversation, create_tool_call] {
-            if let Err(e) = self
-                .run_script(script, BTreeMap::new(), ScriptMutability::Mutable)
-            {
+            if let Err(e) = self.run_script(script, BTreeMap::new(), ScriptMutability::Mutable) {
                 let msg = e.to_string();
                 // Best-effort idempotency: ignore "exists"/"duplicate" errors
-                if !(msg.contains("exists") || msg.contains("duplicate") || msg.contains("Duplicate") || msg.contains("already")) {
+                if !(msg.contains("exists")
+                    || msg.contains("duplicate")
+                    || msg.contains("Duplicate")
+                    || msg.contains("already"))
+                {
                     return Err(DbError::Cozo(msg));
                 }
             }
@@ -162,8 +164,8 @@ impl ObservabilityStore for Database {
             "message_id".into(),
             DataValue::Uuid(UuidWrapper(turn.message_id)),
         );
-        params.insert("kind".into(), DataValue::Str(turn.kind.clone()));
-        params.insert("content".into(), DataValue::Str(turn.content.clone()));
+        params.insert("kind".into(), DataValue::Str(turn.kind.into()));
+        params.insert("content".into(), DataValue::Str(turn.content.into()));
         params.insert(
             "thread_id".into(),
             turn.thread_id
@@ -270,23 +272,17 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(req.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(req.call_id.clone()));
+        params.insert("call_id".into(), DataValue::Str(req.call_id.into()));
         params.insert(
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req.vendor.clone()));
-        params.insert(
-            "tool_name".into(),
-            DataValue::Str(req.tool_name.clone()),
-        );
-        params.insert(
-            "args_sha256".into(),
-            DataValue::Str(req.args_sha256.clone()),
-        );
+        params.insert("vendor".into(), DataValue::Str(req.vendor.into()));
+        params.insert("tool_name".into(), DataValue::Str(req.tool_name.into()));
+        params.insert("args_sha256".into(), DataValue::Str(req.args_sha256.into()));
         params.insert(
             "arguments_json".into(),
-            DataValue::Str(args_json_str.clone()),
+            DataValue::Str(args_json_str.into()),
         );
 
         // Upsert requested state
@@ -320,20 +316,9 @@ impl ObservabilityStore for Database {
         self.ensure_observability_schema()?;
 
         // First, check current state to implement idempotency
-        if let Some((_, maybe_done)) =
-            self.get_tool_call(done.request_id, &done.call_id)?
-        {
-            if let Some(existing) = maybe_done {
-                let same_status = existing.status == done.status;
-                let same_ended = existing.ended_at.at == done.ended_at.at;
-                let same_latency = existing.latency_ms == done.latency_ms;
-                let same_outcome = existing.outcome_json == done.outcome_json;
-                let same_err = existing.error_kind == done.error_kind
-                    && existing.error_msg == done.error_msg;
-                if same_status && same_ended && same_latency && same_outcome && same_err {
-                    // No-op
-                    return Ok(());
-                }
+        if let Some((_, Some(existing))) = self.get_tool_call(done.request_id, &done.call_id)? {
+            if existing == done {
+                return Ok(());
             }
         }
 
@@ -343,37 +328,28 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(done.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(done.call_id.clone()));
-        params.insert(
-            "ended_at_ms".into(),
-            DataValue::from(done.ended_at.at),
-        );
-        params.insert(
-            "latency_ms".into(),
-            DataValue::from(done.latency_ms as i64),
-        );
-        params.insert(
-            "status".into(),
-            DataValue::Str(done.status.as_str().to_string()),
-        );
+        params.insert("call_id".into(), DataValue::Str(done.call_id.into()));
+        params.insert("ended_at_ms".into(), DataValue::from(done.ended_at.at));
+        params.insert("latency_ms".into(), DataValue::from(done.latency_ms));
+        params.insert("status".into(), DataValue::Str(done.status.as_str().into()));
         // Always prepare strings for parse_json; use "null" when None
         let outcome_json = done
             .outcome_json
             .clone()
             .unwrap_or_else(|| "null".to_string());
-        params.insert("outcome_json".into(), DataValue::Str(outcome_json));
+        params.insert("outcome_json".into(), DataValue::Str(outcome_json.into()));
         params.insert(
             "error_kind".into(),
             done.error_kind
                 .clone()
-                .map(DataValue::Str)
+                .map(|s| DataValue::Str(s.into()))
                 .unwrap_or(DataValue::Null),
         );
         params.insert(
             "error_msg".into(),
             done.error_msg
                 .clone()
-                .map(DataValue::Str)
+                .map(|s| DataValue::Str(s.into()))
                 .unwrap_or(DataValue::Null),
         );
 
@@ -408,8 +384,11 @@ impl ObservabilityStore for Database {
         self.ensure_observability_schema()?;
 
         let mut params = BTreeMap::new();
-        params.insert("request_id".into(), DataValue::Uuid(UuidWrapper(request_id)));
-        params.insert("call_id".into(), DataValue::Str(call_id.to_string()));
+        params.insert(
+            "request_id".into(),
+            DataValue::Uuid(UuidWrapper(request_id)),
+        );
+        params.insert("call_id".into(), DataValue::Str(call_id.into()));
 
         // Use dump_json to return JSON strings to the client
         let script = r#"
@@ -454,8 +433,12 @@ impl ObservabilityStore for Database {
                 .map(|s| s.to_string())
                 .filter(|s| s != "null"),
             started_at: Validity {
-                at: row[*hid.get("at_ms").unwrap()].get_int().unwrap_or_default(),
-                is_valid: row[*hid.get("at_valid").unwrap()].get_bool().unwrap_or(true),
+                at: row[*hid.get("at_ms").unwrap()]
+                    .get_int()
+                    .unwrap_or_default(),
+                is_valid: row[*hid.get("at_valid").unwrap()]
+                    .get_bool()
+                    .unwrap_or(true),
             },
         };
 
@@ -544,7 +527,9 @@ impl ObservabilityStore for Database {
                     .map(|s| s.to_string())
                     .filter(|s| s != "null"),
                 started_at: Validity {
-                    at: row[*hid.get("at_ms").unwrap()].get_int().unwrap_or_default(),
+                    at: row[*hid.get("at_ms").unwrap()]
+                        .get_int()
+                        .unwrap_or_default(),
                     is_valid: row[*hid.get("at_valid").unwrap()]
                         .get_bool()
                         .unwrap_or(true),
