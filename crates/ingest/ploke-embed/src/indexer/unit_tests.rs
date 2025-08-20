@@ -742,8 +742,6 @@ async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
     test_next_batch_ss("file_dir_detection").await
 }
 #[tokio::test]
-// AI: Add an env-gated setting to these tests, which are all long-running and should not run with
-// a more broad workspace command like `cargo test` AI!
 // NOTE: passing
 async fn test_batch_ss_attributes() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::INFO);
@@ -752,30 +750,50 @@ async fn test_batch_ss_attributes() -> Result<(), Error> {
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_cyclic_types() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_cyclic_types").await
 }
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_edge_cases() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_edge_cases").await
 }
 #[tokio::test]
 // INFO: passing
 async fn test_batch_ss_generics() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_generics").await
 }
 #[tokio::test]
 // INFO: passing
 async fn test_batch_ss_macros() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_macros").await
 }
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_path_resolution() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_path_resolution").await
 }
@@ -796,12 +814,20 @@ async fn test_batch_ss_spp_edge_cases_no_cfg() -> Result<(), Error> {
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_tracking_hash() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_tracking_hash").await
 }
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_ss_types() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_types").await
 }
@@ -809,12 +835,20 @@ async fn test_batch_ss_types() -> Result<(), Error> {
 #[tokio::test]
 // NOTE: passing - takes about 800 seconds
 async fn test_batch_ss_syn() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ingest/syn_parser").await
 }
 #[tokio::test]
 // NOTE: passing - takes about 575 seconds
 async fn test_batch_ss_transform() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ingest/ploke-transform").await
 }
@@ -822,6 +856,10 @@ async fn test_batch_ss_transform() -> Result<(), Error> {
 // NOTE: passing - takes about 260 seconds
 // - embedded 83/83
 async fn test_batch_ss_embed() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ingest/ploke-embed").await
 }
@@ -829,6 +867,10 @@ async fn test_batch_ss_embed() -> Result<(), Error> {
 // NOTE: passing - takes about 98 seconds
 // - embedded 28/28
 async fn test_batch_ss_core() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-core").await
 }
@@ -836,6 +878,10 @@ async fn test_batch_ss_core() -> Result<(), Error> {
 // NOTE: passing - takes about 258 seconds
 // - embedded 74/74
 async fn test_batch_ss_db() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-db").await
 }
@@ -843,6 +889,10 @@ async fn test_batch_ss_db() -> Result<(), Error> {
 // NOTE: passing - takes about 30 seconds
 // - embedded 10/10
 async fn test_batch_ss_error() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-error").await
 }
@@ -850,6 +900,10 @@ async fn test_batch_ss_error() -> Result<(), Error> {
 // NOTE: passing - takes about 159 seconds
 // - embedded 33/33
 async fn test_batch_ss_io() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-io").await
 }
@@ -857,6 +911,10 @@ async fn test_batch_ss_io() -> Result<(), Error> {
 // NOTE: passing - takes about 1.06 seconds
 // - embedded 2/2
 async fn test_batch_ss_rag() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-rag").await
 }
@@ -864,6 +922,10 @@ async fn test_batch_ss_rag() -> Result<(), Error> {
 // NOTE: passing - takes about 413.18 seconds
 // - embedded 132/132
 async fn test_batch_ss_tui() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-tui").await
 }
@@ -871,6 +933,10 @@ async fn test_batch_ss_tui() -> Result<(), Error> {
 // NOTE: passing - takes about 43.71 seconds <-- probably wrong
 // - embedded 9/9
 async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/ploke-ty-mcp").await
 }
@@ -878,6 +944,10 @@ async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
 // NOTE: passing - takes about 76.80 seconds
 // - embedded 17/17
 async fn test_batch_ss_test_utils() -> Result<(), Error> {
+    if std::env::var("RUN_LONG_TESTS").is_err() {
+        eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
+        return Ok(());
+    }
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("crates/test-utils").await
 }
