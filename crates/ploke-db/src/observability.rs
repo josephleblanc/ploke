@@ -589,7 +589,7 @@ impl ObservabilityStore for Database {
     outcome_json_s = if(is_null(outcome_json), null, dump_json(outcome_json)),
     at_ms = to_int(at),
     at_valid = to_bool(at)
-    :sort at_ms desc
+    :sort -at_ms
     :limit $limit
 "#;
 
