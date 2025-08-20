@@ -101,4 +101,4 @@ Progress update — 2025-08-20
 - Implemented: SSoT tests for Completed and Failed passing (single forwarder).
 - Implemented: EventBus readiness signal to eliminate sleeps in tests.
 - Implemented: SHA-256 for args_sha256 (replacing FNV-1a placeholder).
-- In progress: Observability E2E tests and observability guide doc.
+- Implemented: Observability E2E tests and observability guide doc.

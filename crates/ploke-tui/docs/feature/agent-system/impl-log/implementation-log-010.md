@@ -17,9 +17,9 @@ Rationale
 - Keeps conversions at the boundary; continues the typed params pattern from previous logs.
 
 Notes and next steps
-- Add E2E tests asserting that Requested → Completed populates latency_ms > 0.
-- Consider a small readiness signal in run_event_bus to eliminate sleeps in tests.
-- Replace FNV-1a placeholder with SHA-256 for args_sha256 once Cargo dep changes are staged.
+- DONE: Added E2E tests asserting that Requested → Completed populates latency_ms ≥ 0.
+- DONE: Added readiness signal in run_event_bus (EventBusStarted) to eliminate sleeps in tests.
+- DONE: Replaced FNV-1a placeholder with SHA-256 for args_sha256.
 
 Acceptance alignment
 - Telemetry: latency_ms is now recorded for terminal tool-call events.

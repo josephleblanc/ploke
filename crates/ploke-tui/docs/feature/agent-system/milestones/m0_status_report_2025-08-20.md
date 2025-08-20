@@ -9,8 +9,8 @@ Checklist (status)
 - [x] Persistence sidecar (observability): conversation_turn upsert on MessageUpdated; tool_call lifecycle logged.
 - [x] Latency telemetry: latency_ms computed from requested→done (DB lookup).
 - [x] File export path: atomic save with fsync+rename; UI confirmation event HistorySaved.
-- [ ] Observability E2E tests (Requested→Done rows + fields) — ETA 0.5d
-- [ ] Observability guide (audit queries + grep tips) — ETA 0.5d
+- [x] Observability E2E tests (Requested→Done rows + fields) — done
+- [x] Observability guide (audit queries + grep tips) — done
 - [x] Replace FNV placeholder with SHA-256 for args_sha256 — done
 - [x] EventBus readiness signal for tests — done
 
@@ -19,7 +19,7 @@ Risks and notes
 - Privacy posture: currently storing full JSON for fast iteration per decision; revisit defaults pre prod-ready.
 
 ETA to complete M0
-- Remaining effort: ~1.25–1.5 days of focused work.
+- Remaining effort: 0d for core M0; shifting focus to M1 prep.
 
 Next actions
 - Add observability E2E tests and docs.
