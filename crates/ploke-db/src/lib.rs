@@ -5,10 +5,10 @@ pub mod bm25_index;
 mod database;
 mod error;
 mod index;
+pub mod observability;
 mod query;
 mod result;
 mod span;
-pub mod observability;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
