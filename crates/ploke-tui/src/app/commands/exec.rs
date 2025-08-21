@@ -230,7 +230,7 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::ProviderSelect { model_id, provider_slug } => {
             // Delegate to state layer to pin a specific provider endpoint for a model
-            app.send_cmd(StateCommand::SelectModelProvider { model_id, provider_slug });
+            app.send_cmd(StateCommand::SelectModelProvider { model_id, provider_id: provider_slug });
         }
         Command::Update => spawn_update(app),
         Command::EditApprove(id) => {

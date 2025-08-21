@@ -304,7 +304,6 @@ pub(crate) fn build_openai_request<'a>(
 ) -> super::OpenAiRequest<'a> {
     // NOTE: OpenRouter rejected `provider` object with keys like `allow`/`deny` on chat/completions.
     // Remove provider preferences from payload to avoid 400 errors.
-    let provider_field = None;
 
     super::OpenAiRequest {
         model: provider.model.as_str(),
