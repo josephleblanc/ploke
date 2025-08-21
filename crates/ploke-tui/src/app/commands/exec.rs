@@ -14,6 +14,7 @@
 
 use super::parser::Command;
 use crate::app::App;
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing};
 use crate::{app_state::StateCommand, chat_history::MessageKind, emit_app_event, AppEvent};
 use itertools::Itertools;
 use std::path::PathBuf;
@@ -30,110 +31,9 @@ const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
 const TEST_QUERY_RESULTS: &str = "results.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelEndpointsResponse {
-    data: ModelEndpointsData,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelEndpointsData {
-    #[serde(default)]
-    endpoints: Vec<ModelEndpoint>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UserFilteredEndpoint {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    created: i64,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    architecture: Architecture,
-    #[serde(default)]
-    top_provider: TopProvider,
-    #[serde(default)]
-    pricing: Pricing,
-    #[serde(default)]
-    canonical_slug: String,
-    #[serde(default)]
-    context_length: u64,
-    #[serde(default)]
-    hugging_face_id: String,
-    #[serde(default)]
-    per_request_limits: std::collections::HashMap<String, Value>,
-    #[serde(default)]
-    supported_parameters: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Architecture {
-    input_modalities: Vec<InputModality>,
-    #[serde(default)]
-    output_modalities: Vec<OutputModality>,
-    #[serde(default)]
-    tokenizer: String,
-    #[serde(default)]
-    instruct_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum InputModality {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "image")]
-    Image,
-    #[serde(rename = "audio")]
-    Audio,
-    #[serde(rename = "video")]
-    Video,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum OutputModality {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "image")]
-    Image,
-    #[serde(rename = "audio")]
-    Audio,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TopProvider {
-    #[serde(default)]
-    is_moderated: bool,
-    #[serde(default)]
-    context_length: u64,
-    #[serde(default)]
-    max_completion_tokens: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Pricing {
-    #[serde(default)]
-    prompt: f64,
-    #[serde(default)]
-    completion: f64,
-    #[serde(default)]
-    image: f64,
-    #[serde(default)]
-    request: f64,
-    #[serde(default)]
-    web_search: f64,
-    #[serde(default)]
-    internal_reasoning: f64,
-    #[serde(default)]
-    input_cache_read: f64,
-    #[serde(default)]
-    input_cache_write: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ModelEndpoint {
+pub struct ModelEndpoint {
     #[serde(default)]
     provider_name: String,
     #[serde(default)]
@@ -720,28 +620,23 @@ fn list_model_providers_async(app: &App, model_id: &str) {
 
                     if !payload.data.endpoints.is_empty() {
                         for ep in payload.data.endpoints {
-                            let name = ep.provider_name.as_str();
-                            let ctx = ep
-                                .context_length
-                                .map(|n| format!("ctx={}", n))
-                                .unwrap_or_default();
                             let supports_tools = ep
                                 .supported_parameters
                                 .iter()
                                 .any(|t| t.eq_ignore_ascii_case("tools"));
                             let slug = providers_map
-                                .get(name)
+                                .get(&ep.name)
                                 .cloned()
-                                .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                                .unwrap_or_else(|| ep.name.to_lowercase().replace(' ', "-"));
                             lines.push(format!(
                                 "  - {} (slug: {}) {}{}",
-                                name,
+                                &ep.name,
                                 slug,
                                 if supports_tools { "[tools]" } else { "" },
-                                if ctx.is_empty() {
+                                if ep.context_length == 0 {
                                     "".to_string()
                                 } else {
-                                    format!(" {}", ctx)
+                                    format!("context length = {}", ep.context_length)
                                 }
                             ));
                         }
@@ -1204,6 +1099,7 @@ mod typed_response_tests {
 
     #[test]
     fn deserialize_endpoints_basic() {
+        // AI: update test AI!
         let payload = json!({
             "data": {
                 "endpoints": [
@@ -1225,11 +1121,11 @@ mod typed_response_tests {
 
         let parsed: ModelEndpointsResponse = serde_json::from_value(payload).expect("valid response");
         assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(parsed.data.endpoints[0].provider_name, "Foo Provider");
-        assert_eq!(parsed.data.endpoints[0].context_length, Some(8192));
+        assert_eq!(parsed.data.endpoints[0].name, "Foo Provider");
+        assert_eq!(parsed.data.endpoints[0].context_length, 8192);
         assert!(parsed.data.endpoints[0].supported_parameters.iter().any(|t| t.eq_ignore_ascii_case("tools")));
-        assert_eq!(parsed.data.endpoints[1].provider_name, "Bar Provider");
-        assert!(parsed.data.endpoints[1].context_length.is_none());
+        assert_eq!(parsed.data.endpoints[1].name, "Bar Provider");
+        assert!(parsed.data.endpoints[1].context_length == 0);
     }
 
     #[test]
