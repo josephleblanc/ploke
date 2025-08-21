@@ -3,9 +3,24 @@ use cozo::{Db, MemStorage, ScriptMutability};
 use ploke_db::Database;
 use ploke_embed::error::EmbedError;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+use ratatui::widgets::ListState;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+
+use crate::app::App;
+use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
+use crate::chat_history::ChatHistory;
+
+pub fn create_mock_app_state() -> AppState {
+    // AI: fill out AI!
+    AppState::new(db, embedder, io_handle, rag, budget, rag_tx)
+}
+
+pub fn create_mock_app() -> App {
+    // AI: fill out AI!
+    App::new(command_style, state, cmd_tx, event_bus, active_model_id)
+}
 
 pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
     let storage = MemStorage::default();
