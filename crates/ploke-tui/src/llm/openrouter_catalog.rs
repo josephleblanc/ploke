@@ -140,7 +140,8 @@ pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
 ) -> color_eyre::Result<Vec<ModelEntry>> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    // Use user-filtered catalog as per product decision.
+    let url = format!("{}/models/user", base_url.trim_end_matches('/'));
     let resp = client
         .get(url)
         .bearer_auth(api_key)

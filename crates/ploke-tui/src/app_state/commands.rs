@@ -183,6 +183,10 @@ pub enum StateCommand {
     DenyEdits {
         request_id: Uuid,
     },
+    SelectModelProvider {
+        model_id: String,
+        provider_id: String,
+    },
 }
 
 impl StateCommand {
@@ -234,6 +238,7 @@ impl StateCommand {
             SetEditingAutoConfirm { .. } => "SetEditingAutoConfirm",
             ApproveEdits { .. } => "ApproveEdits",
             DenyEdits { .. } => "DenyEdits",
+            SelectModelProvider { .. } => "SelectModelProvider",
         }
     }
 }
