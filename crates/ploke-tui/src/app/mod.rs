@@ -31,6 +31,7 @@ use itertools::Itertools;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
 use ratatui::widgets::Gauge;
+use ratatui::text::{Line, Span};
 // use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
@@ -96,7 +97,17 @@ struct ModelBrowserItem {
     input_cost: Option<f64>,
     output_cost: Option<f64>,
     supports_tools: bool,
+    providers: Vec<ModelProviderRow>,
     expanded: bool,
+}
+
+#[derive(Debug)]
+struct ModelProviderRow {
+    id: String,
+    context_length: Option<u32>,
+    input_cost: Option<f64>,
+    output_cost: Option<f64>,
+    supports_tools: bool,
 }
 
 #[derive(Debug)]
@@ -525,20 +536,31 @@ impl App {
             let footer_area = layout[1];
 
             // Consistent overlay style (foreground/background)
-            let overlay_style = Style::new().fg(Color::White).bg(Color::Black);
+            // Choose a high-contrast, uniform scheme that doesn't depend on background UI
+            let overlay_style = Style::new().fg(Color::Gray).bg(Color::Black);
 
-            // Build list content
-            let mut lines: Vec<String> = Vec::new();
-            lines.push(format!(
-                "Model Browser — {} results for \"{}\"",
-                mb.items.len(),
-                mb.keyword
-            ));
-            lines.push("Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, ? to toggle help, q/Esc to close.".to_string());
-            lines.push(String::new());
+            // Build list content (styled)
+            let mut lines: Vec<Line> = Vec::new();
+            lines.push(Line::from(Span::styled(
+                format!("Model Browser — {} results for \"{}\"", mb.items.len(), mb.keyword),
+                overlay_style,
+            )));
+            lines.push(Line::from(Span::styled(
+                "Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, ? to toggle help, q/Esc to close.",
+                overlay_style,
+            )));
+            lines.push(Line::from(Span::raw("")));
+
+            // Loading indicator when opened before results arrive
+            if mb.items.is_empty() {
+                lines.push(Line::from(Span::styled("Loading models…", overlay_style)));
+            }
+
+            // Selected row highlighting
+            let selected_style = Style::new().fg(Color::Black).bg(Color::LightCyan);
+            let detail_style = Style::new().fg(Color::DarkGray).bg(Color::Black);
 
             for (i, it) in mb.items.iter().enumerate() {
-                let sel = if i == mb.selected { ">" } else { " " };
                 let title = if let Some(name) = &it.name {
                     if name.is_empty() {
                         it.id.clone()
@@ -548,37 +570,79 @@ impl App {
                 } else {
                     it.id.clone()
                 };
-                lines.push(format!("{} {}", sel, title));
+
+                let mut line = Line::from(vec![
+                    Span::styled(if i == mb.selected { ">" } else { " " }, if i == mb.selected { selected_style } else { overlay_style }),
+                    Span::raw(" "),
+                    Span::styled(title, if i == mb.selected { selected_style } else { overlay_style }),
+                ]);
+                // Ensure entire line style is applied (for background fill)
+                line.style = if i == mb.selected { selected_style } else { overlay_style };
+                lines.push(line);
+
                 if it.expanded {
-                    // Indented details for readability while navigating
-                    lines.push(format!(
-                        "    context_length: {}",
-                        it.context_length
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "-".to_string())
-                    ));
-                    lines.push(format!("    supports_tools: {}", it.supports_tools));
-                    lines.push(format!(
-                        "    pricing: in={} out={}",
-                        it.input_cost
-                            .map(|v| format!("{:.4}", v))
-                            .unwrap_or_else(|| "-".to_string()),
-                        it.output_cost
-                            .map(|v| format!("{:.4}", v))
-                            .unwrap_or_else(|| "-".to_string())
-                    ));
+                    // Indented details for readability while navigating (preserve spaces; do not trim)
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "    context_length: {}",
+                            it.context_length
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        ),
+                        detail_style,
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        format!("    supports_tools: {}", it.supports_tools),
+                        detail_style,
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "    pricing: in={} out={}",
+                            it.input_cost
+                                .map(|v| format!("{:.4}", v))
+                                .unwrap_or_else(|| "-".to_string()),
+                            it.output_cost
+                                .map(|v| format!("{:.4}", v))
+                                .unwrap_or_else(|| "-".to_string())
+                        ),
+                        detail_style,
+                    )));
+
+                    // Provider breakdown
+                    if !it.providers.is_empty() {
+                        lines.push(Line::from(Span::styled("    providers:", detail_style)));
+                        for p in &it.providers {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "      - {}  tools={}  ctx={}  pricing: in={} out={}",
+                                    p.id,
+                                    p.supports_tools,
+                                    p.context_length
+                                        .map(|v| v.to_string())
+                                        .unwrap_or_else(|| "-".to_string()),
+                                    p.input_cost
+                                        .map(|v| format!("{:.4}", v))
+                                        .unwrap_or_else(|| "-".to_string()),
+                                    p.output_cost
+                                        .map(|v| format!("{:.4}", v))
+                                        .unwrap_or_else(|| "-".to_string())
+                                ),
+                                detail_style,
+                            )));
+                        }
+                    }
                 }
             }
 
-            let content = lines.join("\n");
-            let widget = Paragraph::new(content)
+            let widget = Paragraph::new(lines)
                 .style(overlay_style)
                 .block(
                     Block::bordered()
                         .title(" Model Browser ")
                         .style(overlay_style),
                 )
-                .wrap(ratatui::widgets::Wrap { trim: true });
+                // Preserve leading indentation in detail lines
+                .wrap(ratatui::widgets::Wrap { trim: false });
             frame.render_widget(widget, body_area);
 
             // Footer: bottom-right help toggle or expanded help
@@ -717,7 +781,8 @@ impl App {
                         guard.current
                     })
                 });
-                self.send_cmd(StateCommand::DeleteMessage { id });
+                // Use node-only deletion semantics (re-parent children)
+                self.send_cmd(StateCommand::DeleteNode { id });
                 self.needs_redraw = true;
                 return;
             }
@@ -1024,20 +1089,46 @@ impl App {
     fn open_model_browser(&mut self, keyword: String, items: Vec<ModelEntry>) {
         let items = items
             .into_iter()
-            .map(|m| ModelBrowserItem {
-                id: m.id,
-                name: m.name,
-                context_length: m
-                    .context_length
-                    .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                input_cost: m.pricing.as_ref().and_then(|p| p.input),
-                output_cost: m.pricing.as_ref().and_then(|p| p.output),
-                supports_tools: m
+            .map(|m| {
+                // Provider rows
+                let provider_rows = m
+                    .providers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| ModelProviderRow {
+                        id: p.id,
+                        context_length: p.context_length,
+                        input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
+                        output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                        supports_tools: p
+                            .supported_parameters
+                            .as_ref()
+                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                            .or_else(|| p.capabilities.as_ref().and_then(|c| c.tools))
+                            .unwrap_or(false),
+                    })
+                    .collect::<Vec<_>>();
+
+                // Model-level tools: true if any provider supports tools OR model supported_parameters says so
+                let model_supports_tools = m
                     .supported_parameters
                     .as_ref()
                     .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                    .unwrap_or(false),
-                expanded: false,
+                    .unwrap_or(false)
+                    || provider_rows.iter().any(|p| p.supports_tools);
+
+                ModelBrowserItem {
+                    id: m.id,
+                    name: m.name,
+                    context_length: m
+                        .context_length
+                        .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
+                    input_cost: m.pricing.as_ref().and_then(|p| p.input),
+                    output_cost: m.pricing.as_ref().and_then(|p| p.output),
+                    supports_tools: model_supports_tools,
+                    providers: provider_rows,
+                    expanded: false,
+                }
             })
             .collect::<Vec<_>>();
 

@@ -60,6 +60,9 @@ pub enum StateCommand {
     DeleteMessage {
         id: Uuid,
     },
+    DeleteNode {
+        id: Uuid,
+    },
     ClearHistory {
         target: ChatHistoryTarget,
     },
@@ -188,6 +191,7 @@ impl StateCommand {
         match self {
             AddMessage { .. } => "AddMessage",
             DeleteMessage { .. } => "DeleteMessage",
+            DeleteNode { .. } => "DeleteNode",
             AddUserMessage { .. } => "AddUserMessage",
             UpdateMessage { .. } => "UpdateMessage",
             ClearHistory { .. } => "ClearHistory",

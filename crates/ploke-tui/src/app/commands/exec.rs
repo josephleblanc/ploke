@@ -36,6 +36,9 @@ pub fn execute(app: &mut App, command: Command) {
         Command::ModelList => list_models_async(app),
         Command::ModelInfo => show_model_info_async(app),
         Command::ModelSearch(keyword) => {
+            // Open the overlay immediately to avoid perceived delay
+            app.open_model_browser(keyword.clone(), Vec::new());
+            // Then fetch results and populate (synchronously for now; will move to async event)
             open_model_search(app, &keyword);
         }
         Command::ModelSearchHelp => {

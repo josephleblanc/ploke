@@ -43,6 +43,10 @@ pub struct ModelEntry {
     /// OpenRouter model-level "supported_parameters" (e.g., includes "tools" when tool-calling is supported).
     #[serde(default)]
     pub supported_parameters: Option<Vec<String>>,
+
+    /// Provider-specific entries under this model (pricing, tools, context).
+    #[serde(default)]
+    pub providers: Option<Vec<ProviderEntry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +74,25 @@ pub struct TopProviderInfo {
     pub context_length: Option<u32>,
     #[serde(default)]
     pub max_completion_tokens: Option<u32>,
+}
+
+/// Provider-specific entry beneath a model in the catalog.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ProviderEntry {
+    /// Provider identifier (e.g., "openrouter", "openai", or a specific upstream)
+    pub id: String,
+    /// Context length for this provider if known
+    #[serde(default)]
+    pub context_length: Option<u32>,
+    /// Pricing for this provider/model combo. Accepts {input,output} or {prompt,completion}.
+    #[serde(default, deserialize_with = "de_optional_model_pricing")]
+    pub pricing: Option<ModelPricing>,
+    /// Capability flags; many providers expose tools here
+    #[serde(default)]
+    pub capabilities: Option<ModelCapabilitiesRaw>,
+    /// OpenRouter "supported_parameters" array for this provider (e.g., contains "tools")
+    #[serde(default)]
+    pub supported_parameters: Option<Vec<String>>,
 }
 
 /// Custom deserializer for optional ModelPricing supporting either

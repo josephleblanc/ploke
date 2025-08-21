@@ -37,6 +37,13 @@ pub async fn state_manager(
             StateCommand::DeleteMessage { id } => {
                 handlers::chat::delete_message(&state, &event_bus, id).await;
             }
+            StateCommand::DeleteNode { id } => {
+                {
+                    let mut guard = state.chat.0.write().await;
+                    let _ = guard.delete_node(id);
+                }
+                // No explicit message; UI will redraw on next tick
+            }
             StateCommand::AddUserMessage {
                 content,
                 new_msg_id,
