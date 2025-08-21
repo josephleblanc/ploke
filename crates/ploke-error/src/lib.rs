@@ -13,7 +13,7 @@ pub use warning::WarningError;
 pub use domain::DomainError;
 pub use severity::Severity;
 
- // common imports for submodules
+// common imports for submodules
 use std::path::PathBuf;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
