@@ -410,8 +410,11 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
   provider strictness <openrouter-only|allow-custom|allow-any>
                                      - Restrict selectable providers
   provider tools-only <on|off>       - Enforce using only models/providers that support tool calls
+  model providers <model_id>         - List provider endpoints for a model and show tool support and slugs
   provider select <model_id> <provider_slug>
                                      - Pin a model to a specific provider endpoint
+  provider pin <model_id> <provider_slug>
+                                     - Alias for 'provider select'
 "#
         .to_string()
     } else if t.starts_with("index") {
