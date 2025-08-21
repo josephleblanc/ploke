@@ -579,7 +579,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             .and_then(|r| r.error_for_status())
         {
             // AI: Create a type that derives Serialize and Deserialize instead of matching on json
-            // values here AI
+            // values here AI!
             Ok(resp) => match resp.json::<Value>().await {
                 Ok(v) => {
                     let mut lines = vec![
