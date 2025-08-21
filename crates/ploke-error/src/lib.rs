@@ -5,8 +5,8 @@ pub mod warning;
 pub mod domain;
 pub mod severity;
 
-// public exports
-pub use context::{ContextualError, ErrorContext};
+ // public exports
+pub use context::{ContextualError, ErrorContext, SourceSpan, ContextExt};
 pub use fatal::FatalError;
 pub use internal::InternalError;
 pub use warning::WarningError;
@@ -28,6 +28,8 @@ pub enum Error {
     Internal(#[from] InternalError),
     #[error(transparent)]
     Domain(#[from] DomainError),
+    #[error(transparent)]
+    Context(#[from] ContextualError),
 
     // NOTE: Unsure about error design. Using a simple wrapper around the type of error coming out of a
     // target crate for convenience for now.
@@ -46,7 +48,7 @@ impl Error {
         match self {
             Error::Warning(_) => Severity::Warning,
             Error::Fatal(_) => Severity::Fatal,
-            Error::Internal(_) | Error::Domain(_) | Error::UiError(_) | Error::TransformError(_) => Severity::Error,
+            Error::Internal(_) | Error::Domain(_) | Error::UiError(_) | Error::TransformError(_) | Error::Context(_) => Severity::Error,
         }
     }
 }

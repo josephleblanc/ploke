@@ -36,7 +36,7 @@ impl SourceSpan {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorContext {
     pub span: Option<SourceSpan>,
     pub file_path: PathBuf,
@@ -44,7 +44,7 @@ pub struct ErrorContext {
     pub backtrace: Option<Backtrace>,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ContextualError {
     #[error("{source}\nContext: {context:?}")]
     WithContext {
@@ -60,7 +60,7 @@ impl ErrorContext {
             file_path,
             span: None,
             code_snippet: None,
-            backtrace: Some(Backtrace::capture()),
+            backtrace: None,
         }
     }
 
@@ -91,8 +91,10 @@ impl<T> ContextExt<T> for Result<T, Error> {
     fn with_path(self, path: impl Into<PathBuf>) -> Result<T> {
         self.map_err(|e| {
             let context = ErrorContext::new(path.into());
-            Error::Internal(InternalError::CompilerError(format!("Error with path context: {}", e)))
-                .into()
+            Error::from(ContextualError::WithContext {
+                source: Box::new(e),
+                context,
+            })
         })
     }
 
