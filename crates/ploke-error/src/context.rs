@@ -1,5 +1,6 @@
 use std::backtrace::Backtrace;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::*;
 
@@ -41,7 +42,7 @@ pub struct ErrorContext {
     pub span: Option<SourceSpan>,
     pub file_path: PathBuf,
     pub code_snippet: Option<String>,
-    pub backtrace: Option<Backtrace>,
+    pub backtrace: Option<Arc<Backtrace>>,
 }
 
 #[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
@@ -77,7 +78,7 @@ impl ErrorContext {
     }
 
     pub fn with_backtrace(mut self, backtrace: Backtrace) -> Self {
-        self.backtrace = Some(backtrace);
+        self.backtrace = Some(Arc::new(backtrace));
         self
     }
 }

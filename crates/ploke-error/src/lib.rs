@@ -19,8 +19,7 @@ pub use policy::{ErrorPolicy, NoopPolicy};
 pub use policy::TracingPolicy;
 pub use result_ext::ResultExt;
 
-// common imports for submodules
-use std::path::PathBuf;
+ // common imports for submodules
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 

@@ -1,4 +1,4 @@
-use super::{Error, ErrorPolicy, Result};
+use super::{ErrorPolicy, Result};
 
 /// Extension trait for Result to enable policy-driven emission
 pub trait ResultExt<T> {
