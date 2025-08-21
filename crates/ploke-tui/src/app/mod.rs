@@ -813,49 +813,11 @@ impl App {
     }
 
     fn apply_model_provider_selection(&mut self, model_id: &str, provider_slug: Option<&str>) {
-        let provider_slug_str = provider_slug.map(|s| s.to_string());
-        let display_provider = provider_slug.unwrap_or("-");
-        let state = Arc::clone(&self.state);
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut cfg = state.config.write().await;
-                let reg = &mut cfg.provider_registry;
-
-                if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
-                    p.model = model_id.to_string();
-                    p.base_url = OPENROUTER_URL.to_string();
-                    p.provider_type = ProviderType::OpenRouter;
-                    p.llm_params.get_or_insert_with(Default::default).model = model_id.to_string();
-                    p.provider_slug = provider_slug_str.clone();
-                } else {
-                    reg.providers.push(ProviderConfig {
-                        id: model_id.to_string(),
-                        api_key: String::new(),
-                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-                        base_url: OPENROUTER_URL.to_string(),
-                        model: model_id.to_string(),
-                        display_name: Some(model_id.to_string()),
-                        provider_type: ProviderType::OpenRouter,
-                        llm_params: Some(crate::llm::LLMParameters {
-                            model: model_id.to_string(),
-                            ..Default::default()
-                        }),
-                        provider_slug: provider_slug_str.clone(),
-                    });
-                }
-                // Resolve API keys after potential changes
-                reg.load_api_keys();
-                // Activate this provider/model
-                reg.active_provider = model_id.to_string();
-            });
-        });
-
-        self.active_model_id = model_id.to_string();
-        self.active_model_indicator = Some((self.active_model_id.clone(), Instant::now()));
-        self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: format!("Switched active model to {} via provider {}", model_id, display_provider),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
+        // Delegate persistence and broadcasts to the state manager (non-blocking for UI)
+        let provider_id = provider_slug.unwrap_or("-");
+        self.send_cmd(StateCommand::SelectModelProvider {
+            model_id: model_id.to_string(),
+            provider_id: provider_id.to_string(),
         });
         self.needs_redraw = true;
     }

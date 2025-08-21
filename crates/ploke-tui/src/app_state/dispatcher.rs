@@ -263,6 +263,50 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 handlers::rag::deny_edits(&state, &event_bus, request_id).await;
             }
+            StateCommand::SelectModelProvider { model_id, provider_id } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    let reg = &mut cfg.provider_registry;
+
+                    if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
+                        p.model = model_id.clone();
+                        p.base_url = crate::user_config::OPENROUTER_URL.to_string();
+                        p.provider_type = crate::user_config::ProviderType::OpenRouter;
+                        p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
+                        p.provider_slug = Some(provider_id.clone());
+                    } else {
+                        reg.providers.push(crate::user_config::ProviderConfig {
+                            id: model_id.clone(),
+                            api_key: String::new(),
+                            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+                            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+                            model: model_id.clone(),
+                            display_name: Some(model_id.clone()),
+                            provider_type: crate::user_config::ProviderType::OpenRouter,
+                            llm_params: Some(crate::llm::LLMParameters {
+                                model: model_id.clone(),
+                                ..Default::default()
+                            }),
+                            provider_slug: Some(provider_id.clone()),
+                        });
+                    }
+                    // Ensure keys are resolved and activate this provider/model
+                    reg.load_api_keys();
+                    reg.active_provider = model_id.clone();
+                }
+
+                // Inform the user and update the UI via events
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!("Switched active model to {} via provider {}", model_id, provider_id),
+                    MessageKind::SysInfo,
+                )
+                .await;
+
+                event_bus.send(crate::AppEvent::System(SystemEvent::ModelSwitched(model_id)));
+            }
 
             _ => {}
         };

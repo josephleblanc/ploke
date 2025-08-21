@@ -494,13 +494,39 @@ impl ProviderRegistry {
 
         self.capabilities.clear();
         for m in models {
+            // Determine tool support with robust fallbacks:
+            // - provider.supported_parameters contains "tools" (preferred)
+            // - provider.capabilities.tools == true (fallback)
+            // - model.supported_parameters contains "tools" (hint)
+            // - model.capabilities.tools (legacy)
+            let model_level_tools = m
+                .supported_parameters
+                .as_ref()
+                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                .unwrap_or(false);
+
+            let provider_tools = m
+                .providers
+                .as_ref()
+                .map(|ps| {
+                    ps.iter().any(|p| {
+                        p.supported_parameters
+                            .as_ref()
+                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                            .unwrap_or_else(|| p.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false))
+                    })
+                })
+                .unwrap_or(false);
+
+            let supports_tools = model_level_tools
+                || provider_tools
+                || m.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false);
+
             let caps = ModelCapabilities {
-                supports_tools: m
-                    .capabilities
-                    .as_ref()
-                    .and_then(|c| c.tools)
-                    .unwrap_or(false),
-                context_length: m.context_length,
+                supports_tools,
+                context_length: m
+                    .context_length
+                    .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
                 input_cost_per_million: m.pricing.as_ref().and_then(|p| p.input),
                 output_cost_per_million: m.pricing.as_ref().and_then(|p| p.output),
             };
