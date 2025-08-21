@@ -1,3 +1,4 @@
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DomainError {
     #[error("UI error: {message}")]

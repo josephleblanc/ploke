@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::{Error, Severity};
 
 /// A policy for classifying and emitting errors

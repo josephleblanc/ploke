@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
     #[error("Invalid Rust syntax: {0}")]

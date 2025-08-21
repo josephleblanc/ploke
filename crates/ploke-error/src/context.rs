@@ -44,9 +44,11 @@ pub struct ErrorContext {
     pub backtrace: Option<Backtrace>,
 }
 
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ContextualError {
     #[error("{source}\nContext: {context:?}")]
+    #[cfg_attr(feature = "diagnostic", diagnostic(transparent))]
     WithContext {
         #[source]
         source: Box<Error>,

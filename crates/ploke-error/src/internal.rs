@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum InternalError {
     #[error("Internal compiler error: {0}")]

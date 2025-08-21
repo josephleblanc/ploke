@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

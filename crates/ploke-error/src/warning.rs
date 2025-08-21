@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum WarningError {
     #[error("Unlinked modules detected: {modules:?}")]

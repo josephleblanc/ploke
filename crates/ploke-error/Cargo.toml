@@ -11,7 +11,7 @@ uuid = { workspace = true }
 [features]
 default = []
 tracing = ["dep:tracing"]
-diagnostic = []
+diagnostic = ["dep:miette"]
 serde = []
 smartstring = []
 proc-span = []
@@ -19,4 +19,8 @@ backtrace-default = []
 
 [dependencies.tracing]
 version = "0.1"
+optional = true
+
+[dependencies.miette]
+version = "5"
 optional = true
