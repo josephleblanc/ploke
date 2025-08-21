@@ -26,9 +26,7 @@ pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
 
-#[cfg(test)]
 pub mod test_utils;
-#[cfg(test)]
 pub use test_utils::mock;
 
 use app::App;
