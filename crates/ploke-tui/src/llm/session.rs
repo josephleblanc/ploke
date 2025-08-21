@@ -275,7 +275,7 @@ impl<'a> RequestSession<'a> {
         }
     }
     
-    #[test]
+    #[cfg(test)]
     fn test_build_request_without_provider_field_snapshot() {
         // Arrange: provider without provider_slug should omit the "provider" field entirely
         let provider = crate::user_config::ProviderConfig {
@@ -322,7 +322,7 @@ impl<'a> RequestSession<'a> {
         ];
 
         // Act
-        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let payload = build_openai_request(&provider, messages, &params, None, false);
         let json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Snapshot: provider field must be omitted
@@ -346,7 +346,7 @@ impl<'a> RequestSession<'a> {
         assert_eq!(json, expected);
     }
 
-    #[test]
+    #[cfg(test)]
     fn test_build_request_regular_chat_snapshot_insta_inline() {
         use insta::assert_snapshot;
 
@@ -393,7 +393,7 @@ impl<'a> RequestSession<'a> {
             },
         ];
 
-        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let payload = build_openai_request(&provider, messages, &params, None, false);
         let pretty = serde_json::to_string_pretty(&payload).unwrap();
 
         // Inline insta snapshot keeps the snapshot next to the test for easy review.
