@@ -100,3 +100,22 @@ USER: This is a lazy fix (not the good kind). Revisit strategy here. Whatever wa
 ## Notes
 - No items are marked complete until you confirm behavior in your environment.
 - If additional changes are needed, please add the relevant files (e.g., state manager, conversation view) to the chat.
+
+## Update Log (2025-08-21)
+
+- Compilation fixes:
+  - Resolved serde attribute errors in OpenRouter catalog by removing misplaced field attributes on a non-deriving struct.
+  - Eliminated deprecated UiError mapping in StateError -> ploke_error::Error conversion by switching to Error::Domain(DomainError::Ui { message }).
+
+- Delete behavior enhancement:
+  - Added ChatHistory::delete_node(id): deletes only the node and re-parents its children to the parent in-place, preserving order and updating selection semantics as specified.
+  - Current delete_message(id) remains unchanged and continues to remove the entire subtree.
+
+- Async model search plan:
+  - We will refactor model search to be non-blocking. The executor will spawn an async task to fetch models, then dispatch an event to open the Model Browser without blocking the UI thread.
+  - To proceed cleanly, please add the following files so we can wire the event and handler:
+    - crates/ploke-tui/src/app/events.rs (for handling a new AppEvent/SystemEvent to open the Model Browser)
+  - After adding, we will:
+    - Define a lightweight event (e.g., SystemEvent::OpenModelBrowser { keyword, items }).
+    - Handle it in app/events.rs by invoking app.open_model_browser(keyword, items).
+    - Update exec.rs to fetch asynchronously and emit the event instead of using block_in_place.

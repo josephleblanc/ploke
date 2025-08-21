@@ -16,7 +16,11 @@ pub enum StateError {
 impl From<StateError> for ploke_error::Error {
     fn from(value: StateError) -> Self {
         match value {
-            StateError::MissingCrateFocus { msg } => ploke_error::Error::UiError(msg.to_string()),
+            StateError::MissingCrateFocus { msg } => {
+                ploke_error::Error::Domain(ploke_error::domain::DomainError::Ui {
+                    message: msg.to_string(),
+                })
+            }
         }
     }
 }

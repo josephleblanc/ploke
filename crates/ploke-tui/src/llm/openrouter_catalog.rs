@@ -49,10 +49,8 @@ pub struct ModelEntry {
 /// Pricing information for a model.
 pub struct ModelPricing {
     /// USD per 1M input tokens
-    #[serde(default)]
     pub input: Option<f64>,  // USD per 1M input tokens
     /// USD per 1M output tokens
-    #[serde(default)]
     pub output: Option<f64>, // USD per 1M output tokens
 }
 

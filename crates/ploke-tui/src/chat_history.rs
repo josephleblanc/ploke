@@ -539,6 +539,75 @@ impl ChatHistory {
         Some(self.current)
     }
 
+    /// Removes only the specified node, preserving and re-parenting its children to the node's parent.
+    ///
+    /// Semantics:
+    /// - Does NOT delete the subtree. Instead, the node's children are spliced into the parent's
+    ///   children at the same index where the deleted node was located, preserving order.
+    /// - Root node cannot be deleted.
+    /// - Selection updates:
+    ///   - If `current` was the deleted node, it becomes the first re-parented child, or the parent if no children.
+    ///   - If `tail` was the deleted node, it becomes the last re-parented child, or the parent if no children.
+    /// - Rebuilds the cached path after mutation.
+    ///
+    /// Returns the new `current` message id if deletion occurred, otherwise `None`.
+    pub fn delete_node(&mut self, id: Uuid) -> Option<Uuid> {
+        // Cannot delete root or missing node
+        let (parent_id, children_ids) = {
+            let node = self.messages.get(&id)?;
+            let pid = node.parent?;
+            (pid, node.children.clone())
+        };
+
+        // Update each child's parent pointer
+        for child_id in &children_ids {
+            if let Some(child) = self.messages.get_mut(child_id) {
+                child.parent = Some(parent_id);
+            }
+        }
+
+        // Splice children into the parent's children list at the position of the deleted node
+        if let Some(parent) = self.messages.get_mut(&parent_id) {
+            if let Some(pos) = parent.children.iter().position(|&cid| cid == id) {
+                // Remove the node placeholder
+                parent.children.remove(pos);
+                // Insert children in its place preserving order
+                parent.children.splice(pos..pos, children_ids.iter().copied());
+
+                // If the parent's selected_child pointed at the deleted node, choose a reasonable replacement
+                if parent.selected_child == Some(id) {
+                    parent.selected_child = children_ids.first().copied().or_else(|| parent.children.last().copied());
+                }
+            } else {
+                // If position not found, append children to parent (fallback)
+                parent.children.extend(children_ids.iter().copied());
+                if parent.selected_child == Some(id) {
+                    parent.selected_child = children_ids.first().copied().or_else(|| parent.children.last().copied());
+                }
+            }
+        }
+
+        // Track selection adjustments
+        let deletes_current = self.current == id;
+        let deletes_tail = self.tail == id;
+
+        // Remove the node itself
+        self.messages.remove(&id);
+
+        // Adjust tail/current if they were the deleted node
+        if deletes_tail {
+            self.tail = children_ids.last().copied().unwrap_or(parent_id);
+        }
+        if deletes_current {
+            self.current = children_ids.first().copied().unwrap_or(parent_id);
+        }
+
+        // Rebuild path cache to reflect new structure
+        self.rebuild_path_cache();
+
+        Some(self.current)
+    }
+
     /// Gets the index position of a message within its parent's children list
     ///
     /// # Arguments
