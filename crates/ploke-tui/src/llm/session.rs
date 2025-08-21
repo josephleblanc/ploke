@@ -421,6 +421,79 @@ impl<'a> RequestSession<'a> {
   }
 }"###);
     }
+
+    #[test]
+    fn test_build_request_omits_provider_when_slug_missing() {
+        init_test_logging("no-provider");
+
+        // Arrange: provider without provider_slug should omit the "provider" field entirely
+        let provider = crate::user_config::ProviderConfig {
+            id: "qwen-72b".to_string(),
+            api_key: "".to_string(),
+            provider_slug: None,
+            api_key_env: None,
+            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+            model: "qwen/qwen-2.5-72b-instruct".to_string(),
+            display_name: Some("qwen/qwen-2.5-72b-instruct".to_string()),
+            provider_type: crate::user_config::ProviderType::OpenRouter,
+            llm_params: None,
+        };
+
+        let params = super::LLMParameters {
+            model: provider.model.clone(),
+            temperature: Some(0.1),
+            max_tokens: Some(64),
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            stop_sequences: vec![],
+            parallel_tool_calls: true,
+            response_format: Default::default(),
+            safety_settings: Default::default(),
+            system_prompt: Some("Minimal system.".to_string()),
+            tool_max_retries: Some(1),
+            tool_token_limit: Some(512),
+            history_char_budget: Some(4000),
+            tool_timeout_secs: Some(10),
+        };
+
+        let messages = vec![
+            super::RequestMessage {
+                role: "system",
+                content: "Minimal system.".to_string(),
+                tool_call_id: None,
+            },
+            super::RequestMessage {
+                role: "user",
+                content: "Ping".to_string(),
+                tool_call_id: None,
+            },
+        ];
+
+        // Act
+        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Snapshot: provider field must be omitted
+        let expected = r#"{
+  "model": "qwen/qwen-2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Minimal system."
+    },
+    {
+      "role": "user",
+      "content": "Ping"
+    }
+  ],
+  "temperature": 0.1,
+  "max_tokens": 64,
+  "stream": false
+}"#;
+
+        assert_eq!(json, expected);
+    }
 }
 
 pub(crate) fn build_openai_request<'a>(
@@ -537,6 +610,62 @@ mod tests {
     use crate::system::SystemEvent;
     use uuid::Uuid;
 
+    // Simple test logger with a rolling window of 3 files in target/test-logs
+    fn init_test_logging(tag: &str) {
+        static INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
+        INIT.get_or_init(|| {
+            let dir = "target/test-logs";
+            let _ = std::fs::create_dir_all(dir);
+
+            prune_old_logs(dir, "llm_session_test-", 3);
+
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+            let path = format!("{}/{}{}.log", dir, "llm_session_test-", ts);
+
+            if let Ok(file) = std::fs::File::create(&path) {
+                let (nb, guard) = tracing_appender::non_blocking(file);
+                static GUARD: once_cell::sync::OnceCell<tracing_appender::non_blocking::WorkerGuard> =
+                    once_cell::sync::OnceCell::new();
+                let _ = GUARD.set(guard);
+
+                let subscriber = tracing_subscriber::fmt()
+                    .with_writer(nb)
+                    .with_ansi(false)
+                    .with_max_level(tracing::Level::DEBUG)
+                    .finish();
+                let _ = tracing::subscriber::set_global_default(subscriber);
+            }
+        });
+
+        tracing::info!("Initialized test logging: {}", tag);
+    }
+
+    fn prune_old_logs(dir: &str, prefix: &str, keep: usize) {
+        use std::fs;
+        use std::time::SystemTime;
+
+        let mut entries: Vec<(String, SystemTime)> = Vec::new();
+        if let Ok(read) = fs::read_dir(dir) {
+            for e in read.flatten() {
+                if let Ok(file_name) = e.file_name().into_string() {
+                    if file_name.starts_with(prefix) && file_name.ends_with(".log") {
+                        if let Ok(md) = e.metadata() {
+                            let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                            entries.push((file_name, mtime));
+                        }
+                    }
+                }
+            }
+        }
+
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        for (idx, (name, _)) in entries.iter().enumerate() {
+            if idx >= keep {
+                let _ = std::fs::remove_file(format!("{}/{}", dir, name));
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_await_tool_result_completed() {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
@@ -592,6 +721,7 @@ mod tests {
 
     #[test]
     fn test_build_request_regular_chat_snapshot() {
+        init_test_logging("regular");
         // Arrange: provider and parameters for qwen model without tools
         let provider = crate::user_config::ProviderConfig {
             id: "qwen-72b".to_string(),
@@ -655,7 +785,14 @@ mod tests {
   ],
   "temperature": 0.2,
   "max_tokens": 256,
-  "stream": false
+  "stream": false,
+  "provider": {
+    "allow": [
+      "openrouter"
+    ],
+    "deny": [],
+    "order": []
+  }
 }"#;
 
         assert_eq!(json, expected);
@@ -663,6 +800,7 @@ mod tests {
 
     #[test]
     fn test_build_request_tool_call_snapshot() {
+        init_test_logging("tool-call");
         // Arrange: provider and parameters for qwen model with tools
         let provider = crate::user_config::ProviderConfig {
             id: "qwen-72b".to_string(),
@@ -768,7 +906,14 @@ mod tests {
       }
     }
   ],
-  "tool_choice": "auto"
+  "tool_choice": "auto",
+  "provider": {
+    "allow": [
+      "openrouter"
+    ],
+    "deny": [],
+    "order": []
+  }
 }"#;
 
         assert_eq!(json, expected);
