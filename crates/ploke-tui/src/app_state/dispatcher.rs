@@ -34,6 +34,9 @@ pub async fn state_manager(
             StateCommand::UpdateMessage { id, update } => {
                 handlers::chat::update_message(&state, &event_bus, id, update).await;
             }
+            StateCommand::DeleteMessage { id } => {
+                handlers::chat::delete_message(&state, &event_bus, id).await;
+            }
             StateCommand::AddUserMessage {
                 content,
                 new_msg_id,

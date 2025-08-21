@@ -430,7 +430,7 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            self.mode,
+            if self.model_browser.is_some() { Mode::Normal } else { self.mode },
             input_title,
         );
         // Add progress bar at bottom if indexing
@@ -748,12 +748,18 @@ impl App {
                         parent_id: new_msg_id,
                         child_id: Uuid::new_v4(),
                     });
+                    // Snap to bottom to ensure the full assistant/system response is visible.
+                    self.conversation.request_bottom();
+                    self.conversation.set_free_scrolling(true);
                     self.input_buffer.clear();
                 }
             }
 
             Action::ExecuteCommand => {
                 self.execute_command();
+                // Ensure snap-to-bottom so long outputs (e.g., /help) are fully visible.
+                self.conversation.request_bottom();
+                self.conversation.set_free_scrolling(true);
                 self.input_buffer.clear();
                 self.mode = Mode::Insert;
             }

@@ -10,6 +10,10 @@ Status legend:
 - Attempted fix: While handling typing/backspace, explicitly enable free-scrolling to prevent auto-centering based on selection.
   - Changes:
     - app/mod.rs: Set `conversation.set_free_scrolling(true)` in `Action::InsertChar` and `Action::Backspace`.
+  - Additional behavior note and fix: When a new response overflows the viewport (e.g., `/help`), ensure we "snap-to-bottom" so the full message is visible.
+    - Changes:
+      - app/mod.rs: After `Action::Submit` and `Action::ExecuteCommand`, call `conversation.request_bottom()` and keep `free_scrolling` enabled to avoid flicker while revealing the bottom.
+      - app/view/components/conversation.rs: On `AppEvent::MessageUpdated`, request bottom if either `auto_follow` or `free_scrolling` is active.
 - Status: In progress (awaiting verification)
 
 ## 2) <Del> in Normal mode should delete the selected message
@@ -18,6 +22,7 @@ Status legend:
 - Attempted fix: Delete by AppState’s current selected message id (`guard.current`) instead of mapping via `self.list.selected()`.
   - Changes:
     - app/mod.rs: Use `guard.current` to send `StateCommand::DeleteMessage`.
+    - app_state/dispatcher.rs: Implement `StateCommand::DeleteMessage` handling by delegating to `handlers::chat::delete_message(...)`.
 - Status: In progress (awaiting verification)
 
 USER: `StateCommand::DeleteMessage` is currently a no-op, as it is not handled in the `StateCommand` event handling. TODO: Implement `StateCommand::DeleteMessage` handling in `StateCommand` event handling
@@ -47,6 +52,13 @@ USER: This is a lazy fix (not the good kind). Revisit strategy here. Whatever wa
   - Changes:
     - app/mod.rs: `TerminalModeGuard` with Drop to disable modes.
     - lib.rs: Panic hook to call `ratatui::restore()` and disable modes.
+- Status: In progress (awaiting verification)
+
+## 6) Snap-to-bottom not engaging after new messages
+- Symptom: Newly added responses (e.g., `/help`) are partially cut off at the bottom of the viewport; user must manually navigate to reveal full content.
+- Fixes:
+  - app/mod.rs: After `Action::Submit` and `Action::ExecuteCommand`, request a snap-to-bottom and retain `free_scrolling` to avoid flicker.
+  - app/view/components/conversation.rs: On `MessageUpdated`, request bottom when `auto_follow` or `free_scrolling` is active so appended content is revealed without manual navigation.
 - Status: In progress (awaiting verification)
 
 ## Open Questions
