@@ -207,6 +207,27 @@ pub fn execute(app: &mut App, command: Command) {
                     .await;
             });
         }
+        Command::ProviderToolsOnly(enabled) => {
+            let state = app.state.clone();
+            let cmd_tx = app.cmd_tx.clone();
+            tokio::spawn(async move {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.provider_registry.require_tool_support = enabled;
+                }
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: if enabled {
+                            "Provider tools-only enforcement enabled: model calls will be blocked unless the active model is marked as tool-capable. Use ':provider tools-only off' to disable.".to_string()
+                        } else {
+                            "Provider tools-only enforcement disabled.".to_string()
+                        },
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            });
+        }
         Command::Update => spawn_update(app),
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -290,6 +311,8 @@ fn show_model_info_async(app: &App) {
                 format!("    history_char_budget: {}", fmt_opt_usize(params.history_char_budget)),
             ];
 
+            lines.push("".to_string());
+            lines.push(format!("  Tool policy: require_tool_support: {}", reg.require_tool_support));
             if let Some(c) = caps {
                 lines.push("".to_string());
                 lines.push("  Capabilities (cache):".to_string());
@@ -377,6 +400,7 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
         r#"Provider commands:
   provider strictness <openrouter-only|allow-custom|allow-any>
                                      - Restrict selectable providers
+  provider tools-only <on|off>       - Enforce using only models/providers that support tool calls
 "#
         .to_string()
     } else if t.starts_with("index") {
@@ -806,6 +830,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
     model search <keyword> - Search OpenRouter models and open interactive browser
     provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
+    provider tools-only <on|off> - Enforce using only models/providers that support tool calls
 
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status

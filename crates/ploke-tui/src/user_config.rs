@@ -222,6 +222,8 @@ pub struct ProviderRegistry {
     pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
     #[serde(default = "default_strictness")]
     pub strictness: ProviderRegistryStrictness,
+    #[serde(default)]
+    pub require_tool_support: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -582,6 +584,7 @@ impl Default for ProviderRegistry {
             aliases: std::collections::HashMap::new(),
             capabilities: std::collections::HashMap::new(),
             strictness: default_strictness(),
+            require_tool_support: false,
         };
 
         // Always include the curated defaults

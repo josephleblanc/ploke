@@ -598,15 +598,28 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    // Only enable tools for models known to support them; otherwise skip to avoid 404s from providers
-    let supports_tools = {
+    // Decide tool usage based on registry capabilities and enforcement policy
+    let (supports_tools_opt, require_tools) = {
         let cfg = state.config.read().await;
-        cfg.provider_registry
-            .model_supports_tools(&provider.model)
-            .unwrap_or(true)
+        (
+            cfg.provider_registry.model_supports_tools(&provider.model),
+            cfg.provider_registry.require_tool_support,
+        )
     };
 
-    let tools = if supports_tools {
+    if require_tools && supports_tools_opt != Some(true) {
+        return Err(LlmError::Api {
+            status: 412,
+            message: format!(
+                "Active model '{}' is not marked as tool-capable in the capabilities cache. \
+Run ':model refresh' to update the registry, select a tool-capable provider via the model browser, \
+or disable enforcement with ':provider tools-only off'.",
+                provider.model
+            ),
+        });
+    }
+
+    let tools = if supports_tools_opt.unwrap_or(true) {
         vec![
             request_code_context_tool_def(),
             get_file_metadata_tool_def(),
