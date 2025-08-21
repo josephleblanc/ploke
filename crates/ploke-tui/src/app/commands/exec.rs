@@ -42,6 +42,35 @@ struct ModelEndpointsData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct UserFilteredEndpoint {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    created: i64,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    architecture: Architecture,
+    // AI: Finish
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Architecture {
+    input_modalities: Vec<InputModality>,
+    // AI: finish
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum InputModality {
+    #[serde()]
+    Text,
+    Image
+    // AI: Finish
+}
+
+// AI!
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEndpoint {
     #[serde(default)]
     provider_name: String,
