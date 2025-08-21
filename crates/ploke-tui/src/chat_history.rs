@@ -14,7 +14,7 @@ pub enum NavigationDirection {
     Previous,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ChatError {
     ParentNotFound(Uuid),
     SiblingNotFound(Uuid),
@@ -882,14 +882,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q1",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -932,14 +926,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1003,14 +991,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
         ch.current = u1;
 
         let res = ch.navigate_sibling(NavigationDirection::Next);
@@ -1028,14 +1010,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q1",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1048,20 +1024,17 @@ mod tests {
         .unwrap();
 
         ch.current = a1;
-        let (id, content) = ch.last_user_msg().unwrap().expect("should find nearest user");
+        let (id, content) = ch
+            .last_user_msg()
+            .unwrap()
+            .expect("should find nearest user");
         assert_eq!(id, u1);
         assert_eq!(content, "Q1");
 
         // Deeper conversation
         let u2 = Uuid::new_v4();
-        ch.add_child(
-            a1,
-            u2,
-            "Q2",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a2 = Uuid::new_v4();
         ch.add_child(
@@ -1074,7 +1047,10 @@ mod tests {
         .unwrap();
 
         ch.current = a2;
-        let (id2, content2) = ch.last_user_msg().unwrap().expect("should find deeper user");
+        let (id2, content2) = ch
+            .last_user_msg()
+            .unwrap()
+            .expect("should find deeper user");
         assert_eq!(id2, u2);
         assert_eq!(content2, "Q2");
     }
@@ -1085,14 +1061,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1116,14 +1086,8 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(
-            root,
-            u1,
-            "Q",
-            MessageStatus::Completed,
-            MessageKind::User,
-        )
-        .unwrap();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
