@@ -430,6 +430,15 @@ pub(crate) fn build_openai_request<'a>(
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
 ) -> super::OpenAiRequest<'a> {
+    let provider_field = provider
+        .provider_slug
+        .as_ref()
+        .map(|slug| super::ProviderPreferences {
+            allow: vec![slug.clone()],
+            deny: Vec::new(),
+            order: Vec::new(),
+        });
+
     super::OpenAiRequest {
         model: provider.model.as_str(),
         messages,
@@ -443,7 +452,7 @@ pub(crate) fn build_openai_request<'a>(
         } else {
             None
         },
-        provider: None,
+        provider: provider_field,
     }
 }
 
