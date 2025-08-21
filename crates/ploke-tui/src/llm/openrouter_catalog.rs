@@ -10,7 +10,8 @@
 //! This module intentionally fetches only the minimal subset of fields we need to
 //! keep the TUI responsive and reduce payload/deserialize costs.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 #[derive(Deserialize, Debug)]
 /// OpenRouter `/models` response container.
@@ -27,18 +28,24 @@ pub struct ModelEntry {
     /// Optional human-friendly display name.
     #[serde(default)]
     pub name: Option<String>,
-    /// Context window size if known.
+    /// Context window size if known (model-level).
     #[serde(default)]
     pub context_length: Option<u32>,
-    /// Input/output pricing (USD per 1M tokens).
+    /// Top provider info (often carries context length when model-level is missing).
     #[serde(default)]
+    pub top_provider: Option<TopProviderInfo>,
+    /// Input/output pricing; maps from OpenRouter's prompt/completion when present.
+    #[serde(default, deserialize_with = "de_optional_model_pricing")]
     pub pricing: Option<ModelPricing>,
-    /// Raw capability flags (currently tools).
+    /// Raw capability flags (currently tools). Note: many models expose "supported_parameters" instead.
     #[serde(default)]
     pub capabilities: Option<ModelCapabilitiesRaw>,
+    /// OpenRouter model-level "supported_parameters" (e.g., includes "tools" when tool-calling is supported).
+    #[serde(default)]
+    pub supported_parameters: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 /// Pricing information for a model.
 pub struct ModelPricing {
     /// USD per 1M input tokens
@@ -56,6 +63,53 @@ pub struct ModelCapabilitiesRaw {
     /// Whether the model supports tool/function calling.
     #[serde(default)]
     pub tools: Option<bool>,
+}
+
+/// Provider info commonly exposed by OpenRouter for the "top_provider" field.
+#[derive(Deserialize, Debug, Clone)]
+pub struct TopProviderInfo {
+    #[serde(default)]
+    pub context_length: Option<u32>,
+    #[serde(default)]
+    pub max_completion_tokens: Option<u32>,
+}
+
+/// Custom deserializer for optional ModelPricing supporting either
+/// {input, output} or OpenRouter's {prompt, completion} string fields.
+fn de_optional_model_pricing<'de, D>(deserializer: D) -> Result<Option<ModelPricing>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    if let Some(v) = value {
+        if let Some(obj) = v.as_object() {
+            // Attempt to read input/output directly (f64 or string)
+            let mut input: Option<f64> = None;
+            let mut output: Option<f64> = None;
+
+            if let Some(iv) = obj.get("input") {
+                input = iv.as_f64().or_else(|| iv.as_str().and_then(|s| s.parse::<f64>().ok()));
+            }
+            if let Some(ov) = obj.get("output") {
+                output = ov.as_f64().or_else(|| ov.as_str().and_then(|s| s.parse::<f64>().ok()));
+            }
+
+            // Fallback to prompt/completion keys used by OpenRouter
+            if input.is_none() {
+                if let Some(pv) = obj.get("prompt") {
+                    input = pv.as_f64().or_else(|| pv.as_str().and_then(|s| s.parse::<f64>().ok()));
+                }
+            }
+            if output.is_none() {
+                if let Some(cv) = obj.get("completion") {
+                    output = cv.as_f64().or_else(|| cv.as_str().and_then(|s| s.parse::<f64>().ok()));
+                }
+            }
+
+            return Ok(Some(ModelPricing { input, output }));
+        }
+    }
+    Ok(None)
 }
 
 /// Fetch the list of available models from OpenRouter with minimal fields needed

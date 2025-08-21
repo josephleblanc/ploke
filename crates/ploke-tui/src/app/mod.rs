@@ -105,6 +105,8 @@ struct ModelBrowserState {
     keyword: String,
     items: Vec<ModelBrowserItem>,
     selected: usize,
+    // Toggle for bottom-right help panel within the Model Browser overlay
+    help_visible: bool,
 }
 
 impl App {
@@ -510,13 +512,29 @@ impl App {
             let y = area.y.saturating_add(area.height.saturating_sub(height) / 2);
             let rect = ratatui::layout::Rect::new(x, y, width.max(40), height.max(10));
 
+            // Clear the underlying content in the overlay area to avoid "bleed-through"
+            frame.render_widget(ratatui::widgets::Clear, rect);
+
+            // Split overlay into body + footer (help)
+            let footer_height = if mb.help_visible { 6 } else { 1 };
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
+                .split(rect);
+            let body_area = layout[0];
+            let footer_area = layout[1];
+
+            // Consistent overlay style (foreground/background)
+            let overlay_style = Style::new().fg(Color::White).bg(Color::Black);
+
+            // Build list content
             let mut lines: Vec<String> = Vec::new();
             lines.push(format!(
                 "Model Browser — {} results for \"{}\"",
                 mb.items.len(),
                 mb.keyword
             ));
-            lines.push("Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.".to_string());
+            lines.push("Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, ? to toggle help, q/Esc to close.".to_string());
             lines.push(String::new());
 
             for (i, it) in mb.items.iter().enumerate() {
@@ -532,6 +550,7 @@ impl App {
                 };
                 lines.push(format!("{} {}", sel, title));
                 if it.expanded {
+                    // Indented details for readability while navigating
                     lines.push(format!(
                         "    context_length: {}",
                         it.context_length
@@ -553,9 +572,35 @@ impl App {
 
             let content = lines.join("\n");
             let widget = Paragraph::new(content)
-                .block(Block::bordered().title(" Model Browser "))
+                .style(overlay_style)
+                .block(
+                    Block::bordered()
+                        .title(" Model Browser ")
+                        .style(overlay_style),
+                )
                 .wrap(ratatui::widgets::Wrap { trim: true });
-            frame.render_widget(widget, rect);
+            frame.render_widget(widget, body_area);
+
+            // Footer: bottom-right help toggle or expanded help
+            if mb.help_visible {
+                let help = Paragraph::new(
+                    "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
+                     Save/Load/Search:\n\
+                     - model save [path] [--with-keys]\n\
+                     - model load [path]\n\
+                     - model search <keyword>",
+                )
+                .style(overlay_style)
+                .block(Block::bordered().title(" Help ").style(overlay_style))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+                frame.render_widget(help, footer_area);
+            } else {
+                let hint = Paragraph::new(" ? Help ")
+                    .style(overlay_style)
+                    .alignment(ratatui::layout::Alignment::Right)
+                    .block(Block::default().style(overlay_style));
+                frame.render_widget(hint, footer_area);
+            }
         }
 
         // Cursor position is handled by InputView.
@@ -621,6 +666,9 @@ impl App {
                     }
                     KeyCode::Char('s') => {
                         chosen_id = mb.items.get(mb.selected).map(|i| i.id.clone());
+                    }
+                    KeyCode::Char('?') => {
+                        mb.help_visible = !mb.help_visible;
                     }
                     _ => {}
                 }
@@ -979,10 +1027,16 @@ impl App {
             .map(|m| ModelBrowserItem {
                 id: m.id,
                 name: m.name,
-                context_length: m.context_length,
+                context_length: m
+                    .context_length
+                    .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
                 input_cost: m.pricing.as_ref().and_then(|p| p.input),
                 output_cost: m.pricing.as_ref().and_then(|p| p.output),
-                supports_tools: m.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false),
+                supports_tools: m
+                    .supported_parameters
+                    .as_ref()
+                    .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                    .unwrap_or(false),
                 expanded: false,
             })
             .collect::<Vec<_>>();
@@ -992,6 +1046,7 @@ impl App {
             keyword,
             selected: 0,
             items,
+            help_visible: false,
         });
         self.needs_redraw = true;
     }

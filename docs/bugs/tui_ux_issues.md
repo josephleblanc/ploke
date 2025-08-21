@@ -61,6 +61,32 @@ USER: This is a lazy fix (not the good kind). Revisit strategy here. Whatever wa
   - app/view/components/conversation.rs: On `MessageUpdated`, request bottom when `auto_follow` or `free_scrolling` is active so appended content is revealed without manual navigation.
 - Status: In progress (awaiting verification)
 
+## Update Log (2025-08-20)
+
+- Model Browser overlay visual fixes:
+  - Clearing artifacts: Now clears the underlying region before rendering the overlay (ratatui::widgets::Clear), preventing background bleed-through.
+  - Consistent styling: Overlay uses a uniform foreground/background style (white on black) so list items no longer inherit colors from messages underneath.
+  - Indented details: Expanded rows render indented detail lines for readability while navigating.
+  - In-overlay help: A bottom-right "? Help" toggle reveals a compact help panel with keybindings and save/load/search hints.
+
+- Pricing and supports_tools data:
+  - Observation: pricing shows "-" and supports_tools is false for many known-capable models.
+  - Fix: Parse OpenRouter model fields more flexibly:
+    - pricing: map from "prompt"/"completion" string fields to internal input/output floats.
+    - supports_tools: derive from model-level "supported_parameters" array (contains "tools").
+    - context_length: fall back to "top_provider.context_length" when model-level value is absent.
+  - File changes:
+    - crates/ploke-tui/src/llm/openrouter_catalog.rs: flexible pricing deserializer, added supported_parameters and top_provider.
+    - crates/ploke-tui/src/app/mod.rs: overlay indentation/styling/help; supports_tools derived from supported_parameters; context_length fallback.
+
+- Delete semantics and tests:
+  - Current behavior deletes the selected node and its entire subtree (by design of ChatHistory::delete_message).
+  - Action: We'll expand tests to verify both subtree deletion and consider a "delete-only-this-node" alternative (would require re-parenting). Please confirm desired semantics.
+
+- Provider selection and preferences (planned next):
+  - UI: After selecting a model, show providers (endpoints) with provider-specific pricing/capabilities; allow selecting one or multiple providers.
+  - Persistence: Add user favorites/aliases and provider preferences; allow persisting via a hotkey from the Model Browser or a `/model` subcommand.
+
 ## Open Questions
 1. ConversationView auto-centering: If flicker persists, can you share `ConversationView` code? We may need to bypass selection-driven offset updates while in Insert mode.
 2. Delete behavior semantics: Should deleting a message also remove its descendant branch, or only the single node? Current command is `StateCommand::DeleteMessage { id }`—confirm intended semantics.
