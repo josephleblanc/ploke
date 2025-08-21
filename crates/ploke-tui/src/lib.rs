@@ -63,6 +63,8 @@ use ratatui::{
     style::Stylize,
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
+use crossterm::execute;
+use crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture};
 // for list
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
@@ -85,6 +87,17 @@ pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
 }
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
+
+    // Global panic hook to restore terminal state on unexpected panics
+    std::panic::set_hook(Box::new(|_info| {
+        let _ = ratatui::restore();
+        let _ = execute(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture,
+        );
+    }));
 
     let mut config = config::Config::builder()
         .add_source(

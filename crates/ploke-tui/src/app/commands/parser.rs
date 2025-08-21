@@ -25,6 +25,7 @@ pub enum Command {
     ModelLoad(Option<String>),
     ModelSave { path: Option<String>, with_keys: bool },
     ModelSearch(String),
+    ModelSearchHelp,
     ProviderStrictness(ProviderRegistryStrictness),
     Update,
     EditApprove(Uuid),
@@ -87,10 +88,11 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
             }
             Command::ModelSave { path, with_keys }
         }
-        s if s.starts_with("model search ") => {
-            let kw = s.trim_start_matches("model search ").trim().to_string();
+        "model search" => Command::ModelSearchHelp,
+        s if s.starts_with("model search") => {
+            let kw = s.trim_start_matches("model search").trim().to_string();
             if kw.is_empty() {
-                Command::Raw(trimmed.to_string())
+                Command::ModelSearchHelp
             } else {
                 Command::ModelSearch(kw)
             }

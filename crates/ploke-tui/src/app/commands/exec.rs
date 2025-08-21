@@ -38,6 +38,9 @@ pub fn execute(app: &mut App, command: Command) {
         Command::ModelSearch(keyword) => {
             open_model_search(app, &keyword);
         }
+        Command::ModelSearchHelp => {
+            show_model_search_help(app);
+        }
         Command::ModelUse(alias) => {
             // Delegate to existing state manager path to broadcast and apply
             app.send_cmd(StateCommand::SwitchModel {
@@ -437,6 +440,17 @@ fn check_api_keys(app: &App) {
     });
 }
 
+fn show_model_search_help(app: &App) {
+    let msg = "Usage: model search <keyword>\n\
+Examples:\n  model search gemini\n  model search claude\n  model search qwen\n\
+This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.";
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg: msg.to_string(),
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
+}
+
 fn open_model_search(app: &mut App, keyword: &str) {
     // Resolve API key similar to registry refresh logic (prefer configured OpenRouter provider)
     let state = app.state.clone();
@@ -465,8 +479,10 @@ fn open_model_search(app: &mut App, keyword: &str) {
     }
 
     let client = Client::new();
-    let result = tokio::runtime::Handle::current().block_on(async {
-        crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await
+    let result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await
+        })
     });
 
     match result {

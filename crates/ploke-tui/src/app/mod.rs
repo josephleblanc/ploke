@@ -36,6 +36,22 @@ use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
 
+// Ensure terminal modes are always restored on unwind (panic or early return)
+struct TerminalModeGuard;
+
+impl Drop for TerminalModeGuard {
+    fn drop(&mut self) {
+        // Best-effort disable; ignore errors to avoid panicking in Drop
+        let _ = crossterm::execute(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture,
+        );
+        // ratatui::restore is called by the outer try_main panic hook as an extra safety net
+    }
+}
+
 #[derive(Debug)]
 pub struct App {
     /// Is the application running?
@@ -144,6 +160,8 @@ impl App {
         ) {
             tracing::warn!("Failed to enable terminal modes: {}", e);
         }
+        // RAII guard to ensure terminal modes are disabled on unwind
+        let _terminal_mode_guard = TerminalModeGuard;
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
@@ -643,21 +661,15 @@ impl App {
                 _ => {}
             }
         } else {
-            // Normal mode: delete selected message with Del
+            // Normal mode: delete the currently selected message with Del
             if matches!(key.code, crossterm::event::KeyCode::Delete) {
-                if let Some(sel_idx) = self.list.selected() {
-                    // Read current path and resolve message id at index
-                    let id_opt = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            let guard = self.state.chat.0.read().await;
-                            let path = guard.get_full_path();
-                            path.get(sel_idx).map(|m| m.id)
-                        })
-                    });
-                    if let Some(id) = id_opt {
-                        self.send_cmd(StateCommand::DeleteMessage { id });
-                    }
-                }
+                let id = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let guard = self.state.chat.0.read().await;
+                        guard.current
+                    })
+                });
+                self.send_cmd(StateCommand::DeleteMessage { id });
                 self.needs_redraw = true;
                 return;
             }
@@ -685,6 +697,8 @@ impl App {
             }
 
             Action::InsertChar(c) => {
+                // While typing, keep the viewport stable (disable auto-centering on selection)
+                self.conversation.set_free_scrolling(true);
                 // Special-case: Slash style treats leading '/' as entering Command mode.
                 if self.mode == Mode::Insert
                     && self.command_style == CommandStyle::Slash
@@ -705,6 +719,8 @@ impl App {
                 {
                     self.mode = Mode::Insert;
                 }
+                // While editing, avoid auto-scrolling caused by selection adjustments
+                self.conversation.set_free_scrolling(true);
                 self.handle_backspace();
             }
 
