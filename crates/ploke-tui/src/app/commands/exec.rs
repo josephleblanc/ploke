@@ -82,7 +82,7 @@ struct Architecture {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum InputModality {
-    #[serde()]
+    // AI: Use the serde macro tags to transform these from lowercase AI!
     Text,
     Image,
     Audio,
@@ -91,7 +91,6 @@ enum InputModality {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum OutputModality {
-    #[serde()]
     Text,
     Image,
     Audio,
