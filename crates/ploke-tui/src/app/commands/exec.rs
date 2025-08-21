@@ -114,6 +114,8 @@ struct TopProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pricing {
+    // AI: Make sure the prompt/completion items below are translated from strings into f64, see
+    // example in `list_endpoints_for_model.md` AI!
     #[serde(default)]
     prompt: String,
     #[serde(default)]
