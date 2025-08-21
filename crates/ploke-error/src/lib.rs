@@ -4,6 +4,8 @@ pub mod internal;
 pub mod warning;
 pub mod domain;
 pub mod severity;
+pub mod policy;
+pub mod result_ext;
 
  // public exports
 pub use context::{ContextualError, ErrorContext, SourceSpan, ContextExt};
@@ -12,6 +14,10 @@ pub use internal::InternalError;
 pub use warning::WarningError;
 pub use domain::DomainError;
 pub use severity::Severity;
+pub use policy::{ErrorPolicy, NoopPolicy};
+#[cfg(feature = "tracing")]
+pub use policy::TracingPolicy;
+pub use result_ext::ResultExt;
 
 // common imports for submodules
 use std::path::PathBuf;
