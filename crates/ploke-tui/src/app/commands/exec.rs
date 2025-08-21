@@ -589,7 +589,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                         for ep in endpoints {
                             let name = ep.get("provider_name").and_then(|x| x.as_str()).unwrap_or("unknown");
                             let ctx = ep.get("context_length").and_then(|x| x.as_u64()).map(|n| format!("ctx={}", n)).unwrap_or_default();
-                            let sp = ep.get("supported_parameters").and_then(|x| x.as_array()).unwrap_or(&vec![]);
+                            let sp = ep.get("supported_parameters").and_then(|x| x.as_array().cloned()).unwrap_or_default();
                             let supports_tools = sp.iter().any(|s| s.as_str().map(|t| t.eq_ignore_ascii_case("tools")).unwrap_or(false));
                             let slug = providers_map.get(name).cloned().unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
                             lines.push(format!("  - {} (slug: {}) {}{}", name, slug, if supports_tools { "[tools]" } else { "" }, if ctx.is_empty() { "".to_string() } else { format!(" {}", ctx) }));

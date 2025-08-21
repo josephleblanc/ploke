@@ -60,8 +60,8 @@ impl<'a> RequestSession<'a> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
         // Some OpenRouter provider endpoints don't support tool calls even if the model does.
         // Start with tools if configured, but be ready to retry once without tools on a 404 error.
-        let mut use_tools: bool = !self.tools.is_empty();
-        let mut tools_fallback_attempted = false;
+        let use_tools: bool = !self.tools.is_empty();
+        let tools_fallback_attempted = false;
 
         loop {
             let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget
@@ -342,7 +342,11 @@ pub(crate) fn build_openai_request<'a>(
                     if s.is_empty() || s == "-" {
                         None
                     } else {
-                        Some(json!({ "order": [s] }))
+                        Some(super::ProviderPreferences {
+                            order: Some(vec![s.to_string()]),
+                            allow: None,
+                            deny: None,
+                        })
                     }
                 })
         } else {
