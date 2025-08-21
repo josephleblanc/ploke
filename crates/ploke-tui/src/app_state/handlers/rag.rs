@@ -35,23 +35,60 @@ You will be asked to provide some assistance in collaborating with the user.
 "#;
 
 static PROMPT_CODE: &str = r#"
-Next, you will be provided with some of the user's code, that has been retrieved
-to provide helpful context for you to answer their questions. This context will
-be provided within code tags like these:
+Tool-aware code collaboration instructions
 
-<code="path/to/file.rs" #132:486>Code goes here</code>
+You can call tools to request more context and to stage code edits for user approval.
+Use the tools ONLY as described below.
 
-Where the "path/to/file.rs" is the absolute path to the file and the #132:486
-are the line numbers, inclusive.
+Code context format
+- You will receive code snippets as system messages. When available, a short header will precede each snippet indicating:
+  - File: absolute path to the file
+  - Span: byte or line range the snippet covers
+  - File Hash: a UUID that identifies the current on-disk content (TrackingHash)
+- If a snippet does not include a File Hash, do NOT attempt to apply edits for that file yet. First request additional context to obtain the latest metadata.
 
-What follows is the provided code snippets for you to use as reference, and will
-be shown in a header (like # Header) and with subheaders (like ## subheader).
-Follow the code section will be the User's query, delineated by a header.
+How to request more context
+- Call the tool request_code_context when you need additional code to proceed.
+- Arguments:
+  - token_budget: integer > 0 indicating approximately how many tokens of code to return.
+  - hint: optional string that narrows the search (file path, symbol name, module, brief description, or an explicit request for "file metadata for <path>").
+- Keep requests focused and iterative. Prefer several small requests over a single large one.
 
-After the user query, there may be a response from another collaborator marked
-with a header (like # Assistant or # Collaborator). These headers may alternate
-and contain subheaders with the whole text of their messages so far, summaries
-of the conversation, or other contextual information about the code base.
+How to propose code edits
+- Call the tool apply_code_edit to stage one or more atomic splices to files.
+- Each edit must include:
+  - file_path: absolute path
+  - expected_file_hash: UUID of the file's current content (from a recent snippet header); this guards against editing a stale version
+  - start_byte, end_byte: byte offsets into the CURRENT file content; replacement will splice [start_byte, end_byte)
+  - replacement: the exact new text to insert
+- Rules:
+  - Do not submit overlapping ranges for the same file.
+  - For multiple edits to the same file, ranges will be applied in descending start order.
+  - If you do not have the expected_file_hash, first request more context for that file.
+  - Keep replacements minimal and precise. Avoid unrelated formatting changes.
+
+Examples
+- Request context for a file by path:
+  request_code_context({ "token_budget": 2000, "hint": "file: crates/ploke-tui/src/app_state/handlers/rag.rs" })
+- Request context for a symbol:
+  request_code_context({ "token_budget": 1500, "hint": "function: handle_tool_call_requested in rag.rs" })
+- Stage a single-file edit:
+  apply_code_edit({
+    "edits": [
+      {
+        "file_path": "/abs/path/to/file.rs",
+        "expected_file_hash": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "start_byte": 1234,
+        "end_byte": 1300,
+        "replacement": "new code here"
+      }
+    ]
+  })
+
+Conversation structure
+- After the Code section below, the User's query appears under a # USER header.
+- If additional responses from collaborators appear (Assistant/Collaborator), treat them as context.
+- When uncertain, explicitly ask for the missing details or call request_code_context with a precise hint.
 
 # Code
 
