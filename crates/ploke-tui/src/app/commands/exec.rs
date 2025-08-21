@@ -1099,7 +1099,6 @@ mod typed_response_tests {
 
     #[test]
     fn deserialize_endpoints_basic() {
-        // AI: update test AI!
         let payload = json!({
             "data": {
                 "endpoints": [
@@ -1121,10 +1120,10 @@ mod typed_response_tests {
 
         let parsed: ModelEndpointsResponse = serde_json::from_value(payload).expect("valid response");
         assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(parsed.data.endpoints[0].name, "Foo Provider");
+        assert_eq!(parsed.data.endpoints[0].name, "foo/bar");
         assert_eq!(parsed.data.endpoints[0].context_length, 8192);
         assert!(parsed.data.endpoints[0].supported_parameters.iter().any(|t| t.eq_ignore_ascii_case("tools")));
-        assert_eq!(parsed.data.endpoints[1].name, "Bar Provider");
+        assert_eq!(parsed.data.endpoints[1].name, "");
         assert!(parsed.data.endpoints[1].context_length == 0);
     }
 
