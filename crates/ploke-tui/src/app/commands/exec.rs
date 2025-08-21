@@ -114,24 +114,22 @@ struct TopProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pricing {
-    // AI: Make sure the prompt/completion items below are translated from strings into f64, see
-    // example in `list_endpoints_for_model.md` AI!
     #[serde(default)]
-    prompt: String,
+    prompt: f64,
     #[serde(default)]
-    completion: String,
+    completion: f64,
     #[serde(default)]
-    image: String,
+    image: f64,
     #[serde(default)]
-    request: String,
+    request: f64,
     #[serde(default)]
-    web_search: String,
+    web_search: f64,
     #[serde(default)]
-    internal_reasoning: String,
+    internal_reasoning: f64,
     #[serde(default)]
-    input_cache_read: String,
+    input_cache_read: f64,
     #[serde(default)]
-    input_cache_write: String,
+    input_cache_write: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
