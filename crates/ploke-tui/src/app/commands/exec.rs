@@ -24,6 +24,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
+use tracing::{debug, info_span, warn};
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
@@ -527,6 +528,8 @@ fn list_model_providers_async(app: &App, model_id: &str) {
     let cmd_tx = app.cmd_tx.clone();
     let model_id = model_id.to_string();
     tokio::spawn(async move {
+        let span = info_span!("list_model_providers", model_id = model_id.as_str());
+        let _guard = span.enter();
         // Resolve API key
         let (api_key, base_url) = {
             let cfg = state.config.read().await;
@@ -597,8 +600,10 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             Err(_) => Default::default(),
         };
 
+        debug!("providers_map loaded: {} entries", providers_map.len());
         // Fetch endpoints for this model
         let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+        debug!("fetching model endpoints: {}", url);
         match client
             .get(url)
             .bearer_auth(&api_key)
@@ -608,6 +613,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         {
             Ok(resp) => match resp.json::<ModelEndpointsResponse>().await {
                 Ok(payload) => {
+                    debug!("endpoints response parsed: {} endpoints", payload.data.endpoints.len());
                     let mut lines = vec![
                         format!("Available endpoints for model '{}':", model_id),
                         "  (Providers marked [tools] advertise tool support)".to_string(),
@@ -659,6 +665,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                         .await;
                 }
                 Err(e) => {
+                    warn!("Failed to parse endpoints response: {}", e);
                     let _ = cmd_tx
                         .send(StateCommand::AddMessageImmediate {
                             msg: format!("Failed to parse endpoints response: {}", e),
@@ -669,6 +676,8 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                 }
             },
             Err(e) => {
+                warn!("Failed to query OpenRouter models: {}", e);
+                warn!("Failed to fetch endpoints for {}: {}", model_id, e);
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
                         msg: format!("Failed to fetch endpoints for {}: {}", model_id, e),
@@ -688,6 +697,8 @@ fn open_model_search(app: &mut App, keyword: &str) {
     let keyword_str = keyword.to_string();
 
     tokio::spawn(async move {
+        let span = info_span!("open_model_search", keyword = keyword_str.as_str());
+        let _guard = span.enter();
         // Resolve API key from configured OpenRouter provider or env
         let (api_key, base_url) = {
             let cfg = state.config.read().await;
@@ -730,6 +741,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     })
                     .collect();
                 filtered.sort_by(|a, b| a.id.cmp(&b.id));
+                debug!("model search filtered {} results for keyword '{}'", filtered.len(), keyword_str);
                 // Always emit results; UI will show "0 results" if none
                 emit_app_event(AppEvent::ModelSearchResults {
                     keyword: keyword_str,
@@ -1085,3 +1097,46 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
       ↑/↓ - Navigate your previous user messages in this conversation
       PageUp/PageDown - Jump to oldest/newest user message in history
 "#;
+
+#[cfg(test)]
+mod typed_response_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn deserialize_endpoints_basic() {
+        let payload = json!({
+            "data": {
+                "endpoints": [
+                    {
+                        "provider_name": "Foo Provider",
+                        "context_length": 8192,
+                        "supported_parameters": ["tools", "json_output"],
+                        "name": "foo/bar",
+                        "max_completion_tokens": 4096,
+                        "max_prompt_tokens": 8192
+                    },
+                    {
+                        "provider_name": "Bar Provider",
+                        "supported_parameters": []
+                    }
+                ]
+            }
+        });
+
+        let parsed: ModelEndpointsResponse = serde_json::from_value(payload).expect("valid response");
+        assert_eq!(parsed.data.endpoints.len(), 2);
+        assert_eq!(parsed.data.endpoints[0].provider_name, "Foo Provider");
+        assert_eq!(parsed.data.endpoints[0].context_length, Some(8192));
+        assert!(parsed.data.endpoints[0].supported_parameters.iter().any(|t| t.eq_ignore_ascii_case("tools")));
+        assert_eq!(parsed.data.endpoints[1].provider_name, "Bar Provider");
+        assert!(parsed.data.endpoints[1].context_length.is_none());
+    }
+
+    #[test]
+    fn default_fields_do_not_panic() {
+        let minimal = serde_json::json!({"data": {"endpoints": []}});
+        let parsed: ModelEndpointsResponse = serde_json::from_value(minimal).unwrap();
+        assert!(parsed.data.endpoints.is_empty());
+    }
+}
