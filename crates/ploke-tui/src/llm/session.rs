@@ -344,8 +344,7 @@ pub(crate) fn build_openai_request<'a>(
                     } else {
                         Some(super::ProviderPreferences {
                             order: vec![s.to_string()],
-                            allow: vec![],
-                            deny: vec![],
+                            ..Default::default()
                         })
                     }
                 })
