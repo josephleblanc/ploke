@@ -17,6 +17,8 @@ pub use severity::Severity;
 pub use policy::{ErrorPolicy, NoopPolicy};
 #[cfg(feature = "tracing")]
 pub use policy::TracingPolicy;
+#[cfg(feature = "diagnostic")]
+pub use policy::MiettePolicy;
 pub use result_ext::ResultExt;
 
  // common imports for submodules

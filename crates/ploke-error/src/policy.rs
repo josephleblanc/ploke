@@ -43,3 +43,20 @@ impl ErrorPolicy for TracingPolicy {
         }
     }
 }
+
+#[cfg(feature = "diagnostic")]
+#[derive(Debug, Clone, Default)]
+pub struct MiettePolicy;
+
+#[cfg(feature = "diagnostic")]
+impl ErrorPolicy for MiettePolicy {
+    fn classify(&self, error: &Error) -> Severity {
+        error.severity()
+    }
+
+    fn emit(&self, error: &Error) {
+        // Render a rich diagnostic when available; fallback to Display otherwise.
+        let report = miette::Report::new(error.clone());
+        eprintln!("{report}");
+    }
+}
