@@ -42,7 +42,7 @@ struct TerminalModeGuard;
 impl Drop for TerminalModeGuard {
     fn drop(&mut self) {
         // Best-effort disable; ignore errors to avoid panicking in Drop
-        let _ = crossterm::execute(
+        let _ = crossterm::execute!(
             std::io::stdout(),
             DisableBracketedPaste,
             DisableFocusChange,
