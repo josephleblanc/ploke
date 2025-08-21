@@ -11,35 +11,90 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
+use crate::app_state::AppState;
+use crate::app::App;
+use crate::event_bus::EventBus;
+use crate::user_config::CommandStyle;
+use crate::llm::openrouter_catalog::ModelEntry;
+use ploke_rag::{RagService, TokenBudget};
+use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
+use ploke_io::IoManagerHandle;
+use tokio::sync::mpsc;
 
 pub fn create_mock_app_state() -> AppState {
-    // AI: fill out AI!
-    AppState::new(db, embedder, io_handle, rag, budget, rag_tx)
+    let db = create_mock_db(0);
+    let embedder = Arc::new(EmbeddingProcessor::new(
+        Box::new(MockEmbedder {
+            dimensions: 384,
+            behavior: MockBehavior::Normal,
+        }),
+        8,
+    ));
+    let io_handle = IoManagerHandle::new();
+    let rag = Arc::new(RagService::new_mock());
+    let budget = TokenBudget::default();
+    let (rag_tx, _rag_rx) = mpsc::channel(10);
+    
+    AppState {
+        chat: crate::app_state::ChatState::new(ChatHistory::new()),
+        config: crate::app_state::ConfigState::new(crate::app_state::RuntimeConfig::default()),
+        system: crate::app_state::SystemState::default(),
+        indexing_state: tokio::sync::RwLock::new(None),
+        indexer_task: None,
+        indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+        db,
+        embedder,
+        io_handle,
+        proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        rag: Some(rag),
+        budget,
+    }
 }
 
 pub fn create_mock_app() -> App {
-    // AI: fill out AI!
-    App::new(command_style, state, cmd_tx, event_bus, active_model_id)
+    let state = Arc::new(create_mock_app_state());
+    let (cmd_tx, _cmd_rx) = mpsc::channel(1024);
+    let event_bus = EventBus::new(crate::EventBusCaps::default());
+    let active_model_id = "mock-model".to_string();
+    
+    App::new(
+        CommandStyle::Slash,
+        state,
+        cmd_tx,
+        &event_bus,
+        active_model_id,
+    )
 }
 
 pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
     let storage = MemStorage::default();
     let db = Arc::new(Database::new(Db::new(storage).unwrap()));
+    
+    // Initialize database schema
+    db.initialize().unwrap();
+    ploke_transform::schema::create_schema_all(&db.db).unwrap();
+    
+    if num_unindexed > 0 {
+        let script = r#"
+        ?[id, file_path, tracking_hash, start_byte, end_byte, namespace] <- [
+            [uuid_v4(), "/mock/file.rs", uuid_v4(), 0, 100, uuid_v4()],
+        ]
 
-    let script = r#"
-    ?[id, path, tracking_hash, start_byte, end_byte] <- [
-        $unindexed,
-    ]
-
-    :create embedding_nodes {
-        id => Uuid
+        :put embedding_nodes {
+            id => Uuid,
+            file_path => String,
+            tracking_hash => Uuid,
+            start_byte => Int,
+            end_byte => Int,
+            namespace => Uuid,
+            embedding => <F32; 384> default null
+        }
+        "#;
+        
+        db.run_script(script, std::collections::BTreeMap::new(), ScriptMutability::Mutable)
+            .unwrap();
     }
-    "#;
-
-    todo!("define and insert params, ensure db.run_script works correctly");
-
-    // db.run_script(script, params, ScriptMutability::Mutable).unwrap();
-    #[allow(unreachable_code)]
+    
     db
 }
 
