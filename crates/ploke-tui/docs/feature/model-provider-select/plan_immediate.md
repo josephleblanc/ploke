@@ -122,9 +122,53 @@ Risks and Mitigations
   - Use existing StateCommand + EventBus to avoid blocking the UI thread.
 
 Implementation Checklist
-- [ ] Add command parsing for /model and /provider
-- [ ] Add Config::save_to_path / load_from_path with redaction
-- [ ] Add ProviderRegistryStrictness and enforcement in set_active path
-- [ ] Wire /model refresh to registry.refresh_from_openrouter() + registry.load_api_keys()
-- [ ] Ensure try_main calls load_api_keys() after merging defaults
-- [ ] Tests for redaction and command behaviors
+- [x] Add command parsing for /model and /provider (crates/ploke-tui/src/app/commands/parser.rs, crates/ploke-tui/src/app/commands/exec.rs) — Structured parsing added for: model list | model info | model use <alias|id> | model refresh [--local] | model load [<path>] | model save [<path>] [--with-keys] | provider strictness <mode>. Executor dispatches non-blocking actions via StateCommand; legacy fallback retained.
+- [x] Add Config::save_to_path / load_from_path with redaction (crates/ploke-tui/src/user_config.rs) — Implemented atomic write via tempfile + fsync + persist; redact API keys by default unless --with-keys is provided; added default_config_path and load_from_path helpers.
+- [x] Add ProviderRegistryStrictness and enforcement in set_active path (crates/ploke-tui/src/user_config.rs) — Added ProviderRegistryStrictness enum + default; enforced policy in ProviderRegistry::set_active with logging when disallowed.
+- [x] Wire /model refresh to registry.refresh_from_openrouter() + registry.load_api_keys() (crates/ploke-tui/src/app/commands/exec.rs, crates/ploke-tui/src/llm/openrouter_catalog.rs) — Reloads keys; optionally refreshes OpenRouter capabilities; caches supports_tools, context_length, pricing.
+- [x] Ensure try_main calls load_api_keys() after merging defaults (crates/ploke-tui/src/lib.rs) — After merging curated defaults, keys are loaded and OpenRouter capabilities refresh attempted with warnings on failure.
+- [ ] Tests for redaction and command behaviors — TODO.
+
+Implementation Report
+
+Progress summary
+- Commands
+  - Parsing implemented in crates/ploke-tui/src/app/commands/parser.rs.
+  - Execution implemented in crates/ploke-tui/src/app/commands/exec.rs with async tasks to avoid blocking UI; legacy handler kept for backward compatibility.
+- Config and persistence
+  - Config helpers implemented in crates/ploke-tui/src/user_config.rs (save_to_path with redaction and atomic write; load_from_path; default_config_path).
+  - ProviderRegistry::with_defaults merges curated defaults from crates/ploke-tui/src/llm/registry.rs.
+  - API keys loaded at startup and on /model refresh.
+- Provider strictness
+  - ProviderRegistryStrictness added and enforced in ProviderRegistry::set_active.
+  - Command to set strictness wired: /provider strictness <openrouter-only|allow-custom|allow-any>.
+- OpenRouter capabilities
+  - Fetch implemented in crates/ploke-tui/src/llm/openrouter_catalog.rs.
+  - Registry refresh caches supports_tools, context_length, pricing; surfaced in “model info”.
+- Startup integration
+  - crates/ploke-tui/src/lib.rs: try_main merges defaults, refreshes OpenRouter capabilities, then loads API keys; initializes subsystems and UI.
+- UI feedback
+  - SystemEvent::ModelSwitched handled in crates/ploke-tui/src/app/events.rs to update top-right indicator and announce change.
+  - “model info” and “model list” render structured summaries to chat.
+
+Files touched in this implementation
+- crates/ploke-tui/src/app/commands/parser.rs — Command parsing for model/provider and edit subcommands.
+- crates/ploke-tui/src/app/commands/exec.rs — Async executors for parsed commands; load/save config; refresh keys and capabilities; strictness updates; status messages.
+- crates/ploke-tui/src/user_config.rs — ProviderRegistry and ProviderConfig structures; strictness policy; capability cache; atomic save/load helpers; API key resolution; curated defaults merging; OpenRouter refresh wiring.
+- crates/ploke-tui/src/llm/openrouter_catalog.rs — Minimal client for OpenRouter /models endpoint; capability/pricing extraction.
+- crates/ploke-tui/src/llm/registry.rs — Curated default provider configurations for common models.
+- crates/ploke-tui/src/lib.rs — Startup flow integrates defaults, capability refresh, and API key loading.
+- crates/ploke-tui/src/app/events.rs — UI reacts to SystemEvent::ModelSwitched.
+
+Notable gaps and deviations
+- Unit tests: redaction and command parsing/execution tests are not yet implemented; checklist item remains TODO.
+- Model switching internals: StateCommand::SwitchModel is delegated to app_state::models::switch_model (not included in this chat). Assumed to broadcast SystemEvent::ModelSwitched and update active provider; if not, that module should be verified.
+- Minor duplication: help/model list helpers exist in both App and command exec; kept for compatibility; can be consolidated later.
+- Tool-call routing includes deprecation warnings for legacy SystemEvent paths; unrelated to this plan but noted.
+
+Next steps
+- Add unit tests:
+  - Save/load roundtrip with redaction default and with --with-keys.
+  - ProviderRegistry::set_active strictness enforcement.
+  - Command parsing coverage for /model and /provider variants.
+- Validate app_state::models::switch_model broadcasts SystemEvent::ModelSwitched and persists active provider to state.
