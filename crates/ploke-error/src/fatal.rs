@@ -64,9 +64,30 @@ pub enum FatalError {
     DefaultConfigDir { msg: &'static str },
 }
 
-// TODO: Cumbersome, make this better.
+ // TODO: Cumbersome, make this better.
 impl From<(std::io::Error, &'static str, PathBuf)> for FatalError {
     fn from((source, operation, path): (std::io::Error, &'static str, PathBuf)) -> Self {
+        FatalError::FileOperation {
+            operation,
+            path,
+            source: Arc::new(source),
+        }
+    }
+}
+
+impl FatalError {
+    /// Return the raw OS error code when available (matklad-inspired API).
+    /// Helps callers handle specific IO conditions programmatically without
+    /// exposing std::io::Error in the public API.
+    pub fn os_code(&self) -> Option<i32> {
+        match self {
+            FatalError::FileOperation { source, .. } => source.raw_os_error(),
+            _ => None,
+        }
+    }
+
+    /// Convenience constructor for FileOperation that avoids tuple-based From.
+    pub fn file_operation(operation: &'static str, path: PathBuf, source: std::io::Error) -> Self {
         FatalError::FileOperation {
             operation,
             path,

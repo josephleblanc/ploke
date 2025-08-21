@@ -120,3 +120,28 @@ Next Actions (for this crate)
 - Implement new modules/types behind additive, non-breaking changes.
 - Document mapping rules per crate.
 - Provide small examples and migration guide snippets mirroring the offenders.
+
+Addendum — Guidance distilled from matklad’s “Study of std::io::Error”
+- Design for usage
+  - Distinguish between programmatic handling and display/propagation. Our API supports both: Severity for coarse classification and Error/DomainError for structure, with policies for presentation/emission.
+- Avoid kitchen-sink public enums
+  - Do not expose concrete dependency error types in public variants. Keep external errors encapsulated (e.g., std::io::Error boxed/Arc-ed inside a FatalError variant) and surface stable, small enums/fields for cross-boundary decisions.
+- IO error handling patterns
+  - Provide hooks for OS-level specificity without leaking concrete types: expose raw OS error codes where available.
+    - Implemented: FatalError::os_code() returns Option<i32>, enabling targeted handling (e.g., EWOULDBLOCK) in callers.
+    - Construction ergonomics: FatalError::file_operation(...) convenience constructor encourages a single, consistent mapping site.
+  - Prefer pushing IO to the caller when feasible to reduce indirect kitchensink conversions; callers can then map IO explicitly at edges.
+  - When mapping IO, prefer ErrorKind/category-level handling by default, with optional OS-code branches where necessary.
+- Efficiency and representation
+  - Keep error objects small by boxing large data and trait objects; we use Arc for std::io::Error in FileOperation.
+  - Avoid eager backtraces/snippets; retain lazy, opt-in context capture (ContextExt::with_backtrace/with_snippet).
+- API stability vs. flexibility
+  - Favor small, copyable enums (like Severity) as public-facing categories rather than exposing internal representation of complex variants.
+- Iterator ergonomics for results
+  - To reduce boilerplate at boundaries, add iterator helpers:
+    - IterResultExt::collect_ok() -> Result<Vec<T>> to eagerly collect or return the first error.
+    - IterResultExt::first_error() -> Option<Error> to quickly probe for failures without allocation.
+- Caveats applied from USER notes
+  - Prefer monomorphization in public APIs where possible; ResultExt and IterResultExt use &impl ErrorPolicy generics rather than trait objects.
+  - Do not force cross-crate From/Into conversions in this crate; leave conversions to downstream crates to avoid dependency coupling.
+  - Do not use #[non_exhaustive]; breaking changes will be introduced intentionally under feature flags when necessary.

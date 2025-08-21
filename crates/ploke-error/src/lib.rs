@@ -19,7 +19,7 @@ pub use policy::{ErrorPolicy, NoopPolicy};
 pub use policy::TracingPolicy;
 #[cfg(feature = "diagnostic")]
 pub use policy::MiettePolicy;
-pub use result_ext::ResultExt;
+pub use result_ext::{ResultExt, IterResultExt};
 
  // common imports for submodules
 

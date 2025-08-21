@@ -50,3 +50,33 @@ impl<T> ResultExt<T> for Result<T> {
         self
     }
 }
+
+/// Iterator helpers over Result to reduce boilerplate at boundaries.
+/// - collect_ok: eagerly collects Ok items, returning the first Error.
+/// - first_error: scans and returns the first Error without allocation.
+pub trait IterResultExt<T>: Sized {
+    fn collect_ok(self) -> Result<Vec<T>>;
+    fn first_error(self) -> Option<super::Error>;
+}
+
+impl<I, T> IterResultExt<T> for I
+where
+    I: IntoIterator<Item = Result<T>>,
+{
+    fn collect_ok(self) -> Result<Vec<T>> {
+        let mut out = Vec::new();
+        for r in self.into_iter() {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn first_error(self) -> Option<super::Error> {
+        for r in self.into_iter() {
+            if let Err(e) = r {
+                return Some(e);
+            }
+        }
+        None
+    }
+}
