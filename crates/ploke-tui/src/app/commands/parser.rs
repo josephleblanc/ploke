@@ -23,6 +23,7 @@ pub enum Command {
     ModelRefresh { remote: bool },
     ModelLoad(Option<String>),
     ModelSave { path: Option<String>, with_keys: bool },
+    ModelSearch(String),
     ProviderStrictness(ProviderRegistryStrictness),
     Update,
     EditApprove(Uuid),
@@ -76,6 +77,14 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
                 }
             }
             Command::ModelSave { path, with_keys }
+        }
+        s if s.starts_with("model search ") => {
+            let kw = s.trim_start_matches("model search ").trim().to_string();
+            if kw.is_empty() {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::ModelSearch(kw)
+            }
         }
         s if s.starts_with("provider strictness ") => {
             let mode = s.trim_start_matches("provider strictness ").trim().to_lowercase();

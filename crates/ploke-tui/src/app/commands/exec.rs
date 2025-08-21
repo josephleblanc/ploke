@@ -19,7 +19,9 @@ use itertools::Itertools;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use crate::user_config::{ProviderRegistryStrictness, UserConfig};
+use crate::user_config::{ProviderRegistryStrictness, UserConfig, OPENROUTER_URL};
+use reqwest::Client;
+use crate::llm::openrouter_catalog::ModelEntry;
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
@@ -32,6 +34,9 @@ pub fn execute(app: &mut App, command: Command) {
         Command::Help => show_command_help(app),
         Command::ModelList => list_models_async(app),
         Command::ModelInfo => show_model_info_async(app),
+        Command::ModelSearch(keyword) => {
+            open_model_search(app, &keyword);
+        }
         Command::ModelUse(alias) => {
             // Delegate to existing state manager path to broadcast and apply
             app.send_cmd(StateCommand::SwitchModel {
@@ -374,6 +379,78 @@ fn check_api_keys(app: &App) {
     });
 }
 
+fn open_model_search(app: &mut App, keyword: &str) {
+    // Resolve API key similar to registry refresh logic (prefer configured OpenRouter provider)
+    let state = app.state.clone();
+    let (api_key, base_url) = {
+        let cfg = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(state.config.read())
+        });
+        let key = cfg
+            .provider_registry
+            .providers
+            .iter()
+            .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+            .map(|p| p.resolve_api_key())
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .unwrap_or_default();
+        (key, OPENROUTER_URL.to_string())
+    };
+
+    if api_key.is_empty() {
+        app.send_cmd(StateCommand::AddMessageImmediate {
+            msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+        return;
+    }
+
+    let client = Client::new();
+    let result = tokio::runtime::Handle::current().block_on(async {
+        crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await
+    });
+
+    match result {
+        Ok(models) => {
+            let kw_lower = keyword.to_lowercase();
+            let mut filtered: Vec<ModelEntry> = models
+                .into_iter()
+                .filter(|m| {
+                    let id_match = m.id.to_lowercase().contains(&kw_lower);
+                    let name_match = m
+                        .name
+                        .as_ref()
+                        .map(|n| n.to_lowercase().contains(&kw_lower))
+                        .unwrap_or(false);
+                    id_match || name_match
+                })
+                .collect();
+
+            // Sort by id for deterministic display, then cap list to a reasonable size
+            filtered.sort_by(|a, b| a.id.cmp(&b.id));
+            if filtered.is_empty() {
+                app.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: format!("No models found for search: {}", keyword),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                });
+                return;
+            }
+
+            // Open interactive model browser overlay
+            app.open_model_browser(keyword.to_string(), filtered);
+        }
+        Err(e) => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Failed to query OpenRouter models: {}", e),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+        }
+    }
+}
+
 /// Legacy command executor (Phase 3): handles all existing commands using
 /// the original string matching. Newer commands are gradually migrated to
 /// structured Command variants.
@@ -649,15 +726,23 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     index resume - Resume indexing
     index cancel - Cancel indexing
     check api - Check API key configuration
+
     model list - List available models
     model info - Show active model/provider settings
-    model <name> - Switch model
+    model use <name> - Switch to a configured model by alias or id
+    model refresh [--local] - Refresh model registry (OpenRouter) and API keys; use --local to skip network
+    model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
+    model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
+    model search <keyword> - Search OpenRouter models and open interactive browser
+    provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
+
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status
     bm25 save <path> - Save sparse index sidecar to file
     bm25 load <path> - Load sparse index sidecar from file
     bm25 search <query> [top_k] - Search with BM25
     hybrid <query> [top_k] - Hybrid (BM25 + dense) search
+
     preview [on|off|toggle] - Toggle context preview panel
     edit preview mode <code|diff> - Set edit preview mode for proposals
     edit preview lines <N> - Set max preview lines per section

@@ -17,6 +17,8 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use app_state::{AppState, StateCommand};
+use crate::llm::openrouter_catalog::ModelEntry;
+use crate::user_config::{ProviderConfig, ProviderType, OPENROUTER_URL};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -63,6 +65,25 @@ pub struct App {
     pending_char: Option<char>,
     needs_redraw: bool,
     show_context_preview: bool,
+    // Modal overlay for interactive model discovery/selection
+    model_browser: Option<ModelBrowserState>,
+}
+
+struct ModelBrowserItem {
+    id: String,
+    name: Option<String>,
+    context_length: Option<u32>,
+    input_cost: Option<f64>,
+    output_cost: Option<f64>,
+    supports_tools: bool,
+    expanded: bool,
+}
+
+struct ModelBrowserState {
+    visible: bool,
+    keyword: String,
+    items: Vec<ModelBrowserItem>,
+    selected: usize,
 }
 
 impl App {
@@ -93,6 +114,7 @@ impl App {
             pending_char: None,
             needs_redraw: true,
             show_context_preview: false,
+            model_browser: None,
         }
     }
 
@@ -454,6 +476,63 @@ impl App {
             }
         }
 
+        // Render model browser overlay if visible
+        if let Some(mb) = &self.model_browser {
+            let area = frame.area();
+            let width = area.width.saturating_mul(8) / 10;
+            let height = area.height.saturating_mul(8) / 10;
+            let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
+            let y = area.y.saturating_add(area.height.saturating_sub(height) / 2);
+            let rect = ratatui::layout::Rect::new(x, y, width.max(40), height.max(10));
+
+            let mut lines: Vec<String> = Vec::new();
+            lines.push(format!(
+                "Model Browser — {} results for \"{}\"",
+                mb.items.len(),
+                mb.keyword
+            ));
+            lines.push("Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.".to_string());
+            lines.push(String::new());
+
+            for (i, it) in mb.items.iter().enumerate() {
+                let sel = if i == mb.selected { ">" } else { " " };
+                let title = if let Some(name) = &it.name {
+                    if name.is_empty() {
+                        it.id.clone()
+                    } else {
+                        format!("{} — {}", it.id, name)
+                    }
+                } else {
+                    it.id.clone()
+                };
+                lines.push(format!("{} {}", sel, title));
+                if it.expanded {
+                    lines.push(format!(
+                        "    context_length: {}",
+                        it.context_length
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ));
+                    lines.push(format!("    supports_tools: {}", it.supports_tools));
+                    lines.push(format!(
+                        "    pricing: in={} out={}",
+                        it.input_cost
+                            .map(|v| format!("{:.4}", v))
+                            .unwrap_or_else(|| "-".to_string()),
+                        it.output_cost
+                            .map(|v| format!("{:.4}", v))
+                            .unwrap_or_else(|| "-".to_string())
+                    ));
+                }
+            }
+
+            let content = lines.join("\n");
+            let widget = Paragraph::new(content)
+                .block(Block::bordered().title(" Model Browser "))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            frame.render_widget(widget, rect);
+        }
+
         // Cursor position is handled by InputView.
     }
 
@@ -485,6 +564,46 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        // Intercept keys for model browser overlay when visible
+        if let Some(mb) = self.model_browser.as_mut() {
+            use KeyCode::*;
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.model_browser = None;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if mb.selected > 0 {
+                        mb.selected -= 1;
+                    } else {
+                        mb.selected = mb.items.len().saturating_sub(1);
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if mb.items.is_empty() {
+                        // nothing
+                    } else if mb.selected + 1 < mb.items.len() {
+                        mb.selected += 1;
+                    } else {
+                        mb.selected = 0;
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    if let Some(item) = mb.items.get_mut(mb.selected) {
+                        item.expanded = !item.expanded;
+                    }
+                }
+                KeyCode::Char('s') => {
+                    if let Some(item) = mb.items.get(mb.selected) {
+                        self.switch_to_model(&item.id);
+                        self.model_browser = None;
+                    }
+                }
+                _ => {}
+            }
+            self.needs_redraw = true;
+            return;
+        }
+
         if let Some(action) = to_action(self.mode, key, self.command_style) {
             self.handle_action(action);
         }
@@ -681,6 +800,77 @@ impl App {
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
+    }
+
+    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelEntry>) {
+        let items = items
+            .into_iter()
+            .map(|m| ModelBrowserItem {
+                id: m.id,
+                name: m.name,
+                context_length: m.context_length,
+                input_cost: m.pricing.as_ref().and_then(|p| p.input),
+                output_cost: m.pricing.as_ref().and_then(|p| p.output),
+                supports_tools: m.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false),
+                expanded: false,
+            })
+            .collect::<Vec<_>>();
+
+        self.model_browser = Some(ModelBrowserState {
+            visible: true,
+            keyword,
+            selected: 0,
+            items,
+        });
+        self.needs_redraw = true;
+    }
+
+    fn close_model_browser(&mut self) {
+        self.model_browser = None;
+        self.needs_redraw = true;
+    }
+
+    fn switch_to_model(&mut self, model_id: &str) {
+        // Mutate runtime config to promote or select the model, then broadcast info
+        let state = Arc::clone(&self.state);
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut cfg = state.config.write().await;
+                let reg = &mut cfg.provider_registry;
+
+                let exists = reg.providers.iter().any(|p| p.id == model_id);
+                if !exists {
+                    // Promote discovered model into registry
+                    reg.providers.push(ProviderConfig {
+                        id: model_id.to_string(),
+                        api_key: String::new(),
+                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+                        base_url: OPENROUTER_URL.to_string(),
+                        model: model_id.to_string(),
+                        display_name: Some(model_id.to_string()),
+                        provider_type: ProviderType::OpenRouter,
+                        llm_params: Some(crate::llm::LLMParameters {
+                            model: model_id.to_string(),
+                            ..Default::default()
+                        }),
+                    });
+                    // Load keys across providers
+                    reg.load_api_keys();
+                }
+
+                // Switch active provider
+                reg.active_provider = model_id.to_string();
+            });
+        });
+
+        self.active_model_id = model_id.to_string();
+        self.active_model_indicator = Some((self.active_model_id.clone(), Instant::now()));
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: format!("Switched active model to {}", model_id),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+        self.needs_redraw = true;
     }
 
     fn execute_command(&mut self) {
