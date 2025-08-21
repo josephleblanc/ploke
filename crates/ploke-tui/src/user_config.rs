@@ -183,6 +183,7 @@ pub struct EditingAgentConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct EditingConfig {
     #[serde(default)]
     pub auto_confirm_edits: bool,
@@ -190,14 +191,6 @@ pub struct EditingConfig {
     pub agent: EditingAgentConfig,
 }
 
-impl Default for EditingConfig {
-    fn default() -> Self {
-        Self {
-            auto_confirm_edits: false,
-            agent: EditingAgentConfig::default(),
-        }
-    }
-}
 
 fn default_agent_min_confidence() -> f32 {
     0.8
