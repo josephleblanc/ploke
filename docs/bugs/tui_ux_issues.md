@@ -20,6 +20,8 @@ Status legend:
     - app/mod.rs: Use `guard.current` to send `StateCommand::DeleteMessage`.
 - Status: In progress (awaiting verification)
 
+USER: `StateCommand::DeleteMessage` is currently a no-op, as it is not handled in the `StateCommand` event handling. TODO: Implement `StateCommand::DeleteMessage` handling in `StateCommand` event handling
+
 ## 3) `model search` with no argument should show specific usage help
 - Symptom: Entering `model search` triggers generic help fallback.
 - Attempted fix: Parser now emits a dedicated `ModelSearchHelp` command; executor responds with concise usage message instead of full help.
@@ -34,6 +36,8 @@ Status legend:
   - Changes:
     - app/commands/exec.rs: Wrap model fetch in `block_in_place`.
 - Status: In progress (awaiting verification)
+
+USER: This is a lazy fix (not the good kind). Revisit strategy here. Whatever was implemented was obviously complete shit and needs to be done properly.
 
 ## 5) Terminal continues printing mouse event codes after crash
 - Symptom: After panic, terminal remains in special modes; mouse actions spam escape sequences.
