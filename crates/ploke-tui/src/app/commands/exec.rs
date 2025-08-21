@@ -1,3 +1,17 @@
+#![allow(missing_docs)]
+//! Command executor for the TUI.
+//!
+//! Dataflow:
+//! - Receives structured `Command` variants from the parser.
+//! - Performs async side-effects (config save/load, registry refresh, etc.),
+//!   then informs the app via `StateCommand::AddMessageImmediate` or domain-specific
+//!   commands. Avoids blocking the UI thread.
+//!
+//! Critical interactions:
+//! - ProviderRegistry updates (load_api_keys, refresh_from_openrouter, strictness).
+//! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
+//!   `SystemEvent::ModelSwitched` for UI updates.
+
 use super::parser::Command;
 use crate::app::App;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
@@ -627,6 +641,7 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
 }
 
 /// Shared help text for commands
+#[doc = "User-visible help covering supported commands and keybindings."]
 pub const HELP_COMMANDS: &str = r#"Available commands:
     index start [directory] - Run workspace indexing on specified directory
                               (defaults to current dir)

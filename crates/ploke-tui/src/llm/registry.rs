@@ -1,3 +1,11 @@
+#![allow(missing_docs)]
+//! Curated catalog of sensible default OpenRouter model configurations.
+//!
+//! Dataflow:
+//! - Loaded once into `DEFAULT_MODELS` and merged into `ProviderRegistry` via
+//!   `ProviderRegistry::with_defaults`, allowing users to override or disable
+//!   entries declaratively in `config.toml`.
+
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
@@ -9,6 +17,7 @@ use crate::user_config::{ProviderConfig, ProviderType};
 /// supplies in `config.toml`.  Any entry the user defines with the same `id`
 /// will *overwrite* the corresponding default, so power-users can tweak or
 /// disable individual models without touching code.
+#[doc = "Default provider configurations keyed by short id (alias)."]
 pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| {
     let mut m = HashMap::new();
 
@@ -52,6 +61,8 @@ pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| 
     m
 });
 /// Helper to reduce boilerplate when adding new OpenRouter defaults.
+#[inline]
+#[doc = "Insert a standard OpenRouter provider configuration into the defaults map."]
 fn insert_openrouter(
     map: &mut HashMap<String, ProviderConfig>,
     id: &str,

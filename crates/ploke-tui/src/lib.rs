@@ -1,4 +1,16 @@
 #![allow(unused_variables, unused_imports, dead_code)]
+//! ploke-tui main library entry.
+//!
+//! Dataflow overview:
+//! - Config load: `try_main` reads config (toml/env), merges curated defaults, refreshes
+//!   OpenRouter capabilities, then resolves API keys and spins up subsystems.
+//! - Commands: UI routes parsed commands to `StateCommand` via channels; model/provider
+//!   commands update `ProviderRegistry` and emit `SystemEvent::ModelSwitched`.
+//! - Persistence: config can be saved/loaded atomically with optional key redaction.
+//!
+//! Subsystems started in `try_main`:
+//! - State manager (app_state), LLM manager, EventBus, Observability, FileManager,
+//!   Indexer, optional RAG service.
 
 pub mod app;
 pub mod app_state;

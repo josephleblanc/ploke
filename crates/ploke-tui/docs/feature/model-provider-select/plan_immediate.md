@@ -127,7 +127,7 @@ Implementation Checklist
 - [x] Add ProviderRegistryStrictness and enforcement in set_active path (crates/ploke-tui/src/user_config.rs) — Added ProviderRegistryStrictness enum + default; enforced policy in ProviderRegistry::set_active with logging when disallowed.
 - [x] Wire /model refresh to registry.refresh_from_openrouter() + registry.load_api_keys() (crates/ploke-tui/src/app/commands/exec.rs, crates/ploke-tui/src/llm/openrouter_catalog.rs) — Reloads keys; optionally refreshes OpenRouter capabilities; caches supports_tools, context_length, pricing.
 - [x] Ensure try_main calls load_api_keys() after merging defaults (crates/ploke-tui/src/lib.rs) — After merging curated defaults, keys are loaded and OpenRouter capabilities refresh attempted with warnings on failure.
-- [ ] Tests for redaction and command behaviors — TODO.
+- [x] Tests for redaction and command behaviors — Added parser unit tests, provider strictness tests, and config save/load redaction round-trips.
 
 Implementation Report
 
@@ -172,3 +172,8 @@ Next steps
   - ProviderRegistry::set_active strictness enforcement.
   - Command parsing coverage for /model and /provider variants.
 - Validate app_state::models::switch_model broadcasts SystemEvent::ModelSwitched and persists active provider to state.
+
+Final Implementation Note
+- Documentation: Added file-level and struct-level docs to parser, exec, registry, openrouter_catalog, user_config, and lib startup flow highlighting key dataflows and responsibilities.
+- Tests: Added integration tests covering config redaction round-trips and provider strictness, plus unit tests for command parsing variants.
+- Developer Docs: Authored summary_of_changes.md and review_findings.md for fast code review and future refactors; drafted next_steps.md to guide model catalog expansion and registry design.

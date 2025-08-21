@@ -1,3 +1,12 @@
+#![allow(missing_docs)]
+//! Command parser for TUI input.
+//!
+//! Dataflow:
+//! - Raw input is normalized by command style (Slash/NeoVim) and mapped to a
+//!   structured `Command` variant.
+//! - The executor consumes these variants and dispatches `StateCommand`s,
+//!   keeping the UI thread non-blocking.
+
 use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
 use crate::app_state::core::PreviewMode;
 use uuid::Uuid;
@@ -5,6 +14,7 @@ use uuid::Uuid;
 /// Parsed command variants handled by the executor.
 /// Phase 3 wires a subset as examples and falls back to Raw for others.
 #[derive(Debug, Clone)]
+/// High-level parsed command variants handled by the executor.
 pub enum Command {
     Help,
     ModelList,

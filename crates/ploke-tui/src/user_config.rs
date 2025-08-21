@@ -1,3 +1,13 @@
+#![allow(missing_docs)]
+//! User configuration and provider registry.
+//!
+//! Dataflow:
+//! - `UserConfig` is loaded at startup (toml/env), then merged with curated defaults.
+//! - `ProviderRegistry` manages providers, aliases, strictness, capabilities cache,
+//!   and API key resolution from env or config.
+//! - Commands (`/model *`, `/provider strictness`) mutate `ProviderRegistry` at runtime,
+//!   while save/load provide persistence with optional secret redaction.
+
 // NOTE: This todo list applies to both this file and to the `ploke-tui/llm/mod.rs` file
 //
 //                        Additional steps needed for multi-model support:
@@ -167,6 +177,7 @@ impl UserConfig {
 
 // NEW: Embedding configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+/// Embedding backend configuration. Exactly one provider should be set.
 pub struct EmbeddingConfig {
     pub local: Option<LocalModelConfig>,
     pub hugging_face: Option<HuggingFaceConfig>,
@@ -175,6 +186,7 @@ pub struct EmbeddingConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+/// Agent-specific editing controls used by proposal workflows.
 pub struct EditingAgentConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -184,6 +196,7 @@ pub struct EditingAgentConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[derive(Default)]
+/// Editing UI and agent behavior configuration.
 pub struct EditingConfig {
     #[serde(default)]
     pub auto_confirm_edits: bool,
@@ -197,6 +210,8 @@ fn default_agent_min_confidence() -> f32 {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+/// Registry of configured providers with active selection, aliases,
+/// cached capabilities, and selection policy (strictness).
 pub struct ProviderRegistry {
     pub providers: Vec<ProviderConfig>,
     #[serde(default = "default_active_provider")]
@@ -210,6 +225,7 @@ pub struct ProviderRegistry {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+/// Concrete provider configuration (one model endpoint).
 pub struct ProviderConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
@@ -236,6 +252,7 @@ pub struct ProviderConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+/// Provider type used for request formatting and env-var resolution.
 pub enum ProviderType {
     #[default]
     OpenRouter,
@@ -245,6 +262,7 @@ pub enum ProviderType {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+/// Policy for allowed providers when switching the active provider.
 pub enum ProviderRegistryStrictness {
     /// Only allow selecting OpenRouter providers
     OpenRouterOnly,
@@ -304,6 +322,7 @@ impl ProviderConfig {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Cached model capabilities/pricing for quick lookup in the UI and routing.
 pub struct ModelCapabilities {
     pub supports_tools: bool,
     pub context_length: Option<u32>,
