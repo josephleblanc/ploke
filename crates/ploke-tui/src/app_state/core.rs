@@ -224,7 +224,7 @@ impl AppState {
     ) -> Self {
         Self {
             chat: ChatState(RwLock::new(ChatHistory::new())),
-            config: ConfigState(RwLock::new(Config::default())),
+            config: ConfigState(RwLock::new(RuntimeConfig::default())),
             system: SystemState(RwLock::new(SystemStatus::default())),
             indexing_state: RwLock::new(None),
             indexer_task: None,
@@ -235,7 +235,6 @@ impl AppState {
             proposals: RwLock::new(HashMap::new()),
             rag: Some(rag),
             budget,
-            // rag_tx,
         }
     }
 }
