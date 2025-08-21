@@ -2,7 +2,7 @@ use cozo::DataValue;
 use cozo::{Db, MemStorage, ScriptMutability};
 use ploke_db::Database;
 use ploke_embed::error::EmbedError;
-use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+use ploke_embed::indexer::EmbeddingProcessor;
 use ratatui::widgets::ListState;
 use std::future::Future;
 use std::pin::Pin;
@@ -21,11 +21,8 @@ use tokio::sync::mpsc;
 
 pub fn create_mock_app_state() -> AppState {
     let db = create_mock_db(0);
-    // AI: Create this new_mock function AI!
-    let embedder = Arc::new(EmbeddingProcessor::new_mock(source)
-    );
+    let embedder = Arc::new(EmbeddingProcessor::new_mock());
     let io_handle = IoManagerHandle::new();
-    // AI: Create this new_mock function AI!
     let rag = Arc::new(RagService::new_mock());
     let budget = TokenBudget::default();
     let (rag_tx, _rag_rx) = mpsc::channel(10);
