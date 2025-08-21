@@ -76,6 +76,28 @@ impl<'a> OpenAiRequest<'a> {
     }
 }
 
+// Lightweight tool to fetch current file metadata (tracking hash and basics)
+fn get_file_metadata_tool_def() -> ToolDefinition {
+    ToolDefinition {
+        r#type: "function",
+        function: ToolFunctionDef {
+            name: "get_file_metadata",
+            description: "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute path to the target file."
+                    }
+                },
+                "required": ["file_path"],
+                "additionalProperties": false
+            }),
+        },
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct RequestMessage<'a> {
     pub role: &'a str,
@@ -576,7 +598,11 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    let tools = vec![request_code_context_tool_def(), apply_code_edit_tool_def()];
+    let tools = vec![
+        request_code_context_tool_def(),
+        get_file_metadata_tool_def(),
+        apply_code_edit_tool_def(),
+    ];
 
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
     let session = session::RequestSession::new(

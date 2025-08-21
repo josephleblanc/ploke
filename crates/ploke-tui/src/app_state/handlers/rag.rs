@@ -45,26 +45,33 @@ Code context format
   - File: absolute path to the file
   - Span: byte or line range the snippet covers
   - File Hash: a UUID that identifies the current on-disk content (TrackingHash)
-- If a snippet does not include a File Hash, do NOT attempt to apply edits for that file yet. First request additional context to obtain the latest metadata.
+- If a snippet does not include a File Hash, do NOT attempt to apply edits for that file yet. First fetch the metadata to obtain the latest TrackingHash.
 
 How to request more context
 - Call the tool request_code_context when you need additional code to proceed.
 - Arguments:
   - token_budget: integer > 0 indicating approximately how many tokens of code to return.
-  - hint: optional string that narrows the search (file path, symbol name, module, brief description, or an explicit request for "file metadata for <path>").
+  - hint: optional string that narrows the search (file path, symbol name, module, brief description).
 - Keep requests focused and iterative. Prefer several small requests over a single large one.
+
+How to fetch file metadata (TrackingHash)
+- If you need the expected_file_hash for apply_code_edit and it's missing, call get_file_metadata.
+- Arguments:
+  - file_path: absolute path to the file on disk.
+- The tool returns the file's current tracking hash (UUID), byte length, and basic info. Use the returned `file_hash` as `expected_file_hash` in apply_code_edit.
+- Always fetch fresh metadata if you suspect the file changed since you last saw it.
 
 How to propose code edits
 - Call the tool apply_code_edit to stage one or more atomic splices to files.
 - Each edit must include:
   - file_path: absolute path
-  - expected_file_hash: UUID of the file's current content (from a recent snippet header); this guards against editing a stale version
+  - expected_file_hash: UUID of the file's current content (from a recent snippet header or get_file_metadata); this guards against editing a stale version
   - start_byte, end_byte: byte offsets into the CURRENT file content; replacement will splice [start_byte, end_byte)
   - replacement: the exact new text to insert
 - Rules:
   - Do not submit overlapping ranges for the same file.
   - For multiple edits to the same file, ranges will be applied in descending start order.
-  - If you do not have the expected_file_hash, first request more context for that file.
+  - If you do not have the expected_file_hash, call get_file_metadata first.
   - Keep replacements minimal and precise. Avoid unrelated formatting changes.
 
 Examples
@@ -72,6 +79,8 @@ Examples
   request_code_context({ "token_budget": 2000, "hint": "file: crates/ploke-tui/src/app_state/handlers/rag.rs" })
 - Request context for a symbol:
   request_code_context({ "token_budget": 1500, "hint": "function: handle_tool_call_requested in rag.rs" })
+- Fetch file metadata (for expected_file_hash):
+  get_file_metadata({ "file_path": "/abs/path/to/file.rs" })
 - Stage a single-file edit:
   apply_code_edit({
     "edits": [
@@ -88,7 +97,7 @@ Examples
 Conversation structure
 - After the Code section below, the User's query appears under a # USER header.
 - If additional responses from collaborators appear (Assistant/Collaborator), treat them as context.
-- When uncertain, explicitly ask for the missing details or call request_code_context with a precise hint.
+- When uncertain, explicitly ask for the missing details or call request_code_context/get_file_metadata with a precise hint.
 
 # Code
 
@@ -482,6 +491,88 @@ pub async fn handle_tool_call_requested(
         }
 
         // Do not send Completed/Failed now; wait for user approval (unless auto-approval enabled)
+        return;
+    }
+
+    // New: get_file_metadata tool for fetching current file hash and basic metadata
+    if name == "get_file_metadata" {
+        // Validate args
+        let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: "Missing required argument 'file_path'".to_string(),
+                }));
+            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                error: "Missing required argument 'file_path'".to_string(),
+            }));
+            return;
+        };
+
+        let path = std::path::PathBuf::from(file_path_str);
+        // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
+        match tokio::fs::read(&path).await {
+            Ok(bytes) => {
+                let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);
+                // Get basic metadata
+                let (byte_len, modified_ms) = match tokio::fs::metadata(&path).await {
+                    Ok(md) => {
+                        let len = md.len();
+                        let modified_ms = md.modified().ok().and_then(|mtime| {
+                            mtime
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .ok()
+                                .map(|d| d.as_millis() as i64)
+                        });
+                        (len, modified_ms)
+                    }
+                    Err(_) => (bytes.len() as u64, None),
+                };
+
+                let content = serde_json::json!({
+                    "ok": true,
+                    "file_path": path.display().to_string(),
+                    "exists": true,
+                    "byte_len": byte_len,
+                    "modified_ms": modified_ms,
+                    "file_hash": hash_uuid.to_string(),
+                    "tracking_hash": hash_uuid.to_string(),
+                })
+                .to_string();
+
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        content,
+                    }));
+            }
+            Err(e) => {
+                let err = format!("Failed to read file '{}': {}", path.display(), e);
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: err.clone(),
+                    }));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
+            }
+        }
         return;
     }
 
