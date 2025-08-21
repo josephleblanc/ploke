@@ -26,9 +26,10 @@ How to add more snapshot tests
 6) Call build_openai_request(...) and serialize with serde_json::to_string_pretty(&payload).
 7) Compare the resulting string to a literal "snapshot" you paste into the test (kept in-repo).
 
-Why not insta?
-- The workspace base Cargo.toml is read-only here; adding dev-deps would require broader changes.
-- This harness keeps tests deterministic and dependency-light.
+Using insta for structured snapshots
+- We include insta in ploke-tui dev-dependencies to simplify maintaining stable snapshots.
+- Prefer assert_snapshot! over manual string equality where convenient; serialize with serde_json::to_string_pretty for deterministic output.
+- Inline snapshots (using the @r###"..."### form) avoid separate .snap files and keep expectations close to tests.
 
 Limitations
 - Snapshots live inline as string literals (not in separate .snap files).

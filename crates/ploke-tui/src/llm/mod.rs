@@ -48,9 +48,9 @@ pub struct OpenAiRequest<'a> {
 pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub allow: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(default)]
     pub deny: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(default)]
     pub order: Vec<String>,
 }
 

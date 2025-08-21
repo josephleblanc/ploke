@@ -274,6 +274,153 @@ impl<'a> RequestSession<'a> {
             }
         }
     }
+    
+    #[test]
+    fn test_build_request_without_provider_field_snapshot() {
+        // Arrange: provider without provider_slug should omit the "provider" field entirely
+        let provider = crate::user_config::ProviderConfig {
+            id: "qwen-72b".to_string(),
+            api_key: "".to_string(),
+            provider_slug: None,
+            api_key_env: None,
+            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+            model: "qwen/qwen-2.5-72b-instruct".to_string(),
+            display_name: Some("qwen/qwen-2.5-72b-instruct".to_string()),
+            provider_type: crate::user_config::ProviderType::OpenRouter,
+            llm_params: None,
+        };
+
+        let params = super::LLMParameters {
+            model: provider.model.clone(),
+            temperature: Some(0.1),
+            max_tokens: Some(64),
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            stop_sequences: vec![],
+            parallel_tool_calls: true,
+            response_format: Default::default(),
+            safety_settings: Default::default(),
+            system_prompt: Some("Minimal system.".to_string()),
+            tool_max_retries: Some(1),
+            tool_token_limit: Some(512),
+            history_char_budget: Some(4000),
+            tool_timeout_secs: Some(10),
+        };
+
+        let messages = vec![
+            super::RequestMessage {
+                role: "system",
+                content: "Minimal system.".to_string(),
+                tool_call_id: None,
+            },
+            super::RequestMessage {
+                role: "user",
+                content: "Ping".to_string(),
+                tool_call_id: None,
+            },
+        ];
+
+        // Act
+        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Snapshot: provider field must be omitted
+        let expected = r#"{
+  "model": "qwen/qwen-2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Minimal system."
+    },
+    {
+      "role": "user",
+      "content": "Ping"
+    }
+  ],
+  "temperature": 0.1,
+  "max_tokens": 64,
+  "stream": false
+}"#;
+
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_build_request_regular_chat_snapshot_insta_inline() {
+        use insta::assert_snapshot;
+
+        let provider = crate::user_config::ProviderConfig {
+            id: "qwen-72b".to_string(),
+            api_key: "".to_string(),
+            provider_slug: Some("openrouter".to_string()),
+            api_key_env: None,
+            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+            model: "qwen/qwen-2.5-72b-instruct".to_string(),
+            display_name: Some("qwen/qwen-2.5-72b-instruct".to_string()),
+            provider_type: crate::user_config::ProviderType::OpenRouter,
+            llm_params: None,
+        };
+
+        let params = super::LLMParameters {
+            model: provider.model.clone(),
+            temperature: Some(0.2),
+            max_tokens: Some(256),
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            stop_sequences: vec![],
+            parallel_tool_calls: true,
+            response_format: Default::default(),
+            safety_settings: Default::default(),
+            system_prompt: Some("You are helpful.".to_string()),
+            tool_max_retries: Some(2),
+            tool_token_limit: Some(2048),
+            history_char_budget: Some(12000),
+            tool_timeout_secs: Some(30),
+        };
+
+        let messages = vec![
+            super::RequestMessage {
+                role: "system",
+                content: "You are helpful.".to_string(),
+                tool_call_id: None,
+            },
+            super::RequestMessage {
+                role: "user",
+                content: "Hello!".to_string(),
+                tool_call_id: None,
+            },
+        ];
+
+        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let pretty = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Inline insta snapshot keeps the snapshot next to the test for easy review.
+        assert_snapshot!(pretty, @r###"{
+  "model": "qwen/qwen-2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are helpful."
+    },
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "temperature": 0.2,
+  "max_tokens": 256,
+  "stream": false,
+  "provider": {
+    "allow": [
+      "openrouter"
+    ],
+    "deny": [],
+    "order": []
+  }
+}"###);
+    }
 }
 
 pub(crate) fn build_openai_request<'a>(
