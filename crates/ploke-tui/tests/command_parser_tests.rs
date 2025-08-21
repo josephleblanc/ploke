@@ -44,6 +44,42 @@ fn parses_model_commands() {
         }
         other => panic!("unexpected: {:?}", other),
     }
+
+    match parse("/model search gemini", CommandStyle::Slash) {
+        Command::ModelSearch(kw) => assert_eq!(kw, "gemini"),
+        other => panic!("unexpected: {:?}", other),
+    }
+}
+
+#[test]
+fn parses_provider_strictness() {
+    match parse("/provider strictness openrouter-only", CommandStyle::Slash) {
+        Command::ProviderStrictness(mode) => assert!(matches!(mode, ProviderRegistryStrictness::OpenRouterOnly)),
+        other => panic!("unexpected: {:?}", other),
+    }
+
+    match parse("/provider strictness allow-custom", CommandStyle::Slash) {
+        Command::ProviderStrictness(mode) => assert!(matches!(mode, ProviderRegistryStrictness::AllowCustom)),
+        other => panic!("unexpected: {:?}", other),
+    }
+
+    match parse("/provider strictness allow-any", CommandStyle::Slash) {
+        Command::ProviderStrictness(mode) => assert!(matches!(mode, ProviderRegistryStrictness::AllowAny)),
+        other => panic!("unexpected: {:?}", other),
+    }
+}
+
+#[test]
+fn parses_help_topics() {
+    assert!(matches!(parse("/help", CommandStyle::Slash), Command::Help));
+    match parse("/help model", CommandStyle::Slash) {
+        Command::HelpTopic(t) => assert_eq!(t, "model"),
+        other => panic!("unexpected: {:?}", other),
+    }
+    match parse(":help edit", CommandStyle::NeoVim) {
+        Command::HelpTopic(t) => assert_eq!(t, "edit"),
+        other => panic!("unexpected: {:?}", other),
+    }
 }
 
 #[test]

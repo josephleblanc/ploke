@@ -67,8 +67,12 @@ pub struct App {
     show_context_preview: bool,
     // Modal overlay for interactive model discovery/selection
     model_browser: Option<ModelBrowserState>,
+    // Input history browsing (Insert mode)
+    input_history: Vec<String>,
+    input_history_pos: Option<usize>,
 }
 
+#[derive(Debug)]
 struct ModelBrowserItem {
     id: String,
     name: Option<String>,
@@ -79,6 +83,7 @@ struct ModelBrowserItem {
     expanded: bool,
 }
 
+#[derive(Debug)]
 struct ModelBrowserState {
     visible: bool,
     keyword: String,
@@ -115,6 +120,8 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             model_browser: None,
+            input_history: Vec::new(),
+            input_history_pos: None,
         }
     }
 
@@ -565,43 +572,95 @@ impl App {
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
         // Intercept keys for model browser overlay when visible
-        if let Some(mb) = self.model_browser.as_mut() {
-            use KeyCode::*;
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.model_browser = None;
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if mb.selected > 0 {
-                        mb.selected -= 1;
-                    } else {
-                        mb.selected = mb.items.len().saturating_sub(1);
-                    }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if mb.items.is_empty() {
-                        // nothing
-                    } else if mb.selected + 1 < mb.items.len() {
-                        mb.selected += 1;
-                    } else {
-                        mb.selected = 0;
-                    }
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    if let Some(item) = mb.items.get_mut(mb.selected) {
-                        item.expanded = !item.expanded;
-                    }
-                }
-                KeyCode::Char('s') => {
-                    if let Some(item) = mb.items.get(mb.selected) {
-                        self.switch_to_model(&item.id);
+        if self.model_browser.is_some() {
+            let mut chosen_id: Option<String> = None;
+            if let Some(mb) = self.model_browser.as_mut() {
+                use KeyCode::*;
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
                         self.model_browser = None;
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if mb.selected > 0 {
+                            mb.selected -= 1;
+                        } else {
+                            mb.selected = mb.items.len().saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if mb.items.is_empty() {
+                            // nothing
+                        } else if mb.selected + 1 < mb.items.len() {
+                            mb.selected += 1;
+                        } else {
+                            mb.selected = 0;
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                            item.expanded = !item.expanded;
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        chosen_id = mb.items.get(mb.selected).map(|i| i.id.clone());
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+            // Drop the mutable borrow of self.model_browser before switching model
+            if let Some(id) = chosen_id {
+                self.switch_to_model(&id);
+                self.model_browser = None;
             }
             self.needs_redraw = true;
             return;
+        }
+
+        // Insert mode input history navigation
+        if self.mode == Mode::Insert {
+            use KeyCode::*;
+            match key.code {
+                KeyCode::Up => {
+                    self.input_history_prev();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Down => {
+                    self.input_history_next();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::PageUp => {
+                    self.input_history_first();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::PageDown => {
+                    self.input_history_last();
+                    self.needs_redraw = true;
+                    return;
+                }
+                _ => {}
+            }
+        } else {
+            // Normal mode: delete selected message with Del
+            if matches!(key.code, crossterm::event::KeyCode::Delete) {
+                if let Some(sel_idx) = self.list.selected() {
+                    // Read current path and resolve message id at index
+                    let id_opt = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            let guard = self.state.chat.0.read().await;
+                            let path = guard.get_full_path();
+                            path.get(sel_idx).map(|m| m.id)
+                        })
+                    });
+                    if let Some(id) = id_opt {
+                        self.send_cmd(StateCommand::DeleteMessage { id });
+                    }
+                }
+                self.needs_redraw = true;
+                return;
+            }
         }
 
         if let Some(action) = to_action(self.mode, key, self.command_style) {
@@ -799,7 +858,97 @@ impl App {
     }
 
     fn add_input_char(&mut self, c: char) {
+        // Typing resets input-history browsing
+        self.input_history_pos = None;
         self.input_buffer.push(c);
+    }
+
+    /// Rebuild the per-conversation user-input history from the current path.
+    fn rebuild_input_history(&mut self) {
+        let msgs = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let guard = self.state.chat.0.read().await;
+                guard
+                    .get_full_path()
+                    .into_iter()
+                    .filter(|m| m.kind == MessageKind::User && !m.content.is_empty())
+                    .map(|m| m.content.clone())
+                    .collect::<Vec<String>>()
+            })
+        });
+        self.input_history = msgs;
+    }
+
+    fn input_history_prev(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        match self.input_history_pos {
+            None => {
+                // Start from most recent (last)
+                let last = self.input_history.len().saturating_sub(1);
+                self.input_history_pos = Some(last);
+                self.input_buffer = self.input_history[last].clone();
+            }
+            Some(pos) => {
+                if pos > 0 {
+                    let new_pos = pos - 1;
+                    self.input_history_pos = Some(new_pos);
+                    self.input_buffer = self.input_history[new_pos].clone();
+                }
+            }
+        }
+    }
+
+    fn input_history_next(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        match self.input_history_pos {
+            None => {
+                // Nothing selected; keep buffer as-is
+            }
+            Some(pos) => {
+                if pos + 1 < self.input_history.len() {
+                    let new_pos = pos + 1;
+                    self.input_history_pos = Some(new_pos);
+                    self.input_buffer = self.input_history[new_pos].clone();
+                } else {
+                    // Beyond the newest -> clear buffer and exit history mode
+                    self.input_history_pos = None;
+                    self.input_buffer.clear();
+                }
+            }
+        }
+    }
+
+    fn input_history_first(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        self.input_history_pos = Some(0);
+        self.input_buffer = self.input_history[0].clone();
+    }
+
+    fn input_history_last(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        let last = self.input_history.len().saturating_sub(1);
+        self.input_history_pos = Some(last);
+        self.input_buffer = self.input_history[last].clone();
     }
 
     fn open_model_browser(&mut self, keyword: String, items: Vec<ModelEntry>) {

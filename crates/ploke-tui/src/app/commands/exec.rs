@@ -32,6 +32,7 @@ const TEST_QUERY_RESULTS: &str = "results.json";
 pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Help => show_command_help(app),
+        Command::HelpTopic(topic) => show_topic_help(app, &topic),
         Command::ModelList => list_models_async(app),
         Command::ModelInfo => show_model_info_async(app),
         Command::ModelSearch(keyword) => {
@@ -327,6 +328,63 @@ fn show_model_info_async(app: &App) {
 fn show_command_help(app: &App) {
     app.send_cmd(StateCommand::AddMessageImmediate {
         msg: HELP_COMMANDS.to_string(),
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
+}
+
+/// Show targeted help for a topic prefix (e.g., "model", "edit", "bm25", "provider", "index").
+fn show_topic_help(app: &App, topic_prefix: &str) {
+    let t = topic_prefix.to_lowercase();
+    let msg = if t.starts_with("model") {
+        r#"Model commands:
+  model list                         - List available models
+  model info                         - Show active model/provider settings
+  model use <name>                   - Switch to a configured model by alias or id
+  model refresh [--local]            - Refresh model registry (OpenRouter) and API keys; use --local to skip network
+  model load [path]                  - Load configuration from path (default: ~/.config/ploke/config.toml)
+  model save [path] [--with-keys]    - Save configuration; omit --with-keys to redact secrets
+  model search <keyword>             - Search OpenRouter models; interactive browser opens:
+                                       ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close
+"#
+        .to_string()
+    } else if t.starts_with("edit") {
+        r#"Edit commands:
+  edit preview mode <code|diff>      - Set edit preview mode for proposals
+  edit preview lines <N>             - Set max preview lines per section
+  edit auto <on|off>                 - Toggle auto-approval of staged edits
+  edit approve <request_id>          - Apply staged code edits with this request ID
+  edit deny <request_id>             - Deny and discard staged code edits
+"#
+        .to_string()
+    } else if t.starts_with("bm25") {
+        r#"BM25 commands:
+  bm25 rebuild                       - Rebuild sparse BM25 index
+  bm25 status                        - Show sparse BM25 index status
+  bm25 save <path>                   - Save sparse index sidecar to file
+  bm25 load <path>                   - Load sparse index sidecar from file
+  bm25 search <query> [top_k]        - Search with BM25
+  hybrid <query> [top_k]             - Hybrid (BM25 + dense) search
+"#
+        .to_string()
+    } else if t.starts_with("provider") {
+        r#"Provider commands:
+  provider strictness <openrouter-only|allow-custom|allow-any>
+                                     - Restrict selectable providers
+"#
+        .to_string()
+    } else if t.starts_with("index") {
+        r#"Indexing commands:
+  index start [directory]            - Run workspace indexing (defaults to current dir)
+  index pause/resume/cancel          - Pause, resume, or cancel indexing
+"#
+        .to_string()
+    } else {
+        format!("Unknown help topic '{}'. Try 'help model', 'help edit', 'help bm25', 'help provider', or 'help index'.", topic_prefix)
+    };
+
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg,
         kind: MessageKind::SysInfo,
         new_msg_id: Uuid::new_v4(),
     });
@@ -749,7 +807,9 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     edit auto <on|off> - Toggle auto-approval of staged edits
     edit approve <request_id> - Apply staged code edits with this request ID
     edit deny <request_id> - Deny and discard staged code edits
+
     help - Show this help
+    help <topic> - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
 
     Keyboard shortcuts (Normal mode):
     q - Quit
@@ -767,5 +827,17 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     gg - Go to top (scroll)
     h/← - Navigate branch previous
     l/→ - Navigate branch next
+    Del - Delete selected conversation item
     Ctrl+n - Scroll down one line
-    Ctrl+p - Scroll up one line"#;
+    Ctrl+p - Scroll up one line
+
+    Model Browser (opened via 'model search <keyword>'):
+      ↑/↓ or j/k - Navigate
+      Enter/Space - Expand/collapse details
+      s - Select and set active model
+      q/Esc - Close
+
+    Insert mode history:
+      ↑/↓ - Navigate your previous user messages in this conversation
+      PageUp/PageDown - Jump to oldest/newest user message in history
+"#;

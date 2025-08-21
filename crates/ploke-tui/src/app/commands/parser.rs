@@ -17,6 +17,7 @@ use uuid::Uuid;
 /// High-level parsed command variants handled by the executor.
 pub enum Command {
     Help,
+    HelpTopic(String),
     ModelList,
     ModelInfo,
     ModelUse(String),
@@ -43,6 +44,14 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
 
     match trimmed {
         "help" => Command::Help,
+        s if s.starts_with("help ") => {
+            let topic = s.trim_start_matches("help ").trim().to_string();
+            if topic.is_empty() {
+                Command::Help
+            } else {
+                Command::HelpTopic(topic)
+            }
+        }
         "model list" => Command::ModelList,
         "model info" => Command::ModelInfo,
         s if s.starts_with("model use ") => {
