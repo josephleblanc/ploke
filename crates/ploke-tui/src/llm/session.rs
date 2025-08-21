@@ -76,33 +76,13 @@ impl<'a> RequestSession<'a> {
 
             let effective_messages = cap_messages_by_chars(&self.messages, history_budget_chars);
 
-            let request_payload = OpenAiRequest {
-                model: self.provider.model.as_str(),
-                messages: effective_messages,
-                temperature: self.params.temperature,
-                max_tokens: self.params.max_tokens,
-                top_p: self.params.top_p,
-                stream: false,
-                tools: if use_tools {
-                    Some(self.tools.clone())
-                } else {
-                    None
-                },
-                tool_choice: if use_tools {
-                    Some("auto".to_string())
-                } else {
-                    None
-                },
-                provider: self
-                    .provider
-                    .provider_slug
-                    .as_ref()
-                    .map(|slug| super::ProviderPreferences {
-                        allow: vec![slug.clone()],
-                        deny: vec![],
-                        order: vec![],
-                    }),
-            };
+            let request_payload = build_openai_request(
+                self.provider,
+                effective_messages,
+                &self.params,
+                if use_tools { Some(self.tools.clone()) } else { None },
+                use_tools,
+            );
 
             let response = self
                 .client
@@ -296,6 +276,37 @@ impl<'a> RequestSession<'a> {
     }
 }
 
+pub(crate) fn build_openai_request<'a>(
+    provider: &'a crate::user_config::ProviderConfig,
+    messages: Vec<super::RequestMessage<'a>>,
+    params: &super::LLMParameters,
+    tools: Option<Vec<super::ToolDefinition>>,
+    use_tools: bool,
+) -> super::OpenAiRequest<'a> {
+    super::OpenAiRequest {
+        model: provider.model.as_str(),
+        messages,
+        temperature: params.temperature,
+        max_tokens: params.max_tokens,
+        top_p: params.top_p,
+        stream: false,
+        tools: if use_tools { tools } else { None },
+        tool_choice: if use_tools {
+            Some("auto".to_string())
+        } else {
+            None
+        },
+        provider: provider
+            .provider_slug
+            .as_ref()
+            .map(|slug| super::ProviderPreferences {
+                allow: vec![slug.clone()],
+                deny: vec![],
+                order: vec![],
+            }),
+    }
+}
+
 /// Await a correlated ToolCall completion/failure on the realtime broadcast channel.
 ///
 /// - `rx`: a subscribed `broadcast::Receiver<AppEvent>` (must be subscribed before the request is emitted)
@@ -427,5 +438,203 @@ mod tests {
         let res = await_tool_result(rx, request_id, &call_id, 5).await;
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), error_msg);
+    }
+
+    #[test]
+    fn test_build_request_regular_chat_snapshot() {
+        // Arrange: provider and parameters for qwen model without tools
+        let provider = crate::user_config::ProviderConfig {
+            id: "qwen-72b".to_string(),
+            api_key: "".to_string(),
+            provider_slug: Some("openrouter".to_string()),
+            api_key_env: None,
+            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+            model: "qwen/qwen-2.5-72b-instruct".to_string(),
+            display_name: Some("qwen/qwen-2.5-72b-instruct".to_string()),
+            provider_type: crate::user_config::ProviderType::OpenRouter,
+            llm_params: None,
+        };
+
+        let params = super::LLMParameters {
+            model: provider.model.clone(),
+            temperature: Some(0.2),
+            max_tokens: Some(256),
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            stop_sequences: vec![],
+            parallel_tool_calls: true,
+            response_format: Default::default(),
+            safety_settings: Default::default(),
+            system_prompt: Some("You are helpful.".to_string()),
+            tool_max_retries: Some(2),
+            tool_token_limit: Some(2048),
+            history_char_budget: Some(12000),
+            tool_timeout_secs: Some(30),
+        };
+
+        let messages = vec![
+            super::RequestMessage {
+                role: "system",
+                content: "You are helpful.".to_string(),
+                tool_call_id: None,
+            },
+            super::RequestMessage {
+                role: "user",
+                content: "Hello!".to_string(),
+                tool_call_id: None,
+            },
+        ];
+
+        // Act: build request without tools
+        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Snapshot: expected payload (stable field order)
+        let expected = r#"{
+  "model": "qwen/qwen-2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are helpful."
+    },
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "temperature": 0.2,
+  "max_tokens": 256,
+  "stream": false,
+  "provider": {
+    "allow": [
+      "openrouter"
+    ],
+    "deny": [],
+    "order": []
+  }
+}"#;
+
+        assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn test_build_request_tool_call_snapshot() {
+        // Arrange: provider and parameters for qwen model with tools
+        let provider = crate::user_config::ProviderConfig {
+            id: "qwen-72b".to_string(),
+            api_key: "".to_string(),
+            provider_slug: Some("openrouter".to_string()),
+            api_key_env: None,
+            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+            model: "qwen/qwen-2.5-72b-instruct".to_string(),
+            display_name: Some("qwen/qwen-2.5-72b-instruct".to_string()),
+            provider_type: crate::user_config::ProviderType::OpenRouter,
+            llm_params: None,
+        };
+
+        let params = super::LLMParameters {
+            model: provider.model.clone(),
+            temperature: Some(0.0),
+            max_tokens: Some(128),
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            stop_sequences: vec![],
+            parallel_tool_calls: true,
+            response_format: Default::default(),
+            safety_settings: Default::default(),
+            system_prompt: Some("You can call tools.".to_string()),
+            tool_max_retries: Some(2),
+            tool_token_limit: Some(2048),
+            history_char_budget: Some(12000),
+            tool_timeout_secs: Some(30),
+        };
+
+        let messages = vec![
+            super::RequestMessage {
+                role: "system",
+                content: "You can call tools.".to_string(),
+                tool_call_id: None,
+            },
+            super::RequestMessage {
+                role: "user",
+                content: "Please fetch context.".to_string(),
+                tool_call_id: None,
+            },
+        ];
+
+        let tool = super::ToolDefinition {
+            r#type: "function",
+            function: super::ToolFunctionDef {
+                name: "dummy_tool",
+                description: "Return a fixed string",
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "arg": { "type": "string" }
+                    },
+                    "required": ["arg"]
+                }),
+            },
+        };
+
+        // Act: build request with tools and auto tool_choice
+        let payload = super::build_openai_request(
+            &provider,
+            messages,
+            &params,
+            Some(vec![tool]),
+            true,
+        );
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+
+        // Snapshot: expected payload (stable field order)
+        let expected = r#"{
+  "model": "qwen/qwen-2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You can call tools."
+    },
+    {
+      "role": "user",
+      "content": "Please fetch context."
+    }
+  ],
+  "temperature": 0.0,
+  "max_tokens": 128,
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "dummy_tool",
+        "description": "Return a fixed string",
+        "parameters": {
+          "properties": {
+            "arg": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "arg"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "provider": {
+    "allow": [
+      "openrouter"
+    ],
+    "deny": [],
+    "order": []
+  }
+}"#;
+
+        assert_eq!(json, expected);
     }
 }
