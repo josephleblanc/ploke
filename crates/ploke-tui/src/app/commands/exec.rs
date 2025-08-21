@@ -53,23 +53,80 @@ struct UserFilteredEndpoint {
     description: String,
     #[serde(default)]
     architecture: Architecture,
-    // AI: Finish
+    #[serde(default)]
+    top_provider: TopProvider,
+    #[serde(default)]
+    pricing: Pricing,
+    #[serde(default)]
+    canonical_slug: String,
+    #[serde(default)]
+    context_length: u64,
+    #[serde(default)]
+    hugging_face_id: String,
+    #[serde(default)]
+    per_request_limits: std::collections::HashMap<String, Value>,
+    #[serde(default)]
+    supported_parameters: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Architecture {
     input_modalities: Vec<InputModality>,
-    // AI: finish
+    #[serde(default)]
+    output_modalities: Vec<OutputModality>,
+    #[serde(default)]
+    tokenizer: String,
+    #[serde(default)]
+    instruct_type: String,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum InputModality {
     #[serde()]
     Text,
-    Image
-    // AI: Finish
+    Image,
+    Audio,
+    Video,
 }
 
-// AI!
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum OutputModality {
+    #[serde()]
+    Text,
+    Image,
+    Audio,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TopProvider {
+    #[serde(default)]
+    is_moderated: bool,
+    #[serde(default)]
+    context_length: u64,
+    #[serde(default)]
+    max_completion_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Pricing {
+    #[serde(default)]
+    prompt: String,
+    #[serde(default)]
+    completion: String,
+    #[serde(default)]
+    image: String,
+    #[serde(default)]
+    request: String,
+    #[serde(default)]
+    web_search: String,
+    #[serde(default)]
+    internal_reasoning: String,
+    #[serde(default)]
+    input_cache_read: String,
+    #[serde(default)]
+    input_cache_write: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEndpoint {
     #[serde(default)]
@@ -84,6 +141,14 @@ struct ModelEndpoint {
     max_completion_tokens: Option<u64>,
     #[serde(default)]
     max_prompt_tokens: Option<u64>,
+    #[serde(default)]
+    pricing: Pricing,
+    #[serde(default)]
+    quantization: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    uptime_last_30m: f32,
 }
 
 /// Execute a parsed command. Falls back to legacy handler for commands
