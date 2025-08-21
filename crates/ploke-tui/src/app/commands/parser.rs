@@ -28,6 +28,7 @@ pub enum Command {
     ModelSearchHelp,
     ProviderStrictness(ProviderRegistryStrictness),
     ProviderToolsOnly(bool),
+    ProviderSelect { model_id: String, provider_slug: String },
     Update,
     EditApprove(Uuid),
     EditDeny(Uuid),
@@ -112,6 +113,19 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
             let t = s.trim_start_matches("provider tools-only ").trim().to_lowercase();
             let enabled = matches!(t.as_str(), "on" | "true" | "1" | "enabled" | "enable");
             Command::ProviderToolsOnly(enabled)
+        }
+        s if s.starts_with("provider select ") => {
+            // provider select <model_id> <provider_slug>
+            let rest = s.trim_start_matches("provider select ").trim();
+            let mut parts = rest.split_whitespace();
+            if let (Some(model_id), Some(provider_slug)) = (parts.next(), parts.next()) {
+                Command::ProviderSelect {
+                    model_id: model_id.to_string(),
+                    provider_slug: provider_slug.to_string(),
+                }
+            } else {
+                Command::Raw(trimmed.to_string())
+            }
         }
         "update" => Command::Update,
         s if s.starts_with("edit preview mode ") => {

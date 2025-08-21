@@ -228,6 +228,10 @@ pub fn execute(app: &mut App, command: Command) {
                     .await;
             });
         }
+        Command::ProviderSelect { model_id, provider_slug } => {
+            // Delegate to state layer to pin a specific provider endpoint for a model
+            app.send_cmd(StateCommand::SelectModelProvider { model_id, provider_slug });
+        }
         Command::Update => spawn_update(app),
         Command::EditApprove(id) => {
             app.send_cmd(StateCommand::ApproveEdits { request_id: id });
@@ -295,6 +299,7 @@ fn show_model_info_async(app: &App) {
                 format!("  Model: {}", p.model),
                 format!("  Base URL: {}", p.base_url),
                 format!("  Provider type: {:?}", p.provider_type),
+                format!("  Provider slug: {}", p.provider_slug.as_deref().unwrap_or("-")),
                 "".to_string(),
                 "  LLM parameters:".to_string(),
                 format!("    temperature: {}", fmt_opt_f32(params.temperature)),
@@ -401,6 +406,8 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
   provider strictness <openrouter-only|allow-custom|allow-any>
                                      - Restrict selectable providers
   provider tools-only <on|off>       - Enforce using only models/providers that support tool calls
+  provider select <model_id> <provider_slug>
+                                     - Pin a model to a specific provider endpoint
 "#
         .to_string()
     } else if t.starts_with("index") {
@@ -831,6 +838,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     model search <keyword> - Search OpenRouter models and open interactive browser
     provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
     provider tools-only <on|off> - Enforce using only models/providers that support tool calls
+    provider select <model_id> <provider_slug> - Pin a model to a specific provider endpoint
 
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status
