@@ -689,9 +689,8 @@ impl ChatHistory {
 
         for message in self.get_full_path() {
             md.push_str(&format!(
-                "## [{}] {}\n\n{}\n\n",
+                "## [{}]\n\n{}\n\n",
                 message.kind,
-                chrono::Utc::now().to_rfc3339(),
                 message.content
             ));
         }
