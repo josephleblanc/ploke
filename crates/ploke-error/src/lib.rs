@@ -112,13 +112,13 @@ pub use result_ext::{ResultExt, IterResultExt};
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 //// Top-level error type used across the ploke workspace.
-//!
-//! Variants group failures into coarse classes; see [`Error::severity`] for programmatic classification.
-//! Prefer returning `Result<T>` from functions and let callers decide how to emit via an [`policy::ErrorPolicy`].
-//!
-//! Migration note:
-//! - Prefer [`Error::Domain`] with a specific [`DomainError`] over deprecated stringly variants.
-//! - Emission/logging should be performed by an application-supplied policy rather than inline in libraries.
+///
+/// Variants group failures into coarse classes; see [`Error::severity`] for programmatic classification.
+/// Prefer returning `Result<T>` from functions and let callers decide how to emit via an [`policy::ErrorPolicy`].
+///
+/// Migration note:
+/// - Prefer [`Error::Domain`] with a specific [`DomainError`] over deprecated stringly variants.
+/// - Emission/logging should be performed by an application-supplied policy rather than inline in libraries.
 #[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
