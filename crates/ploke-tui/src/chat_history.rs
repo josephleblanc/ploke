@@ -352,7 +352,7 @@ impl ChatHistory {
     }
 
     /// Rebuilds the cached root -> tail path.
-    fn rebuild_path_cache(&mut self) {
+    pub(crate) fn rebuild_path_cache(&mut self) {
         let mut path = Vec::new();
         let mut cur = Some(self.tail);
         while let Some(id) = cur {
@@ -479,6 +479,64 @@ impl ChatHistory {
         // NOTE: Assumes the same kind (safe for sibling of message)
         let new_id = Uuid::new_v4();
         self.add_child(parent_id, new_id, content, status, sibling.kind)
+    }
+
+    /// Deletes a message and its descendant subtree from the conversation history.
+    ///
+    /// - The root message cannot be deleted.
+    /// - If the deleted subtree contains `current` or `tail`, they are moved to the parent.
+    /// - Rebuilds the cached path after mutation.
+    ///
+    /// Returns the new `current` message id if deletion occurred, otherwise `None`.
+    pub fn delete_message(&mut self, id: Uuid) -> Option<Uuid> {
+        // Cannot delete if not found or if root
+        let parent_id = match self.messages.get(&id).and_then(|m| m.parent) {
+            Some(pid) => pid,
+            None => return None, // root or missing
+        };
+
+        // Collect subtree nodes to delete (DFS)
+        let mut stack = vec![id];
+        let mut to_delete: Vec<Uuid> = Vec::new();
+        while let Some(node_id) = stack.pop() {
+            if let Some(msg) = self.messages.get(&node_id) {
+                for &child in &msg.children {
+                    stack.push(child);
+                }
+            }
+            to_delete.push(node_id);
+        }
+
+        // Update parent's children and selected_child
+        if let Some(parent) = self.messages.get_mut(&parent_id) {
+            parent.children.retain(|cid| *cid != id);
+            if parent.selected_child == Some(id) {
+                // Prefer the last remaining child if any
+                parent.selected_child = parent.children.last().copied();
+            }
+        }
+
+        // Track whether current/tail are being deleted
+        let deletes_current = to_delete.iter().any(|n| *n == self.current);
+        let deletes_tail = to_delete.iter().any(|n| *n == self.tail);
+
+        // Remove all collected nodes
+        for node in to_delete {
+            self.messages.remove(&node);
+        }
+
+        // Adjust tail/current if they were part of the deleted subtree
+        if deletes_tail {
+            self.tail = parent_id;
+        }
+        if deletes_current {
+            self.current = parent_id;
+        }
+
+        // Rebuild path cache to reflect new tree structure
+        self.rebuild_path_cache();
+
+        Some(self.current)
     }
 
     /// Gets the index position of a message within its parent's children list

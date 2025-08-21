@@ -36,6 +36,27 @@ pub async fn update_message(
     }
 }
 
+pub async fn delete_message(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    id: Uuid,
+) {
+    // Perform deletion and compute new current selection, if any
+    let new_current = {
+        let mut chat_guard = state.chat.0.write().await;
+        chat_guard.delete_message(id)
+    };
+
+    if let Some(curr) = new_current {
+        {
+            let mut chat_guard = state.chat.0.write().await;
+            chat_guard.current = curr;
+        }
+        // Notify UI to refresh based on the new current selection
+        event_bus.send(MessageUpdatedEvent::new(curr).into());
+    }
+}
+
 pub async fn add_user_message(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
