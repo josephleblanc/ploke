@@ -11,26 +11,21 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
-use crate::app_state::AppState;
-use crate::app::App;
 use crate::event_bus::EventBus;
 use crate::user_config::CommandStyle;
 use crate::llm::openrouter_catalog::ModelEntry;
 use ploke_rag::{RagService, TokenBudget};
-use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
+use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
 use tokio::sync::mpsc;
 
 pub fn create_mock_app_state() -> AppState {
     let db = create_mock_db(0);
-    let embedder = Arc::new(EmbeddingProcessor::new(
-        Box::new(MockEmbedder {
-            dimensions: 384,
-            behavior: MockBehavior::Normal,
-        }),
-        8,
-    ));
+    // AI: Create this new_mock function AI!
+    let embedder = Arc::new(EmbeddingProcessor::new_mock(source)
+    );
     let io_handle = IoManagerHandle::new();
+    // AI: Create this new_mock function AI!
     let rag = Arc::new(RagService::new_mock());
     let budget = TokenBudget::default();
     let (rag_tx, _rag_rx) = mpsc::channel(10);
