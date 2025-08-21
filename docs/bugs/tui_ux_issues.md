@@ -89,8 +89,13 @@ USER: This is a lazy fix (not the good kind). Revisit strategy here. Whatever wa
 
 ## Open Questions
 1. ConversationView auto-centering: If flicker persists, can you share `ConversationView` code? We may need to bypass selection-driven offset updates while in Insert mode.
+  - USER: I haven't opened the TUI again since there are currently compilation errors after your last changes (fix now), but I had already included the necessary file in the conversation, see this message from our `aider` interface when I tried to add it:
+  `/home/brasides/code/second_aider_dir/ploke/crates/ploke-tui/src/app/view/components/conversation.rs is already in the chat as an editable file`
+  - USER: I believe you are making this mistake because the context window is growing long (63k+). I would like you to specify which files are necessary to continue implementing the fixes, and add a short description of why the others were usefule (if at all) so you will have a reference if we need to add them later. Let's try to reduce cognitive overhead and stay focused on these fixes.
 2. Delete behavior semantics: Should deleting a message also remove its descendant branch, or only the single node? Current command is `StateCommand::DeleteMessage { id }`—confirm intended semantics.
+  - USER: Leave the current function for delete as-is, create a new function for `delete_node` with documentation highlighting the differences, where `delete_node` should remove the node, then reparent/child as necessary.
 3. For model search fetching: Would you prefer a fully async flow (no blocking) with a `StateCommand` to deliver results to the UI instead of doing a synchronous fetch in the UI thread?
+  - USER: Yes, use an async flow, we should try to always avoid blocking the UI thread to maintain high performance.
 
 ## Notes
 - No items are marked complete until you confirm behavior in your environment.
