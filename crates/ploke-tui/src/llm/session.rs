@@ -443,14 +443,7 @@ pub(crate) fn build_openai_request<'a>(
         } else {
             None
         },
-        provider: provider
-            .provider_slug
-            .as_ref()
-            .map(|slug| super::ProviderPreferences {
-                allow: vec![slug.clone()],
-                deny: vec![],
-                order: vec![],
-            }),
+        provider: None,
     }
 }
 
@@ -653,14 +646,7 @@ mod tests {
   ],
   "temperature": 0.2,
   "max_tokens": 256,
-  "stream": false,
-  "provider": {
-    "allow": [
-      "openrouter"
-    ],
-    "deny": [],
-    "order": []
-  }
+  "stream": false
 }"#;
 
         assert_eq!(json, expected);
@@ -773,14 +759,7 @@ mod tests {
       }
     }
   ],
-  "tool_choice": "auto",
-  "provider": {
-    "allow": [
-      "openrouter"
-    ],
-    "deny": [],
-    "order": []
-  }
+  "tool_choice": "auto"
 }"#;
 
         assert_eq!(json, expected);
