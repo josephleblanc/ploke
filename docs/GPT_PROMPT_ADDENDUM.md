@@ -91,14 +91,25 @@ Micro-guidance examples (stylistic)
 
 Open questions to confirm (pick defaults)
 - Traits vs generics vs dyn: prefer generics for perf-critical internals and dyn at boundaries? Y/N
+  - // AI: I'd actually like you to expand on the trade-offs here. My tendency is toward static dispatch over dynamic dispatch in all cases. I know people tend to like the `&dyn Trait` but I really dislike runtime errors. My instinct is to always lean towards decisions that will "make invalid states unrepresentable" wherever possible, and have found that this is a powerful pattern for LLM-assisted coding. However, I'm still learning and would like to understand the different perspectives and tradeoffs. Dont' agree with me for the sake of it, don't disagree with me just to disagree. Present me with good information and resaoned arguments for each side, and try to represent the choices and design decisions that are implied with each choice, along with the implications of those choices. AI!
 - Iterator APIs: OK to return impl Iterator from internal helpers by default? Y/N
+  - // AI: Question here - This was something I was surprised by in the documentation in the contributor style guide for rust-analyzer, which is taht they said to prefer not to do this (I think?) possibly because that meant that all of the types that implemented IntoIterator or Iterator would need to have a static dispatch function generated at compile time and this would bloat binaries? Tell me more about why they might have made this decision. Similarly I think they say not to use colsures inside a function as variables, which also surprised me because they seem to have such value in capturing Copy types from the environment and reduicng boilderplate. Any ideas on why they would make these choices AI!
 - Lifetimes: prefer borrowing APIs even if slightly less ergonomic? Y/N
+  - // AI: Prefer borrowing APIs when there is a clear benefit to doing so and the type in question is large.
 - Recursion: allow in shallow-tree transforms without pre-approval? Y/N
+  - // AI: Yes this is fine.
 - Lints: enforce deny(warnings) or allow during migrations? Which clippy tiers?
+  - // AI: Don't really care
 - Features: minimize default features; keep “diagnostic” and “tracing” opt-in? Y/N
+  - // AI: Yes
 - Testing: keep docs as rust,ignore by default; selectively enable doctests? Y/N
+  - // AI: I mean, this is tough. I want the docs to run, but yours usually fail. I want correct docs with correct examples.
 
 Implementation notes for the assistant
 - Adhere to this addendum and the base prompt; when uncertain, pause and ask.
 - Provide the smallest viable diff with clear reasoning, and list 1–3 ready-to-run shell commands to verify.
 - If requested to add documentation, never use //! except at the file top with explicit approval; otherwise, use ///.
+
+// AI: USER QUESTIONS:
+- `String` vs `Arc<[str]>`? Discuss.
+- `tokio` and `rayon`? Discuss
