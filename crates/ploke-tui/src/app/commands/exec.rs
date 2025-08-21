@@ -21,12 +21,40 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 use crate::user_config::{ProviderRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
 const TEST_QUERY_RESULTS: &str = "results.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModelEndpointsResponse {
+    data: ModelEndpointsData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModelEndpointsData {
+    #[serde(default)]
+    endpoints: Vec<ModelEndpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModelEndpoint {
+    #[serde(default)]
+    provider_name: String,
+    #[serde(default)]
+    context_length: Option<u64>,
+    #[serde(default)]
+    supported_parameters: Vec<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    max_prompt_tokens: Option<u64>,
+}
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
@@ -578,23 +606,39 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             .await
             .and_then(|r| r.error_for_status())
         {
-            // AI: Create a type that derives Serialize and Deserialize instead of matching on json
-            // values here AI!
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => {
+            Ok(resp) => match resp.json::<ModelEndpointsResponse>().await {
+                Ok(payload) => {
                     let mut lines = vec![
                         format!("Available endpoints for model '{}':", model_id),
                         "  (Providers marked [tools] advertise tool support)".to_string(),
                     ];
 
-                    if let Some(endpoints) = v.get("data").and_then(|d| d.get("endpoints")).and_then(|e| e.as_array()) {
-                        for ep in endpoints {
-                            let name = ep.get("provider_name").and_then(|x| x.as_str()).unwrap_or("unknown");
-                            let ctx = ep.get("context_length").and_then(|x| x.as_u64()).map(|n| format!("ctx={}", n)).unwrap_or_default();
-                            let sp = ep.get("supported_parameters").and_then(|x| x.as_array().cloned()).unwrap_or_default();
-                            let supports_tools = sp.iter().any(|s| s.as_str().map(|t| t.eq_ignore_ascii_case("tools")).unwrap_or(false));
-                            let slug = providers_map.get(name).cloned().unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
-                            lines.push(format!("  - {} (slug: {}) {}{}", name, slug, if supports_tools { "[tools]" } else { "" }, if ctx.is_empty() { "".to_string() } else { format!(" {}", ctx) }));
+                    if !payload.data.endpoints.is_empty() {
+                        for ep in payload.data.endpoints {
+                            let name = ep.provider_name.as_str();
+                            let ctx = ep
+                                .context_length
+                                .map(|n| format!("ctx={}", n))
+                                .unwrap_or_default();
+                            let supports_tools = ep
+                                .supported_parameters
+                                .iter()
+                                .any(|t| t.eq_ignore_ascii_case("tools"));
+                            let slug = providers_map
+                                .get(name)
+                                .cloned()
+                                .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                            lines.push(format!(
+                                "  - {} (slug: {}) {}{}",
+                                name,
+                                slug,
+                                if supports_tools { "[tools]" } else { "" },
+                                if ctx.is_empty() {
+                                    "".to_string()
+                                } else {
+                                    format!(" {}", ctx)
+                                }
+                            ));
                         }
                     } else {
                         lines.push("  No endpoints returned for this model.".to_string());
