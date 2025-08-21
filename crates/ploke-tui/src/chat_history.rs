@@ -806,3 +806,351 @@ pub(crate) async fn atomic_write(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_root_returns_none_and_no_changes() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+        let orig_len = ch.messages.len();
+
+        let res = ch.delete_message(root);
+
+        assert!(res.is_none());
+        assert_eq!(ch.messages.len(), orig_len);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_nonexistent_returns_none_and_no_effect() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let res = ch.delete_message(Uuid::new_v4());
+
+        assert!(res.is_none());
+        assert_eq!(ch.messages.len(), 1);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_leaf_updates_state() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "User: hi",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        // Set current to the leaf to exercise current-move behavior
+        ch.current = u1;
+
+        let res = ch.delete_message(u1);
+
+        assert_eq!(res, Some(root));
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.current, root);
+
+        // Parent should have no children and no selected child
+        let parent = ch.messages.get(&root).unwrap();
+        assert!(parent.children.is_empty());
+        assert!(parent.selected_child.is_none());
+
+        // Path cache should be rebuilt to just root
+        assert_eq!(ch.path_len(), 1);
+        let ids: Vec<Uuid> = ch.full_path_ids().collect();
+        assert_eq!(ids, vec![root]);
+    }
+
+    #[test]
+    fn delete_internal_node_removes_subtree() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // Set current inside the subtree to be deleted
+        ch.current = a1;
+
+        let res = ch.delete_message(u1);
+
+        assert_eq!(res, Some(root));
+        assert_eq!(ch.messages.len(), 1);
+        let parent = ch.messages.get(&root).unwrap();
+        assert!(parent.children.is_empty());
+        assert!(parent.selected_child.is_none());
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_sibling_updates_selected_child_and_tail() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // After adding a2, selected_child should point to a2
+        assert_eq!(ch.messages.get(&u1).unwrap().selected_child, Some(a2));
+
+        // Set current to a1 (the sibling that will remain)
+        ch.current = a1;
+
+        let res = ch.delete_message(a2);
+
+        // Deletion returns Some(current) and current should remain a1
+        assert_eq!(res, Some(a1));
+        assert_eq!(ch.current, a1);
+
+        // Tail should have moved up to u1 (since tail was a2)
+        assert_eq!(ch.tail, u1);
+
+        // Parent should now only contain a1 and select a1
+        let parent = ch.messages.get(&u1).unwrap();
+        assert_eq!(parent.children, vec![a1]);
+        assert_eq!(parent.selected_child, Some(a1));
+
+        // Path root -> u1
+        assert_eq!(ch.path_len(), 2);
+        let ids: Vec<Uuid> = ch.full_path_ids().collect();
+        assert_eq!(ids, vec![root, u1]);
+    }
+
+    #[test]
+    fn add_sibling_on_root_errors() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let res = ch.add_sibling(root, "x", MessageStatus::Completed);
+
+        assert!(matches!(res, Err(ChatError::RootHasNoSiblings)));
+    }
+
+    #[test]
+    fn navigate_sibling_requires_two_children() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+        ch.current = u1;
+
+        let res = ch.navigate_sibling(NavigationDirection::Next);
+
+        assert!(matches!(res, Err(ChatError::SiblingNotFound(_))));
+    }
+
+    #[test]
+    fn last_user_msg_behaves() {
+        let mut ch = ChatHistory::new();
+
+        // No user message yet
+        assert!(ch.last_user_msg().unwrap().is_none());
+
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a1;
+        let (id, content) = ch.last_user_msg().unwrap().expect("should find nearest user");
+        assert_eq!(id, u1);
+        assert_eq!(content, "Q1");
+
+        // Deeper conversation
+        let u2 = Uuid::new_v4();
+        ch.add_child(
+            a1,
+            u2,
+            "Q2",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u2,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a2;
+        let (id2, content2) = ch.last_user_msg().unwrap().expect("should find deeper user");
+        assert_eq!(id2, u2);
+        assert_eq!(content2, "Q2");
+    }
+
+    #[test]
+    fn current_path_ids_sequence() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a1;
+
+        let ids: Vec<Uuid> = ch.current_path_ids().collect();
+        assert_eq!(ids, vec![root, u1, a1]);
+    }
+
+    #[test]
+    fn iter_path_matches_tail_chain() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // Tail is a1 by construction
+        let ids: Vec<Uuid> = ch.iter_path().map(|m| m.id).collect();
+        assert_eq!(ch.path_len(), 3);
+        assert_eq!(ids, vec![root, u1, a1]);
+    }
+
+    #[tokio::test]
+    async fn persist_writes_expected_content() {
+        let ch = ChatHistory::new();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.md");
+
+        let expected = ch.format_for_persistence();
+        ch.persist(&path).await.unwrap();
+
+        let read = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(read, expected);
+    }
+}
