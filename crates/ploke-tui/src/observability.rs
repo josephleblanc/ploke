@@ -268,10 +268,10 @@ async fn persist_tool_done(
     state: &Arc<AppState>,
     params: &ToolDonePersistParams,
 ) -> Result<(), String> {
-    let outcome_json = match &params.outcome {
-        Some(v) => Some(serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())),
-        None => None,
-    };
+    let outcome_json = params
+        .outcome
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()));
     let ended_at_ms = now_ms();
     let started_at_ms = match state.db.get_tool_call(params.request_id, &params.call_id) {
         Ok(Some((req, _))) => req.started_at.at,

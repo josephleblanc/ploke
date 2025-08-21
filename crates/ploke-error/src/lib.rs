@@ -111,7 +111,7 @@ pub use result_ext::{ResultExt, IterResultExt};
 /// Use this throughout library code and propagate failures with `?`.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-//// Top-level error type used across the ploke workspace.
+/// Top-level error type used across the ploke workspace.
 ///
 /// Variants group failures into coarse classes; see [`Error::severity`] for programmatic classification.
 /// Prefer returning `Result<T>` from functions and let callers decide how to emit via an [`policy::ErrorPolicy`].
@@ -135,10 +135,10 @@ pub enum Error {
 
     // NOTE: Unsure about error design. Using a simple wrapper around the type of error coming out of a
     // target crate for convenience for now.
-    #[deprecated(note = "Use Error::Domain(DomainError::Ui { message }) instead.")]
+    // #[deprecated(note = "Use Error::Domain(DomainError::Ui { message }) instead.")]
     #[error("{msg} {0}", msg = "UiError: ")]
     UiError(String),
-    #[deprecated(note = "Use Error::Domain(DomainError::Transform { message }) instead.")]
+    // #[deprecated(note = "Use Error::Domain(DomainError::Transform { message }) instead.")]
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
 }
@@ -162,7 +162,8 @@ impl Error {
         match self {
             Error::Warning(_) => Severity::Warning,
             Error::Fatal(_) => Severity::Fatal,
-            Error::Internal(_) | Error::Domain(_) | Error::UiError(_) | Error::TransformError(_) | Error::Context(_) => Severity::Error,
+            Error::Internal(_) | Error::Domain(_) | Error::Context(_) 
+            | Error::UiError(_) | Error::TransformError(_) => Severity::Error,
         }
     }
 }

@@ -17,6 +17,7 @@ fn sample_registry() -> ProviderRegistry {
                 id: "openrouter-default".to_string(),
                 api_key: "SECRET_OR".to_string(),
                 api_key_env: None,
+                provider_slug: None,
                 base_url: "https://openrouter.ai/api/v1".to_string(),
                 model: "openai/gpt-4o".to_string(),
                 display_name: Some("GPT-4o".to_string()),
@@ -27,6 +28,7 @@ fn sample_registry() -> ProviderRegistry {
                 id: "custom-local".to_string(),
                 api_key: "SECRET_CUSTOM".to_string(),
                 api_key_env: None,
+            provider_slug: None,
                 base_url: "http://localhost:9999".to_string(),
                 model: "local/dev".to_string(),
                 display_name: Some("Local Dev".to_string()),
@@ -38,6 +40,7 @@ fn sample_registry() -> ProviderRegistry {
         aliases: std::collections::HashMap::new(),
         capabilities: std::collections::HashMap::new(),
         strictness: ProviderRegistryStrictness::AllowCustom,
+        require_tool_support: true,
     }
 }
 

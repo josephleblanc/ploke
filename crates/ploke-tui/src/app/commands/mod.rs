@@ -8,6 +8,6 @@ pub use exec::HELP_COMMANDS;
 pub fn execute_command(app: &mut App) {
     let style = app.command_style;
     let cmd = app.input_buffer.clone();
-    let command = parser::parse(&cmd, style);
+    let command = parser::parse(&app, &cmd, style);
     exec::execute(app, command);
 }

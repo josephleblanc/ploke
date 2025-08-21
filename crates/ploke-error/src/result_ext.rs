@@ -66,20 +66,20 @@ impl<T> ResultExt<T> for Result<T> {
     }
 }
 
-//// Iterator helpers over `Result` to reduce boilerplate at boundaries.
-//!
-//! - `collect_ok`: eagerly collects `Ok` items, returning the first `Error`
+/// Iterator helpers over `Result` to reduce boilerplate at boundaries.
+///
+/// - `collect_ok`: eagerly collects `Ok` items, returning the first `Error`
 ///   (equivalent to `collect::<Result<Vec<_>, _>>()` but clearer at call sites).
-//! - `first_error`: scans and returns the first `Error` without allocation.
-//!
-//! Example
-//! ```rust,ignore
-//! use ploke_error::{Result, result_ext::IterResultExt, DomainError};
-//!
-//! let items: Vec<Result<u32>> = vec![Ok(1), Ok(2), Err(DomainError::Io { message: "disk".into() }.into())];
-//! assert!(items.clone().first_error().is_some());
-//! let collected = items.collect_ok(); // -> Err(_)
-//! ```
+/// - `first_error`: scans and returns the first `Error` without allocation.
+///
+/// Example
+/// ```rust,ignore
+/// use ploke_error::{Result, result_ext::IterResultExt, DomainError};
+///
+/// let items: Vec<Result<u32>> = vec![Ok(1), Ok(2), Err(DomainError::Io { message: "disk".into() }.into())];
+/// assert!(items.clone().first_error().is_some());
+/// let collected = items.collect_ok(); // -> Err(_)
+/// ```
 pub trait IterResultExt<T>: Sized {
     fn collect_ok(self) -> Result<Vec<T>>;
     fn first_error(self) -> Option<super::Error>;

@@ -7,6 +7,7 @@
 //! - The executor consumes these variants and dispatches `StateCommand`s,
 //!   keeping the UI thread non-blocking.
 
+use crate::app::App;
 use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
 use crate::app_state::core::PreviewMode;
 use uuid::Uuid;
@@ -40,7 +41,7 @@ pub enum Command {
 }
 
 /// Parse the input buffer into a Command, stripping the style prefix.
-pub fn parse(input: &str, style: CommandStyle) -> Command {
+pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
     let trimmed = match style {
         CommandStyle::NeoVim => input.trim_start_matches(':').trim(),
         CommandStyle::Slash => input.trim_start_matches('/').trim(),
@@ -103,7 +104,7 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
         s if s.starts_with("model providers ") => {
             let id = s.trim_start_matches("model providers ").trim().to_string();
             if id.is_empty() {
-                Command::Raw(trimmed.to_string())
+                Command::ModelProviders(app.active_model_id.clone())
             } else {
                 Command::ModelProviders(id)
             }
@@ -127,14 +128,21 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
             // provider select <model_id> <provider_slug>
             let rest = s.trim_start_matches("provider select ").trim();
             let mut parts = rest.split_whitespace();
-            if let (Some(model_id), Some(provider_slug)) = (parts.next(), parts.next()) {
-                Command::ProviderSelect {
-                    model_id: model_id.to_string(),
-                    provider_slug: provider_slug.to_string(),
+            match (parts.next(), parts.next()) {
+                (Some(provider_slug), None) => {
+                    Command::ProviderSelect {
+                        model_id: app.active_model_id.clone(),
+                        provider_slug: provider_slug.to_string(),
+                    }
                 }
-            } else {
-                Command::Raw(trimmed.to_string())
-            }
+                (Some(model_id), Some(provider_slug)) => {
+                    Command::ProviderSelect {
+                        model_id: model_id.to_string(),
+                        provider_slug: provider_slug.to_string(),
+                    }
+                }
+                _ => Command::Raw(trimmed.to_string())
+            }   
         }
         s if s.starts_with("provider pin ") => {
             // provider pin <model_id> <provider_slug> (alias of provider select)

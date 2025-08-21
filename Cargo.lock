@@ -3874,8 +3874,11 @@ dependencies = [
 name = "ploke-error"
 version = "0.1.0"
 dependencies = [
+ "miette",
  "proc-macro2",
+ "serde",
  "thiserror 2.0.12",
+ "tracing",
  "uuid",
 ]
 
@@ -4025,6 +4028,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "similar",
  "syn 2.0.100",
  "syn_parser",
  "tempfile",

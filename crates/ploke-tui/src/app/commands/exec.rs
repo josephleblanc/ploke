@@ -19,7 +19,7 @@ use itertools::Itertools;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use crate::user_config::{ProviderRegistryStrictness, UserConfig, OPENROUTER_URL};
+use crate::user_config::{ProviderRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use reqwest::Client;
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
@@ -506,7 +506,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                 .provider_registry
                 .providers
                 .iter()
-                .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
                 .map(|p| p.resolve_api_key())
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .unwrap_or_default();
@@ -578,6 +578,8 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             .await
             .and_then(|r| r.error_for_status())
         {
+            // AI: Create a type that derives Serialize and Deserialize instead of matching on json
+            // values here AI
             Ok(resp) => match resp.json::<Value>().await {
                 Ok(v) => {
                     let mut lines = vec![

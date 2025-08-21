@@ -5,10 +5,8 @@ use ploke_tui::{
     app_state::{
         core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
         handlers::rag::{approve_edits, deny_edits, handle_tool_call_requested},
-        Config,
-    },
-    event_bus::EventBusCaps,
-    EventBus,
+        RuntimeConfig,
+    }, event_bus::EventBusCaps, user_config::UserConfig, EventBus
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;
@@ -33,14 +31,14 @@ async fn make_min_state() -> Arc<AppState> {
     let io_handle = ploke_io::IoManagerHandle::new();
 
     // Minimal provider registry via user config default
-    let cfg = ploke_tui::user_config::Config::default();
+    let cfg = UserConfig::default();
     let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder init"));
 
     Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
-        config: ConfigState::new(Config {
-            llm_params: ploke_tui::llm::LLMParameters::default(),
+        config: ConfigState::new(RuntimeConfig {
             provider_registry: cfg.registry.clone(),
+            ..Default::default()
         }),
         system: SystemState::default(),
         indexing_state: RwLock::new(None),
@@ -101,7 +99,7 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
     // Verify proposal exists and is Pending with a preview
     let reg = state.proposals.read().await;
     let proposal = reg.get(&request_id).expect("proposal not found");
-    match proposal.status {
+    match &proposal.status {
         EditProposalStatus::Pending => {}
         other => panic!("expected Pending, got {:?}", other),
     }

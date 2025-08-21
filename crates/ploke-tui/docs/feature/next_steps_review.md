@@ -97,15 +97,15 @@ Legend: Low / Medium / High
 | Proposal | Complexity | UX Impact | Maintainability | Performance | Flexibility | Operability | Risk |
 |---------:|------------|-----------|-----------------|------------|-------------|-------------|------|
 | A Catalog (Curated+Discovered) | Low | High | High | Low | Medium | Medium | Low |
-| B Provider Generalization      | High | High | High | Low | High | Medium | Medium |
-| C Capability Routing           | Med-High | High | High | Low-Med | High | Medium | Medium |
-| D Health & Monitoring          | Medium | Medium | High | Low | High | High | Low-Med |
-| E Dynamic Config               | Medium | Medium-High | Medium | Low | High | Medium | Low |
-| F Cost & Usage                 | Medium | Medium | High | Low | Medium | Medium | Low |
-| G Provider SDK/Plugin          | Med-High | Medium | High | Low | Very High | Medium | Medium |
-| H Rate Limit & Backpressure    | Medium | Medium-High | High | High (smoother) | Medium | High | Medium |
-| I Secrets & Profiles           | Low-Med | Medium | High | Low | Medium | High | Low |
-| J Testing & Replay             | Medium | Medium | Very High | Low | Medium | Very High | Low |
+| B Provider Generalization | High | High | High | Low | High | Medium | Medium |
+| C Capability Routing | Med-High | High | High | Low-Med | High | Medium | Medium |
+| D Health & Monitoring | Medium | Medium | High | Low | High | High | Low-Med |
+| E Dynamic Config | Medium | Medium-High | Medium | Low | High | Medium | Low |
+| F Cost & Usage | Medium | Medium | High | Low | Medium | Medium | Low |
+| G Provider SDK/Plugin | Med-High | Medium | High | Low | Very High | Medium | Medium |
+| H Rate Limit & Backpressure | Medium | Medium-High | High | High (smoother) | Medium | High | Medium |
+| I Secrets & Profiles | Low-Med | Medium | High | Low | Medium | High | Low |
+| J Testing & Replay | Medium | Medium | Very High | Low | Medium | Very High | Low |
 
 Synthesis and Interdependencies
 - B (Generalization) unlocks C (Routing), G (SDK), H (Coordinator), and simplifies D/E/F/J.

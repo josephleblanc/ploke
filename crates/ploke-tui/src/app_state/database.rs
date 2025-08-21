@@ -761,8 +761,8 @@ mod test {
             )
             .add_source(config::Environment::default().separator("_"))
             .build()?
-            .try_deserialize::<crate::user_config::Config>()
-            .unwrap_or_else(|_| crate::user_config::Config::default());
+            .try_deserialize::<crate::user_config::UserConfig>()
+            .unwrap_or_else(|_| crate::user_config::UserConfig::default());
 
         // Merge curated defaults with user overrides
         config.registry = config.registry.with_defaults();

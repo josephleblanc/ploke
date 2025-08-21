@@ -520,13 +520,13 @@ macro_rules! define_category_enum {
     };
 }
 
-///// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
-/////
-///// # Usage
-///// ```ignore
-///// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
-///// impl_typed_node_id_get!(StructNodeId, get_struct);
-///// ```
+/// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
+///
+/// # Usage
+/// ```ignore
+/// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
+/// impl_typed_node_id_get!(StructNodeId, get_struct);
+/// ```
 // macro_rules! impl_typed_node_id_get {
 //     ($IdType:ty, $GetterMethod:ident) => {
 //         // Implement the private sealing trait first

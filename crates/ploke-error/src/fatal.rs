@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-//// Fatal errors terminate the current operation and typically require caller intervention.
-//!
-//! This variant family captures irrecoverable issues for a task (not necessarily
-//! for the whole process), such as I/O failures and content mismatches.
-//! They map to [`crate::Severity::Fatal`].
+/// Fatal errors terminate the current operation and typically require caller intervention.
+///
+/// This variant family captures irrecoverable issues for a task (not necessarily
+/// for the whole process), such as I/O failures and content mismatches.
+/// They map to [`crate::Severity::Fatal`].
 #[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {

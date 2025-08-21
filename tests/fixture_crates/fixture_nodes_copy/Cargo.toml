@@ -1,0 +1,10 @@
+[package]
+name = "fixture_nodes"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs" # Add this
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] } # Add serde dependency

@@ -1,26 +1,26 @@
 use super::{Error, Severity};
 
-//// A policy for classifying and emitting errors.
-//!
-//! Libraries should not log or print directly; instead, they return [`crate::Result`] and let
-//! the application install an `ErrorPolicy` to decide how to present or route errors.
-//!
-//! Classification is coarse-grained via [`Severity`]. Emission can be anything:
-//! - tracing logs
-//! - UI event bus
-//! - structured diagnostics
-//! - custom telemetry
-//!
-//! Example
-//! ```rust,ignore
-//! use ploke_error::{ErrorPolicy, Severity, Error};
-//!
-//! struct PrintPolicy;
-//! impl ErrorPolicy for PrintPolicy {
-//!     fn classify(&self, e: &Error) -> Severity { e.severity() }
-//!     fn emit(&self, e: &Error) { eprintln!("[{:?}] {e}", self.classify(e)); }
-//! }
-//! ```
+/// A policy for classifying and emitting errors.
+///
+/// Libraries should not log or print directly; instead, they return [`crate::Result`] and let
+/// the application install an `ErrorPolicy` to decide how to present or route errors.
+///
+/// Classification is coarse-grained via [`Severity`]. Emission can be anything:
+/// - tracing logs
+/// - UI event bus
+/// - structured diagnostics
+/// - custom telemetry
+///
+/// Example
+/// ```rust,ignore
+/// use ploke_error::{ErrorPolicy, Severity, Error};
+///
+/// struct PrintPolicy;
+/// impl ErrorPolicy for PrintPolicy {
+///     fn classify(&self, e: &Error) -> Severity { e.severity() }
+///     fn emit(&self, e: &Error) { eprintln!("[{:?}] {e}", self.classify(e)); }
+/// }
+/// ```
 pub trait ErrorPolicy: Send + Sync {
     /// Classify the error's severity
     fn classify(&self, error: &Error) -> Severity;
@@ -80,21 +80,21 @@ impl ErrorPolicy for MiettePolicy {
         eprintln!("{report}");
     }
 }
-//// A composite policy that delegates to multiple policies.
-//!
-//! Behavior
-//! - classify: returns the maximum severity among inner policies (defaulting to the error's own severity when empty).
-//! - emit: delegates emission to all inner policies in insertion order.
-//!
-//! Example
-//! ```rust,ignore
-//! use ploke_error::{policy::{CombinedPolicy, NoopPolicy}, ErrorPolicy};
-//! let policy = CombinedPolicy::new()
-//!     .push(NoopPolicy::default());
-//! // Optionally add feature-gated policies:
-//! // #[cfg(feature = "tracing")] let policy = policy.push(ploke_error::policy::TracingPolicy::default());
-//! // #[cfg(feature = "diagnostic")] let policy = policy.push(ploke_error::policy::MiettePolicy::default());
-//! ```
+/// A composite policy that delegates to multiple policies.
+///
+/// Behavior
+/// - classify: returns the maximum severity among inner policies (defaulting to the error's own severity when empty).
+/// - emit: delegates emission to all inner policies in insertion order.
+///
+/// Example
+/// ```rust,ignore
+/// use ploke_error::{policy::{CombinedPolicy, NoopPolicy}, ErrorPolicy};
+/// let policy = CombinedPolicy::new()
+///     .push(NoopPolicy::default());
+/// // Optionally add feature-gated policies:
+/// // #[cfg(feature = "tracing")] let policy = policy.push(ploke_error::policy::TracingPolicy::default());
+/// // #[cfg(feature = "diagnostic")] let policy = policy.push(ploke_error::policy::MiettePolicy::default());
+/// ```
 #[derive(Default)]
 pub struct CombinedPolicy {
     policies: Vec<Box<dyn ErrorPolicy>>,

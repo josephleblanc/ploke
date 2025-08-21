@@ -12,7 +12,7 @@ use ploke_tui::{tracing_setup, try_main};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    // let _guard = tracing_setup::init_tracing();
+    let _guard = tracing_setup::init_tracing();
     //  TODO: Getting weird stuff writing to terminal, might be this.
     //  Look more into it later
     // color_eyre::config::HookBuilder::default()

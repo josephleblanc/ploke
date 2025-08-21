@@ -4,18 +4,18 @@ use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
 use ploke_tui::{
     AppEvent, EventBus, RagEvent,
     app_state::{
+        RuntimeConfig,
         commands::StateCommand,
         core::{AppState, ChatState, ConfigState, SystemState},
-        Config,
     },
     event_bus::EventBusCaps,
     llm::{self, LLMParameters, ToolVendor},
     system::SystemEvent,
     tracing_setup::init_tracing,
-    user_config::{ProviderConfig, ProviderRegistry, ProviderType, default_model},
+    user_config::{ProviderConfig, ProviderRegistry, ProviderType, UserConfig, default_model},
 };
 use quote::ToTokens;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -57,15 +57,14 @@ async fn e2e_apply_code_edit_real_llm() {
     let provider_id = "e2e-openrouter";
     let provider = ProviderConfig {
         id: provider_id.to_string(),
-        api_key, // resolved directly from env
+        api_key,
+        provider_slug: None,
         api_key_env: None,
         base_url: ploke_tui::user_config::OPENROUTER_URL.to_string(),
-        // Prefer a model with tool/function calling support
         model: "openai/gpt-4o-mini".to_string(),
         display_name: Some("E2E OpenRouter gpt-4o-mini".to_string()),
         provider_type: ProviderType::OpenRouter,
         llm_params: Some(LLMParameters {
-            // Give tools a bit more time for network + tool roundtrip
             tool_timeout_secs: Some(90),
             ..Default::default()
         }),
@@ -74,6 +73,7 @@ async fn e2e_apply_code_edit_real_llm() {
         providers: vec![provider],
         active_provider: provider_id.to_string(),
         aliases: std::collections::HashMap::new(),
+        ..Default::default()
     };
 
     // Construct AppState with minimal viable components.
@@ -82,11 +82,9 @@ async fn e2e_apply_code_edit_real_llm() {
     // Use the default embedder from config; may initialize a local model.
     // This test is env-gated; allow it when explicitly enabled.
     let embedder = Arc::new(
-        ploke_tui::user_config::Config {
+        ploke_tui::user_config::UserConfig {
             registry: registry.clone(),
-            command_style: Default::default(),
-            embedding: Default::default(),
-            editing: Default::default(),
+            ..Default::default()
         }
         .load_embedding_processor()
         .expect("embedder init"),
@@ -96,9 +94,9 @@ async fn e2e_apply_code_edit_real_llm() {
 
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
-        config: ConfigState::new(Config {
-            llm_params: LLMParameters::default(),
+        config: ConfigState::new(RuntimeConfig {
             provider_registry: registry.clone(),
+            ..Default::default()
         }),
         system: SystemState::default(),
         indexing_state: tokio::sync::RwLock::new(None),
