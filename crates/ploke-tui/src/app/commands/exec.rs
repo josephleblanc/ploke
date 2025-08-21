@@ -21,8 +21,27 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 use crate::user_config::{ProviderRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelEndpointsResponse {
+    data: ModelEndpointsData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelEndpointsData {
+    endpoints: Vec<ModelEndpoint>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelEndpoint {
+    name: String,
+    context_length: Option<u64>,
+    provider_name: String,
+    supported_parameters: Vec<String>,
+}
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
@@ -578,25 +597,22 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             .await
             .and_then(|r| r.error_for_status())
         {
-            // AI: Create a type that derives Serialize and Deserialize instead of matching on json
-            // values here AI!
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => {
+            Ok(resp) => match resp.json::<ModelEndpointsResponse>().await {
+                Ok(response) => {
                     let mut lines = vec![
                         format!("Available endpoints for model '{}':", model_id),
                         "  (Providers marked [tools] advertise tool support)".to_string(),
                     ];
 
-                    if let Some(endpoints) = v.get("data").and_then(|d| d.get("endpoints")).and_then(|e| e.as_array()) {
-                        for ep in endpoints {
-                            let name = ep.get("provider_name").and_then(|x| x.as_str()).unwrap_or("unknown");
-                            let ctx = ep.get("context_length").and_then(|x| x.as_u64()).map(|n| format!("ctx={}", n)).unwrap_or_default();
-                            let sp = ep.get("supported_parameters").and_then(|x| x.as_array().cloned()).unwrap_or_default();
-                            let supports_tools = sp.iter().any(|s| s.as_str().map(|t| t.eq_ignore_ascii_case("tools")).unwrap_or(false));
-                            let slug = providers_map.get(name).cloned().unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
-                            lines.push(format!("  - {} (slug: {}) {}{}", name, slug, if supports_tools { "[tools]" } else { "" }, if ctx.is_empty() { "".to_string() } else { format!(" {}", ctx) }));
-                        }
-                    } else {
+                    for endpoint in response.data.endpoints {
+                        let name = &endpoint.provider_name;
+                        let ctx = endpoint.context_length.map(|n| format!("ctx={}", n)).unwrap_or_default();
+                        let supports_tools = endpoint.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools"));
+                        let slug = providers_map.get(name).cloned().unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                        lines.push(format!("  - {} (slug: {}) {}{}", name, slug, if supports_tools { "[tools]" } else { "" }, if ctx.is_empty() { "".to_string() } else { format!(" {}", ctx) }));
+                    }
+
+                    if response.data.endpoints.is_empty() {
                         lines.push("  No endpoints returned for this model.".to_string());
                     }
 
