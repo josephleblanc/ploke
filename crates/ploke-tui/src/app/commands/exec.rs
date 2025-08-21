@@ -14,7 +14,7 @@
 
 use super::parser::Command;
 use crate::app::App;
-use crate::{app_state::StateCommand, chat_history::MessageKind};
+use crate::{app_state::StateCommand, chat_history::MessageKind, emit_app_event, AppEvent};
 use itertools::Itertools;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
@@ -38,7 +38,7 @@ pub fn execute(app: &mut App, command: Command) {
         Command::ModelSearch(keyword) => {
             // Open the overlay immediately to avoid perceived delay
             app.open_model_browser(keyword.clone(), Vec::new());
-            // Then fetch results and populate (synchronously for now; will move to async event)
+            // Fetch results asynchronously and publish to the UI via AppEvent
             open_model_search(app, &keyword);
         }
         Command::ModelSearchHelp => {
@@ -455,77 +455,71 @@ This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Sp
 }
 
 fn open_model_search(app: &mut App, keyword: &str) {
-    // Resolve API key similar to registry refresh logic (prefer configured OpenRouter provider)
+    // Open overlay already done by caller; now spawn a non-blocking fetch and emit results.
     let state = app.state.clone();
-    let (api_key, base_url) = {
-        let cfg = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(state.config.read())
-        });
-        let key = cfg
-            .provider_registry
-            .providers
-            .iter()
-            .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
-            .map(|p| p.resolve_api_key())
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .unwrap_or_default();
-        (key, OPENROUTER_URL.to_string())
-    };
+    let cmd_tx = app.cmd_tx.clone();
+    let keyword_str = keyword.to_string();
 
-    if api_key.is_empty() {
-        app.send_cmd(StateCommand::AddMessageImmediate {
-            msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        });
-        return;
-    }
+    tokio::spawn(async move {
+        // Resolve API key from configured OpenRouter provider or env
+        let (api_key, base_url) = {
+            let cfg = state.config.read().await;
+            let key = cfg
+                .provider_registry
+                .providers
+                .iter()
+                .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                .map(|p| p.resolve_api_key())
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .unwrap_or_default();
+            (key, OPENROUTER_URL.to_string())
+        };
 
-    let client = Client::new();
-    let result = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await
-        })
-    });
-
-    match result {
-        Ok(models) => {
-            let kw_lower = keyword.to_lowercase();
-            let mut filtered: Vec<ModelEntry> = models
-                .into_iter()
-                .filter(|m| {
-                    let id_match = m.id.to_lowercase().contains(&kw_lower);
-                    let name_match = m
-                        .name
-                        .as_ref()
-                        .map(|n| n.to_lowercase().contains(&kw_lower))
-                        .unwrap_or(false);
-                    id_match || name_match
-                })
-                .collect();
-
-            // Sort by id for deterministic display, then cap list to a reasonable size
-            filtered.sort_by(|a, b| a.id.cmp(&b.id));
-            if filtered.is_empty() {
-                app.send_cmd(StateCommand::AddMessageImmediate {
-                    msg: format!("No models found for search: {}", keyword),
+        if api_key.is_empty() {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
-                });
-                return;
-            }
+                })
+                .await;
+            return;
+        }
 
-            // Open interactive model browser overlay
-            app.open_model_browser(keyword.to_string(), filtered);
+        let client = Client::new();
+        match crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await {
+            Ok(models) => {
+                let kw_lower = keyword_str.to_lowercase();
+                let mut filtered: Vec<ModelEntry> = models
+                    .into_iter()
+                    .filter(|m| {
+                        let id_match = m.id.to_lowercase().contains(&kw_lower);
+                        let name_match = m
+                            .name
+                            .as_ref()
+                            .map(|n| n.to_lowercase().contains(&kw_lower))
+                            .unwrap_or(false);
+                        id_match || name_match
+                    })
+                    .collect();
+                filtered.sort_by(|a, b| a.id.cmp(&b.id));
+                // Always emit results; UI will show "0 results" if none
+                emit_app_event(AppEvent::ModelSearchResults {
+                    keyword: keyword_str,
+                    items: filtered,
+                }).await;
+            }
+            Err(e) => {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Failed to query OpenRouter models: {}", e),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
         }
-        Err(e) => {
-            app.send_cmd(StateCommand::AddMessageImmediate {
-                msg: format!("Failed to query OpenRouter models: {}", e),
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
-            });
-        }
-    }
+    });
 }
 
 /// Legacy command executor (Phase 3): handles all existing commands using

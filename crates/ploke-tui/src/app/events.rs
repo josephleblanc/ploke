@@ -19,6 +19,10 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }
+        AppEvent::ModelSearchResults { keyword, items } => {
+            // Populate or update the Model Browser overlay with async results
+            app.open_model_browser(keyword, items);
+        }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
         }

@@ -11,6 +11,7 @@ use crate::system::SystemEvent;
 
 use reqwest::Client;
 use serde_json::{Value, json};
+use serde::Serialize;
 use std::sync::Arc;
 
 use super::tool_call;
@@ -92,6 +93,15 @@ impl<'a> RequestSession<'a> {
                 } else {
                     None
                 },
+                provider: self
+                    .provider
+                    .provider_slug
+                    .as_ref()
+                    .map(|slug| super::ProviderPreferences {
+                        allow: vec![slug.clone()],
+                        deny: vec![],
+                        order: vec![],
+                    }),
             };
 
             let response = self

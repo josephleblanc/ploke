@@ -729,7 +729,20 @@ impl App {
                         }
                     }
                     KeyCode::Char('s') => {
-                        chosen_id = mb.items.get(mb.selected).map(|i| i.id.clone());
+                        // Choose a provider that supports tools if available, otherwise first provider
+                        if let Some(item) = mb.items.get(mb.selected) {
+                            let provider_choice = item
+                                .providers
+                                .iter()
+                                .find(|p| p.supports_tools)
+                                .or_else(|| item.providers.first())
+                                .map(|p| p.id.clone());
+                            if let Some(pid) = provider_choice {
+                                chosen_id = Some(format!("{}::{}", item.id, pid));
+                            } else {
+                                chosen_id = Some(item.id.clone());
+                            }
+                        }
                     }
                     KeyCode::Char('?') => {
                         mb.help_visible = !mb.help_visible;
@@ -739,7 +752,12 @@ impl App {
             }
             // Drop the mutable borrow of self.model_browser before switching model
             if let Some(id) = chosen_id {
-                self.switch_to_model(&id);
+                // id format: "model_id::provider_id" when provider selected, or just model_id
+                if let Some((model_id, provider_id)) = id.split_once("::") {
+                    self.apply_model_provider_selection(model_id, Some(provider_id));
+                } else {
+                    self.apply_model_provider_selection(&id, None);
+                }
                 self.model_browser = None;
             }
             self.needs_redraw = true;
@@ -791,6 +809,54 @@ impl App {
         if let Some(action) = to_action(self.mode, key, self.command_style) {
             self.handle_action(action);
         }
+        self.needs_redraw = true;
+    }
+
+    fn apply_model_provider_selection(&mut self, model_id: &str, provider_slug: Option<&str>) {
+        let provider_slug_str = provider_slug.map(|s| s.to_string());
+        let display_provider = provider_slug.unwrap_or("-");
+        let state = Arc::clone(&self.state);
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut cfg = state.config.write().await;
+                let reg = &mut cfg.provider_registry;
+
+                if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
+                    p.model = model_id.to_string();
+                    p.base_url = OPENROUTER_URL.to_string();
+                    p.provider_type = ProviderType::OpenRouter;
+                    p.llm_params.get_or_insert_with(Default::default).model = model_id.to_string();
+                    p.provider_slug = provider_slug_str.clone();
+                } else {
+                    reg.providers.push(ProviderConfig {
+                        id: model_id.to_string(),
+                        api_key: String::new(),
+                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+                        base_url: OPENROUTER_URL.to_string(),
+                        model: model_id.to_string(),
+                        display_name: Some(model_id.to_string()),
+                        provider_type: ProviderType::OpenRouter,
+                        llm_params: Some(crate::llm::LLMParameters {
+                            model: model_id.to_string(),
+                            ..Default::default()
+                        }),
+                        provider_slug: provider_slug_str.clone(),
+                    });
+                }
+                // Resolve API keys after potential changes
+                reg.load_api_keys();
+                // Activate this provider/model
+                reg.active_provider = model_id.to_string();
+            });
+        });
+
+        self.active_model_id = model_id.to_string();
+        self.active_model_indicator = Some((self.active_model_id.clone(), Instant::now()));
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: format!("Switched active model to {} via provider {}", model_id, display_provider),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
         self.needs_redraw = true;
     }
 

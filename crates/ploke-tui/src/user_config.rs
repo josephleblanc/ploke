@@ -231,6 +231,9 @@ pub struct ProviderConfig {
     pub id: String,
     /// The API key for this specific provider
     pub api_key: String,
+    /// Optional: upstream provider slug (for OpenRouter routing preferences)
+    #[serde(default)]
+    pub provider_slug: Option<String>,
     /// Optional: provider-specific environment variable name for API key
     #[serde(default)]
     pub api_key_env: Option<String>,
@@ -539,6 +542,7 @@ impl Default for ProviderRegistry {
             providers: vec![ProviderConfig {
                 id: default_model_id(),
                 api_key: String::new(),
+                provider_slug: None,
                 base_url: default_base_url(),
                 model: default_model(),
                 display_name: Some("Default".to_string()),

@@ -84,6 +84,12 @@ pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
         event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
     }
 }
+
+pub async fn emit_app_event(event: AppEvent) {
+    if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
+        event_bus.send(event);
+    }
+}
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
 
@@ -348,6 +354,7 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(system::SystemEvent),
+    ModelSearchResults { keyword: String, items: Vec<crate::llm::openrouter_catalog::ModelEntry> },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
@@ -389,6 +396,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
+            AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,

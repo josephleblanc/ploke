@@ -40,6 +40,18 @@ pub struct OpenAiRequest<'a> {
     tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>, // e.g., "auto"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderPreferences>,
+}
+
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct ProviderPreferences {
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub allow: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub deny: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub order: Vec<String>,
 }
 
 impl<'a> OpenAiRequest<'a> {
@@ -59,6 +71,7 @@ impl<'a> OpenAiRequest<'a> {
             stream: false,
             tools: None,
             tool_choice: None,
+            provider: None,
         }
     }
 }
