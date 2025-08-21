@@ -100,6 +100,7 @@ impl<'a> RequestSession<'a> {
                 .post(format!("{}/chat/completions", self.provider.base_url))
                 .bearer_auth(self.provider.resolve_api_key())
                 .json(&request_payload)
+                .timeout(Duration::from_secs(45))
                 .send()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
@@ -111,23 +112,37 @@ impl<'a> RequestSession<'a> {
                     .await
                     .unwrap_or_else(|_| "Could not retrieve error body".to_string());
 
-                // Fallback for provider endpoints lacking tool support, e.g.:
-                // {"error":{"message":"No endpoints found that support tool use.", "code":404}}
+                // Deterministic enforcement for tool use: fail fast when endpoint lacks tool support.
+                // Example provider body: {"error":{"message":"No endpoints found that support tool use.", "code":404}}
                 if status == 404
                     && use_tools
-                    && !tools_fallback_attempted
                     && error_text.to_lowercase().contains("support tool")
                 {
                     tracing::warn!(
                         model = %self.provider.model,
                         provider_slug = ?self.provider.provider_slug,
-                        "tool_unsupported_fallback: {}",
+                        "tool_unsupported_endpoint: {}",
                         error_text
                     );
-                    use_tools = false;
-                    tools_fallback_attempted = true;
-                    // Retry immediately without failing the whole request
-                    continue;
+
+                    let mut guidance = String::new();
+                    guidance.push_str("Selected endpoint appears to lack tool support.\n\n");
+                    guidance.push_str("Remediation steps:\n");
+                    guidance.push_str(&format!(
+                        "  1) List tool-capable endpoints for this model:\n     :model providers {}\n",
+                        self.provider.model
+                    ));
+                    guidance.push_str(&format!(
+                        "  2) Pin a specific provider endpoint (slug shown in step 1):\n     :provider pin {} <provider_slug>\n",
+                        self.provider.model
+                    ));
+                    guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
+                    guidance.push_str(&format!("Details: {}", error_text));
+
+                    return Err(LlmError::Api {
+                        status,
+                        message: guidance,
+                    });
                 }
 
                 tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
@@ -302,8 +317,8 @@ pub(crate) fn build_openai_request<'a>(
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
 ) -> super::OpenAiRequest<'a> {
-    // NOTE: OpenRouter rejected `provider` object with keys like `allow`/`deny` on chat/completions.
-    // Remove provider preferences from payload to avoid 400 errors.
+    // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
+    // We include `provider: { \"order\": [\"<slug>\"] }` when a valid provider_slug is set.
 
     super::OpenAiRequest {
         model: provider.model.as_str(),
@@ -318,7 +333,21 @@ pub(crate) fn build_openai_request<'a>(
         } else {
             None
         },
-        provider: None,
+        provider: if use_tools {
+            provider
+                .provider_slug
+                .as_ref()
+                .and_then(|slug| {
+                    let s = slug.trim();
+                    if s.is_empty() || s == "-" {
+                        None
+                    } else {
+                        Some(json!({ "order": [s] }))
+                    }
+                })
+        } else {
+            None
+        },
     }
 }
 
@@ -692,7 +721,12 @@ mod tests {
       }
     }
   ],
-  "tool_choice": "auto"
+  "tool_choice": "auto",
+  "provider": {
+    "order": [
+      "openrouter"
+    ]
+  }
 }"#;
 
         assert_eq!(json, expected);

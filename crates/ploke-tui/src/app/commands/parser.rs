@@ -26,6 +26,7 @@ pub enum Command {
     ModelSave { path: Option<String>, with_keys: bool },
     ModelSearch(String),
     ModelSearchHelp,
+    ModelProviders(String),
     ProviderStrictness(ProviderRegistryStrictness),
     ProviderToolsOnly(bool),
     ProviderSelect { model_id: String, provider_slug: String },
@@ -99,6 +100,14 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
                 Command::ModelSearch(kw)
             }
         }
+        s if s.starts_with("model providers ") => {
+            let id = s.trim_start_matches("model providers ").trim().to_string();
+            if id.is_empty() {
+                Command::Raw(trimmed.to_string())
+            } else {
+                Command::ModelProviders(id)
+            }
+        }
         s if s.starts_with("provider strictness ") => {
             let mode = s.trim_start_matches("provider strictness ").trim().to_lowercase();
             let strictness = match mode.as_str() {
@@ -117,6 +126,19 @@ pub fn parse(input: &str, style: CommandStyle) -> Command {
         s if s.starts_with("provider select ") => {
             // provider select <model_id> <provider_slug>
             let rest = s.trim_start_matches("provider select ").trim();
+            let mut parts = rest.split_whitespace();
+            if let (Some(model_id), Some(provider_slug)) = (parts.next(), parts.next()) {
+                Command::ProviderSelect {
+                    model_id: model_id.to_string(),
+                    provider_slug: provider_slug.to_string(),
+                }
+            } else {
+                Command::Raw(trimmed.to_string())
+            }
+        }
+        s if s.starts_with("provider pin ") => {
+            // provider pin <model_id> <provider_slug> (alias of provider select)
+            let rest = s.trim_start_matches("provider pin ").trim();
             let mut parts = rest.split_whitespace();
             if let (Some(model_id), Some(provider_slug)) = (parts.next(), parts.next()) {
                 Command::ProviderSelect {

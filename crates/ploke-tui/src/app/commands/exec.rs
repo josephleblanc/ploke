@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 use crate::user_config::{ProviderRegistryStrictness, UserConfig, OPENROUTER_URL};
 use reqwest::Client;
+use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
@@ -43,6 +44,9 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::ModelSearchHelp => {
             show_model_search_help(app);
+        }
+        Command::ModelProviders(model_id) => {
+            list_model_providers_async(app, &model_id);
         }
         Command::ModelUse(alias) => {
             // Delegate to existing state manager path to broadcast and apply
@@ -485,6 +489,149 @@ This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Sp
     });
 }
 
+/// List available provider endpoints for a model and highlight tool support.
+/// Example: :model providers qwen/qwen-2.5-72b-instruct
+fn list_model_providers_async(app: &App, model_id: &str) {
+    let state = app.state.clone();
+    let cmd_tx = app.cmd_tx.clone();
+    let model_id = model_id.to_string();
+    tokio::spawn(async move {
+        // Resolve API key
+        let (api_key, base_url) = {
+            let cfg = state.config.read().await;
+            let key = cfg
+                .provider_registry
+                .providers
+                .iter()
+                .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                .map(|p| p.resolve_api_key())
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .unwrap_or_default();
+            (key, OPENROUTER_URL.to_string())
+        };
+
+        if api_key.is_empty() {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+
+        // Parse model id into author/slug
+        let parts: Vec<&str> = model_id.split('/').collect();
+        if parts.len() != 2 {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: format!("Invalid model id '{}'. Expected format '<author>/<slug>'.", model_id),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+        let author = parts[0];
+        let slug = parts[1];
+
+        let client = Client::new();
+
+        // Build a provider name -> slug map from /providers
+        let providers_map: std::collections::HashMap<String, String> = match client
+            .get(format!("{}/providers", base_url))
+            .bearer_auth(&api_key)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(v) => {
+                    v.get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    let name = p.get("name").and_then(|x| x.as_str())?;
+                                    let slug = p.get("slug").and_then(|x| x.as_str())?;
+                                    Some((name.to_string(), slug.to_string()))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                }
+                Err(_) => Default::default(),
+            },
+            Err(_) => Default::default(),
+        };
+
+        // Fetch endpoints for this model
+        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+        match client
+            .get(url)
+            .bearer_auth(&api_key)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(v) => {
+                    let mut lines = vec![
+                        format!("Available endpoints for model '{}':", model_id),
+                        "  (Providers marked [tools] advertise tool support)".to_string(),
+                    ];
+
+                    if let Some(endpoints) = v.get("data").and_then(|d| d.get("endpoints")).and_then(|e| e.as_array()) {
+                        for ep in endpoints {
+                            let name = ep.get("provider_name").and_then(|x| x.as_str()).unwrap_or("unknown");
+                            let ctx = ep.get("context_length").and_then(|x| x.as_u64()).map(|n| format!("ctx={}", n)).unwrap_or_default();
+                            let sp = ep.get("supported_parameters").and_then(|x| x.as_array()).unwrap_or(&vec![]);
+                            let supports_tools = sp.iter().any(|s| s.as_str().map(|t| t.eq_ignore_ascii_case("tools")).unwrap_or(false));
+                            let slug = providers_map.get(name).cloned().unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                            lines.push(format!("  - {} (slug: {}) {}{}", name, slug, if supports_tools { "[tools]" } else { "" }, if ctx.is_empty() { "".to_string() } else { format!(" {}", ctx) }));
+                        }
+                    } else {
+                        lines.push("  No endpoints returned for this model.".to_string());
+                    }
+
+                    lines.push("".to_string());
+                    lines.push("To pin a provider endpoint:".to_string());
+                    lines.push(format!("  :provider pin {} <provider_slug>", model_id));
+                    lines.push("To enforce tool-capable routing:".to_string());
+                    lines.push("  :provider tools-only on".to_string());
+
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: lines.join("\n"),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: format!("Failed to parse endpoints response: {}", e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                }
+            },
+            Err(e) => {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Failed to fetch endpoints for {}: {}", model_id, e),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
+        }
+    });
+}
+
 fn open_model_search(app: &mut App, keyword: &str) {
     // Open overlay already done by caller; now spawn a non-blocking fetch and emit results.
     let state = app.state.clone();
@@ -836,9 +983,11 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
     model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
     model search <keyword> - Search OpenRouter models and open interactive browser
+    model providers <model_id> - List provider endpoints for a model and show tool support and slugs
     provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
     provider tools-only <on|off> - Enforce using only models/providers that support tool calls
     provider select <model_id> <provider_slug> - Pin a model to a specific provider endpoint
+    provider pin <model_id> <provider_slug> - Alias for 'provider select'
 
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status
