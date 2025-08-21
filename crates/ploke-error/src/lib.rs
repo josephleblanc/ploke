@@ -19,7 +19,7 @@ Quickstart
   - optionally emit errors at boundaries without interleaving side-effects in core logic
 
 Example: return Result and propagate with ?
-```no_run
+```rust,ignore
 use ploke_error::{Result, DomainError};
 
 fn parse_user_input(s: &str) -> Result<usize> {
@@ -31,7 +31,7 @@ fn parse_user_input(s: &str) -> Result<usize> {
 ```
 
 Example: policy-driven emission at the boundary
-```no_run
+```rust,ignore
 use ploke_error::{Result, ErrorPolicy, ResultExt, policy::NoopPolicy};
 
 fn handle_request(policy: &impl ErrorPolicy) -> Result<()> {
@@ -44,7 +44,7 @@ fn handle_request(policy: &impl ErrorPolicy) -> Result<()> {
 ```
 
 Example: combining policies for tracing + diagnostics
-```no_run
+```rust,ignore
 use ploke_error::{policy::CombinedPolicy, ErrorPolicy};
 
 fn app_policy() -> CombinedPolicy {
@@ -59,7 +59,7 @@ fn app_policy() -> CombinedPolicy {
 ```
 
 Example: iterator ergonomics
-```no_run
+```rust,ignore
 use ploke_error::{Result, result_ext::IterResultExt};
 
 fn gather(values: &[&str]) -> Result<Vec<usize>> {

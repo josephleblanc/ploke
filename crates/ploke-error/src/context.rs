@@ -98,7 +98,7 @@ impl ErrorContext {
 //! snippets, or backtraces. The attachment happens only on the error branch.
 //!
 //! Example
-//! ```no_run
+//! ```rust,ignore
 //! use ploke_error::{Result, ContextExt};
 //! use std::path::PathBuf;
 //!

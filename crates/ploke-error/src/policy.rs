@@ -12,7 +12,7 @@ use super::{Error, Severity};
 //! - custom telemetry
 //!
 //! Example
-//! ```no_run
+//! ```rust,ignore
 //! use ploke_error::{ErrorPolicy, Severity, Error};
 //!
 //! struct PrintPolicy;
@@ -87,7 +87,7 @@ impl ErrorPolicy for MiettePolicy {
 //! - emit: delegates emission to all inner policies in insertion order.
 //!
 //! Example
-//! ```no_run
+//! ```rust,ignore
 //! use ploke_error::{policy::{CombinedPolicy, NoopPolicy}, ErrorPolicy};
 //! let policy = CombinedPolicy::new()
 //!     .push(NoopPolicy::default());

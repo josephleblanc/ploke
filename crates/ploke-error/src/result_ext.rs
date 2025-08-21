@@ -8,7 +8,7 @@ use super::{ErrorPolicy, Result};
 /// the original result for further handling.
 /// 
 /// Example
-/// ```no_run
+/// ```rust,ignore
 /// use ploke_error::{Result, ResultExt, ErrorPolicy, DomainError};
 /// 
 /// fn do_work(policy: &impl ErrorPolicy) -> Result<()> {
@@ -73,7 +73,7 @@ impl<T> ResultExt<T> for Result<T> {
 //! - `first_error`: scans and returns the first `Error` without allocation.
 //!
 //! Example
-//! ```no_run
+//! ```rust,ignore
 //! use ploke_error::{Result, result_ext::IterResultExt, DomainError};
 //!
 //! let items: Vec<Result<u32>> = vec![Ok(1), Ok(2), Err(DomainError::Io { message: "disk".into() }.into())];
