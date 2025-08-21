@@ -381,6 +381,7 @@ mod tests {
 
     use tokio::time::sleep;
 
+    use crate::llm::ToolFunctionDef;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
@@ -566,7 +567,7 @@ mod tests {
 
         let tool = super::ToolDefinition {
             r#type: "function",
-            function: super::ToolFunctionDef {
+            function: ToolFunctionDef {
                 name: "dummy_tool",
                 description: "Return a fixed string",
                 parameters: serde_json::json!({
