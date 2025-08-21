@@ -134,7 +134,7 @@ impl UserConfig {
     /// Save the configuration to the specified path.
     /// If `redact_keys` is true, provider API keys are removed before saving.
     pub fn save_to_path(&self, path: &std::path::Path, redact_keys: bool) -> color_eyre::Result<()> {
-        let mut cfg = if redact_keys { self.clone() } else { self.clone() };
+        let mut cfg = self.clone();
 
         if redact_keys {
             for p in &mut cfg.registry.providers {
