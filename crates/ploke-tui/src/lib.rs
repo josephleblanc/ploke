@@ -29,6 +29,9 @@ pub use event_bus::*;
 pub mod test_utils;
 pub use test_utils::mock;
 
+#[cfg(test)]
+pub mod test_harness;
+
 use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
@@ -91,9 +94,6 @@ pub async fn emit_app_event(event: AppEvent) {
     }
 }
 pub async fn try_main() -> color_eyre::Result<()> {
-    // AI: Set up a test harness in a lazy_static in a new file that will allow us to run tests on
-    // an App, where the lazy static stores the app as an Arc<Mutex<App>>, so we can use tests
-    // against a realistic test object. AI!
     dotenvy::dotenv().ok();
 
     // Global panic hook to restore terminal state on unexpected panics
