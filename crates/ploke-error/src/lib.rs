@@ -14,7 +14,7 @@ pub use internal::InternalError;
 pub use warning::WarningError;
 pub use domain::DomainError;
 pub use severity::Severity;
-pub use policy::{ErrorPolicy, NoopPolicy};
+pub use policy::{ErrorPolicy, NoopPolicy, CombinedPolicy};
 #[cfg(feature = "tracing")]
 pub use policy::TracingPolicy;
 #[cfg(feature = "diagnostic")]
@@ -41,8 +41,10 @@ pub enum Error {
 
     // NOTE: Unsure about error design. Using a simple wrapper around the type of error coming out of a
     // target crate for convenience for now.
+    #[deprecated(note = "Use Error::Domain(DomainError::Ui { message }) instead.")]
     #[error("{msg} {0}", msg = "UiError: ")]
     UiError(String),
+    #[deprecated(note = "Use Error::Domain(DomainError::Transform { message }) instead.")]
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
 }

@@ -60,3 +60,73 @@ impl ErrorPolicy for MiettePolicy {
         eprintln!("{report}");
     }
 }
+///
+/// A composite policy that delegates to multiple policies.
+/// - classify: returns the maximum severity among its inner policies (defaulting to the error's own severity when empty).
+/// - emit: delegates emission to all inner policies in order.
+#[derive(Default)]
+pub struct CombinedPolicy {
+    policies: Vec<Box<dyn ErrorPolicy>>,
+}
+
+impl CombinedPolicy {
+    /// Create an empty CombinedPolicy.
+    pub fn new() -> Self {
+        Self { policies: Vec::new() }
+    }
+
+    /// Pre-allocate capacity for N policies.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self { policies: Vec::with_capacity(capacity) }
+    }
+
+    /// Construct from an existing vector of boxed policies.
+    pub fn from_vec(policies: Vec<Box<dyn ErrorPolicy>>) -> Self {
+        Self { policies }
+    }
+
+    /// Add a policy by value (boxed internally). Consumes and returns Self for builder-style chaining.
+    pub fn push<P: ErrorPolicy + 'static>(mut self, policy: P) -> Self {
+        self.policies.push(Box::new(policy));
+        self
+    }
+
+    /// Add an already boxed policy. Consumes and returns Self for builder-style chaining.
+    pub fn add_boxed(mut self, policy: Box<dyn ErrorPolicy>) -> Self {
+        self.policies.push(policy);
+        self
+    }
+}
+
+impl ErrorPolicy for CombinedPolicy {
+    fn classify(&self, error: &Error) -> Severity {
+        if self.policies.is_empty() {
+            return error.severity();
+        }
+        let mut sev = error.severity();
+        let mut rank = severity_rank(sev);
+        for p in &self.policies {
+            let s = p.classify(error);
+            let r = severity_rank(s);
+            if r > rank {
+                rank = r;
+                sev = s;
+            }
+        }
+        sev
+    }
+
+    fn emit(&self, error: &Error) {
+        for p in &self.policies {
+            p.emit(error);
+        }
+    }
+}
+
+fn severity_rank(s: Severity) -> u8 {
+    match s {
+        Severity::Warning => 0,
+        Severity::Error => 1,
+        Severity::Fatal => 2,
+    }
+}
