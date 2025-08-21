@@ -630,7 +630,7 @@ or disable enforcement with ':provider tools-only off'.",
         });
     }
 
-    let tools = if supports_tools_opt.unwrap_or(true) {
+    let tools = if supports_tools_opt.unwrap_or(false) {
         vec![
             request_code_context_tool_def(),
             get_file_metadata_tool_def(),
