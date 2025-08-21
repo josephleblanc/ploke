@@ -84,6 +84,17 @@ impl<'a> RequestSession<'a> {
                 use_tools,
             );
 
+            // Brief, structured dispatch log for efficient triage
+            let tool_names: Vec<&str> = self.tools.iter().map(|t| t.function.name).collect();
+            tracing::info!(
+                model = %self.provider.model,
+                base_url = %self.provider.base_url,
+                provider_slug = ?self.provider.provider_slug,
+                use_tools = use_tools,
+                tools = %tool_names.join(","),
+                "dispatch_request"
+            );
+
             let response = self
                 .client
                 .post(format!("{}/chat/completions", self.provider.base_url))
@@ -108,13 +119,18 @@ impl<'a> RequestSession<'a> {
                     && error_text.to_lowercase().contains("support tool")
                 {
                     tracing::warn!(
-                        "Provider endpoint does not support tool calls for this model. Retrying without tools."
+                        model = %self.provider.model,
+                        provider_slug = ?self.provider.provider_slug,
+                        "tool_unsupported_fallback: {}",
+                        error_text
                     );
                     use_tools = false;
                     tools_fallback_attempted = true;
                     // Retry immediately without failing the whole request
                     continue;
                 }
+
+                tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
 
                 let user_friendly_msg = if status == 401 {
                     format!(
@@ -286,14 +302,9 @@ pub(crate) fn build_openai_request<'a>(
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
 ) -> super::OpenAiRequest<'a> {
-    let provider_field = provider
-        .provider_slug
-        .as_ref()
-        .map(|slug| super::ProviderPreferences {
-            allow: vec![slug.clone()],
-            deny: Vec::new(),
-            order: Vec::new(),
-        });
+    // NOTE: OpenRouter rejected `provider` object with keys like `allow`/`deny` on chat/completions.
+    // Remove provider preferences from payload to avoid 400 errors.
+    let provider_field = None;
 
     super::OpenAiRequest {
         model: provider.model.as_str(),
@@ -308,7 +319,7 @@ pub(crate) fn build_openai_request<'a>(
         } else {
             None
         },
-        provider: provider_field,
+        provider: None,
     }
 }
 
@@ -568,14 +579,7 @@ mod tests {
   ],
   "temperature": 0.2,
   "max_tokens": 256,
-  "stream": false,
-  "provider": {
-    "allow": [
-      "openrouter"
-    ],
-    "deny": [],
-    "order": []
-  }
+  "stream": false
 }"#;
 
         assert_eq!(json, expected);
@@ -689,14 +693,7 @@ mod tests {
       }
     }
   ],
-  "tool_choice": "auto",
-  "provider": {
-    "allow": [
-      "openrouter"
-    ],
-    "deny": [],
-    "order": []
-  }
+  "tool_choice": "auto"
 }"#;
 
         assert_eq!(json, expected);

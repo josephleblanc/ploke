@@ -607,6 +607,17 @@ async fn prepare_and_run_llm_call(
         )
     };
 
+    // Concise plan log: shows what we think about tool support and enforcement
+    tracing::info!(
+        model = %provider.model,
+        base_url = %provider.base_url,
+        provider_type = ?provider.provider_type,
+        provider_slug = ?provider.provider_slug,
+        supports_tools_cache = ?supports_tools_opt,
+        require_tool_support = require_tools,
+        "llm_request_plan"
+    );
+
     if require_tools && supports_tools_opt != Some(true) {
         return Err(LlmError::Api {
             status: 412,
@@ -628,6 +639,14 @@ or disable enforcement with ':provider tools-only off'.",
     } else {
         Vec::new()
     };
+
+    // Summarize tools we will include for this request
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name).collect();
+    tracing::info!(
+        use_tools = %(!tools.is_empty()),
+        tools = %tool_names.join(","),
+        "llm_request_tools"
+    );
 
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
     let session = session::RequestSession::new(
