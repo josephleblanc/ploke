@@ -1,3 +1,8 @@
+//// Structured, non-fatal domain errors used across subsystems.
+//!
+//! Prefer DomainError over ad-hoc string variants. These map to
+//! [`crate::Severity::Error`] by default, and applications can downgrade
+//! or upgrade via an [`crate::policy::ErrorPolicy`].
 #[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, thiserror::Error)]

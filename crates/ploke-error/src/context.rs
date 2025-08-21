@@ -4,6 +4,11 @@ use std::sync::Arc;
 
 use super::*;
 
+//// A lightweight, stable span to reference a location in a source file.
+//!
+//! This crate avoids coupling to proc-macro ecosystems. `SourceSpan` records
+//! best-effort positional metadata for diagnostics: file path, optional byte
+//! offsets, and optional line/column numbers.
 #[derive(Debug, Clone)]
 pub struct SourceSpan {
     pub file: PathBuf,
@@ -37,6 +42,10 @@ impl SourceSpan {
     }
 }
 
+//// Lazily-attached context to enrich error reports.
+//!
+//! Constructed and attached via the [`ContextExt`] helpers on `Result<T>`.
+//! This is opt-in and captured only on error paths to avoid happy-path overhead.
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
     pub span: Option<SourceSpan>,
@@ -83,6 +92,22 @@ impl ErrorContext {
     }
 }
 
+//// Lazily attach additional context to errors.
+//!
+//! Use these methods on `Result<T>` to annotate failures with paths, spans,
+//! snippets, or backtraces. The attachment happens only on the error branch.
+//!
+//! Example
+//! ```no_run
+//! use ploke_error::{Result, ContextExt};
+//! use std::path::PathBuf;
+//!
+//! fn read_file(path: &str) -> Result<String> {
+//!     std::fs::read_to_string(path)
+//!         .map_err(|e| ploke_error::FatalError::file_operation("read", PathBuf::from(path), e).into())
+//!         .with_path(path) // attaches path only if read fails
+//! }
+//! ```
 pub trait ContextExt<T> {
     fn with_path(self, path: impl Into<PathBuf>) -> Result<T>;
     fn with_span(self, span: SourceSpan) -> Result<T>;

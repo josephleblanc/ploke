@@ -1,6 +1,21 @@
 use super::{ErrorPolicy, Result};
 
-/// Extension trait for Result to enable policy-driven emission
+/// Extension trait for `Result` enabling policy-driven emission without
+/// contaminating core control-flow with side-effects.
+/// 
+/// Typical usage: at subsystem boundaries in applications, call one of the
+/// helpers to emit errors via your chosen [`ErrorPolicy`], while preserving
+/// the original result for further handling.
+/// 
+/// Example
+/// ```no_run
+/// use ploke_error::{Result, ResultExt, ErrorPolicy, DomainError};
+/// 
+/// fn do_work(policy: &impl ErrorPolicy) -> Result<()> {
+///     let r: Result<()> = Err(DomainError::Ui { message: "bad input".into() }.into());
+///     r.emit_error(policy) // Emitted according to policy, still Err for caller to handle
+/// }
+/// ```
 pub trait ResultExt<T> {
     /// Emit the error using the provided policy and return the result unchanged
     fn emit_event(self, policy: &impl ErrorPolicy) -> Self;
@@ -51,9 +66,20 @@ impl<T> ResultExt<T> for Result<T> {
     }
 }
 
-/// Iterator helpers over Result to reduce boilerplate at boundaries.
-/// - collect_ok: eagerly collects Ok items, returning the first Error.
-/// - first_error: scans and returns the first Error without allocation.
+//// Iterator helpers over `Result` to reduce boilerplate at boundaries.
+//!
+//! - `collect_ok`: eagerly collects `Ok` items, returning the first `Error`
+///   (equivalent to `collect::<Result<Vec<_>, _>>()` but clearer at call sites).
+//! - `first_error`: scans and returns the first `Error` without allocation.
+//!
+//! Example
+//! ```no_run
+//! use ploke_error::{Result, result_ext::IterResultExt, DomainError};
+//!
+//! let items: Vec<Result<u32>> = vec![Ok(1), Ok(2), Err(DomainError::Io { message: "disk".into() }.into())];
+//! assert!(items.clone().first_error().is_some());
+//! let collected = items.collect_ok(); // -> Err(_)
+//! ```
 pub trait IterResultExt<T>: Sized {
     fn collect_ok(self) -> Result<Vec<T>>;
     fn first_error(self) -> Option<super::Error>;
