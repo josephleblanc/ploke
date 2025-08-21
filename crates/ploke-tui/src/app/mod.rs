@@ -1227,6 +1227,7 @@ impl App {
                     reg.providers.push(ProviderConfig {
                         id: model_id.to_string(),
                         api_key: String::new(),
+                        provider_slug: None,
                         api_key_env: Some("OPENROUTER_API_KEY".to_string()),
                         base_url: OPENROUTER_URL.to_string(),
                         model: model_id.to_string(),

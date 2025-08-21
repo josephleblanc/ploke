@@ -137,7 +137,7 @@ pub struct RuntimeConfig {
 
 impl From<UserConfig> for RuntimeConfig {
     fn from(uc: UserConfig) -> Self {
-        let mut registry = uc.registry;
+        let registry = uc.registry;
         // Choose LLM params from active provider or default
         let llm_params = registry
             .get_active_provider()
