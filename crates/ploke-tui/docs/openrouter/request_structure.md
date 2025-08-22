@@ -109,6 +109,11 @@ type ToolChoice =
     };
 ```
 
+Recommended Headers
+- HTTP-Referer: Identify your app origin (we send https://github.com/ploke-ai/ploke in tests)
+- X-Title: Human-readable app name (we send Ploke TUI Tests)
+These are optional but improve provider routing and diagnostics in error cases.
+
 ## Responses
 CompletionsResponse Format
 OpenRouter normalizes the schema across models and providers to comply with the OpenAI Chat API.
