@@ -3,6 +3,7 @@ use ploke_rag::AssembledContext;
 use ploke_rag::RagService;
 use ploke_rag::RetrievalStrategy;
 use ploke_rag::RrfConfig;
+use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -210,8 +211,8 @@ pub async fn handle_tool_call_requested(
         }
 
         let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(edits_arr.len());
-        let mut files_set: std::collections::BTreeSet<std::path::PathBuf> = std::collections::BTreeSet::new();
-        let mut interval_map: std::collections::BTreeMap<std::path::PathBuf, Vec<(usize, usize)>> =
+        let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        let mut interval_map: BTreeMap<PathBuf, Vec<(usize, usize)>> =
             std::collections::BTreeMap::new();
 
         for e in edits_arr {
@@ -266,7 +267,7 @@ pub async fn handle_tool_call_requested(
             }
             // Collect for overlap validation
             interval_map
-                .entry(std::path::PathBuf::from(file_path))
+                .entry(PathBuf::from(file_path))
                 .or_default()
                 .push((start_byte as usize, end_byte as usize));
             let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
@@ -283,7 +284,7 @@ pub async fn handle_tool_call_requested(
                 return;
             };
 
-            let path_buf = std::path::PathBuf::from(file_path);
+            let path_buf = PathBuf::from(file_path);
             let ws = WriteSnippetData {
                 id: uuid::Uuid::new_v4(),
                 name: "edit".to_string(),
@@ -386,7 +387,7 @@ pub async fn handle_tool_call_requested(
             }
         }
 
-        let files: Vec<std::path::PathBuf> = files_set.into_iter().collect();
+        let files: Vec<PathBuf> = files_set.into_iter().collect();
         let display_files: Vec<String> = files
             .iter()
             .map(|p| {
@@ -515,7 +516,7 @@ pub async fn handle_tool_call_requested(
             return;
         };
 
-        let path = std::path::PathBuf::from(file_path_str);
+        let path = PathBuf::from(file_path_str);
         // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
         match tokio::fs::read(&path).await {
             Ok(bytes) => {
