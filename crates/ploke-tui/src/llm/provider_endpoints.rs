@@ -84,20 +84,22 @@ pub struct TopProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Pricing {
+    // OpenRouter returns these as strings in endpoints and models listings.
+    // Use String to accept canonical API shape; adapt downstream as needed.
     #[serde(default)]
-    prompt: f64,
+    prompt: String,
     #[serde(default)]
-    completion: f64,
+    completion: String,
     #[serde(default)]
-    image: f64,
+    image: String,
     #[serde(default)]
-    request: f64,
+    request: String,
     #[serde(default)]
-    web_search: f64,
+    web_search: String,
     #[serde(default)]
-    internal_reasoning: f64,
+    internal_reasoning: String,
     #[serde(default)]
-    input_cache_read: f64,
+    input_cache_read: String,
     #[serde(default)]
-    input_cache_write: f64,
+    input_cache_write: String,
 }

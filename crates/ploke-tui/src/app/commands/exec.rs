@@ -26,7 +26,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
-use tracing::{debug, info_span, warn};
+use tracing::{debug, info_span, warn, instrument};
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
@@ -523,6 +523,7 @@ This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Sp
 
 /// List available provider endpoints for a model and highlight tool support.
 /// Example: :model providers qwen/qwen-2.5-72b-instruct
+#[instrument(skip(app, model_id))]
 fn list_model_providers_async(app: &App, model_id: &str) {
     let state = app.state.clone();
     let cmd_tx = app.cmd_tx.clone();

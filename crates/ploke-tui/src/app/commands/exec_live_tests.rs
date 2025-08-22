@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use serde_json::json;
-use tracing::{info, warn};
+use tracing::{info, warn, instrument};
 
 use reqwest::Client;
 use std::time::Duration;
@@ -22,7 +22,19 @@ fn openrouter_env() -> Option<(String, String)> {
     Some((key, OPENROUTER_URL.to_string()))
 }
 
+fn save_response_body(prefix: &str, contents: &str) {
+    let _ = std::fs::create_dir_all("logs");
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let path = format!("logs/{}_{}.json", prefix, ts);
+    if let Err(e) = std::fs::write(&path, contents) {
+        warn!("failed to write {}: {}", path, e);
+    } else {
+        info!("wrote response body to {}", path);
+    }
+}
+
 /// Very basic check that our test App can be acquired from the harness.
+#[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn harness_smoke_app_constructs() {
     let app_arc = app();
@@ -34,10 +46,11 @@ async fn harness_smoke_app_constructs() {
 }
 
 /// Live smoke-test against OpenRouter to validate the endpoints shape for a commonly available model.
+#[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_endpoints_live_smoke() {
     let _guard = init_tracing();
-
+    let _guard = init_tracing();
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
@@ -91,8 +104,14 @@ async fn openrouter_endpoints_live_smoke() {
     match resp {
         Ok(resp) => {
             let status = resp.status();
+            let headers = resp.headers().clone();
+            info!("GET {} -> {}", url, status);
+            for (k, v) in headers.iter() {
+                info!("header {}: {}", k, v.to_str().unwrap_or("<binary>"));
+            }
             let text = resp.text().await.unwrap_or_default();
-            info!("GET {} -> {} ({} bytes)", url, status, text.len());
+            info!("body ({} bytes)", text.len());
+            save_response_body("openrouter_endpoints", &text);
 
             // Try to parse strongly-typed to validate our schema
             match serde_json::from_str::<ModelEndpointsResponse>(&text) {
@@ -121,6 +140,7 @@ async fn openrouter_endpoints_live_smoke() {
 
 /// HYP-001: Provider preference hypotheses.
 /// Sends three minimal chat/completions with different provider preference shapes and logs the results.
+#[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_provider_preference_experiment() {
 
@@ -173,6 +193,10 @@ async fn openrouter_provider_preference_experiment() {
         match res {
             Ok(rsp) => {
                 let status = rsp.status();
+                let headers = rsp.headers().clone();
+                for (k, v) in headers.iter() {
+                    info!("{} header {}: {}", label, k, v.to_str().unwrap_or("<binary>"));
+                }
                 let body = rsp.text().await.unwrap_or_default();
                 info!(
                     "{} -> Status: {}. Body (first 512): {}",
@@ -180,8 +204,7 @@ async fn openrouter_provider_preference_experiment() {
                     status,
                     &body.chars().take(512).collect::<String>()
                 );
-                // Do not assert specific status codes to avoid brittleness; we are logging evidence.
-                // If you want to enforce expectations locally, remove #[ignore] and add assertions.
+                save_response_body(&format!("provider_pref_{}", label.replace([' ', ':'], "_")), &body);
             }
             Err(e) => {
                 warn!("{} -> Request error: {}", label, e);
@@ -191,9 +214,10 @@ async fn openrouter_provider_preference_experiment() {
 }
 
 /// HYP-001: Tool support smoke. Attempts a basic "tools" call to observe whether tool_calls are returned.
+#[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_tools_smoke() {
-    // let _guard = init_tracing();
+    let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
@@ -244,13 +268,18 @@ async fn openrouter_tools_smoke() {
     match res {
         Ok(rsp) => {
             let status = rsp.status();
+            let headers = rsp.headers().clone();
+            for (k, v) in headers.iter() {
+                info!("tools_smoke header {}: {}", k, v.to_str().unwrap_or("<binary>"));
+            }
             let body = rsp.text().await.unwrap_or_default();
             info!("tools_smoke -> Status: {}", status);
             info!(
                 "tools_smoke -> Body (first 1024): {}",
                 &body.chars().take(1024).collect::<String>()
             );
-            // Non-brittle: we only log; to assert tool_calls, devs can inspect logs and tighten checks as desired.
+            save_response_body("tools_smoke", &body);
+            warn!("tools_smoke is currently using a synthetic tool schema. Integrate real tools from our registry for stronger validation.");
         }
         Err(e) => {
             warn!("tools_smoke -> Request error: {}", e);
