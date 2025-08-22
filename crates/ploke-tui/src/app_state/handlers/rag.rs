@@ -281,12 +281,18 @@ pub async fn handle_tool_call_requested(
                 return;
             }
 
-            // Compute absolute path (best-effort)
-            let abs_path = if let Some(root) = crate_root.as_ref() {
-                let joined = root.join(&e.file);
-                joined
-            } else {
-                PathBuf::from(&e.file)
+            // Compute absolute path (best-effort; prefer crate_root, else absolute or CWD)
+            let abs_path = {
+                let p = PathBuf::from(&e.file);
+                if p.is_absolute() {
+                    p
+                } else if let Some(root) = crate_root.as_ref() {
+                    root.join(&e.file)
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(&e.file)
+                }
             };
 
             // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
