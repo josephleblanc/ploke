@@ -25,7 +25,6 @@ fn openrouter_env() -> Option<(String, String)> {
 /// Very basic check that our test App can be acquired from the harness.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn harness_smoke_app_constructs() {
-    let _guard = init_tracing();
     let app_arc = app();
     let app_lock = app_arc.lock().await;
     // Print a few things for visibility in logs.
@@ -35,9 +34,7 @@ async fn harness_smoke_app_constructs() {
 }
 
 /// Live smoke-test against OpenRouter to validate the endpoints shape for a commonly available model.
-/// This test is ignored by default and requires OPENROUTER_API_KEY to be set.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
 async fn openrouter_endpoints_live_smoke() {
     let _guard = init_tracing();
 
@@ -107,7 +104,7 @@ async fn openrouter_endpoints_live_smoke() {
                     // Soft assertion: Expect at least one endpoint in most cases
                     // Avoids being too brittle; we mainly validate deserialization.
                     assert!(
-                        parsed.data.endpoints.len() >= 0,
+                        parsed.data.endpoints.len() >= 1,
                         "Endpoints vector should exist"
                     );
                 }
@@ -124,11 +121,8 @@ async fn openrouter_endpoints_live_smoke() {
 
 /// HYP-001: Provider preference hypotheses.
 /// Sends three minimal chat/completions with different provider preference shapes and logs the results.
-/// Ignored by default; requires OPENROUTER_API_KEY and will incur minimal usage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
 async fn openrouter_provider_preference_experiment() {
-    let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
@@ -197,11 +191,9 @@ async fn openrouter_provider_preference_experiment() {
 }
 
 /// HYP-001: Tool support smoke. Attempts a basic "tools" call to observe whether tool_calls are returned.
-/// Ignored by default since endpoint/tooling availability varies.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
 async fn openrouter_tools_smoke() {
-    let _guard = init_tracing();
+    // let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
