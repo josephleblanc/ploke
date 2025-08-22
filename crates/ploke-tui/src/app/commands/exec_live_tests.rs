@@ -48,34 +48,45 @@ async fn choose_tools_model(
     preferred: Option<&str>,
 ) -> String {
     // Helper: check endpoints for tools support
-    let supports_tools = |model_id: &str| async {
-        let parts: Vec<&str> = model_id.split('/').collect();
-        if parts.len() != 2 {
-            return false;
-        }
-        let author = parts[0];
-        let slug = parts[1];
-        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
-        match client
-            .get(&url)
-            .bearer_auth(api_key)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
-            Ok(resp) => {
-                if let Ok(text) = resp.text().await {
-                    if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
-                        return parsed
-                            .data
-                            .endpoints
-                            .iter()
-                            .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")));
-                    }
+    // Use owned clones inside an async move closure to avoid lifetime issues.
+    let base_url_owned = base_url.to_string();
+    let api_key_owned = api_key.to_string();
+    let supports_tools = {
+        let client = client.clone();
+        move |model_id: &str| {
+            let client = client.clone();
+            let base_url = base_url_owned.clone();
+            let api_key = api_key_owned.clone();
+            async move {
+                let parts: Vec<&str> = model_id.split('/').collect();
+                if parts.len() != 2 {
+                    return false;
                 }
-                false
+                let author = parts[0];
+                let slug = parts[1];
+                let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+                match client
+                    .get(&url)
+                    .bearer_auth(&api_key)
+                    .send()
+                    .await
+                    .and_then(|r| r.error_for_status())
+                {
+                    Ok(resp) => {
+                        if let Ok(text) = resp.text().await {
+                            if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
+                                return parsed
+                                    .data
+                                    .endpoints
+                                    .iter()
+                                    .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")));
+                            }
+                        }
+                        false
+                    }
+                    Err(_) => false,
+                }
             }
-            Err(_) => false,
         }
     };
 
@@ -210,11 +221,7 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         return;
     };
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(45))
-        .default_headers(default_headers())
-        .build()
-        .expect("client");
+    // Client previously constructed above for this test case.
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
     let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
 
@@ -419,6 +426,13 @@ async fn openrouter_tools_success_matrix() {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
     };
+
+    // HTTP client used across this test
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
+        .build()
+        .expect("client");
 
     // Choose a tools-capable model (prefer env override, else auto-detect from catalog).
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
