@@ -224,10 +224,7 @@ pub(crate) async fn write_snippets_batch(
     for req in requests {
         let res = process_one_write(req, roots.clone(), symlink_policy)
             .await
-            // AI: This is a redundant closure. Why are you making this error? You wrote this code
-            // in a previous response. In my other included message I asked for an error report so
-            // we can avoid this in the future. Include this in the report as well.
-            .map_err(|e| ploke_error::Error::from(e));
+            .map_err(ploke_error::Error::from);
         out.push(res);
     }
     out

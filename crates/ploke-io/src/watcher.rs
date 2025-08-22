@@ -287,10 +287,7 @@ mod tests {
                 Ok(Ok(evt)) => {
                     let kind_matches =
                         std::mem::discriminant(&evt.kind) == std::mem::discriminant(&expected_kind);
-                    // AI: This map_or could be simpliefied to a map_or_else
-                    // Add this to your mistakes, and process all the instructions I have given in
-                    // the `AI:` comments so far AI!
-                    let path_matches = expected_path.map_or(true, |p| &evt.path == p);
+                    let path_matches = expected_path.map_or_else(|| true, |p| &evt.path == p);
                     if kind_matches && path_matches {
                         return true;
                     }

@@ -333,8 +333,6 @@ lazy_static! {
 /// 2) If tool_calls returned, execute locally on a temp target
 /// 3) Send a follow-up with the tool role message and log the final completion
 async fn run_tool_roundtrip(
-    // AI: This function has too many arguments. Instead you should be creating or using other
-    // structs and destructuring them where necessary. Add this to your mistakes.
     client: &Client,
     base_url: &str,
     api_key: &str,
