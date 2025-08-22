@@ -943,3 +943,204 @@ async fn openrouter_tools_smoke() {
         }
     }
 }
+
+/// Quick-touchpoint test across a small set of models to see if a forced tool call is honored.
+/// Does not try all permutations; intended to be fast and informative.
+/// Requires OPENROUTER_API_KEY; respects PLOKE_MODEL_ID override for the first slot, then tries a few popular models.
+#[instrument(skip_all)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openrouter_tools_model_touchpoints() {
+    let _guard = init_tracing();
+
+    let Some((api_key, base_url)) = openrouter_env() else {
+        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
+        return;
+    };
+
+    // Small set of models to probe. The first entry is either explicit override or autodetected tools-capable model.
+    // The rest are popular/representative models for a quick cross-section.
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
+        .build()
+        .expect("client");
+
+    let preferred = std::env::var("PLOKE_MODEL_ID").ok();
+    let primary = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
+
+    let mut models: Vec<String> = vec![
+        primary,
+        "google/gemini-2.0-flash-001".to_string(),
+        "qwen/qwen-2.5-72b-instruct".to_string(),
+        "anthropic/claude-3.5-sonnet".to_string(),
+    ];
+    // Dedup while preserving order
+    models.dedup();
+
+    // Shared tool schema and forced tool choice. Keep it minimal and consistent with our other tests.
+    let tools = json!([
+      {
+        "type": "function",
+        "function": {
+          "name": "search_workspace",
+          "description": "Search for code or text in the workspace",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string", "description": "Search query string" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+            },
+            "required": ["query"]
+          }
+        }
+      }
+    ]);
+
+    #[derive(Debug, Serialize)]
+    struct Touchpoint {
+        model: String,
+        status: u16,
+        used_tool: bool,
+        finish_reason: Option<String>,
+        native_finish_reason: Option<String>,
+        error_code: Option<i64>,
+        error_message: Option<String>,
+        latency_ms: u64,
+    }
+
+    let mut results: Vec<Touchpoint> = Vec::new();
+
+    for model_id in models {
+        let messages = json!([
+            {"role":"system","content":"You are a tool-using assistant. Prefer calling a tool when one is available."},
+            {"role":"user","content":"Search the workspace for references to trait implementations of Iterator."}
+        ]);
+
+        let payload = json!({
+            "model": model_id,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": {"type":"function","function":{"name":"search_workspace"}},
+            "max_tokens": 128
+        });
+
+        let url = format!("{}/chat/completions", base_url);
+        let start = Instant::now();
+        match client.post(&url).bearer_auth(&api_key).json(&payload).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+
+                let parsed_json = serde_json::from_str::<serde_json::Value>(&body).ok();
+
+                let used_tool = parsed_json.as_ref().and_then(|v| {
+                    v.get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.get(0))
+                        .and_then(|c0| c0.get("message"))
+                        .and_then(|m| m.get("tool_calls"))
+                        .and_then(|tc| tc.as_array())
+                        .map(|a| !a.is_empty())
+                }).unwrap_or(false);
+
+                let finish_reason = parsed_json.as_ref().and_then(|v| {
+                    v.get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.get(0))
+                        .and_then(|c0| c0.get("finish_reason"))
+                        .and_then(|fr| fr.as_str().map(|s| s.to_string()))
+                });
+
+                let native_finish_reason = parsed_json.as_ref().and_then(|v| {
+                    v.get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.get(0))
+                        .and_then(|c0| c0.get("native_finish_reason"))
+                        .and_then(|fr| fr.as_str().map(|s| s.to_string()))
+                });
+
+                let (error_code, error_message) = if let Some(v) = parsed_json.as_ref() {
+                    let top = v.get("error");
+                    if let Some(err) = top {
+                        let code = err.get("code").and_then(|c| c.as_i64());
+                        let msg = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                        (code, msg)
+                    } else {
+                        let choice_err = v.get("choices")
+                            .and_then(|c| c.as_array())
+                            .and_then(|arr| arr.get(0))
+                            .and_then(|c0| c0.get("error"));
+                        if let Some(ej) = choice_err {
+                            let code = ej.get("code").and_then(|c| c.as_i64());
+                            let msg = ej.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                            (code, msg)
+                        } else {
+                            (None, None)
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
+
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                let label = format!("tools_touchpoint_{}", model_id.replace([' ', '/', '\n', ':'], "_"));
+                let saved = save_response_body(&label, &body);
+                info!(
+                    "touchpoint model='{}' -> status={}, used_tool={}, finish_reason={:?}, native_finish_reason={:?}, saved={}",
+                    model_id, status, used_tool, finish_reason, native_finish_reason, saved
+                );
+
+                results.push(Touchpoint{
+                    model: model_id,
+                    status: status.as_u16(),
+                    used_tool,
+                    finish_reason,
+                    native_finish_reason,
+                    error_code,
+                    error_message,
+                    latency_ms: elapsed_ms,
+                });
+            }
+            Err(e) => {
+                info!(
+                    "touchpoint request error for model='{}': {}",
+                    model_id, e
+                );
+                results.push(Touchpoint{
+                    model: model_id,
+                    status: 0,
+                    used_tool: false,
+                    finish_reason: None,
+                    native_finish_reason: None,
+                    error_code: None,
+                    error_message: Some(e.to_string()),
+                    latency_ms: 0,
+                });
+            }
+        }
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TouchpointSummary {
+        total: usize,
+        used_tool: usize,
+        cases: Vec<Touchpoint>,
+    }
+
+    let used_tool_count = results.iter().filter(|r| r.used_tool).count();
+    let summary = TouchpointSummary {
+        total: results.len(),
+        used_tool: used_tool_count,
+        cases: results,
+    };
+
+    let serialized = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string());
+    info!(
+        "tools_model_touchpoints summary: total={}, used_tool={}",
+        summary.total, summary.used_tool
+    );
+    let _ = save_response_body("tools_model_touchpoints", &serialized);
+
+    // Intentionally do not fail: this is a discovery/visibility test.
+    // For strict assertions, see openrouter_tools_forced_choice_diagnostics and the full matrix test.
+}
