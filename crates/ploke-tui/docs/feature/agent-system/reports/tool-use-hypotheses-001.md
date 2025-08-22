@@ -49,10 +49,14 @@ Hypotheses
 Testing Plan (Incremental)
 - Phase A: Live, manual probes behind a small CLI/dev tool to validate H1 quickly (no code churn).
 - Phase B: Introduce an ignored cargo test (requires OPENROUTER_API_KEY) that:
-  - Selects a model known to support tools (via docs or endpoints API).
+  - Selects a model known to support tools (via /models/user auto-detection or PLOKE_MODEL_ID override).
   - Builds a minimal tool schema and expects tool_calls in the response.
 - Phase C: Add wiremock-based tests to assert request payloads and our fallback/enforcement policy logic.
 - Phase D: CI gating on mocked tests; live tests are developer-run only.
+
+Operational Notes
+- We set HTTP-Referer and X-Title headers in tests to align with OpenRouter recommendations and improve diagnostics.
+- If a preferred model doesn't advertise tools in its endpoints, tests auto-pick another model that does.
 
 Exit Criteria
 - We can deterministically select a provider endpoint that supports tools for a given model.

@@ -16,6 +16,9 @@ Key Observations
 - Provider identification:
   - Endpoints list includes a human-readable `name` (e.g., "OpenAI") but routing often needs a provider slug.
   - We build a name→slug map from `/providers`. If no match, we derive a slug-ish fallback by lowercasing and replacing spaces with dashes.
+- Recommended headers:
+  - Include HTTP-Referer and X-Title headers with requests. While optional, some providers behave better and error messages are clearer when these are present.
+  - We now set: HTTP-Referer=https://github.com/ploke-ai/ploke and X-Title=Ploke TUI Tests in our test clients.
 
 Diagnostic Artifacts
 - Test `openrouter_endpoints_live_smoke` now writes the raw JSON body into `logs/openrouter_endpoints_<timestamp>.json`.

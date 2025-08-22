@@ -5,11 +5,13 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, warn, instrument};
 
 use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
 use crate::llm::provider_endpoints::ModelEndpointsResponse;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
+use crate::llm::openrouter_catalog;
 
 // Leverage the in-crate test harness (Arc<Mutex<App>>) for constructing a realistic App.
 use crate::test_harness::app;
@@ -21,6 +23,106 @@ fn openrouter_env() -> Option<(String, String)> {
         return None;
     }
     Some((key, OPENROUTER_URL.to_string()))
+}
+
+/// Default OpenRouter-recommended headers for telemetry and routing.
+fn default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    // OpenRouter recommends sending these headers to help with routing and abuse prevention.
+    // They are not strictly required, but some providers behave better with them.
+    let referer = HeaderName::from_static("http-referer");
+    let x_title = HeaderName::from_static("x-title");
+    headers.insert(referer, HeaderValue::from_static("https://github.com/ploke-ai/ploke"));
+    headers.insert(x_title, HeaderValue::from_static("Ploke TUI Tests"));
+    headers
+}
+
+/// Choose a tools-capable model:
+/// 1) If a preferred model is provided and advertises "tools" via the endpoints API, use it.
+/// 2) Otherwise, scan /models/user and pick the first model whose supported_parameters includes "tools".
+/// 3) Fallback to "google/gemini-2.0-flash-001" if nothing else is found.
+async fn choose_tools_model(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    preferred: Option<&str>,
+) -> String {
+    // Helper: check endpoints for tools support
+    let supports_tools = |model_id: &str| async {
+        let parts: Vec<&str> = model_id.split('/').collect();
+        if parts.len() != 2 {
+            return false;
+        }
+        let author = parts[0];
+        let slug = parts[1];
+        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+        match client
+            .get(&url)
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => {
+                if let Ok(text) = resp.text().await {
+                    if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
+                        return parsed
+                            .data
+                            .endpoints
+                            .iter()
+                            .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")));
+                    }
+                }
+                false
+            }
+            Err(_) => false,
+        }
+    };
+
+    if let Some(pref) = preferred {
+        if supports_tools(pref).await {
+            info!("choose_tools_model: using preferred model '{}'", pref);
+            return pref.to_string();
+        } else {
+            warn!("choose_tools_model: preferred model '{}' did not advertise tools; probing catalog for alternatives", pref);
+        }
+    }
+
+    // Probe catalog for a tools-capable model
+    match openrouter_catalog::fetch_models(client, base_url, api_key).await {
+        Ok(models) => {
+            if let Some(m) = models.iter().find(|m| {
+                m.supported_parameters
+                    .as_ref()
+                    .map(|sp| sp.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                    .unwrap_or(false)
+            }) {
+                info!("choose_tools_model: selected tools-capable model from user catalog: {}", m.id);
+                return m.id.clone();
+            }
+            // Try provider-level signals if model-level is missing
+            if let Some(m) = models.iter().find(|m| {
+                m.providers.as_ref().map(|ps| {
+                    ps.iter().any(|p| {
+                        p.supported_parameters
+                            .as_ref()
+                            .map(|sp| sp.iter().any(|x| x.eq_ignore_ascii_case("tools")))
+                            .unwrap_or(false)
+                    })
+                }).unwrap_or(false)
+            }) {
+                info!("choose_tools_model: selected tools-capable provider variant: {}", m.id);
+                return m.id.clone();
+            }
+            warn!("choose_tools_model: no tools-capable model found in user catalog; falling back");
+        }
+        Err(e) => {
+            warn!("choose_tools_model: failed to fetch models catalog: {}", e);
+        }
+    }
+
+    // Conservative fallback commonly supporting tools
+    "google/gemini-2.0-flash-001".to_string()
 }
 
 /// Inspect tools support for the active model by querying the endpoints list and printing diagnostics.
@@ -45,7 +147,11 @@ async fn openrouter_model_tools_support_check() {
     let author = parts[0];
     let slug = parts[1];
 
-    let client = Client::builder().timeout(Duration::from_secs(30)).build().expect("client");
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .default_headers(default_headers())
+        .build()
+        .expect("client");
     let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
     match client
         .get(&url)
@@ -104,9 +210,13 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         return;
     };
 
-    let client = Client::builder().timeout(Duration::from_secs(45)).build().expect("client");
-    let model_id = std::env::var("PLOKE_MODEL_ID")
-        .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
+        .build()
+        .expect("client");
+    let preferred = std::env::var("PLOKE_MODEL_ID").ok();
+    let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
 
     let payload = json!({
         "model": model_id,
@@ -228,6 +338,7 @@ async fn openrouter_endpoints_live_smoke() {
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
         .build()
         .expect("client");
 
@@ -309,9 +420,9 @@ async fn openrouter_tools_success_matrix() {
         return;
     };
 
-    // Choose a widely available tools-capable model; override via env if desired.
-    let model_id = std::env::var("PLOKE_MODEL_ID")
-        .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
+    // Choose a tools-capable model (prefer env override, else auto-detect from catalog).
+    let preferred = std::env::var("PLOKE_MODEL_ID").ok();
+    let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
 
     // Pre-check: does this model expose any endpoints that advertise "tools" support?
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -425,7 +536,12 @@ async fn openrouter_tools_success_matrix() {
         status: u16,
         used_tool: bool,
         finish_reason: Option<String>,
+        native_finish_reason: Option<String>,
+        response_model: Option<String>,
+        error_code: Option<i64>,
+        error_message: Option<String>,
         error: Option<String>,
+        latency_ms: u64,
     }
 
     #[derive(Debug, Serialize)]
@@ -439,6 +555,7 @@ async fn openrouter_tools_success_matrix() {
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
         .build()
         .expect("client");
 
@@ -496,30 +613,61 @@ async fn openrouter_tools_success_matrix() {
                         Ok(resp) => {
                             let status = resp.status();
                             let body = resp.text().await.unwrap_or_default();
-                            let used_tool = match serde_json::from_str::<serde_json::Value>(&body) {
-                                Ok(v) => {
-                                    // Non-streaming path: choices[0].message.tool_calls exists and non-empty
-                                    let tc_opt = v.get("choices")
-                                        .and_then(|c| c.as_array())
-                                        .and_then(|arr| arr.get(0))
-                                        .and_then(|c0| c0.get("message"))
-                                        .and_then(|m| m.get("tool_calls"));
-                                    match tc_opt {
-                                        Some(serde_json::Value::Array(a)) => !a.is_empty(),
-                                        _ => false,
-                                    }
-                                }
-                                Err(_) => false,
-                            };
 
-                            let finish_reason = serde_json::from_str::<serde_json::Value>(&body)
-                                .ok()
-                                .and_then(|v| v.get("choices")
+                            let parsed_json = serde_json::from_str::<serde_json::Value>(&body).ok();
+
+                            let used_tool = parsed_json.as_ref().and_then(|v| {
+                                v.get("choices")
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|arr| arr.get(0))
+                                    .and_then(|c0| c0.get("message"))
+                                    .and_then(|m| m.get("tool_calls"))
+                                    .and_then(|tc| tc.as_array())
+                                    .map(|a| !a.is_empty())
+                            }).unwrap_or(false);
+
+                            let finish_reason = parsed_json.as_ref().and_then(|v| {
+                                v.get("choices")
                                     .and_then(|c| c.as_array())
                                     .and_then(|arr| arr.get(0))
                                     .and_then(|c0| c0.get("finish_reason"))
                                     .and_then(|fr| fr.as_str().map(|s| s.to_string()))
-                                );
+                            });
+
+                            let native_finish_reason = parsed_json.as_ref().and_then(|v| {
+                                v.get("choices")
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|arr| arr.get(0))
+                                    .and_then(|c0| c0.get("native_finish_reason"))
+                                    .and_then(|fr| fr.as_str().map(|s| s.to_string()))
+                            });
+
+                            let response_model = parsed_json.as_ref().and_then(|v| v.get("model")).and_then(|m| m.as_str()).map(|s| s.to_string());
+
+                            // Error details (top-level or per-choice)
+                            let (error_code, error_message) = if let Some(v) = parsed_json.as_ref() {
+                                let top = v.get("error");
+                                if let Some(err) = top {
+                                    let code = err.get("code").and_then(|c| c.as_i64());
+                                    let msg = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                                    (code, msg)
+                                } else {
+                                    // Check first choice error if present
+                                    let choice_err = v.get("choices")
+                                        .and_then(|c| c.as_array())
+                                        .and_then(|arr| arr.get(0))
+                                        .and_then(|c0| c0.get("error"));
+                                    if let Some(ej) = choice_err {
+                                        let code = ej.get("code").and_then(|c| c.as_i64());
+                                        let msg = ej.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                                        (code, msg)
+                                    } else {
+                                        (None, None)
+                                    }
+                                }
+                            } else {
+                                (None, None)
+                            };
 
                             let label = format!("tools_matrix_s={},u={},tc={},p={}",
                                 if system.is_empty() { "none" } else { "var" },
@@ -536,8 +684,8 @@ async fn openrouter_tools_success_matrix() {
 
                             let elapsed_ms = start.elapsed().as_millis() as u64;
                             info!(
-                                "case {} -> status={}, used_tool={}, finish_reason={:?}, elapsed_ms={}",
-                                label, status, used_tool, finish_reason, elapsed_ms
+                                "case {} -> status={}, used_tool={}, finish_reason={:?}, native_finish_reason={:?}, elapsed_ms={}",
+                                label, status, used_tool, finish_reason, native_finish_reason, elapsed_ms
                             );
 
                             results.push(CaseResult{
@@ -548,7 +696,12 @@ async fn openrouter_tools_success_matrix() {
                                 status: status.as_u16(),
                                 used_tool,
                                 finish_reason,
+                                native_finish_reason,
+                                response_model,
+                                error_code,
+                                error_message,
                                 error: None,
+                                latency_ms: elapsed_ms,
                             });
                         }
                         Err(e) => {
@@ -564,7 +717,12 @@ async fn openrouter_tools_success_matrix() {
                                 status: 0,
                                 used_tool: false,
                                 finish_reason: None,
+                                native_finish_reason: None,
+                                response_model: None,
+                                error_code: None,
+                                error_message: None,
                                 error: Some(e.to_string()),
+                                latency_ms: 0,
                             });
                         }
                     }

@@ -24,8 +24,9 @@ Key Live Tests (require OPENROUTER_API_KEY)
   - On failure, prints summary path and hints for next steps.
 
 Choosing Models
-- Default: qwen/qwen-2.5-72b-instruct (tools-capable in many regions).
+- Auto-detect: tests now probe /models/user and select a model that advertises tools if no explicit choice is provided.
 - Override: export PLOKE_MODEL_ID="google/gemini-2.0-flash-001" (or another tools-capable model per endpoints probe).
+- Fallback: when catalog detection fails, we fall back to google/gemini-2.0-flash-001.
 
 What to Look For
 - finish_reason=tool_calls and presence of message.tool_calls in responses.
