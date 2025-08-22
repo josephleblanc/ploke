@@ -537,7 +537,7 @@ impl App {
 
             // Consistent overlay style (foreground/background)
             // Choose a high-contrast, uniform scheme that doesn't depend on background UI
-            let overlay_style = Style::new().fg(Color::Gray).bg(Color::Black);
+            let overlay_style = Style::new().fg(Color::LightBlue);
 
             // Build list content (styled)
             let mut lines: Vec<Line> = Vec::new();
@@ -558,7 +558,7 @@ impl App {
 
             // Selected row highlighting
             let selected_style = Style::new().fg(Color::Black).bg(Color::LightCyan);
-            let detail_style = Style::new().fg(Color::DarkGray).bg(Color::Black);
+            let detail_style = Style::new().fg(Color::Blue).dim();
 
             for (i, it) in mb.items.iter().enumerate() {
                 let title = if let Some(name) = &it.name {
@@ -1278,5 +1278,9 @@ impl App {
     /// Set running to false to quit the application.
     fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn set_selected_model(&mut self, model_id: String) {
+        self.active_model_id = model_id;
     }
 }

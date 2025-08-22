@@ -2,6 +2,7 @@ pub mod registry;
 pub mod openrouter_catalog;
 mod session;
 mod tool_call;
+pub mod provider_endpoints;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

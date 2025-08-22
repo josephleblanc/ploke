@@ -40,6 +40,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+cozo = { workspace = true }
 
 # config
 toml = "0.8"
@@ -85,6 +86,7 @@ insta = "1.39.0"
 criterion = "0.5"
 quote = { workspace = true }
 syn = { workspace = true }
+lazy_static = { workspace = true } # Added lazy_static
 
 [features]
 default = ["custom_list"]

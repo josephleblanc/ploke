@@ -14,6 +14,7 @@ use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
 use crate::user_config::CommandStyle;
 use crate::llm::openrouter_catalog::ModelEntry;
+use crate::RagEvent;
 use ploke_rag::{RagService, TokenBudget};
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
@@ -25,7 +26,7 @@ pub fn create_mock_app_state() -> AppState {
     let io_handle = IoManagerHandle::new();
     let rag = Arc::new(RagService::new_mock());
     let budget = TokenBudget::default();
-    let (rag_tx, _rag_rx) = mpsc::channel(10);
+    let (rag_tx, _rag_rx) = mpsc::channel::<RagEvent>(10);
     
     AppState {
         chat: crate::app_state::ChatState::new(ChatHistory::new()),
@@ -59,12 +60,7 @@ pub fn create_mock_app() -> App {
 }
 
 pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
-    let storage = MemStorage::default();
-    let db = Arc::new(Database::new(Db::new(storage).unwrap()));
-    
-    // Initialize database schema
-    db.initialize().unwrap();
-    ploke_transform::schema::create_schema_all(&db.db).unwrap();
+    let db = Database::init_with_schema().unwrap();
     
     if num_unindexed > 0 {
         let script = r#"
@@ -87,7 +83,7 @@ pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
             .unwrap();
     }
     
-    db
+    Arc::new( db )
 }
 
 #[derive(Debug, PartialEq, Eq)]

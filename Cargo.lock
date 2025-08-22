@@ -4009,6 +4009,7 @@ dependencies = [
  "governor",
  "insta",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "nonzero_ext",
  "num_cpus",
