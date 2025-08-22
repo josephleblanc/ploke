@@ -13,6 +13,7 @@
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
 use super::parser::Command;
+use super::HELP_COMMANDS;
 use crate::app::App;
 use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing};
 use crate::{app_state::StateCommand, chat_history::MessageKind, emit_app_event, AppEvent};
@@ -26,6 +27,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
 use tracing::{debug, info_span, warn};
+// AI: In a new file, create a more comprehensive set of tests that can run against a real-world
+// API endpoint to test for things like the `list_model_providers_async` function. If you don't
+// know what the correct output would be, or even if you think you do, add logging that will record
+// the correct output. We should be able to confirm in our tests that the queires against the
+// actual OpenRouter API are running correctly, and that we are receiving correct output for things
+// like the form of the query, the values for some models, what a tool request returns, whether a
+// given provider has support for tools, what the tool response looks like and whether the model
+// correctly calls the tool, etc.
+// Create these tests in a new file using the new test harness for Arc<Mutex<App>> we recently
+// created.
+// Use these tests as an opportunity to test the hypotheses you noted earlier in `tool-use-hypotheses-001.md` as well.
+// AI!
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
@@ -1021,76 +1034,6 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
     }
 }
 
-/// Shared help text for commands
-#[doc = "User-visible help covering supported commands and keybindings."]
-pub const HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory
-                              (defaults to current dir)
-    index pause - Pause indexing
-    index resume - Resume indexing
-    index cancel - Cancel indexing
-    check api - Check API key configuration
-
-    model list - List available models
-    model info - Show active model/provider settings
-    model use <name> - Switch to a configured model by alias or id
-    model refresh [--local] - Refresh model registry (OpenRouter) and API keys; use --local to skip network
-    model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
-    model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
-    model search <keyword> - Search OpenRouter models and open interactive browser
-    model providers <model_id> - List provider endpoints for a model and show tool support and slugs
-    provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
-    provider tools-only <on|off> - Enforce using only models/providers that support tool calls
-    provider select <model_id> <provider_slug> - Pin a model to a specific provider endpoint
-    provider pin <model_id> <provider_slug> - Alias for 'provider select'
-
-    bm25 rebuild - Rebuild sparse BM25 index
-    bm25 status - Show sparse BM25 index status
-    bm25 save <path> - Save sparse index sidecar to file
-    bm25 load <path> - Load sparse index sidecar from file
-    bm25 search <query> [top_k] - Search with BM25
-    hybrid <query> [top_k] - Hybrid (BM25 + dense) search
-
-    preview [on|off|toggle] - Toggle context preview panel
-    edit preview mode <code|diff> - Set edit preview mode for proposals
-    edit preview lines <N> - Set max preview lines per section
-    edit auto <on|off> - Toggle auto-approval of staged edits
-    edit approve <request_id> - Apply staged code edits with this request ID
-    edit deny <request_id> - Deny and discard staged code edits
-
-    help - Show this help
-    help <topic> - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
-
-    Keyboard shortcuts (Normal mode):
-    q - Quit
-    i - Enter insert mode
-    : - Enter command mode (vim-style)
-    m - Quick model selection
-    ? - Show this help
-    / - Quick hybrid search prompt
-    P - Toggle context preview
-    j/↓ - Navigate down (selection)
-    k/↑ - Navigate up (selection)
-    J - Page down (scroll)
-    K - Page up (scroll)
-    G - Go to bottom (scroll)
-    gg - Go to top (scroll)
-    h/← - Navigate branch previous
-    l/→ - Navigate branch next
-    Del - Delete selected conversation item
-    Ctrl+n - Scroll down one line
-    Ctrl+p - Scroll up one line
-
-    Model Browser (opened via 'model search <keyword>'):
-      ↑/↓ or j/k - Navigate
-      Enter/Space - Expand/collapse details
-      s - Select and set active model
-      q/Esc - Close
-
-    Insert mode history:
-      ↑/↓ - Navigate your previous user messages in this conversation
-      PageUp/PageDown - Jump to oldest/newest user message in history
-"#;
 
 #[cfg(test)]
 mod typed_response_tests {
