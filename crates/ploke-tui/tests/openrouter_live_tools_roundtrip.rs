@@ -140,7 +140,16 @@ async fn choose_tools_endpoint_for_model(
     candidates.sort_by(|a, b| endpoint_price_hint(a).partial_cmp(&endpoint_price_hint(b)).unwrap_or(std::cmp::Ordering::Equal));
 
     let chosen = candidates.remove(0);
-    let slug_hint = providers_map.get(&chosen.name).cloned();
+    let slug_hint = providers_map.get(&chosen.name).cloned().or_else(|| {
+        // Derive a conservative fallback slug from the provider display name
+        let derived = chosen
+            .name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>();
+        if derived.is_empty() { None } else { Some(derived) }
+    });
     Some((author, slug, chosen, slug_hint))
 }
 
@@ -536,8 +545,9 @@ async fn openrouter_live_tools_roundtrip() {
         let rc_args = json!({"token_budget": 512, "hint":"SimpleStruct"});
 
         // get_file_metadata | apply_code_edit prepare their own temporary targets internally
-        let gfm_args = json!({"file_path":"will_be_overridden_by_local_execution"});
-        let ace_args = json!({"edits":[{"file_path":"will_be_overridden_by_local_execution","expected_file_hash":"<unused>","start_byte":0,"end_byte":0,"replacement":"ploke"}]});
+        // Use plausible arguments to encourage tool invocation; local execution ignores these values.
+        let gfm_args = json!({"file_path":"/etc/hosts"});
+        let ace_args = json!({"edits":[{"file_path":"/etc/hosts","expected_file_hash":"ignored","start_byte":0,"end_byte":0,"replacement":"ploke"}]});
 
         for (def, (name, args)) in tools.iter().zip(vec![
             ("request_code_context", rc_args),
