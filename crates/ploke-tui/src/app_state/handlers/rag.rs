@@ -36,6 +36,7 @@ You are a highly skilled software engineer, specializing in the Rust programming
 You will be asked to provide some assistance in collaborating with the user.
 "#;
 
+// TODO: Review the prompt, I think the LLM fucked it up.
 static PROMPT_CODE: &str = r#"
 Tool-aware code collaboration instructions
 
@@ -237,6 +238,9 @@ pub async fn handle_tool_call_requested(
         };
 
         if args.edits.is_empty() {
+            // AI: You are using both the `tool_call_failed` closure and the
+            // `event_bus.send(AppEvent::LlmTool(ToolEvent::Failed` below. Why? Add this to your
+            // mistakes
             let _ = event_bus
                 .realtime_tx
                 .send(tool_call_failed("No edits provided".to_string()));

@@ -259,6 +259,12 @@ impl IoManager {
         let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
             let semaphore = semaphore.clone();
             let roots = roots.clone();
+            // AI: You wrote this code. Why are you cloning the `symlink_policy` here? This line
+            // doesn't make any sense as far as I can tell. Evaluate your failure and try to come
+            // up with a way to ensure you avoid this code smell in the future. How can we ensure
+            // you avoid this code smell moving forward? I don't mean in a second pass, but in a
+            // first pass at a solution. Why do you think this mistake happened?
+            // Create a new file in `docs/bugs/llm_quirks/` that has your response.
             let symlink_policy = symlink_policy.clone();
             tokio::spawn(async move {
                 Self::process_file_with_roots(path, reqs, semaphore, roots, symlink_policy).await

@@ -256,6 +256,9 @@ async fn openrouter_tools_forced_choice_diagnostics() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
                 let used_tool = v.get("choices")
                     .and_then(|c| c.as_array())
+                    // AI: You are making another mistake here. Instead of using `get` you should
+                    // use `first` to access the first element. Add this to the report with your
+                    // mistakes
                     .and_then(|arr| arr.get(0))
                     .and_then(|c0| c0.get("message"))
                     .and_then(|m| m.get("tool_calls"))

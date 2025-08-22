@@ -24,6 +24,8 @@ pub(crate) fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
     let path_canon = canonicalize_best_effort(path);
     roots
         .iter()
+        // AI: You are needlessly using the `&` borrowed expression which is automatically
+        // dereferenced by the compiler. Add this to your mistakes
         .any(|root| path_canon.starts_with(&canonicalize_best_effort(root)))
 }
 
