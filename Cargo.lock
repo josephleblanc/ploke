@@ -3924,6 +3924,7 @@ dependencies = [
  "ploke-error",
  "ploke-io",
  "ploke-test-utils",
+ "serde",
  "thiserror 2.0.12",
  "tokio",
  "tracing",

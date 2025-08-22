@@ -100,6 +100,15 @@ impl Database {
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
     "#;
+
+    /// Get the embedding data from the canonical path of a given node, find the node in the
+    /// database and return the `EmbeddingData` so the snippet for the node can be found from a
+    /// file read.
+    /// Returns the database error or the embedding data for the item.
+    pub fn get_node_from_canon(&self, canonical_path: &[&str]) -> Result<EmbeddingData, PlokeError> {
+        todo!()
+    }
+
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
         Self { db }

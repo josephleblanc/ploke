@@ -9,6 +9,7 @@ ploke-embed = { path = "../ingest/ploke-embed" }
 ploke-error = { path = "../ploke-error" }
 ploke-core = { path = "../ploke-core" }
 ploke-io = { path = "../ploke-io" }
+serde = { workspace = true }
 
 itertools = { workspace = true }
 

@@ -78,7 +78,7 @@ impl<'a> OpenAiRequest<'a> {
 }
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
-fn get_file_metadata_tool_def() -> ToolDefinition {
+pub fn get_file_metadata_tool_def() -> ToolDefinition {
     ToolDefinition {
         r#type: "function",
         function: ToolFunctionDef {
@@ -126,14 +126,14 @@ impl RequestMessage<'_> {
 }
 
 // OpenAI tool/function definition (for request payload)
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct ToolDefinition {
     #[serde(rename = "type")]
     pub r#type: &'static str, // "function"
     pub function: ToolFunctionDef,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct ToolFunctionDef {
     pub name: &'static str,
     pub description: &'static str,
@@ -141,7 +141,7 @@ pub struct ToolFunctionDef {
 }
 
 // Helper to define our example tool
-fn request_code_context_tool_def() -> ToolDefinition {
+pub fn request_code_context_tool_def() -> ToolDefinition {
     ToolDefinition {
         r#type: "function",
         function: ToolFunctionDef {
@@ -168,7 +168,7 @@ fn request_code_context_tool_def() -> ToolDefinition {
 }
 
 // New tool definition for applying code edits atomically via ploke-io
-fn apply_code_edit_tool_def() -> ToolDefinition {
+pub fn apply_code_edit_tool_def() -> ToolDefinition {
     ToolDefinition {
         r#type: "function",
         function: ToolFunctionDef {

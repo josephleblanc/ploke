@@ -1,7 +1,13 @@
 #![cfg(test)]
 
 use lazy_static::lazy_static;
+use ploke_db::{create_index_primary, Database};
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+use ploke_error::Error;
+use ploke_rag::{MmrConfig, RagService, RrfConfig, TokenBudget};
 use ploke_test_utils::workspace_root;
+use ploke_tui::error::ErrorExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -9,15 +15,18 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use ploke_tui::llm::openrouter_catalog;
+use ploke_tui::llm::{apply_code_edit_tool_def, get_file_metadata_tool_def, openrouter_catalog, request_code_context_tool_def};
 use ploke_tui::llm::provider_endpoints::ModelEndpointsResponse;
 use ploke_tui::tracing_setup::init_tracing;
 use ploke_tui::user_config::OPENROUTER_URL;
+
+const LLM_TOKEN_BUDGET: usize = 512;
 
 /// Read OPENROUTER_API_KEY and base URL from environment.
 fn openrouter_env() -> Option<(String, String)> {
@@ -135,9 +144,12 @@ async fn choose_tools_endpoint_for_model(
         .collect();
 
     if candidates.is_empty() {
+        warn!("{model_id} | No candidates found for model with tools");
         return None;
     }
-    candidates.sort_by(|a, b| endpoint_price_hint(a).partial_cmp(&endpoint_price_hint(b)).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| endpoint_price_hint(a)
+        .partial_cmp(&endpoint_price_hint(b))
+        .unwrap_or(std::cmp::Ordering::Equal));
 
     let chosen = candidates.remove(0);
     let slug_hint = providers_map.get(&chosen.name).cloned().or_else(|| {
@@ -156,71 +168,14 @@ async fn choose_tools_endpoint_for_model(
 /// Build the three real tool definitions we expose to models.
 fn tool_defs() -> Vec<Value> {
     // Keep these schemas aligned with ploke_tui::llm definitions.
-    let request_code_context = json!({
-        "type": "function",
-        "function": {
-            "name": "request_code_context",
-            "description": "Request additional code context from the repository up to a token budget.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "token_budget": { "type": "integer", "minimum": 1, "description": "Maximum tokens of code context to return." },
-                    "hint": { "type": "string", "description": "Optional hint to guide which code to retrieve." }
-                },
-                "required": ["token_budget"],
-                "additionalProperties": false
-            }
-        }
-    });
+    let request_code_context = serde_json::to_value(request_code_context_tool_def())
+        .expect("Error with code context tool tranlsation to json");
 
-    let get_file_metadata = json!({
-        "type": "function",
-        "function": {
-            "name": "get_file_metadata",
-            "description": "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": { "type": "string", "description": "Absolute path to the target file." }
-                },
-                "required": ["file_path"],
-                "additionalProperties": false
-            }
-        }
-    });
+    let get_file_metadata = serde_json::to_value(get_file_metadata_tool_def())
+        .expect("Error with code context tool tranlsation to json");
 
-    let apply_code_edit = json!({
-        "type": "function",
-        "function": {
-            "name": "apply_code_edit",
-            "description": "Apply one or more code edits atomically (tempfile + fsync + rename) using ploke-io. Each edit splices bytes [start_byte, end_byte) with replacement.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-                    "namespace": { "type": "string" },
-                    "edits": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": { "type": "string" },
-                                "expected_file_hash": { "type": "string" },
-                                "start_byte": { "type": "integer", "minimum": 0 },
-                                "end_byte": { "type": "integer", "minimum": 0 },
-                                "replacement": { "type": "string" }
-                            },
-                            "required": ["file_path", "expected_file_hash", "start_byte", "end_byte", "replacement"],
-                            "additionalProperties": false
-                        },
-                        "minItems": 1
-                    }
-                },
-                "required": ["edits"],
-                "additionalProperties": false
-            }
-        }
-    });
+    let apply_code_edit = serde_json::to_value(apply_code_edit_tool_def())
+        .expect("Error with code context tool tranlsation to json");
 
     vec![request_code_context, get_file_metadata, apply_code_edit]
 }
@@ -311,7 +266,7 @@ fn local_request_code_context(hint: Option<&str>, token_budget: u32) -> String {
 
 lazy_static! {
     /// Optional shared DB restored from a backup of `fixture_nodes` (if present).
-    pub static ref TEST_DB_NODES: Result<ploke_db::Database, ploke_error::Error> = {
+    pub static ref TEST_DB_NODES: Result<Arc< ploke_db::Database >, ploke_error::Error> = {
         let db = ploke_db::Database::init_with_schema()?;
         let mut backup = workspace_root();
         backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
@@ -322,7 +277,7 @@ lazy_static! {
                 .map_err(ploke_db::DbError::from)
                 .map_err(ploke_error::Error::from)?;
         }
-        Ok(db)
+        Ok(Arc::new(db))
     };
 }
 
@@ -339,11 +294,19 @@ async fn run_tool_roundtrip(
     tool_def: &Value,
     tool_name: &str,
     tool_args: Value,
+    rag: &RagService
 ) {
     // Prepare messages
     let mut messages = vec![
-        json!({"role":"system","content":"You are a tool-using assistant. Prefer calling a tool when one is available."}),
-        json!({"role":"user","content": format!("Please call the tool '{}' with these JSON arguments, then wait for results:\n{}", tool_name, tool_args.to_string())}),
+        json!({
+            "role":"system",
+            "content":"You are a tool-using assistant. Prefer calling a tool when one is available."}
+        ),
+        json!({
+            "role":"user",
+            "content": format!("Please call the tool '{}' with these JSON arguments, then wait for results:\n{}", 
+            tool_name, tool_args.to_string())
+        }),
     ];
 
     let mut root = json!({
@@ -370,7 +333,7 @@ async fn run_tool_roundtrip(
     let body = resp.text().await.unwrap_or_default();
     info!("first leg '{}' -> {}", tool_name, status);
 
-    let parsed = serde_json::from_str::<Value>(&body).unwrap_or(json!({}));
+    let parsed = serde_json::from_str::<Value>(&body).expect("Could not parse json return value");
     let tool_calls = parsed
         .get("choices")
         .and_then(|c| c.as_array())
@@ -379,17 +342,21 @@ async fn run_tool_roundtrip(
         .and_then(|m| m.get("tool_calls"))
         .and_then(|a| a.as_array())
         .cloned()
-        .unwrap_or_default();
+        .expect("Respose malformed or no tool called");
 
     assert!(
         !tool_calls.is_empty(),
-        "Expected tool_calls for '{}', none found. Body (first 512): {}",
+        "Expected tool_calls for '{}', none found. Body (first LLM_TOKEN_BUDGET): {}",
         tool_name,
-        &body.chars().take(512).collect::<String>()
+        if body.is_empty() {"Response body empty"} else { &body }
     );
 
     // Create temp targets and execute locally
-    let tool_call_id = tool_calls.first().and_then(|x| x.get("id")).and_then(|s| s.as_str()).unwrap_or("call_1").to_string();
+    let tool_call_id = tool_calls.first()
+        .and_then(|x| x.get("id"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("call_1")
+        .to_string();
     let local_result = match tool_name {
         "get_file_metadata" => {
             let mut tf = NamedTempFile::new().expect("temp file");
@@ -408,8 +375,22 @@ async fn run_tool_roundtrip(
                 .get("hint")
                 .and_then(|h| h.as_str())
                 .unwrap_or("SimpleStruct");
-            let token_budget = tool_args.get("token_budget").and_then(|t| t.as_u64()).unwrap_or(512) as u32;
-            local_request_code_context(Some(hint), token_budget)
+            let mut token_budget = TokenBudget::default();
+            let token_budget_max = tool_args.get("token_budget").and_then(|t| t.as_u64()).unwrap_or(LLM_TOKEN_BUDGET as u64);
+            token_budget.max_total = token_budget_max as usize;
+            let rag_result = rag.get_context(hint, 5, &token_budget,  ploke_rag::RetrievalStrategy::Hybrid {
+                rrf: RrfConfig::default(),
+                mmr: None,
+            }).await.expect("Rag get_context failed");
+            let rag_json = serde_json::to_value(rag_result).expect("Could not parse rag result to json Value");
+
+            let pretty_print = serde_json::to_string_pretty(&rag_json).expect("Could not format rag json to pretty");
+            info!("Tool call success, returning value:\n{}", pretty_print);
+
+            // TODO: Transition this to use the rag_json value instead once we have nailed down our
+            // tool use semantics and format.
+            // rag_json
+            local_request_code_context(Some(hint), token_budget_max as u32)
         }
         _ => {
             warn!("unknown tool '{}'", tool_name);
@@ -444,7 +425,7 @@ async fn run_tool_roundtrip(
         "model": model_id,
         "messages": messages,
         "tools": [tool_def.clone()],
-        "max_tokens": 256
+        "max_tokens": LLM_TOKEN_BUDGET
     });
 
     let second = post_with_retries(client, &url, api_key, &followup, 3).await;
@@ -465,10 +446,10 @@ async fn run_tool_roundtrip(
                 })
                 .unwrap_or_default();
             info!(
-                "second leg '{}' -> {}. content (first 160): {}",
+                "second leg '{}' -> {}. content: {}",
                 tool_name,
                 status,
-                content.chars().take(160).collect::<String>()
+                &content
             );
         }
         Err(e) => {
@@ -485,14 +466,29 @@ async fn run_tool_roundtrip(
 ///
 /// Fails if any forced tool call for a tools-capable endpoint does not produce tool_calls.
 /// Requires OPENROUTER_API_KEY to be set.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn openrouter_live_tools_roundtrip() {
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
+async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
     let _guard = init_tracing();
+
+    // ----- setup start -----
+    let db = TEST_DB_NODES
+        .as_ref()
+        .expect("Must set up TEST_DB_NODES correctly.");
+
+    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+    let source = EmbeddingSource::Local(model);
+    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+    let rag = RagService::new(db.clone(), embedding_processor)?;
+
+    // Should not error
+    rag.bm25_rebuild().await?;
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
+        return Ok(());
     };
+    // ----- setup end -----
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -542,7 +538,7 @@ async fn openrouter_live_tools_roundtrip() {
         let tools = tool_defs();
 
         // request_code_context
-        let rc_args = json!({"token_budget": 512, "hint":"SimpleStruct"});
+        let rc_args = json!({"token_budget": LLM_TOKEN_BUDGET, "hint":"SimpleStruct"});
 
         // get_file_metadata | apply_code_edit prepare their own temporary targets internally
         // Use plausible arguments to encourage tool invocation; local execution ignores these values.
@@ -563,6 +559,7 @@ async fn openrouter_live_tools_roundtrip() {
                 def,
                 name,
                 args,
+                &rag
             )
             .await;
         }
@@ -571,4 +568,5 @@ async fn openrouter_live_tools_roundtrip() {
         // polite spacing between models
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    Ok(())
 }
