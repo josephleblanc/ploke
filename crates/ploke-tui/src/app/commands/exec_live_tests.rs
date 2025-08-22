@@ -207,6 +207,7 @@ async fn openrouter_provider_preference_experiment() {
             }
             Err(e) => {
                 warn!("{} -> Request error: {}", label, e);
+            panic!("Test failed")
             }
         }
     }
@@ -282,6 +283,7 @@ async fn openrouter_tools_smoke() {
         }
         Err(e) => {
             warn!("tools_smoke -> Request error: {}", e);
+            panic!("Test failed")
         }
     }
 }
