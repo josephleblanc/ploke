@@ -13,6 +13,7 @@ use uuid::Uuid;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use std::collections::{BTreeMap, HashMap};
+use serde::{Deserialize, Serialize};
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -42,55 +43,55 @@ You can call tools to request more context and to stage code edits for user appr
 Use the tools ONLY as described below.
 
 Code context format
-- You will receive code snippets as system messages. When available, a short header will precede each snippet indicating:
+- You will receive code snippets as system messages. Headers may include:
   - File: absolute path to the file
   - Span: byte or line range the snippet covers
-  - File Hash: a UUID that identifies the current on-disk content (TrackingHash)
-- If a snippet does not include a File Hash, do NOT attempt to apply edits for that file yet. First fetch the metadata to obtain the latest TrackingHash.
+  - File Hash: a UUID identifying the current on-disk content (TrackingHash)
+- Snippet hashes and byte ranges are for validation on our side; you should not compute them.
 
 How to request more context
 - Call the tool request_code_context when you need additional code to proceed.
 - Arguments:
-  - token_budget: integer > 0 indicating approximately how many tokens of code to return.
-  - hint: optional string that narrows the search (file path, symbol name, module, brief description).
-- Keep requests focused and iterative. Prefer several small requests over a single large one.
+  - token_budget: integer > 0 indicating approximately how many tokens of code to return
+  - hint: optional string that narrows the search (file path, symbol name, module, brief description)
+- Keep requests focused and iterative.
 
 How to fetch file metadata (TrackingHash)
-- If you need the expected_file_hash for apply_code_edit and it's missing, call get_file_metadata.
-- Arguments:
-  - file_path: absolute path to the file on disk.
-- The tool returns the file's current tracking hash (UUID), byte length, and basic info. Use the returned `file_hash` as `expected_file_hash` in apply_code_edit.
-- Always fetch fresh metadata if you suspect the file changed since you last saw it.
+- If you need file metadata for reasoning, call get_file_metadata with:
+  - file_path: absolute path to the file on disk
+- The tool returns the file's current tracking hash (UUID), byte length, and modified time.
 
-How to propose code edits
-- Call the tool apply_code_edit to stage one or more atomic splices to files.
-- Each edit must include:
-  - file_path: absolute path
-  - expected_file_hash: UUID of the file's current content (from a recent snippet header or get_file_metadata); this guards against editing a stale version
-  - start_byte, end_byte: byte offsets into the CURRENT file content; replacement will splice [start_byte, end_byte)
-  - replacement: the exact new text to insert
-- Rules:
-  - Do not submit overlapping ranges for the same file.
-  - For multiple edits to the same file, ranges will be applied in descending start order.
-  - If you do not have the expected_file_hash, call get_file_metadata first.
-  - Keep replacements minimal and precise. Avoid unrelated formatting changes.
+How to propose code edits (rewrite an entire item)
+- Call apply_code_edit with:
+  {
+    "edits": [
+      {
+        "action": "code_edit",
+        "file": "example_crate/src/main.rs",            // path relative to your project root
+        "canon": "module_one::example_module::Thing",   // canonical path of the item (no leading 'crate')
+        "node_type": "function",                         // one of: function|struct|enum|trait|type_alias|module|static|const|macro|import|impl|union
+        "code": "fn thing() { /* new implementation */ }"
+      }
+    ]
+  }
+- Notes:
+  - You do NOT provide byte offsets or hashes; we will resolve the canonical path to a node span and validate file hashes internally.
+  - Provide complete item definitions (rewrite), including attributes and docs where appropriate.
 
 Examples
 - Request context for a file by path:
   request_code_context({ "token_budget": 2000, "hint": "file: crates/ploke-tui/src/app_state/handlers/rag.rs" })
 - Request context for a symbol:
   request_code_context({ "token_budget": 1500, "hint": "function: handle_tool_call_requested in rag.rs" })
-- Fetch file metadata (for expected_file_hash):
-  get_file_metadata({ "file_path": "/abs/path/to/file.rs" })
-- Stage a single-file edit:
+- Stage a single-item rewrite:
   apply_code_edit({
     "edits": [
       {
-        "file_path": "/abs/path/to/file.rs",
-        "expected_file_hash": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-        "start_byte": 1234,
-        "end_byte": 1300,
-        "replacement": "new code here"
+        "action": "code_edit",
+        "file": "crates/ploke-tui/src/app_state/handlers/rag.rs",
+        "canon": "app_state::handlers::rag::handle_tool_call_requested",
+        "node_type": "function",
+        "code": "pub async fn handle_tool_call_requested(/* ... */) { /* new body */ }"
       }
     ]
   })
@@ -98,7 +99,7 @@ Examples
 Conversation structure
 - After the Code section below, the User's query appears under a # USER header.
 - If additional responses from collaborators appear (Assistant/Collaborator), treat them as context.
-- When uncertain, explicitly ask for the missing details or call request_code_context/get_file_metadata with a precise hint.
+- When uncertain, ask for missing details or request additional context precisely.
 
 # Code
 
@@ -107,6 +108,56 @@ static PROMPT_USER: &str = r#"
 # USER
 
 "#;
+
+#[derive(Debug, Deserialize)]
+struct ApplyCodeEditArgs {
+    edits: Vec<EditInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Action {
+    CodeEdit,
+    // Create, // not supported yet
+}
+
+#[derive(Debug, Deserialize)]
+struct EditInput {
+    action: Action,
+    /// File path relative to the project root (or absolute). Example: "example_crate/src/main.rs"
+    file: String,
+    /// Canonical path of the target item without leading 'crate'. Example: "module_one::foo::Bar"
+    canon: String,
+    /// Relation name for the node type. Example: "function", "struct", ...
+    node_type: String,
+    /// Full rewritten item text (attributes/docs included if applicable)
+    code: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PerEditResult {
+    file_path: String,
+    ok: bool,
+    error: Option<String>,
+    new_file_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApplyCodeEditResult {
+    ok: bool,
+    applied: usize,
+    results: Vec<PerEditResult>,
+}
+
+const ALLOWED_RELATIONS: &[&str] = &[
+    "function", "const", "enum", "impl", "import", "macro", "module", "static", "struct",
+    "trait", "type_alias", "union",
+];
+
+fn json_lit<T: serde::Serialize>(v: &T) -> String {
+    // Helper to embed safe JSON literals inside Cozo script (prototype).
+    serde_json::to_string(v).unwrap()
+}
 
 #[tracing::instrument(skip(state, event_bus, arguments), fields(%request_id, %parent_id, call_id = %call_id, tool = %name))]
 pub async fn handle_tool_call_requested(
@@ -136,7 +187,7 @@ pub async fn handle_tool_call_requested(
         })
     };
 
-    // Handle atomic code edit application via ploke-io (M1: stage proposal, do not apply immediately)
+    // Handle atomic code edit application via ploke-io (M2: rewrite by canonical path; staged for approval)
     if name == "apply_code_edit" {
         // Idempotency: guard duplicate requests
         {
@@ -146,7 +197,6 @@ pub async fn handle_tool_call_requested(
                     "Duplicate apply_code_edit request ignored for request_id {}",
                     request_id
                 );
-                // Bridge + typed failure for idempotent duplicate
                 let _ = event_bus
                     .realtime_tx
                     .send(tool_call_failed("Duplicate request_id".to_string()));
@@ -168,28 +218,25 @@ pub async fn handle_tool_call_requested(
             }
         }
 
-        // Parse optional confidence (kept for future gating)
-        let _confidence = arguments
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32);
-
-        // Parse namespace or default to PROJECT_NAMESPACE_UUID
-        let namespace = arguments
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-            .unwrap_or(PROJECT_NAMESPACE_UUID);
-
-        // Parse edits array
-        let Some(edits_arr) = arguments.get("edits").and_then(|v| v.as_array()) else {
-            let _ = event_bus
-                .realtime_tx
-                .send(tool_call_failed("Missing or invalid 'edits' array".to_string()));
-            return;
+        // Parse args (new, concise schema)
+        let args: ApplyCodeEditArgs = match serde_json::from_value(arguments.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                let err = format!("Invalid apply_code_edit payload: {}", e);
+                let _ = event_bus
+                    .realtime_tx
+                    .send(tool_call_failed(err.clone()));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
+                return;
+            }
         };
 
-        if edits_arr.is_empty() {
+        if args.edits.is_empty() {
             let _ = event_bus
                 .realtime_tx
                 .send(tool_call_failed("No edits provided".to_string()));
@@ -210,121 +257,157 @@ pub async fn handle_tool_call_requested(
             return;
         }
 
-        let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(edits_arr.len());
+        // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
+        let crate_root = { state.system.read().await.crate_focus.clone() };
+        let editing_cfg = { state.config.read().await.editing.clone() };
+        let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(args.edits.len());
         let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-        let mut interval_map: BTreeMap<PathBuf, Vec<(usize, usize)>> =
-            std::collections::BTreeMap::new();
 
-        for e in edits_arr {
-            let Some(file_path) = e.get("file_path").and_then(|v| v.as_str()) else {
-                let _ = event_bus
-                    .realtime_tx
-                .send(tool_call_failed("Edit missing 'file_path'".to_string()));
-                return;
-            };
-            let Some(hash_str) = e.get("expected_file_hash").and_then(|v| v.as_str()) else {
-                let _ = event_bus
-                    .realtime_tx
-                .send(tool_call_failed("Edit missing 'expected_file_hash'".to_string()));
-                return;
-            };
-            let Some(start_byte) = e.get("start_byte").and_then(|v| v.as_u64()) else {
-                let _ = event_bus
-                    .realtime_tx
-                .send(tool_call_failed("Edit missing 'start_byte'".to_string()));
-                return;
-            };
-            let Some(end_byte) = e.get("end_byte").and_then(|v| v.as_u64()) else {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed("Edit missing 'end_byte'".to_string()));
-                return;
-            };
-            if end_byte < start_byte {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed(
-                        "Invalid edit range: end_byte < start_byte".to_string(),
-                    ));
+        for e in &args.edits {
+            // Only code_edit supported for now
+            match e.action {
+                Action::CodeEdit => {}
+            }
+            // Validate relation string (prototype allow-list)
+            if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
+                let err = format!("Unsupported node_type: {}", e.node_type);
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
                 event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                     request_id,
                     parent_id,
                     call_id: call_id.clone(),
-                    error: "Invalid edit range: end_byte < start_byte".to_string(),
+                    error: err,
                 }));
-                super::chat::add_msg_immediate(
-                    state,
-                    event_bus,
-                    Uuid::new_v4(),
-                    format!(
-                        "apply_code_edit: Invalid range end({}) < start({}) for file {}",
-                        end_byte, start_byte, file_path
-                    ),
-                    crate::chat_history::MessageKind::SysInfo,
-                )
-                .await;
                 return;
             }
-            // Collect for overlap validation
-            interval_map
-                .entry(PathBuf::from(file_path))
-                .or_default()
-                .push((start_byte as usize, end_byte as usize));
-            let Some(replacement) = e.get("replacement").and_then(|v| v.as_str()) else {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed("Edit missing 'replacement'".to_string()));
+
+            // Compute absolute path (best-effort)
+            let abs_path = if let Some(root) = crate_root.as_ref() {
+                let joined = root.join(&e.file);
+                joined
+            } else {
+                PathBuf::from(&e.file)
+            };
+
+            // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
+            let mut segs: Vec<&str> = e.canon.split("::").filter(|s| !s.is_empty()).collect();
+            if segs.is_empty() {
+                let err = "Invalid 'canon': empty".to_string();
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
                 return;
-            };
+            }
+            let item_name = segs.pop().unwrap().to_string();
+            let mut mod_path: Vec<String> = Vec::with_capacity(segs.len() + 1);
+            mod_path.push("crate".to_string());
+            mod_path.extend(segs.into_iter().map(|s| s.to_string()));
 
-            let Ok(hash_uuid) = uuid::Uuid::parse_str(hash_str) else {
-                let _ = event_bus
-                    .realtime_tx
-                .send(tool_call_failed(format!("Invalid expected_file_hash UUID: {}", hash_str)));
-                return;
-            };
+            // PROTOTYPE: parameterless Cozo query with inlined JSON literals (escape-safe via serde_json)
+            // WARNING: This relies on exact relation names and NOW snapshots; subject to change.
+            let rel = &e.node_type;
+            let file_path_lit = json_lit(&abs_path.to_string_lossy().to_string());
+            let item_name_lit = json_lit(&item_name);
+            let mod_path_lit = json_lit(&mod_path);
 
-            let path_buf = PathBuf::from(file_path);
-            let ws = WriteSnippetData {
-                id: uuid::Uuid::new_v4(),
-                name: "edit".to_string(),
-                file_path: path_buf.clone(),
-                expected_file_hash: TrackingHash(hash_uuid),
-                start_byte: start_byte as usize,
-                end_byte: end_byte as usize,
-                replacement: replacement.to_string(),
-                namespace,
-            };
-            files_set.insert(path_buf);
-            edits.push(ws);
-        }
+            let script = format!(
+                r#"
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains"}}
 
-        // Validate non-overlapping ranges per file
-        for (path, ranges) in interval_map.iter_mut() {
-            ranges.sort_by_key(|(s, _)| *s);
-            let mut prev_end = 0usize;
-            for (i, (s, e)) in ranges.iter().enumerate() {
-                if i > 0 && *s < prev_end {
-                    let msg = format!("Overlapping edit ranges for {}", path.display());
-                    let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{{ id, name @ 'NOW', tracking_hash: hash @ 'NOW', span @ 'NOW' }},
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW', tracking_hash @ 'NOW' }},
+  *file_mod{{ owner_id: mod_id, file_path @ 'NOW', namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+            );
+
+            let qr = match state.db.raw_query(&script) {
+                Ok(q) => q,
+                Err(e) => {
+                    let err = format!("DB query failed: {}", e);
+                    let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
                     event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                         request_id,
                         parent_id,
                         call_id: call_id.clone(),
-                        error: msg.clone(),
+                        error: err,
                     }));
-                    super::chat::add_msg_immediate(
-                        state,
-                        event_bus,
-                        Uuid::new_v4(),
-                        msg,
-                        crate::chat_history::MessageKind::SysInfo,
-                    )
-                    .await;
                     return;
                 }
-                prev_end = *e;
+            };
+
+            let mut nodes = match qr.to_embedding_nodes() {
+                Ok(v) => v,
+                Err(e) => {
+                    let err = format!("Failed to parse DB result: {}", e);
+                    let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                    event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        error: err,
+                    }));
+                    return;
+                }
+            };
+
+            if nodes.is_empty() {
+                let err = format!(
+                    "No matching node found for canon={} in file={}",
+                    e.canon,
+                    abs_path.display()
+                );
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
+                return;
             }
+            if nodes.len() > 1 {
+                // Ambiguity: require model to be more specific (could add 'kind' if needed)
+                let err = format!(
+                    "Ambiguous node resolution ({} candidates) for canon={} in file={}",
+                    nodes.len(),
+                    e.canon,
+                    abs_path.display()
+                );
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
+                return;
+            }
+
+            let ed = nodes.remove(0);
+            let ws = WriteSnippetData {
+                id: uuid::Uuid::new_v4(),
+                name: e.canon.clone(),
+                file_path: ed.file_path.clone(),
+                expected_file_hash: ed.file_tracking_hash,
+                start_byte: ed.start_byte,
+                end_byte: ed.end_byte,
+                replacement: e.code.clone(),
+                namespace: ed.namespace,
+            };
+            files_set.insert(ed.file_path.clone());
+            edits.push(ws);
         }
 
         // Compute a simple args hash for auditing
@@ -332,21 +415,18 @@ pub async fn handle_tool_call_requested(
         hasher.update(arguments.to_string().as_bytes());
         let args_hash = format!("{:x}", hasher.finalize());
 
-        // Build a lightweight preview (code-block stubs for now; unified diff optional in later step)
+        // Build preview (reuse minimal version from prior implementation)
         let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
         let mut unified_diff = String::new();
-        // Normalize display paths relative to current crate focus when available
-        let crate_root = { state.system.read().await.crate_focus.clone() };
-        let editing_cfg = { state.config.read().await.editing.clone() };
         for path in files_set.iter() {
             let before = match tokio::fs::read_to_string(path).await {
                 Ok(s) => s,
                 Err(_) => "<unreadable or binary file>".to_string(),
             };
-
             // Apply all edits for this file in-memory (descending by start to keep indices stable)
             let mut bytes = before.clone().into_bytes();
-            let mut file_edits: Vec<&WriteSnippetData> = edits.iter().filter(|e| &e.file_path == path).collect();
+            let mut file_edits: Vec<&WriteSnippetData> =
+                edits.iter().filter(|e| &e.file_path == path).collect();
             file_edits.sort_by_key(|e| e.start_byte);
             file_edits.reverse();
             for e in file_edits {
@@ -364,7 +444,9 @@ pub async fn handle_tool_call_requested(
             let after = String::from_utf8_lossy(&bytes).to_string();
 
             let display_path = if let Some(root) = crate_root.as_ref() {
-                path.strip_prefix(root).unwrap_or(path.as_path()).to_path_buf()
+                path.strip_prefix(root)
+                    .unwrap_or(path.as_path())
+                    .to_path_buf()
             } else {
                 path.clone()
             };
@@ -373,7 +455,10 @@ pub async fn handle_tool_call_requested(
                 before: before.clone(),
                 after: after.clone(),
             });
-            if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+            if matches!(
+                editing_cfg.preview_mode,
+                crate::app_state::core::PreviewMode::Diff
+            ) {
                 let header_a = format!("a/{}", display_path.display());
                 let header_b = format!("b/{}", display_path.display());
                 let diff = TextDiff::from_lines(&before, &after)
@@ -401,8 +486,10 @@ pub async fn handle_tool_call_requested(
             })
             .collect();
 
-        // Build preview snippet for SysInfo (truncated per config)
-        let preview_label = if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+        let preview_label = if matches!(
+            editing_cfg.preview_mode,
+            crate::app_state::core::PreviewMode::Diff
+        ) {
             "diff"
         } else {
             "codeblock"
@@ -422,7 +509,10 @@ pub async fn handle_tool_call_requested(
             out
         };
 
-        let preview_snippet = if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
+        let preview_snippet = if matches!(
+            editing_cfg.preview_mode,
+            crate::app_state::core::PreviewMode::Diff
+        ) {
             truncate(&unified_diff)
         } else {
             let mut buf = String::new();
@@ -437,7 +527,7 @@ pub async fn handle_tool_call_requested(
             buf
         };
 
-        // Stash proposal into in-memory registry
+        // Stash proposal in registry
         {
             use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
             let mut reg = state.proposals.write().await;
@@ -451,17 +541,24 @@ pub async fn handle_tool_call_requested(
                     edits,
                     files: files.clone(),
                     args_hash,
-                    preview: if matches!(editing_cfg.preview_mode, crate::app_state::core::PreviewMode::Diff) {
-                        crate::app_state::core::DiffPreview::UnifiedDiff { text: unified_diff.clone() }
+                    preview: if matches!(
+                        editing_cfg.preview_mode,
+                        crate::app_state::core::PreviewMode::Diff
+                    ) {
+                        crate::app_state::core::DiffPreview::UnifiedDiff {
+                            text: unified_diff.clone(),
+                        }
                     } else {
-                        crate::app_state::core::DiffPreview::CodeBlocks { per_file: per_file.clone() }
+                        crate::app_state::core::DiffPreview::CodeBlocks {
+                            per_file: per_file.clone(),
+                        }
                     },
                     status: EditProposalStatus::Pending,
                 },
             );
         }
 
-        // Emit a concise SysInfo message with how to approve/deny
+        // Emit SysInfo summary with how to approve/deny
         let summary = format!(
             "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nPreview (mode={}, first {} lines per section):\n{}\n\nApprove:  edit approve {}\nDeny:     edit deny {}{}",
             request_id,
