@@ -47,55 +47,47 @@ async fn choose_tools_model(
     api_key: &str,
     preferred: Option<&str>,
 ) -> String {
-    // Helper: check endpoints for tools support
-    // Use owned clones inside an async move closure to avoid lifetime issues.
-    let base_url_owned = base_url.to_string();
-    let api_key_owned = api_key.to_string();
-    let supports_tools = {
-        let client = client.clone();
-        move |model_id: &str| {
-            let client = client.clone();
-            let base_url = base_url_owned.clone();
-            let api_key = api_key_owned.clone();
-            async move {
-                let parts: Vec<&str> = model_id.split('/').collect();
-                if parts.len() != 2 {
-                    return false;
-                }
-                let author = parts[0];
-                let slug = parts[1];
-                let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
-                match client
-                    .get(&url)
-                    .bearer_auth(&api_key)
-                    .send()
-                    .await
-                    .and_then(|r| r.error_for_status())
-                {
-                    Ok(resp) => {
-                        if let Ok(text) = resp.text().await {
-                            if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
-                                return parsed
-                                    .data
-                                    .endpoints
-                                    .iter()
-                                    .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")));
-                            }
-                        }
-                        false
-                    }
-                    Err(_) => false,
-                }
-            }
-        }
-    };
 
     if let Some(pref) = preferred {
-        if supports_tools(pref).await {
-            info!("choose_tools_model: using preferred model '{}'", pref);
-            return pref.to_string();
+        // Inline probe of endpoints to see if preferred model advertises "tools"
+        let parts: Vec<&str> = pref.split('/').collect();
+        if parts.len() == 2 {
+            let author = parts[0];
+            let slug = parts[1];
+            let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+            let supports = match client
+                .get(&url)
+                .bearer_auth(api_key)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+            {
+                Ok(resp) => {
+                    if let Ok(text) = resp.text().await {
+                        if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
+                            parsed
+                                .data
+                                .endpoints
+                                .iter()
+                                .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                Err(_) => false,
+            };
+
+            if supports {
+                info!("choose_tools_model: using preferred model '{}'", pref);
+                return pref.to_string();
+            } else {
+                warn!("choose_tools_model: preferred model '{}' did not advertise tools; probing catalog for alternatives", pref);
+            }
         } else {
-            warn!("choose_tools_model: preferred model '{}' did not advertise tools; probing catalog for alternatives", pref);
+            warn!("choose_tools_model: preferred model '{}' invalid; expected '<author>/<slug>'", pref);
         }
     }
 
@@ -221,7 +213,12 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         return;
     };
 
-    // Client previously constructed above for this test case.
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .default_headers(default_headers())
+        .build()
+        .expect("client");
+
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
     let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
 
