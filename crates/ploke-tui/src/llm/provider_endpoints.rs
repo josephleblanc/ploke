@@ -132,3 +132,13 @@ where
 {
     serializer.serialize_str(&v.to_string())
 }
+
+// Lightweight getters so callers can compute price hints without poking at serde internals.
+impl Pricing {
+    pub fn prompt_or_default(&self) -> f64 {
+        self.prompt
+    }
+    pub fn completion_or_default(&self) -> f64 {
+        self.completion
+    }
+}

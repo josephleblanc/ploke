@@ -43,31 +43,44 @@ fn default_headers() -> HeaderMap {
     headers
 }
 
+/// Simple retry helper for POSTing to OpenRouter, with basic 429 backoff.
+async fn post_with_retries(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+    body: &Value,
+    attempts: u8,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let attempts = attempts.max(1);
+    for i in 0..attempts {
+        let resp = client.post(url).bearer_auth(api_key).json(body).send().await;
+        match resp {
+            Ok(r) => {
+                if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && i + 1 < attempts {
+                    tokio::time::sleep(Duration::from_millis(250 * (i as u64 + 1))).await;
+                    continue;
+                }
+                return Ok(r);
+            }
+            Err(e) => {
+                if i + 1 == attempts {
+                    return Err(e);
+                }
+                tokio::time::sleep(Duration::from_millis(250 * (i as u64 + 1))).await;
+            }
+        }
+    }
+    // Unreachable: loop always returns by the last iteration
+    unreachable!("post_with_retries exhausted attempts unexpectedly")
+}
+
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
 fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelEndpoint) -> f64 {
-    let p = ep.pricing_prompt_or_default();
-    let c = ep.pricing_completion_or_default();
+    let p = ep.pricing.prompt_or_default();
+    let c = ep.pricing.completion_or_default();
     p + c
 }
 
-// Extend Pricing accessors without changing the source file by defining helper traits here.
-trait PricingAccess {
-    fn pricing_prompt_or_default(&self) -> f64;
-    fn pricing_completion_or_default(&self) -> f64;
-}
-impl PricingAccess for crate::llm::provider_endpoints::ModelEndpoint {
-    fn pricing_prompt_or_default(&self) -> f64 {
-        // The struct in provider_endpoints.rs keeps numeric fields internally.
-        // We can't access them directly due to privacy; use JSON roundtrip if needed.
-        // Here we serialize and read back; default to 0.0 on any mismatch.
-        let v = serde_json::to_value(&self.pricing).unwrap_or_else(|_| json!({}));
-        v.get("prompt").and_then(|x| x.as_f64()).unwrap_or(0.0)
-    }
-    fn pricing_completion_or_default(&self) -> f64 {
-        let v = serde_json::to_value(&self.pricing).unwrap_or_else(|_| json!({}));
-        v.get("completion").and_then(|x| x.as_f64()).unwrap_or(0.0)
-    }
-}
 
 /// Pick the cheapest tools-capable endpoint for a model (by prompt+completion price).
 async fn choose_tools_endpoint_for_model(
@@ -136,10 +149,7 @@ async fn choose_tools_endpoint_for_model(
     candidates.sort_by(|a, b| endpoint_price_hint(a).partial_cmp(&endpoint_price_hint(b)).unwrap_or(std::cmp::Ordering::Equal));
 
     let chosen = candidates.remove(0);
-    let slug_hint = providers_map
-        .get(&chosen.name)
-        .cloned()
-        .or_else(|| Some(chosen.name.to_lowercase().replace(' ', "-")));
+    let slug_hint = providers_map.get(&chosen.name).cloned();
     Some((author, slug, chosen, slug_hint))
 }
 
@@ -239,7 +249,7 @@ fn local_get_file_metadata(file_path: &Path) -> String {
 }
 
 fn local_apply_code_edit(file_path: &Path, start: usize, end: usize, replacement: &str) -> String {
-    let mut data = fs::read(file_path).expect("read temp file");
+    let data = fs::read(file_path).expect("read temp file");
     let end = end.min(data.len());
     let start = start.min(end);
     // splice [start, end)
@@ -335,7 +345,7 @@ async fn run_tool_roundtrip(
     // Prepare messages
     let mut messages = vec![
         json!({"role":"system","content":"You are a tool-using assistant. Prefer calling a tool when one is available."}),
-        json!({"role":"user","content": format!("Please call the tool '{}' with the provided arguments, then wait for results.", tool_name)}),
+        json!({"role":"user","content": format!("Please call the tool '{}' with these JSON arguments, then wait for results:\n{}", tool_name, tool_args.to_string())}),
     ];
 
     let mut root = json!({
@@ -353,12 +363,7 @@ async fn run_tool_roundtrip(
     }
 
     let url = format!("{}/chat/completions", base_url);
-    let first = client
-        .post(&url)
-        .bearer_auth(api_key)
-        .json(&root)
-        .send()
-        .await;
+    let first = post_with_retries(client, &url, api_key, &root, 3).await;
 
     let Ok(resp) = first else {
         warn!("first leg request failed for tool '{}': {}", tool_name, first.err().unwrap());
@@ -447,12 +452,7 @@ async fn run_tool_roundtrip(
         "max_tokens": 256
     });
 
-    let second = client
-        .post(&url)
-        .bearer_auth(api_key)
-        .json(&followup)
-        .send()
-        .await;
+    let second = post_with_retries(client, &url, api_key, &followup, 3).await;
 
     match second {
         Ok(resp) => {
