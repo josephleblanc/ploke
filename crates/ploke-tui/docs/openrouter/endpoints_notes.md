@@ -20,6 +20,7 @@ Key Observations
 Diagnostic Artifacts
 - Test `openrouter_endpoints_live_smoke` now writes the raw JSON body into `logs/openrouter_endpoints_<timestamp>.json`.
 - Provider preference experiment and tools smoke tests also persist raw bodies for later inspection.
+- For convenience, a stable alias is also written as `logs/<prefix>_latest.json` (e.g., `logs/tools_success_matrix_latest.json`).
 
 Hypotheses and Status
 - H1: Provider preferences on chat/completions

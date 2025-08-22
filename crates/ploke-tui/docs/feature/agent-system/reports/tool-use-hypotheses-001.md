@@ -64,6 +64,7 @@ Learnings So Far (from exec_live_tests)
 - Duplicate global tracing init can happen in multi-test runs; switching to try_init avoids SetGlobalDefaultError panics.
 - Basic provider preference experiment ran without client-side failures. Additional runs are needed to verify routing enforcement across providers/models.
 - Tool smoke test returns structured responses and captures headers/body to logs/, providing artifacts for error forensics.
+- Stable 'latest' log files are also written (e.g., `logs/tools_success_matrix_latest.json`) for quick inspection without guessing timestamps.
 
 Planned Test Matrix (Tools)
 We will record frequency of tool_calls across the following axes:

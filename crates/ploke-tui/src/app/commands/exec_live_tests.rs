@@ -23,15 +23,31 @@ fn openrouter_env() -> Option<(String, String)> {
     Some((key, OPENROUTER_URL.to_string()))
 }
 
-fn save_response_body(prefix: &str, contents: &str) {
+fn save_response_body(prefix: &str, contents: &str) -> String {
     let _ = std::fs::create_dir_all("logs");
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let path = format!("logs/{}_{}.json", prefix, ts);
-    if let Err(e) = std::fs::write(&path, contents) {
-        warn!("failed to write {}: {}", path, e);
-    } else {
-        info!("wrote response body to {}", path);
+    match std::fs::write(&path, contents) {
+        Ok(()) => {
+            info!("wrote response body to {}", path);
+        }
+        Err(e) => {
+            warn!("failed to write {}: {}", path, e);
+        }
     }
+
+    // Also write/overwrite a stable 'latest' alias for quick inspection.
+    let latest_path = format!("logs/{}_latest.json", prefix);
+    match std::fs::write(&latest_path, contents) {
+        Ok(()) => {
+            info!("updated {}", latest_path);
+        }
+        Err(e) => {
+            warn!("failed to write {}: {}", latest_path, e);
+        }
+    }
+
+    path
 }
 
 /// Very basic check that our test App can be acquired from the harness.
@@ -111,7 +127,8 @@ async fn openrouter_endpoints_live_smoke() {
             }
             let text = resp.text().await.unwrap_or_default();
             info!("body ({} bytes)", text.len());
-            save_response_body("openrouter_endpoints", &text);
+            let saved = save_response_body("openrouter_endpoints", &text);
+            info!("saved endpoints body to {} (and logs/openrouter_endpoints_latest.json)", saved);
 
             // Try to parse strongly-typed to validate our schema
             match serde_json::from_str::<ModelEndpointsResponse>(&text) {
@@ -325,7 +342,8 @@ async fn openrouter_tools_success_matrix() {
                                 tc,
                                 pref
                             );
-                            save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
+                            let saved = save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
+                            info!("saved case body to {} (and logs/{}_latest.json)", saved, label.replace([' ', '/', '\n'], "_"));
 
                             results.push(CaseResult{
                                 system: system.to_string(),
@@ -369,7 +387,30 @@ async fn openrouter_tools_success_matrix() {
 
     let serialized = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string());
     info!("tools_success_matrix summary: total={}, success={}, failure={}", summary.total, summary.successes, summary.failures);
-    save_response_body("tools_success_matrix", &serialized);
+
+    // Save the full summary to timestamped and 'latest' paths.
+    let summary_path = save_response_body("tools_success_matrix", &serialized);
+    info!("tools_success_matrix saved to {} and logs/tools_success_matrix_latest.json", summary_path);
+
+    // Minimal, meaningful assertion: when tool_choice is forced for our declared tool,
+    // we expect at least one call to register as using a tool. If not, fail the test.
+    let forced_total = summary
+        .cases
+        .iter()
+        .filter(|c| c.tool_choice == "force_search_workspace")
+        .count();
+    let forced_success = summary
+        .cases
+        .iter()
+        .filter(|c| c.tool_choice == "force_search_workspace" && c.used_tool)
+        .count();
+    info!(
+        "force_search_workspace -> used_tool {}/{}",
+        forced_success, forced_total
+    );
+    if forced_total > 0 && forced_success == 0 {
+        panic!("No tool_calls observed in any force_search_workspace cases. This suggests the API ignored the forced tool_choice or our schema is invalid.");
+    }
 }
 
 /// HYP-001: Provider preference hypotheses.
@@ -438,7 +479,8 @@ async fn openrouter_provider_preference_experiment() {
                     status,
                     &body.chars().take(512).collect::<String>()
                 );
-                save_response_body(&format!("provider_pref_{}", label.replace([' ', ':'], "_")), &body);
+                let saved = save_response_body(&format!("provider_pref_{}", label.replace([' ', ':'], "_")), &body);
+                info!("{} -> saved body to {} (and logs/provider_pref_{}_latest.json)", label, saved, label.replace([' ', ':'], "_"));
             }
             Err(e) => {
                 warn!("{} -> Request error: {}", label, e);
@@ -513,7 +555,8 @@ async fn openrouter_tools_smoke() {
                 "tools_smoke -> Body (first 1024): {}",
                 &body.chars().take(1024).collect::<String>()
             );
-            save_response_body("tools_smoke", &body);
+            let saved = save_response_body("tools_smoke", &body);
+            info!("tools_smoke -> saved body to {} (and logs/tools_smoke_latest.json)", saved);
             warn!("tools_smoke is currently using a synthetic tool schema. Integrate real tools from our registry for stronger validation.");
         }
         Err(e) => {
