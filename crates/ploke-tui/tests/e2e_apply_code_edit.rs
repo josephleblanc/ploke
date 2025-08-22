@@ -12,7 +12,7 @@ use ploke_tui::{
     llm::{self, LLMParameters, ToolVendor},
     system::SystemEvent,
     tracing_setup::init_tracing,
-    user_config::{ProviderConfig, ProviderRegistry, ProviderType, UserConfig, default_model},
+    user_config::{ProviderConfig, ProviderRegistry, ProviderType, default_model},
 };
 use quote::ToTokens;
 use tokio::sync::{RwLock, mpsc};
