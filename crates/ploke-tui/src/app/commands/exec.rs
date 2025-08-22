@@ -27,18 +27,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::llm::openrouter_catalog::ModelEntry;
 use tracing::{debug, info_span, warn};
-// AI: In a new file, create a more comprehensive set of tests that can run against a real-world
-// API endpoint to test for things like the `list_model_providers_async` function. If you don't
-// know what the correct output would be, or even if you think you do, add logging that will record
-// the correct output. We should be able to confirm in our tests that the queires against the
-// actual OpenRouter API are running correctly, and that we are receiving correct output for things
-// like the form of the query, the values for some models, what a tool request returns, whether a
-// given provider has support for tools, what the tool response looks like and whether the model
-// correctly calls the tool, etc.
-// Create these tests in a new file using the new test harness for Arc<Mutex<App>> we recently
-// created.
-// Use these tests as an opportunity to test the hypotheses you noted earlier in `tool-use-hypotheses-001.md` as well.
-// AI!
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
