@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use lazy_static::lazy_static;
+use ploke_test_utils::workspace_root;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -22,17 +23,6 @@ use crate::llm::openrouter_catalog;
 use crate::llm::provider_endpoints::ModelEndpointsResponse;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
-
-/// Workspace root inferred from this crate's manifest location.
-/// crates/ploke-tui -> crates -> <workspace root>
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("expected parent directory 'crates'")
-        .parent()
-        .expect("expected workspace root (parent of 'crates')")
-        .to_path_buf()
-}
 
 /// OPENROUTER_API_KEY + base URL
 fn openrouter_env() -> Option<(String, String)> {
@@ -226,7 +216,6 @@ fn tool_defs() -> Vec<Value> {
 }
 
 /// Local execution for the three tools against temporary test targets or fixtures.
-
 fn local_get_file_metadata(file_path: &Path) -> String {
     // Compute a simple JSON result with size and sha256; include a pseudo tracking hash (UUID v5)
     let mut f = fs::File::open(file_path).expect("open temp file");
@@ -502,7 +491,6 @@ async fn run_tool_roundtrip(
 /// Notes:
 /// - This test requires OPENROUTER_API_KEY and is ignored by default due to network and cost.
 /// - It performs local tool execution; tool schemas are aligned with our LLM plumbing.
-#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_real_tools_roundtrip_smoke() {
     let _guard = init_tracing();
