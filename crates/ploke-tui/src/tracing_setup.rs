@@ -24,10 +24,11 @@ pub fn init_tracing() -> WorkerGuard {
         .pretty()
         .with_ansi(false);
 
-    tracing_subscriber::registry()
+    // Use try_init to avoid panicking if a global subscriber is already set (e.g., across tests)
+    let _ = tracing_subscriber::registry()
         .with(filter)
         .with(file_subscriber)
-        .init();
+        .try_init();
 
     file_guard
 }

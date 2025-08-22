@@ -50,7 +50,6 @@ async fn harness_smoke_app_constructs() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_endpoints_live_smoke() {
     let _guard = init_tracing();
-    let _guard = init_tracing();
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
