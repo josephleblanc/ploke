@@ -65,6 +65,16 @@ Learnings So Far (from exec_live_tests)
 - Basic provider preference experiment ran without client-side failures. Additional runs are needed to verify routing enforcement across providers/models.
 - Tool smoke test returns structured responses and captures headers/body to logs/, providing artifacts for error forensics.
 - Stable 'latest' log files are also written (e.g., `logs/tools_success_matrix_latest.json`) for quick inspection without guessing timestamps.
+- Console logging is enabled for tests; on failure, stderr includes diagnostics. Use `RUST_LOG=info -- --nocapture` to see logs during passing runs.
+
+Updated Hypotheses
+- Some models ignore forced tool_choice under certain provider routes even when tools are available. We must confirm endpoint tool support before asserting expectations.
+- Provider.order is accepted on chat/completions for some providers; enforcement level varies. We should track status codes and native_finish_reason to understand routing behavior.
+
+Actionable Tests
+- openrouter_model_tools_support_check: Confirms whether the selected model advertises tool support and lists endpoints.
+- openrouter_tools_forced_choice_diagnostics: Sends a single forced tool_choice call and logs request/response thoroughly.
+- openrouter_tools_success_matrix: Measures tool_call frequency across prompt/task/provider variants and fails with a detailed summary when forced-tool cases never produce tool_calls.
 
 Planned Test Matrix (Tools)
 We will record frequency of tool_calls across the following axes:

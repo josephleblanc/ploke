@@ -22,6 +22,10 @@ Diagnostic Artifacts
 - Provider preference experiment and tools smoke tests also persist raw bodies for later inspection.
 - For convenience, a stable alias is also written as `logs/<prefix>_latest.json` (e.g., `logs/tools_success_matrix_latest.json`).
 
+Logging Visibility
+- Tests capture stdout/stderr by default and print it when a test fails. We now emit logs to stderr via tracing so failure diagnostics appear without --nocapture.
+- To see logs even on success: run with `RUST_LOG=info cargo test -p ploke-tui -- --nocapture`.
+
 Hypotheses and Status
 - H1: Provider preferences on chat/completions
   - `provider: { "order": ["<slug>"] }` is accepted/respected; `allow` may 400 on chat/completions.

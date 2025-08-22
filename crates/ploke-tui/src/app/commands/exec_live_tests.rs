@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, warn, instrument};
 
 use reqwest::Client;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::llm::provider_endpoints::ModelEndpointsResponse;
 use crate::tracing_setup::init_tracing;
@@ -21,6 +21,148 @@ fn openrouter_env() -> Option<(String, String)> {
         return None;
     }
     Some((key, OPENROUTER_URL.to_string()))
+}
+
+/// Inspect tools support for the active model by querying the endpoints list and printing diagnostics.
+/// Skips when OPENROUTER_API_KEY is unset.
+#[instrument(skip_all)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openrouter_model_tools_support_check() {
+    let _guard = init_tracing();
+
+    let Some((api_key, base_url)) = openrouter_env() else {
+        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
+        return;
+    };
+
+    let model_id = std::env::var("PLOKE_MODEL_ID")
+        .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
+    let parts: Vec<&str> = model_id.split('/').collect();
+    if parts.len() != 2 {
+        warn!("Invalid model id '{}'; expected '<author>/<slug>'", model_id);
+        return;
+    }
+    let author = parts[0];
+    let slug = parts[1];
+
+    let client = Client::builder().timeout(Duration::from_secs(30)).build().expect("client");
+    let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+    match client
+        .get(&url)
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let saved = save_response_body("model_tools_support_check", &body);
+            info!("GET {} -> {}. Saved to {}", url, status, saved);
+
+            match serde_json::from_str::<ModelEndpointsResponse>(&body) {
+                Ok(parsed) => {
+                    let total = parsed.data.endpoints.len();
+                    let tools_cnt = parsed
+                        .data
+                        .endpoints
+                        .iter()
+                        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                        .count();
+                    info!("model={} endpoints total={}, tools_capable={}", model_id, total, tools_cnt);
+                    for ep in parsed.data.endpoints.iter() {
+                        let supports_tools = ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools"));
+                        info!(
+                            "  - provider='{}' slug_hint='{}' supports_tools={} context_length={}",
+                            ep.name,
+                            ep.name.to_lowercase().replace(' ', "-"),
+                            supports_tools,
+                            ep.context_length
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to parse endpoints json: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to fetch endpoints: {}", e);
+        }
+    }
+}
+
+/// Diagnostic: send a single forced tool_choice request and log the request/response thoroughly.
+/// Skips when OPENROUTER_API_KEY is unset.
+#[instrument(skip_all)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openrouter_tools_forced_choice_diagnostics() {
+    let _guard = init_tracing();
+
+    let Some((api_key, base_url)) = openrouter_env() else {
+        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
+        return;
+    };
+
+    let client = Client::builder().timeout(Duration::from_secs(45)).build().expect("client");
+    let model_id = std::env::var("PLOKE_MODEL_ID")
+        .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
+
+    let payload = json!({
+        "model": model_id,
+        "messages": [
+            {"role":"user","content":"Find code that mentions 'serde_json::from_str' and summarize the count."}
+        ],
+        "tools": [
+            {"type":"function","function":{
+                "name":"search_workspace",
+                "description":"Search for code or text in the workspace",
+                "parameters":{"type":"object","properties":{
+                    "query":{"type":"string"},
+                    "limit":{"type":"integer","minimum":1,"maximum":50}
+                },"required":["query"]}}
+            }
+        ],
+        "tool_choice": {"type":"function","function":{"name":"search_workspace"}},
+        "max_tokens": 64
+    });
+
+    info!("forced_choice request payload:\n{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+
+    let url = format!("{}/chat/completions", base_url);
+    let start = Instant::now();
+    match client.post(&url).bearer_auth(&api_key).json(&payload).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let saved = save_response_body("tools_forced_diag", &body);
+            let elapsed_ms = start.elapsed().as_millis();
+            info!("forced_choice -> status={}, elapsed_ms={}, saved={}", status, elapsed_ms, saved);
+
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                let used_tool = v.get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.get(0))
+                    .and_then(|c0| c0.get("message"))
+                    .and_then(|m| m.get("tool_calls"))
+                    .and_then(|tc| tc.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false);
+                let finish_reason = v.get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.get(0))
+                    .and_then(|c0| c0.get("finish_reason"))
+                    .and_then(|fr| fr.as_str())
+                    .unwrap_or("<none>");
+                info!("forced_choice -> used_tool={}, finish_reason={}", used_tool, finish_reason);
+            } else {
+                warn!("forced_choice -> non-JSON response; inspect {}", saved);
+            }
+        }
+        Err(e) => {
+            warn!("forced_choice -> request error: {}", e);
+        }
+    }
 }
 
 fn save_response_body(prefix: &str, contents: &str) -> String {
@@ -171,6 +313,52 @@ async fn openrouter_tools_success_matrix() {
     let model_id = std::env::var("PLOKE_MODEL_ID")
         .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
 
+    // Pre-check: does this model expose any endpoints that advertise "tools" support?
+    let parts: Vec<&str> = model_id.split('/').collect();
+    let mut endpoints_tools_count: Option<usize> = None;
+    if parts.len() == 2 {
+        let author = parts[0];
+        let slug = parts[1];
+        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+        let client_probe = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("client");
+        match client_probe
+            .get(&url)
+            .bearer_auth(&api_key)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => {
+                let body = resp.text().await.unwrap_or_default();
+                let _ = save_response_body("tools_matrix_endpoints_probe", &body);
+                if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&body) {
+                    let cnt = parsed
+                        .data
+                        .endpoints
+                        .iter()
+                        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                        .count();
+                    endpoints_tools_count = Some(cnt);
+                    info!(
+                        "endpoints probe: {} endpoints total, {} advertise tools",
+                        parsed.data.endpoints.len(),
+                        cnt
+                    );
+                } else {
+                    warn!("endpoints probe: failed to parse response; inspect logs/tools_matrix_endpoints_probe_latest.json");
+                }
+            }
+            Err(e) => {
+                warn!("endpoints probe failed: {}", e);
+            }
+        }
+    } else {
+        warn!("model id '{}' is not '<author>/<slug>'; skipping endpoints probe", model_id);
+    }
+
     // Define tools (placeholder until wired to our registry export)
     let tools = json!([
       {
@@ -296,6 +484,7 @@ async fn openrouter_tools_success_matrix() {
                     }
 
                     let url = format!("{}/chat/completions", base_url);
+                    let start = Instant::now();
                     let send_res = client
                         .post(&url)
                         .bearer_auth(&api_key)
@@ -345,6 +534,12 @@ async fn openrouter_tools_success_matrix() {
                             let saved = save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
                             info!("saved case body to {} (and logs/{}_latest.json)", saved, label.replace([' ', '/', '\n'], "_"));
 
+                            let elapsed_ms = start.elapsed().as_millis() as u64;
+                            info!(
+                                "case {} -> status={}, used_tool={}, finish_reason={:?}, elapsed_ms={}",
+                                label, status, used_tool, finish_reason, elapsed_ms
+                            );
+
                             results.push(CaseResult{
                                 system: system.to_string(),
                                 user: user.to_string(),
@@ -357,6 +552,10 @@ async fn openrouter_tools_success_matrix() {
                             });
                         }
                         Err(e) => {
+                            info!(
+                                "case build/send error for system='{}', user='{}', tool_choice='{}', provider_pref='{}': {}",
+                                system, user, tc, pref, e
+                            );
                             results.push(CaseResult{
                                 system: system.to_string(),
                                 user: user.to_string(),
@@ -409,7 +608,17 @@ async fn openrouter_tools_success_matrix() {
         forced_success, forced_total
     );
     if forced_total > 0 && forced_success == 0 {
-        panic!("No tool_calls observed in any force_search_workspace cases. This suggests the API ignored the forced tool_choice or our schema is invalid.");
+        panic!(
+            "No tool_calls observed in any force_search_workspace cases.
+endpoints_tools_count(advertise 'tools')={:?}.
+Summary saved to: {}.
+Hints:
+- Verify the selected model supports tools on at least one endpoint (see endpoints probe log above).
+- Inspect {} and logs/tools_matrix_endpoints_probe_latest.json for raw responses.
+- Try setting PLOKE_MODEL_ID to a known tools-capable model (e.g., qwen/qwen-2.5-72b-instruct or google/gemini-2.0-flash-001).
+- Run with: RUST_LOG=info cargo test -p ploke-tui openrouter_tools_success_matrix -- --nocapture.",
+            endpoints_tools_count, summary_path, summary_path
+        );
     }
 }
 

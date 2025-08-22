@@ -24,10 +24,19 @@ pub fn init_tracing() -> WorkerGuard {
         .pretty()
         .with_ansi(false);
 
+    // Also log to stderr so test failures print captured diagnostics without requiring manual file inspection.
+    let console_subscriber = fmt::layer()
+        .with_target(true)
+        .with_level(true)
+        .with_thread_ids(true)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_ansi(true);
+
     // Use try_init to avoid panicking if a global subscriber is already set (e.g., across tests)
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(file_subscriber)
+        .with(console_subscriber.with_writer(std::io::stderr))
         .try_init();
 
     file_guard
