@@ -58,3 +58,34 @@ Exit Criteria
 - We can deterministically select a provider endpoint that supports tools for a given model.
 - When policy requires tool support, we never downgrade silently to no-tools.
 - Tests cover both the live smoke path (ignored by default) and mocked payload/policy logic.
+
+Learnings So Far (from exec_live_tests)
+- Endpoints parsing now succeeds; pricing fields come back as strings in OpenRouter JSON but deserialize cleanly via string-or-number helpers into f64.
+- Duplicate global tracing init can happen in multi-test runs; switching to try_init avoids SetGlobalDefaultError panics.
+- Basic provider preference experiment ran without client-side failures. Additional runs are needed to verify routing enforcement across providers/models.
+- Tool smoke test returns structured responses and captures headers/body to logs/, providing artifacts for error forensics.
+
+Planned Test Matrix (Tools)
+We will record frequency of tool_calls across the following axes:
+- System prompts:
+  - neutral: “You are a helpful assistant.”
+  - prefer-tools: “Prefer calling a tool when available.”
+  - tools-only: “Use tools exclusively; no natural language unless tool results are present.”
+- User tasks:
+  - code-search: “Find code that mentions ‘serde_json::from_str’...”
+  - knowledge: “What is the weather in Paris?” (no matching tool available)
+  - repo-search: “Search the workspace for references to trait implementations of Iterator.”
+- Tool choice:
+  - "auto"
+  - force a specific function
+- Provider preference:
+  - none
+  - provider.order=["openai"] (example)
+
+Success criteria:
+- tool_calls array present and references one of our offered functions.
+- Aggregate success rate reported to logs and saved as JSON for analysis.
+
+Next:
+- Wire actual tool schemas from our registry to replace placeholders.
+- Add optional second-leg call (posting tool results) and measure final-answer quality separately from tool_call frequency.

@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use serde_json::json;
+use serde::{Serialize, Deserialize};
 use tracing::{info, warn, instrument};
 
 use reqwest::Client;
@@ -135,6 +136,240 @@ async fn openrouter_endpoints_live_smoke() {
             panic!("Failed to fetch endpoints for {}: {}", model_id, e);
         }
     }
+}
+
+/// Matrix-style live test to measure tool_call frequency under varied prompts/requests.
+/// Saves per-case results and an aggregate summary to logs/tools_success_matrix_<timestamp>.json.
+#[instrument(skip_all)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openrouter_tools_success_matrix() {
+    let _guard = init_tracing();
+
+    let Some((api_key, base_url)) = openrouter_env() else {
+        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
+        return;
+    };
+
+    // Choose a widely available tools-capable model; override via env if desired.
+    let model_id = std::env::var("PLOKE_MODEL_ID")
+        .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
+
+    // Define tools (placeholder until wired to our registry export)
+    let tools = json!([
+      {
+        "type": "function",
+        "function": {
+          "name": "search_workspace",
+          "description": "Search for code or text in the workspace",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string", "description": "Search query string" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+            },
+            "required": ["query"]
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "add_numbers",
+          "description": "Add two integers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {"type": "integer"},
+              "b": {"type": "integer"}
+            },
+            "required": ["a","b"]
+          }
+        }
+      }
+    ]);
+
+    // Axes
+    let system_variants = vec![
+        "",
+        "You are a tool-using assistant. Prefer calling a tool when one is available.",
+        "Use tools exclusively; output no natural language unless tool results are present.",
+    ];
+
+    let user_variants = vec![
+        "Search the workspace for references to trait implementations of Iterator.",
+        "What's the weather in Paris right now?",
+        "Find code files that mention 'serde_json::from_str' and summarize.",
+    ];
+
+    let tool_choice_variants = vec![
+        "auto",
+        "force_search_workspace",
+    ];
+
+    let provider_prefs = vec![
+        "none",
+        "order_openai",
+    ];
+
+    #[derive(Debug, Serialize)]
+    struct CaseResult {
+        system: String,
+        user: String,
+        tool_choice: String,
+        provider_pref: String,
+        status: u16,
+        used_tool: bool,
+        finish_reason: Option<String>,
+        error: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct Summary {
+        model: String,
+        total: usize,
+        successes: usize,
+        failures: usize,
+        cases: Vec<CaseResult>,
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .expect("client");
+
+    let mut results: Vec<CaseResult> = Vec::new();
+
+    for system in &system_variants {
+        for user in &user_variants {
+            for tc in &tool_choice_variants {
+                for pref in &provider_prefs {
+                    // Build messages
+                    let mut messages = vec![];
+                    if !system.is_empty() {
+                        messages.push(json!({"role":"system","content": system}));
+                    }
+                    messages.push(json!({"role":"user","content": user}));
+
+                    // Build root payload
+                    let mut root = json!({
+                        "model": model_id,
+                        "messages": messages,
+                        "tools": tools,
+                        "max_tokens": 128,
+                    });
+
+                    // tool_choice
+                    match *tc {
+                        "auto" => {
+                            root.as_object_mut().unwrap().insert("tool_choice".to_string(), json!("auto"));
+                        }
+                        "force_search_workspace" => {
+                            root.as_object_mut().unwrap().insert("tool_choice".to_string(), json!({"type":"function","function":{"name":"search_workspace"}}));
+                        }
+                        _ => {}
+                    }
+
+                    // provider preference
+                    match *pref {
+                        "none" => {}
+                        "order_openai" => {
+                            root.as_object_mut().unwrap().insert("provider".to_string(), json!({"order": ["openai"]}));
+                        }
+                        _ => {}
+                    }
+
+                    let url = format!("{}/chat/completions", base_url);
+                    let send_res = client
+                        .post(&url)
+                        .bearer_auth(&api_key)
+                        .json(&root)
+                        .send()
+                        .await;
+
+                    match send_res {
+                        Ok(resp) => {
+                            let status = resp.status();
+                            let body = resp.text().await.unwrap_or_default();
+                            let used_tool = match serde_json::from_str::<serde_json::Value>(&body) {
+                                Ok(v) => {
+                                    // Non-streaming path: choices[0].message.tool_calls exists and non-empty
+                                    let tc_opt = v.get("choices")
+                                        .and_then(|c| c.as_array())
+                                        .and_then(|arr| arr.get(0))
+                                        .and_then(|c0| c0.get("message"))
+                                        .and_then(|m| m.get("tool_calls"));
+                                    match tc_opt {
+                                        Some(serde_json::Value::Array(a)) => !a.is_empty(),
+                                        _ => false,
+                                    }
+                                }
+                                Err(_) => false,
+                            };
+
+                            let finish_reason = serde_json::from_str::<serde_json::Value>(&body)
+                                .ok()
+                                .and_then(|v| v.get("choices")
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|arr| arr.get(0))
+                                    .and_then(|c0| c0.get("finish_reason"))
+                                    .and_then(|fr| fr.as_str().map(|s| s.to_string()))
+                                );
+
+                            let label = format!("tools_matrix_s={},u={},tc={},p={}",
+                                if system.is_empty() { "none" } else { "var" },
+                                match *user {
+                                    "Search the workspace for references to trait implementations of Iterator." => "repo",
+                                    "What's the weather in Paris right now?" => "weather",
+                                    _ => "code",
+                                },
+                                tc,
+                                pref
+                            );
+                            save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
+
+                            results.push(CaseResult{
+                                system: system.to_string(),
+                                user: user.to_string(),
+                                tool_choice: tc.to_string(),
+                                provider_pref: pref.to_string(),
+                                status: status.as_u16(),
+                                used_tool,
+                                finish_reason,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            results.push(CaseResult{
+                                system: system.to_string(),
+                                user: user.to_string(),
+                                tool_choice: tc.to_string(),
+                                provider_pref: pref.to_string(),
+                                status: 0,
+                                used_tool: false,
+                                finish_reason: None,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let successes = results.iter().filter(|r| r.used_tool).count();
+    let failures = results.len() - successes;
+
+    let summary = Summary{
+        model: model_id,
+        total: results.len(),
+        successes,
+        failures,
+        cases: results,
+    };
+
+    let serialized = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string());
+    info!("tools_success_matrix summary: total={}, success={}, failure={}", summary.total, summary.successes, summary.failures);
+    save_response_body("tools_success_matrix", &serialized);
 }
 
 /// HYP-001: Provider preference hypotheses.

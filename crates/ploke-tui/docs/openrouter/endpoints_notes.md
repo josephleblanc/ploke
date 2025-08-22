@@ -34,3 +34,20 @@ Next Steps
 - Integrate actual tool schema in live tools tests (avoid fake tools).
 - Tighten typed models only when we’re sure fields are stable; otherwise prefer permissive types + adapters.
 - Capture headers/latency in spans for better visibility.
+
+Learnings From Live Smoke Tests
+- Endpoints schema parsed successfully end-to-end after switching pricing to a flexible deserializer (accept string or number into f64).
+- Global tracing initialization across tests caused a SetGlobalDefaultError previously; using try_init resolved duplicate init across tests.
+- Provider preference experiment (omitted vs. provider.order vs. provider.allow) did not crash the client; responses were captured for inspection. Exact routing behavior still needs deeper analysis across providers/models.
+- Headers and bodies are now persisted to logs/ for offline inspection. This has already helped confirm shape differences and error payloads.
+- Timeouts (45s) on reqwest eliminate “silent hangs,” surfacing actionable error states for flaky providers.
+
+What We Still Don’t Know
+- Provider routing guarantees per model: when provider.order is honored vs. ignored.
+- Tool support variance across endpoints for the same model: which providers actually surface tool_calls reliably.
+- Impact of instructions: how system prompt wording influences tool selection frequency.
+
+Planned Work
+- Add a matrix-style live test to measure tool_call frequency across combinations of system prompts, user tasks, tool_choice settings, and provider preferences.
+- Replace synthetic examples with our real tool schemas once the registry export is wired in (pending).
+- Codify minimal acceptance thresholds (locally, not CI) for tool-call rates on commonly used models and refine prompts accordingly.
