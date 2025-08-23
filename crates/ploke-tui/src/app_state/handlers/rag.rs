@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use ploke_db::EmbeddingData;
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -229,7 +230,7 @@ pub async fn handle_tool_call_requested(
             Ok(v) => v,
             Err(e) => {
                 let err = format!("Invalid apply_code_edit payload: {}", e);
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                 return;
             }
         };
@@ -263,7 +264,7 @@ pub async fn handle_tool_call_requested(
             // Validate relation string (prototype allow-list)
             if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
                 let err = format!("Unsupported node_type: {}", e.node_type);
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                 return;
             }
 
@@ -397,9 +398,36 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
         let mut unified_diff = String::new();
         for path in files_set.iter() {
-            let before = match tokio::fs::read_to_string(path).await {
-                Ok(s) => s,
-                Err(_) => "<unreadable or binary file>".to_string(),
+            // Fetch full file content via IoManager (verified against tracking hash)
+            let (file_hash, namespace) = edits
+                .iter()
+                .find(|e| &e.file_path == path)
+                .map(|e| (e.expected_file_hash, e.namespace))
+                .unwrap_or((TrackingHash(Uuid::nil()), Uuid::nil()));
+            let byte_len = match tokio::fs::metadata(path).await {
+                Ok(md) => md.len() as usize,
+                Err(_) => 0,
+            };
+            let before = if byte_len > 0 {
+                let req = EmbeddingData {
+                    file_path: path.clone(),
+                    file_tracking_hash: file_hash,
+                    node_tracking_hash: file_hash,
+                    start_byte: 0,
+                    end_byte: byte_len,
+                    id: Uuid::new_v4(),
+                    name: "full_file".to_string(),
+                    namespace,
+                };
+                match state.io_handle.get_snippets_batch(vec![req]).await {
+                    Ok(mut v) => match v.pop() {
+                        Some(Ok(s)) => s,
+                        _ => "<unreadable or binary file>".to_string(),
+                    },
+                    Err(_) => "<unreadable or binary file>".to_string(),
+                }
+            } else {
+                "<unreadable or binary file>".to_string()
             };
             // Apply all edits for this file in-memory (descending by start to keep indices stable)
             let mut bytes = before.clone().into_bytes();
@@ -706,7 +734,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
             Err(e) => {
                 let msg = format!("RAG hybrid_search failed: {}", e);
                 tracing::warn!("{}", msg);
-                let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(msg));
             }
         }
     } else {
