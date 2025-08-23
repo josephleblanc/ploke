@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use ploke_db::EmbeddingData;
+use ploke_core::EmbeddingData;
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -318,7 +318,7 @@ pub async fn handle_tool_call_requested(
 
             let script = format!(
                 r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains"}}
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
 
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
