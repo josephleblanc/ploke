@@ -14,7 +14,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use ploke_core::EmbeddingData;
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -404,30 +403,13 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 .find(|e| &e.file_path == path)
                 .map(|e| (e.expected_file_hash, e.namespace))
                 .unwrap_or((TrackingHash(Uuid::nil()), Uuid::nil()));
-            let byte_len = match tokio::fs::metadata(path).await {
-                Ok(md) => md.len() as usize,
-                Err(_) => 0,
-            };
-            let before = if byte_len > 0 {
-                let req = EmbeddingData {
-                    file_path: path.clone(),
-                    file_tracking_hash: file_hash,
-                    node_tracking_hash: file_hash,
-                    start_byte: 0,
-                    end_byte: byte_len,
-                    id: Uuid::new_v4(),
-                    name: "full_file".to_string(),
-                    namespace,
-                };
-                match state.io_handle.get_snippets_batch(vec![req]).await {
-                    Ok(mut v) => match v.pop() {
-                        Some(Ok(s)) => s,
-                        _ => "<unreadable or binary file>".to_string(),
-                    },
-                    Err(_) => "<unreadable or binary file>".to_string(),
-                }
-            } else {
-                "<unreadable or binary file>".to_string()
+            let before = match state
+                .io_handle
+                .read_full_verified(path.clone(), file_hash, namespace)
+                .await
+            {
+                Ok(Ok(s)) => s,
+                _ => "<unreadable or binary file>".to_string(),
             };
             // Apply all edits for this file in-memory (descending by start to keep indices stable)
             let mut bytes = before.clone().into_bytes();
