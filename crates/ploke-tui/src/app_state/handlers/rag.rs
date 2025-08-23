@@ -347,7 +347,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 Ok(v) => v,
                 Err(e) => {
                     let err = format!("Failed to parse DB result: {}", e);
-                    let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                    let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                     return;
                 }
             };
