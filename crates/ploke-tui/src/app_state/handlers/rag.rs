@@ -3,17 +3,17 @@ use ploke_rag::AssembledContext;
 use ploke_rag::RagService;
 use ploke_rag::RetrievalStrategy;
 use ploke_rag::RrfConfig;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use similar::TextDiff;
 use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-use sha2::{Digest, Sha256};
-use similar::TextDiff;
-use std::collections::{BTreeMap, HashMap};
-use serde::{Deserialize, Serialize};
 
 use crate::AppEvent;
 use crate::EventBus;
@@ -27,6 +27,7 @@ use crate::system::SystemEvent;
 use crate::AppState;
 use crate::RagEvent;
 
+use super::chat;
 use super::embedding::wait_on_oneshot;
 
 static PROMPT_HEADER: &str = r#"
@@ -151,8 +152,18 @@ struct ApplyCodeEditResult {
 }
 
 const ALLOWED_RELATIONS: &[&str] = &[
-    "function", "const", "enum", "impl", "import", "macro", "module", "static", "struct",
-    "trait", "type_alias", "union",
+    "function",
+    "const",
+    "enum",
+    "impl",
+    "import",
+    "macro",
+    "module",
+    "static",
+    "struct",
+    "trait",
+    "type_alias",
+    "union",
 ];
 
 fn json_lit<T: serde::Serialize>(v: &T) -> String {
@@ -171,6 +182,37 @@ pub async fn handle_tool_call_requested(
     arguments: serde_json::Value,
     call_id: String,
 ) {
+    // AI: I asked you to make specific improvements to this file, and frankly, you made a complete
+    // mess of it. I've been going through and changing things myself, but I would like to see if
+    // you are capable of fixing your mistakes.
+    // Major issues I want you to address immediately:
+    // 1. You are using both a closure and explicit statements that the closure defines, e.g.
+    // let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+    // event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
+    //     request_id,
+    //     parent_id,
+    //     call_id: call_id.clone(),
+    //     error: err,
+    // }));
+    // This is bad. There is literally no reason to ever do this. Use the closure. That's why its
+    // there.
+    // 2. Too many transitive allocations:
+    // Why? Just why? Reduce the transitive allocations. It makes me feel like I'm bleeding from my
+    // eyes when I read this horrible code, e.g.
+    // let mut segs: Vec<&str> = e.canon.split("::").filter(|s| !s.is_empty()).collect();
+    // if segs.is_empty() {
+    //     let err = "Invalid 'canon': empty".to_string();
+    //     let _ = event_bus.realtime_tx.send(tool_call_failed(err));
+    //     return;
+    // }
+    // let item_name = segs.pop().unwrap().to_string();
+    // let mut mod_path: Vec<String> = Vec::with_capacity(segs.len() + 1);
+    // mod_path.push("crate".to_string());
+    // mod_path.extend(segs.into_iter().map(|s| s.to_string()));
+    // Just why? Why are you doing this? Its just such shit. Just use functional patterns and
+    // iterators, don't collect and to_string all over the place. I feel like I become a worse
+    // programmer when I read your code. Come on. Please. Suck less.
+    // AI!
     tracing::info!(
         "handle_tool_call_requested: vendor={:?}, name={}",
         vendor,
@@ -201,18 +243,12 @@ pub async fn handle_tool_call_requested(
                 let _ = event_bus
                     .realtime_tx
                     .send(tool_call_failed("Duplicate request_id".to_string()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Duplicate request_id".to_string(),
-                }));
-                super::chat::add_msg_immediate(
+                chat::add_msg_immediate(
                     state,
                     event_bus,
                     Uuid::new_v4(),
                     msg,
-                    crate::chat_history::MessageKind::SysInfo,
+                    MessageKind::SysInfo,
                 )
                 .await;
                 return;
@@ -224,15 +260,7 @@ pub async fn handle_tool_call_requested(
             Ok(v) => v,
             Err(e) => {
                 let err = format!("Invalid apply_code_edit payload: {}", e);
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed(err.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
                 return;
             }
         };
@@ -241,18 +269,12 @@ pub async fn handle_tool_call_requested(
             let _ = event_bus
                 .realtime_tx
                 .send(tool_call_failed("No edits provided".to_string()));
-            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                error: "No edits provided".to_string(),
-            }));
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 "apply_code_edit: No edits provided".to_string(),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
             return;
@@ -273,12 +295,6 @@ pub async fn handle_tool_call_requested(
             if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
                 let err = format!("Unsupported node_type: {}", e.node_type);
                 let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
                 return;
             }
 
@@ -300,13 +316,7 @@ pub async fn handle_tool_call_requested(
             let mut segs: Vec<&str> = e.canon.split("::").filter(|s| !s.is_empty()).collect();
             if segs.is_empty() {
                 let err = "Invalid 'canon': empty".to_string();
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                 return;
             }
             let item_name = segs.pop().unwrap().to_string();
@@ -576,14 +586,18 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
             preview_snippet,
             request_id,
             request_id,
-            if editing_cfg.auto_confirm_edits { "\n\nAuto-approval enabled: applying now..." } else { "" }
+            if editing_cfg.auto_confirm_edits {
+                "\n\nAuto-approval enabled: applying now..."
+            } else {
+                ""
+            }
         );
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             summary,
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
         .await;
 
@@ -651,14 +665,15 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 })
                 .to_string();
 
-                let _ = event_bus
-                    .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        content,
-                    }));
+                let _ =
+                    event_bus
+                        .realtime_tx
+                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            parent_id,
+                            call_id: call_id.clone(),
+                            content,
+                        }));
             }
             Err(e) => {
                 let err = format!("Failed to read file '{}': {}", path.display(), e);
@@ -684,9 +699,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     if name != "request_code_context" {
         tracing::warn!("Unsupported tool call: {}", name);
         let err = format!("Unsupported tool: {}", name);
-        let _ = event_bus
-            .realtime_tx
-            .send(tool_call_failed(err.clone()));
+        let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
         event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
             request_id,
             parent_id,
@@ -703,9 +716,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         .map(|v| v as u32);
     if token_budget.is_none() || token_budget == Some(0) {
         let msg = "Invalid or missing token_budget".to_string();
-        let _ = event_bus
-            .realtime_tx
-            .send(tool_call_failed(msg.clone()));
+        let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
         event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
             request_id,
             parent_id,
@@ -733,9 +744,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
 
     if query.trim().is_empty() {
         let msg = "No query available (no hint provided and no recent user message)".to_string();
-        let _ = event_bus
-            .realtime_tx
-            .send(tool_call_failed(msg.clone()));
+        let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
         event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
             request_id,
             parent_id,
@@ -776,9 +785,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
             Err(e) => {
                 let msg = format!("RAG hybrid_search failed: {}", e);
                 tracing::warn!("{}", msg);
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed(msg.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
                 event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                     request_id,
                     parent_id,
@@ -790,9 +797,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     } else {
         let msg = "RAG service unavailable".to_string();
         tracing::warn!("{}", msg);
-        let _ = event_bus
-            .realtime_tx
-            .send(tool_call_failed(msg.clone()));
+        let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
         event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
             request_id,
             parent_id,
@@ -806,12 +811,15 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     use crate::app_state::core::EditProposalStatus;
     let mut reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
-            format!("No staged edit proposal found for request_id {}", request_id),
-            crate::chat_history::MessageKind::SysInfo,
+            format!(
+                "No staged edit proposal found for request_id {}",
+                request_id
+            ),
+            MessageKind::SysInfo,
         )
         .await;
         return;
@@ -821,23 +829,23 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     match proposal.status {
         EditProposalStatus::Pending => { /* ok */ }
         EditProposalStatus::Applied => {
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Edits already applied for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
             return;
         }
         EditProposalStatus::Denied => {
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Edits already denied for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
             return;
@@ -852,7 +860,11 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
 
     // Apply edits via IoManagerHandle
     let file_paths = proposal.files.clone();
-    match state.io_handle.write_snippets_batch(proposal.edits.clone()).await {
+    match state
+        .io_handle
+        .write_snippets_batch(proposal.edits.clone())
+        .await
+    {
         Ok(results) => {
             let applied = results.iter().filter(|r| r.is_ok()).count();
             let results_json: Vec<serde_json::Value> = results
@@ -882,14 +894,22 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             reg.insert(request_id, proposal);
 
             // Bridge: mark tool call completed
-            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
-            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
-            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val.clone(),
-                content: content.clone(),
-            }));
+            let parent_id_val = reg
+                .get(&request_id)
+                .map(|p| p.parent_id)
+                .unwrap_or_default();
+            let call_id_val = reg
+                .get(&request_id)
+                .map(|p| p.call_id.clone())
+                .unwrap_or_default();
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    parent_id: parent_id_val,
+                    call_id: call_id_val.clone(),
+                    content: content.clone(),
+                }));
             event_bus.send(AppEvent::LlmTool(ToolEvent::Completed {
                 request_id,
                 parent_id: parent_id_val,
@@ -897,12 +917,12 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                 content: content.clone(),
             }));
 
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Applied edits for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
         }
@@ -910,15 +930,23 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             proposal.status = EditProposalStatus::Failed(e.to_string());
             reg.insert(request_id, proposal);
 
-            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
-            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
+            let parent_id_val = reg
+                .get(&request_id)
+                .map(|p| p.parent_id)
+                .unwrap_or_default();
+            let call_id_val = reg
+                .get(&request_id)
+                .map(|p| p.call_id.clone())
+                .unwrap_or_default();
             let err_str = format!("Failed to apply edits: {}", e);
-            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val.clone(),
-                error: err_str.clone(),
-            }));
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id: parent_id_val,
+                    call_id: call_id_val.clone(),
+                    error: err_str.clone(),
+                }));
             event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                 request_id,
                 parent_id: parent_id_val,
@@ -926,12 +954,12 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                 error: err_str.clone(),
             }));
 
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Failed to apply edits for request_id {}: {}", request_id, e),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
         }
@@ -942,32 +970,45 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
     use crate::app_state::core::EditProposalStatus;
     let mut reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
-            format!("No staged edit proposal found for request_id {}", request_id),
-            crate::chat_history::MessageKind::SysInfo,
+            format!(
+                "No staged edit proposal found for request_id {}",
+                request_id
+            ),
+            MessageKind::SysInfo,
         )
         .await;
         return;
     };
 
     match proposal.status {
-        EditProposalStatus::Pending | EditProposalStatus::Approved | EditProposalStatus::Failed(_) => {
+        EditProposalStatus::Pending
+        | EditProposalStatus::Approved
+        | EditProposalStatus::Failed(_) => {
             proposal.status = EditProposalStatus::Denied;
             reg.insert(request_id, proposal);
 
             // Bridge: mark tool call failed with denial
-            let parent_id_val = reg.get(&request_id).map(|p| p.parent_id).unwrap_or_default();
-            let call_id_val = reg.get(&request_id).map(|p| p.call_id.clone()).unwrap_or_default();
+            let parent_id_val = reg
+                .get(&request_id)
+                .map(|p| p.parent_id)
+                .unwrap_or_default();
+            let call_id_val = reg
+                .get(&request_id)
+                .map(|p| p.call_id.clone())
+                .unwrap_or_default();
             let err_msg = "Edit proposal denied by user".to_string();
-            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val.clone(),
-                error: err_msg.clone(),
-            }));
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id: parent_id_val,
+                    call_id: call_id_val.clone(),
+                    error: err_msg.clone(),
+                }));
             event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
                 request_id,
                 parent_id: parent_id_val,
@@ -975,32 +1016,32 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
                 error: err_msg.clone(),
             }));
 
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Denied edits for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
         }
         EditProposalStatus::Denied => {
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Edits already denied for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
         }
         EditProposalStatus::Applied => {
-            super::chat::add_msg_immediate(
+            chat::add_msg_immediate(
                 state,
                 event_bus,
                 Uuid::new_v4(),
                 format!("Edits already applied for request_id {}", request_id),
-                crate::chat_history::MessageKind::SysInfo,
+                MessageKind::SysInfo,
             )
             .await;
         }
@@ -1029,12 +1070,12 @@ pub async fn process_with_rag(
         return;
     }
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
     if let Some(rag) = &state.rag {
@@ -1116,12 +1157,12 @@ fn construct_context_from_rag(
 
 pub async fn bm25_rebuild(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1145,12 +1186,12 @@ pub async fn bm25_search(
     top_k: usize,
 ) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1185,12 +1226,12 @@ pub async fn hybrid_search(
     top_k: usize,
 ) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1220,12 +1261,12 @@ pub async fn hybrid_search(
 
 pub async fn bm25_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1247,12 +1288,12 @@ pub async fn bm25_status(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
 
 pub async fn bm25_save(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: PathBuf) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1274,12 +1315,12 @@ pub async fn bm25_save(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: P
 
 pub async fn bm25_load(state: &Arc<AppState>, event_bus: &Arc<EventBus>, path: PathBuf) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1308,12 +1349,12 @@ pub async fn sparse_search(
     strict: bool,
 ) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1364,12 +1405,12 @@ pub async fn dense_search(
     top_k: usize,
 ) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
@@ -1412,12 +1453,12 @@ pub async fn assemble_context(
     strategy: ploke_rag::RetrievalStrategy,
 ) {
     let add_msg = |msg: &str| {
-        super::chat::add_msg_immediate(
+        chat::add_msg_immediate(
             state,
             event_bus,
             Uuid::new_v4(),
             msg.to_string(),
-            crate::chat_history::MessageKind::SysInfo,
+            MessageKind::SysInfo,
         )
     };
 
