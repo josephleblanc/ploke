@@ -182,7 +182,6 @@ pub async fn handle_tool_call_requested(
     arguments: serde_json::Value,
     call_id: String,
 ) {
-    // AI: I asked you to make specific improvements to this file, and frankly, you made a complete
     // mess of it. I've been going through and changing things myself, but I would like to see if
     // you are capable of fixing your mistakes.
     // Major issues I want you to address immediately:
@@ -212,7 +211,6 @@ pub async fn handle_tool_call_requested(
     // Just why? Why are you doing this? Its just such shit. Just use functional patterns and
     // iterators, don't collect and to_string all over the place. I feel like I become a worse
     // programmer when I read your code. Come on. Please. Suck less.
-    // AI!
     tracing::info!(
         "handle_tool_call_requested: vendor={:?}, name={}",
         vendor,
@@ -313,16 +311,31 @@ pub async fn handle_tool_call_requested(
             };
 
             // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
-            let mut segs: Vec<&str> = e.canon.split("::").filter(|s| !s.is_empty()).collect();
-            if segs.is_empty() {
-                let err = "Invalid 'canon': empty".to_string();
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
+            let canon = e.canon.trim();
+            if canon.is_empty() {
+                let _ = event_bus
+                    .realtime_tx
+                    .send(tool_call_failed("Invalid 'canon': empty".to_string()));
                 return;
             }
-            let item_name = segs.pop().unwrap().to_string();
-            let mut mod_path: Vec<String> = Vec::with_capacity(segs.len() + 1);
-            mod_path.push("crate".to_string());
-            mod_path.extend(segs.into_iter().map(|s| s.to_string()));
+            let (mods_slice, item_name) = match canon.rfind("::") {
+                Some(idx) => (&canon[..idx], &canon[idx + 2..]),
+                None => ("", canon),
+            };
+            if item_name.is_empty() {
+                let _ = event_bus
+                    .realtime_tx
+                    .send(tool_call_failed(
+                        "Invalid 'canon': missing item name".to_string(),
+                    ));
+                return;
+            }
+            // Build module path as &str slices without allocating new Strings
+            let mut mod_path: Vec<&str> = Vec::new();
+            mod_path.push("crate");
+            if !mods_slice.is_empty() {
+                mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
+            }
 
             // PROTOTYPE: parameterless Cozo query with inlined JSON literals (escape-safe via serde_json)
             // WARNING: This relies on exact relation names and NOW snapshots; subject to change.
@@ -354,12 +367,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 Err(e) => {
                     let err = format!("DB query failed: {}", e);
                     let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                    event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: err,
-                    }));
                     return;
                 }
             };
@@ -369,12 +376,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 Err(e) => {
                     let err = format!("Failed to parse DB result: {}", e);
                     let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                    event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: err,
-                    }));
                     return;
                 }
             };
@@ -386,12 +387,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                     abs_path.display()
                 );
                 let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
                 return;
             }
             if nodes.len() > 1 {
@@ -403,12 +398,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                     abs_path.display()
                 );
                 let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
                 return;
             }
 
@@ -619,18 +608,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
             let _ = event_bus
                 .realtime_tx
-                .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: "Missing required argument 'file_path'".to_string(),
-                }));
-            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                error: "Missing required argument 'file_path'".to_string(),
-            }));
+                .send(tool_call_failed("Missing required argument 'file_path'".to_string()));
             return;
         };
 
@@ -679,18 +657,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 let err = format!("Failed to read file '{}': {}", path.display(), e);
                 let _ = event_bus
                     .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        error: err.clone(),
-                    }));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
+                    .send(tool_call_failed(err));
             }
         }
         return;
@@ -700,12 +667,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         tracing::warn!("Unsupported tool call: {}", name);
         let err = format!("Unsupported tool: {}", name);
         let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            error: err,
-        }));
         return;
     }
 
@@ -717,12 +678,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     if token_budget.is_none() || token_budget == Some(0) {
         let msg = "Invalid or missing token_budget".to_string();
         let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
-        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            error: msg,
-        }));
         return;
     }
     let token_budget = token_budget.unwrap();
@@ -745,12 +700,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     if query.trim().is_empty() {
         let msg = "No query available (no hint provided and no recent user message)".to_string();
         let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
-        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            error: msg,
-        }));
         return;
     }
 
@@ -786,24 +735,12 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 let msg = format!("RAG hybrid_search failed: {}", e);
                 tracing::warn!("{}", msg);
                 let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: msg,
-                }));
             }
         }
     } else {
         let msg = "RAG service unavailable".to_string();
         tracing::warn!("{}", msg);
         let _ = event_bus.realtime_tx.send(tool_call_failed(msg.clone()));
-        event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id,
-            error: msg,
-        }));
     }
 }
 
