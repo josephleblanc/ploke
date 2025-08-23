@@ -182,35 +182,6 @@ pub async fn handle_tool_call_requested(
     arguments: serde_json::Value,
     call_id: String,
 ) {
-    // mess of it. I've been going through and changing things myself, but I would like to see if
-    // you are capable of fixing your mistakes.
-    // Major issues I want you to address immediately:
-    // 1. You are using both a closure and explicit statements that the closure defines, e.g.
-    // let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
-    // event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-    //     request_id,
-    //     parent_id,
-    //     call_id: call_id.clone(),
-    //     error: err,
-    // }));
-    // This is bad. There is literally no reason to ever do this. Use the closure. That's why its
-    // there.
-    // 2. Too many transitive allocations:
-    // Why? Just why? Reduce the transitive allocations. It makes me feel like I'm bleeding from my
-    // eyes when I read this horrible code, e.g.
-    // let mut segs: Vec<&str> = e.canon.split("::").filter(|s| !s.is_empty()).collect();
-    // if segs.is_empty() {
-    //     let err = "Invalid 'canon': empty".to_string();
-    //     let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-    //     return;
-    // }
-    // let item_name = segs.pop().unwrap().to_string();
-    // let mut mod_path: Vec<String> = Vec::with_capacity(segs.len() + 1);
-    // mod_path.push("crate".to_string());
-    // mod_path.extend(segs.into_iter().map(|s| s.to_string()));
-    // Just why? Why are you doing this? Its just such shit. Just use functional patterns and
-    // iterators, don't collect and to_string all over the place. I feel like I become a worse
-    // programmer when I read your code. Come on. Please. Suck less.
     tracing::info!(
         "handle_tool_call_requested: vendor={:?}, name={}",
         vendor,
@@ -366,7 +337,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                 Ok(q) => q,
                 Err(e) => {
                     let err = format!("DB query failed: {}", e);
-                    let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                    let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                     return;
                 }
             };
@@ -386,7 +357,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                     e.canon,
                     abs_path.display()
                 );
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                 return;
             }
             if nodes.len() > 1 {
@@ -397,7 +368,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
                     e.canon,
                     abs_path.display()
                 );
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
                 return;
             }
 
@@ -417,6 +388,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         }
 
         // Compute a simple args hash for auditing
+        // BUG: This is incorrect hashing approach. Should use TrackingHash::generate instead
         let mut hasher = Sha256::new();
         hasher.update(arguments.to_string().as_bytes());
         let args_hash = format!("{:x}", hasher.finalize());
