@@ -688,67 +688,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     let mut processed = 0usize;
 
-    let models_with_tools = "https://openrouter.ai/models?supported_parameters=tools";
-    // let providers_map: std::collections::HashMap<String, String> = match client
-    // AI: Let's just try to print the raw response, I'm not sure what format it uses AI!
-    let resp = client
-        .get(models_with_tools)
-        // .bearer_auth(&api_key)
-        .send()
-        .await.unwrap();
-    let resp_json: Value = resp.json().await.unwrap();
-    info!("Response: {:#?}", resp_json);
-    let providers_map: HashMap<String, String> = match client
-        .get(models_with_tools)
-        // .bearer_auth(&api_key)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(resp) => match resp.json::<Value>().await {
-            Ok(v) => {
-                info!("Full response infodump:\n{:#?}\n", v);
-                v.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                let name = p.get("name").and_then(|x| x.as_str())?;
-                                let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                Some((name.to_string(), slug.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
-            Err(_) => Default::default(),
-        },
-        Err(_) => Default::default(),
-    };
-    // --- start: temporary for making sure choose_tools_endpoint_for_model works correctly
-    for m in models {
-        if processed >= max_models {
-            break;
-        }
-
-        let model_id = m.id;
-        info!("model: {}", model_id);
-
-        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
-        let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
-            info!("  no tools-capable endpoints; skipping {}", model_id);
-            continue;
-        };
-
-        info!(
-            "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
-            endpoint.name,
-            endpoint.context_length,
-            endpoint_price_hint(&endpoint)
-        );
-    }
-    // --- end: temporary for making sure choose_tools_endpoint_for_model works correctly
-    panic!("Testing implementation of choose_tools_endpoints_for_model");
+    let providers_map: HashMap<String, String> = HashMap::new();
     for m in models {
         if processed >= max_models {
             break;
