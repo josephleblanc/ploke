@@ -621,8 +621,8 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
         // request_code_context args encourage tool invocation; other tools manage their own temp targets
         let rc_args = json!({"token_budget": LLM_TOKEN_BUDGET, "hint":"SimpleStruct"});
-        let gfm_args = json!({"file_path":"/etc/hosts"});
-        let ace_args = json!({"edits":[{"file_path":"/etc/hosts","expected_file_hash":"00000000-0000-0000-0000-000000000000","start_byte":0,"end_byte":0,"replacement":"ploke"}]});
+        let gfm_args = json!({"file_path":"/tmp/ploke_tools_test.txt"});
+        let ace_args = json!({"edits":[{"file_path":"/tmp/ploke_tools_test.txt","expected_file_hash":"0000000000000000000000000000000000000000000000000000000000000000","start_byte":0,"end_byte":5,"replacement":"HELLO"}]});
 
         for (def, (name, args)) in tools.iter().zip(vec![
             ("request_code_context", rc_args),
