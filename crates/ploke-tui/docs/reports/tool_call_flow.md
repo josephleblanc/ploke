@@ -75,10 +75,10 @@ What is working well
 - Request payloads: build_openai_request produces stable, snapshot-tested JSON, including provider preferences when tools are in play.
 
 Gaps and risks
-- Tool fallback policy: We now retry once without tools on a 404 “support tool” response and add a system message with remediation; make this configurable later.
-- Stringly typed tool IO: Mostly addressed for request_code_context; get_file_metadata and apply_code_edit still return ad‑hoc JSON and should be migrated to typed results next.
-- Context quality: request_code_context now assembles real snippets via RagService::get_context; further refinements like richer metadata and range stitching remain.
-- History budgeting: Added token-based capping (approx chars/4) with char-based fallback; wire real tokenizer adapters later.
+- Tool fallback policy: We retry once without tools on a 404 “support tool” response and add a system message with remediation; make this configurable later.
+- Stringly typed tool IO: Eliminated for request_code_context and get_file_metadata; apply_code_edit now returns a typed ApplyCodeEditResult with staging info. Next: add serde round‑trips and versioning fields.
+- Context quality: request_code_context assembles real snippets via RagService::get_context; further refinements like richer metadata and range stitching remain.
+- History budgeting: Token-based capping (approx chars/4) with char-based fallback; wire real tokenizer adapters later.
 - Deprecated path: SystemEvent::ToolCallRequested remains as a compatibility path; schedule removal after downstream migration.
 - DB query in apply_code_edit_tool: CozoScript still inlined JSON; prefer parameterization when feasible.
 - Cloning and allocations: Reasonable for now; audit hot paths post-migration.

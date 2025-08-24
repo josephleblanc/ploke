@@ -7,7 +7,7 @@ use std::sync::Arc;
    crate, when we will have a real namespace uuid. */
 use ploke_core::{WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use similar::TextDiff;
-use ploke_core::rag_types::{RequestCodeContextArgs, RequestCodeContextResult};
+use ploke_core::rag_types::{RequestCodeContextArgs, RequestCodeContextResult, GetFileMetadataResult, ApplyCodeEditResult};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 
 use crate::{app_state::{core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode}, handlers::chat}, chat_history::MessageKind};
@@ -51,16 +51,23 @@ pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
                 Err(_) => (bytes.len() as u64, None),
             };
 
-            let content = serde_json::json!({
-                "ok": true,
-                "file_path": path.display().to_string(),
-                "exists": true,
-                "byte_len": byte_len,
-                "modified_ms": modified_ms,
-                "file_hash": hash_uuid.to_string(),
-                "tracking_hash": hash_uuid.to_string(),
-            })
-            .to_string();
+            let result = GetFileMetadataResult {
+                ok: true,
+                file_path: path.display().to_string(),
+                exists: true,
+                byte_len,
+                modified_ms,
+                file_hash: hash_uuid.to_string(),
+                tracking_hash: hash_uuid.to_string(),
+            };
+            let content = match serde_json::to_string(&result) {
+                Ok(s) => s,
+                Err(e) => {
+                    let err = format!("Failed to serialize GetFileMetadataResult: {}", e);
+                    tool_call_params.tool_call_failed(err);
+                    return;
+                }
+            };
 
             let _ = event_bus
                 .realtime_tx
@@ -438,6 +445,32 @@ Deny:     edit deny {request_id}{2}"#,
         MessageKind::SysInfo,
     )
     .await;
+
+    // Emit a typed ToolCallCompleted so the LLM loop can proceed deterministically.
+    let result = ApplyCodeEditResult {
+        ok: true,
+        staged: edits.len(),
+        applied: 0,
+        files: display_files.clone(),
+        preview_mode: preview_label.to_string(),
+        auto_confirmed: editing_cfg.auto_confirm_edits,
+    };
+    let content = match serde_json::to_string(&result) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = format!("Failed to serialize ApplyCodeEditResult: {}", e);
+            tool_call_params.tool_call_failed(err);
+            return;
+        }
+    };
+    let _ = event_bus
+        .realtime_tx
+        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content,
+        }));
 
     if editing_cfg.auto_confirm_edits {
         let state2 = Arc::clone(state);

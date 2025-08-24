@@ -18,8 +18,7 @@ Behavior (ploke-tui)
 - Local ad-hoc parsing code removed; stringly-typed "results" payload replaced with typed result.
 
 Next steps
-- Migrate other tools (get_file_metadata, apply_code_edit) to typed outputs in ploke_core::rag_types.
-- Add serde round-trip tests for RequestCodeContextArgs/Result.
+- Add serde round-trip tests for RequestCodeContextArgs/Result, GetFileMetadataResult, ApplyCodeEditResult.
 - Introduce a version field in tool results if we need forward-compatibility guarantees.
 - Consider exposing a small crate ploke_tool_io if we outgrow rag_types.
 
@@ -34,10 +33,11 @@ Follow-up review and gaps
 - Removed an unused calc_top_k_for_budget import in rag::dispatcher.
 - Implemented a single retry fallback in llm::session: on 404 "support tool" responses, we now add a system message and retry once without tools before surfacing an error. This aligns with the checklist decision.
 - The SystemEvent::ToolCallRequested compatibility path remains; slated for later removal.
-- Only request_code_context is strongly typed so far; get_file_metadata and apply_code_edit still return ad-hoc JSON. Next steps: define typed outputs in ploke_core::rag_types and migrate.
+- Migrated get_file_metadata and apply_code_edit to typed outputs in ploke_core::rag_types and updated tool handlers to emit ToolCallCompleted with typed JSON strings.
 - Add serde round-trip tests for RequestCodeContextArgs/Result; add e2e tests for tool-call cycle with typed payloads.
 
 Update (this commit)
 - Added cap_messages_by_tokens in ploke_tui::llm and switched RequestSession to token-based history budgeting with char-budget fallback.
+- Migrated get_file_metadata and apply_code_edit to typed results; apply_code_edit now emits ToolCallCompleted after staging with auto-confirm hint.
 - No request payload shape changes; existing snapshot tests remain valid.
-- Updated tool_call_flow.md to reflect the implemented 404 fallback policy and token-based budgeting.
+- Updated tool_call_flow.md to reflect typed IO and the implemented 404 fallback policy and token-based budgeting.

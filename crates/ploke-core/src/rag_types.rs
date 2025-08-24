@@ -65,3 +65,29 @@ pub struct RequestCodeContextResult {
     pub top_k: usize,
     pub context: AssembledContext,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetFileMetadataResult {
+    pub ok: bool,
+    pub file_path: String,
+    pub exists: bool,
+    pub byte_len: u64,
+    pub modified_ms: Option<i64>,
+    pub file_hash: String,
+    pub tracking_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyCodeEditResult {
+    pub ok: bool,
+    /// Number of edits staged into an EditProposal
+    pub staged: usize,
+    /// Number of edits applied immediately (0 unless auto-confirm is enabled and synchronous)
+    pub applied: usize,
+    /// Display-friendly file paths included in this proposal
+    pub files: Vec<String>,
+    /// Preview mode used for the summary ("diff" or "codeblock")
+    pub preview_mode: String,
+    /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
+    pub auto_confirmed: bool,
+}

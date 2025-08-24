@@ -31,20 +31,6 @@ pub(super) struct EditInput {
     pub(super) code: String,
 }
 
-#[derive(Debug, Serialize)]
-struct PerEditResult {
-    file_path: String,
-    ok: bool,
-    error: Option<String>,
-    new_file_hash: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ApplyCodeEditResult {
-    ok: bool,
-    applied: usize,
-    results: Vec<PerEditResult>,
-}
 
 pub(super) const ALLOWED_RELATIONS: &[&str] = &[
     "function",
