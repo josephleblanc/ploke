@@ -566,7 +566,6 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-// AI: Add tracing so we can see the returned code snippets in the logs
 pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
         state,
@@ -578,6 +577,10 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
         arguments,
         call_id,
     } = tool_call_params.clone();
+
+    let span = tracing::info_span!("handle_request_context", request_id = %request_id, parent_id = %parent_id, call_id = %call_id);
+    let _enter = span.enter();
+    tracing::debug!(arguments = ?arguments, "handle_request_context called");
 
     // Parse typed arguments
     let args: RequestCodeContextArgs = match serde_json::from_value(arguments.clone()) {

@@ -58,8 +58,10 @@ impl<'a> RequestSession<'a> {
     }
 
     /// Execute the request loop until completion or error.
-    // AI: Add instrument tracing for messages and LLMParameters
     pub async fn run(mut self) -> Result<String, LlmError> {
+        let span = tracing::info_span!("request_session_run", model = %self.provider.model);
+        let _enter = span.enter();
+        tracing::debug!(?self.params, "Starting RequestSession::run");
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
         // Some OpenRouter provider endpoints don't support tool calls even if the model does.
         // Start with tools if configured, but be ready to retry once without tools on a 404 error.
@@ -327,6 +329,7 @@ pub fn build_openai_request<'a>(
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
 ) -> super::OpenAiRequest<'a> {
+    tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_openai_request");
     // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
     // We include `provider: { \"order\": [\"<slug>\"] }` when a valid provider_slug is set.
 
@@ -373,13 +376,15 @@ pub fn build_openai_request<'a>(
 ///
 /// Returns Ok(content) when ToolCallCompleted is received with matching (request_id, call_id),
 /// or Err(error_string) when ToolCallFailed or other failure occurs (including timeout).
-// AI: Add instrument tracing for received ToolEvent and ToolCallCompleted/Failed
 pub async fn await_tool_result(
     mut rx: broadcast::Receiver<AppEvent>,
     request_id: Uuid,
     call_id: &str,
     timeout_secs: u64,
 ) -> Result<String, String> {
+    let span = tracing::info_span!("await_tool_result", request_id = %request_id, call_id = %call_id);
+    let _enter = span.enter();
+    tracing::debug!("Awaiting tool result");
     let wait = async {
         loop {
             match rx.recv().await {

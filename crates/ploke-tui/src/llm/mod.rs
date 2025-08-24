@@ -498,7 +498,6 @@ pub async fn process_llm_request(
     }
 }
 
-// AI: Add tracking for the context and within for the contents of what the tool calls return AI!
 #[instrument(skip(provider, state, client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
@@ -508,6 +507,7 @@ async fn prepare_and_run_llm_call(
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
+    tracing::info!(model = %provider.model, has_context = %context.is_some(), "prepare_and_run_llm_call start");
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
     let path = history_guard.get_current_path();
