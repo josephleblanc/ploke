@@ -62,11 +62,7 @@ pub async fn update_message(
     }
 }
 
-pub async fn delete_message(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    id: Uuid,
-) {
+pub async fn delete_message(state: &Arc<AppState>, event_bus: &Arc<EventBus>, id: Uuid) {
     // Perform deletion and compute new current selection, if any
     let new_current = {
         let mut chat_guard = state.chat.0.write().await;
