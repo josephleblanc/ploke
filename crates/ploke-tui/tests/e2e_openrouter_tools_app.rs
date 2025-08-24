@@ -33,23 +33,31 @@ Reliability:
 
 use lazy_static::lazy_static;
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
-use ploke_db::{create_index_primary, Database};
-use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+use ploke_db::{Database, bm25_index, create_index_primary};
+use ploke_embed::cancel_token::CancellationToken;
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexerTask};
 use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
 use ploke_error::Error;
 use ploke_rag::{RagConfig, RagService, RrfConfig, TokenBudget};
 use ploke_test_utils::workspace_root;
+use ploke_tui::app::App;
+use ploke_tui::app_state::{AppState, ChatState, ConfigState, StateCommand, SystemState};
+use ploke_tui::chat_history::ChatHistory;
+use ploke_tui::test_harness::TEST_APP;
 use ploke_tui::tracing_setup::init_tracing;
-use ploke_tui::user_config::OPENROUTER_URL;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model};
+use ploke_tui::{EventBus, EventBusCaps, app_state};
 use reqwest::Client;
-use serde_json::{json, Value};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -178,19 +186,21 @@ async fn choose_tools_endpoint_for_model(
         .and_then(|r| r.error_for_status())
     {
         Ok(resp) => match resp.json::<Value>().await {
-            Ok(v) => v
-                .get("data")
-                .and_then(|d| d.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|p| {
-                            let name = p.get("name").and_then(|x| x.as_str())?;
-                            let slug = p.get("slug").and_then(|x| x.as_str())?;
-                            Some((name.to_string(), slug.to_string()))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            Ok(v) => {
+                info!("Full response infodump:\n{:#?}\n", v);
+                v.get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| {
+                                let name = p.get("name").and_then(|x| x.as_str())?;
+                                let slug = p.get("slug").and_then(|x| x.as_str())?;
+                                Some((name.to_string(), slug.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
             Err(_) => Default::default(),
         },
         Err(_) => Default::default(),
@@ -249,8 +259,9 @@ async fn choose_tools_endpoint_for_model(
 
 /// Build the three real tool definitions we expose to models.
 fn tool_defs() -> Vec<Value> {
-    let request_code_context = serde_json::to_value(ploke_tui::llm::request_code_context_tool_def())
-        .expect("Error with code context tool translation to json");
+    let request_code_context =
+        serde_json::to_value(ploke_tui::llm::request_code_context_tool_def())
+            .expect("Error with code context tool translation to json");
 
     // Context-only focus: only expose the request_code_context tool in this E2E
     vec![request_code_context]
@@ -302,7 +313,12 @@ fn local_apply_code_edit(file_path: &Path, start: usize, end: usize, replacement
 }
 
 /// Assemble a small JSON payload for request_code_context using real RAG with a pre-loaded DB.
-async fn rag_request_code_context(rag: &RagService, db: &Database, hint: &str, token_budget_max: u32) -> String {
+async fn rag_request_code_context(
+    rag: &RagService,
+    db: &Database,
+    hint: &str,
+    token_budget_max: u32,
+) -> String {
     let mut token_budget = TokenBudget::default();
     token_budget.max_total = token_budget_max as usize;
     let rag_result = rag
@@ -423,7 +439,11 @@ async fn run_tool_roundtrip(
         .cloned();
 
     // Some providers may ignore tool_choice for certain tools/endpoints. Treat as a soft skip.
-    if tool_calls_opt.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
+    if tool_calls_opt
+        .as_ref()
+        .map(|v| v.is_empty())
+        .unwrap_or(true)
+    {
         warn!(
             "No tool_calls returned for '{}' on first leg. Provider may have ignored tool_choice. Body: {}",
             tool_name,
@@ -496,11 +516,7 @@ async fn run_tool_roundtrip(
         "content": local_result
     });
 
-    messages = vec![
-        user_message,
-        assistant_msg,
-        tool_msg,
-    ];
+    messages = vec![user_message, assistant_msg, tool_msg];
 
     let followup = json!({
         "model": model_id,
@@ -526,7 +542,10 @@ async fn run_tool_roundtrip(
                         .and_then(|s| s.as_str().map(|s| s.to_string()))
                 })
                 .unwrap_or_default();
-            info!("second leg '{}' -> {}. content: {}", tool_name, status, &content);
+            info!(
+                "second leg '{}' -> {}. content: {}",
+                tool_name, status, &content
+            );
             return ToolRoundtripOutcome {
                 tool_name: tool_name.to_string(),
                 model_id: model_id.to_string(),
@@ -555,31 +574,85 @@ async fn run_tool_roundtrip(
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     let _guard = init_tracing();
+    // Build a realistic App instance without spawning UI/event loops.
+    // Keep this synchronous for ergonomic use in tests.
+    let mut config = UserConfig::default();
+    // Merge curated defaults with user overrides (none in tests by default)
+    config.registry = config.registry.with_defaults();
+    // Apply any API keys from env for more realistic behavior if present
+    config.registry.load_api_keys();
 
-    // App harness is crate-private to unit tests; skip here. Environment is already sufficient.
+    // Convert to runtime configuration
+    let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
-    // Build a local embedder and RAG using the pre-loaded DB
     let db_handle = TEST_DB_NODES
         .as_ref()
         .expect("TEST_DB_NODES must initialize");
-    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
-    let source = EmbeddingSource::Local(model);
-    let proc_arc = Arc::new(EmbeddingProcessor::new(source));
 
-    // RAG service with IoManager
+    // IO manager
     let io_handle = ploke_io::IoManagerHandle::new();
-    let rag = Arc::new(
-        RagService::new_full(
-            db_handle.clone(),
-            Arc::clone(&proc_arc),
-            io_handle.clone(),
-            RagConfig::default(),
-        )
-        .expect("Failed to create RAG service"),
-    );
+
+    // Event bus for the app
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    // Embedder (from config)
+    let processor = config
+        .load_embedding_processor()
+        .expect("load embedding processor");
+    let proc_arc = Arc::new(processor);
+
+    // BM25 service (used by indexer/RAG)
+    let bm25_cmd =
+        bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0).expect("start bm25 service");
+
+    // Indexer task
+    let indexer_task = IndexerTask::new(
+        db_handle.clone(),
+        io_handle.clone(),
+        Arc::clone(&proc_arc),
+        CancellationToken::new().0,
+        8,
+    )
+    .with_bm25_tx(bm25_cmd);
+    let indexer_task = Arc::new(indexer_task);
+
+    // RAG service (optional)
+    let rag = match RagService::new_full(
+        db_handle.clone(),
+        Arc::clone(&proc_arc),
+        io_handle.clone(),
+        RagConfig::default(),
+    ) {
+        Ok(svc) => Some(Arc::new(svc)),
+        Err(_e) => None,
+    };
 
     // Rebuild BM25 for consistent test behavior
+    let rag = rag.expect("rag service not created correctly");
     rag.bm25_rebuild().await?;
+
+    // Shared app state
+    let state = Arc::new(AppState {
+        chat: ChatState::new(ChatHistory::new()),
+        config: ConfigState::new(runtime_cfg),
+        system: SystemState::default(),
+        indexing_state: RwLock::new(None),
+        indexer_task: Some(Arc::clone(&indexer_task)),
+        indexing_control: Arc::new(Mutex::new(None)),
+        db: db_handle.clone(),
+        embedder: Arc::clone(&proc_arc),
+        io_handle: io_handle.clone(),
+        proposals: RwLock::new(std::collections::HashMap::new()),
+        rag: Some(Arc::clone(&rag)),
+        budget: TokenBudget::default(),
+    });
+
+    // Command channel (not wired to a state_manager loop in tests)
+    let (cmd_tx, _cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+    // Build the App
+    let command_style = config.command_style;
+    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
@@ -593,7 +666,11 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         .expect("client");
 
     // Fetch catalog filtered by user allowances
-    let models = match ploke_tui::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await {
+    let models = match ploke_tui::llm::openrouter_catalog::fetch_models(
+        &client, &base_url, &api_key,
+    )
+    .await
+    {
         Ok(m) => m,
         Err(e) => {
             panic!("Failed to fetch OpenRouter catalog: {}", e);
@@ -604,12 +681,51 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     let max_models: usize = std::env::var("PLOKE_LIVE_MAX_MODELS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(5); // slightly lower default to keep this test snappy
+        .unwrap_or(10); // slightly lower default to keep this test snappy
 
     let tools = tool_defs();
     let mut outcomes: Vec<ToolRoundtripOutcome> = Vec::new();
 
     let mut processed = 0usize;
+
+    let models_with_tools = "https://openrouter.ai/models?supported_parameters=tools";
+    // let providers_map: std::collections::HashMap<String, String> = match client
+    // AI: Let's just try to print the raw response, I'm not sure what format it uses AI!
+    let resp = client
+        .get(models_with_tools)
+        // .bearer_auth(&api_key)
+        .send()
+        .await.unwrap();
+    let resp_json: Value = resp.json().await.unwrap();
+    info!("Response: {:#?}", resp_json);
+    let providers_map: HashMap<String, String> = match client
+        .get(models_with_tools)
+        // .bearer_auth(&api_key)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => match resp.json::<Value>().await {
+            Ok(v) => {
+                info!("Full response infodump:\n{:#?}\n", v);
+                v.get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| {
+                                let name = p.get("name").and_then(|x| x.as_str())?;
+                                let slug = p.get("slug").and_then(|x| x.as_str())?;
+                                Some((name.to_string(), slug.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Err(_) => Default::default(),
+        },
+        Err(_) => Default::default(),
+    };
+    // --- start: temporary for making sure choose_tools_endpoint_for_model works correctly
     for m in models {
         if processed >= max_models {
             break;
@@ -626,15 +742,38 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
         info!(
             "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
-            endpoint.name, endpoint.context_length, endpoint_price_hint(&endpoint)
+            endpoint.name,
+            endpoint.context_length,
+            endpoint_price_hint(&endpoint)
+        );
+    }
+    // --- end: temporary for making sure choose_tools_endpoint_for_model works correctly
+    panic!("Testing implementation of choose_tools_endpoints_for_model");
+    for m in models {
+        if processed >= max_models {
+            break;
+        }
+
+        let model_id = m.id;
+        info!("model: {}", model_id);
+
+        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
+        let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
+            info!("  no tools-capable endpoints; skipping {}", model_id);
+            continue;
+        };
+
+        info!(
+            "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
+            endpoint.name,
+            endpoint.context_length,
+            endpoint_price_hint(&endpoint)
         );
 
         // Context-only focus: exercise only the request_code_context tool
         let rc_args = json!({"token_budget": LLM_TOKEN_BUDGET, "hint":"SimpleStruct"});
 
-        for (def, (name, args)) in tools.iter().zip(vec![
-            ("request_code_context", rc_args),
-        ]) {
+        for (def, (name, args)) in tools.iter().zip(vec![("request_code_context", rc_args)]) {
             let outcome = run_tool_roundtrip(
                 &client,
                 &base_url,
