@@ -65,7 +65,6 @@ Tool call event flow:
 - `prepare_and_run_llm_call` is itself called from `process_llm_request`
 - sends an update to the `StateCommand` with a message that completes an earlier message
 
-<!-- AI: Follow the new instructions below to add to this planning file and/or make new planning files so we can continue our implementation of the tool systems -->
 <!-- Start New Instructions -->
 I've added some more files to review so we can plan the next steps to create e2e tests against a real API and parsed code graph with dense vector embeddings pre-loaded into a database. Here is a description of the files I've just added:
 
@@ -136,7 +135,6 @@ Review the implementation of the plan in `tool_call_flow.md`. What has been impl
 In addition, identify which steps should come next, and create a list of files required for each step. Create a new document with a short description of each file, a list of relevant functions or code items with short descriptions of each, and when it would be useful to reference the file. This should help provide us with a condensed source of information that will allow us to keep our cognitive overhead lean, but still have a good reference for when we need more precise information while building out the next steps in the implementation.
 
 <!-- End new instructions -->
-<!-- AI! -->
 
 ## In-depth Analysis
 
