@@ -320,8 +320,6 @@ impl<'a> RequestSession<'a> {
 
 
 }
-
-// AI: add logging with tracing instrument on provider and messages
 pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ProviderConfig,
     messages: Vec<super::RequestMessage<'a>>,
