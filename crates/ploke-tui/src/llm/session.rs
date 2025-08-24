@@ -29,6 +29,7 @@ pub struct RequestSession<'a> {
     messages: Vec<RequestMessage<'a>>,
     tools: Vec<ToolDefinition>,
     params: LLMParameters,
+    fallback_on_404: bool,
     attempts: u32,
 }
 
@@ -41,6 +42,7 @@ impl<'a> RequestSession<'a> {
         messages: Vec<RequestMessage<'a>>,
         tools: Vec<ToolDefinition>,
         params: LLMParameters,
+        fallback_on_404: bool,
     ) -> Self {
         Self {
             client,
@@ -50,6 +52,7 @@ impl<'a> RequestSession<'a> {
             messages,
             tools,
             params,
+            fallback_on_404,
             attempts: 0,
         }
     }
@@ -133,8 +136,8 @@ impl<'a> RequestSession<'a> {
                     guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
                     guidance.push_str(&format!("Details: {}", error_text));
 
-                    // Fallback once without tools: inform the model via a system message, then retry.
-                    if !tools_fallback_attempted {
+                    // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
+                    if self.fallback_on_404 && !tools_fallback_attempted {
                         self.messages.push(RequestMessage::new_system(format!(
                             "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
                             guidance

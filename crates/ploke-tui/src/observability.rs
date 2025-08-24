@@ -245,11 +245,21 @@ async fn persist_tool_requested(
     params: &ToolRequestPersistParams,
 ) -> Result<(), String> {
     let args_json = serde_json::to_string(&params.arguments).unwrap_or_else(|_| "null".to_string());
+    let (model, provider_slug) = {
+        let cfg = state.config.read().await;
+        if let Some(p) = cfg.provider_registry.get_active_provider() {
+            (p.model.clone(), p.provider_slug.clone())
+        } else {
+            ("".to_string(), None)
+        }
+    };
     let req = ToolCallReq {
         request_id: params.request_id,
         call_id: params.call_id.clone(),
         parent_id: params.parent_id,
         vendor: vendor_str(&params.vendor).to_string(),
+        model,
+        provider_slug,
         tool_name: params.tool_name.clone(),
         args_sha256: sha256_hex(&args_json),
         arguments_json: Some(args_json),

@@ -639,6 +639,7 @@ or disable enforcement with ':provider tools-only off'.",
         messages,
         tools,
         params.clone(),
+        !require_tools,
     );
 
     session.run().await
