@@ -731,7 +731,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             &model_id,
             &providers_map,
         ) // AI: We should save the output from all of these model choices somewhere so we can know for
-        // other plans and implementations which endpoints support tool use and tool choice
+        // other plans and implementations which endpoints support tool use and tool choice AI!
         .await;
         let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
