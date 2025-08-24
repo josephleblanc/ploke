@@ -389,6 +389,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         buf
     };
 
+    let edit_len = edits.len();
     // Stash proposal in registry
     {
         let mut reg = state.proposals.write().await;
@@ -449,7 +450,7 @@ Deny:     edit deny {request_id}{2}"#,
     // Emit a typed ToolCallCompleted so the LLM loop can proceed deterministically.
     let result = ApplyCodeEditResult {
         ok: true,
-        staged: edits.len(),
+        staged: edit_len,
         applied: 0,
         files: display_files.clone(),
         preview_mode: preview_label.to_string(),
