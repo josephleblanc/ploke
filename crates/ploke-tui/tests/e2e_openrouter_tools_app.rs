@@ -749,7 +749,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         );
     }
     // --- end: temporary for making sure choose_tools_endpoint_for_model works correctly
-    panic!("Testing implementation of choose_tools_endpoints_for_model");
     for m in models {
         if processed >= max_models {
             break;
