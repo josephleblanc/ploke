@@ -745,6 +745,17 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             endpoint_price_hint(&endpoint)
         );
 
+        // Record the model/endpoint choice for summary/diagnostics
+        outcomes.push(ToolRoundtripOutcome {
+            tool_name: "endpoint_choice".to_string(),
+            model_id: model_id.clone(),
+            provider_slug: provider_slug_hint.clone(),
+            first_status: 0,
+            tool_called: false,
+            second_status: None,
+            body_excerpt_first: format!("chosen endpoint: {}", endpoint.name),
+        });
+
         let parent_id = Uuid::new_v4();
         let request_id = Uuid::new_v4();
         let new_msg_id = Uuid::new_v4();
@@ -761,9 +772,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             ],
         }));
 
-        // AI: How can we observe the output from the LLM response above? Can we use the event
-        // emitted by process_llm_request, StateCommand::UpdateMessage, somehow? Perhaps the
-        // conversation history can show us the output?
     }
 
     // Summary of outcomes across models/tools

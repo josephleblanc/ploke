@@ -407,7 +407,7 @@ pub async fn llm_manager(
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
 #[instrument(skip(state, client, provider_config))]
-pub async fn process_llm_request( // AI: See function to process it here
+pub async fn process_llm_request(
     request: Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
@@ -451,7 +451,7 @@ pub async fn process_llm_request( // AI: See function to process it here
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = match prepare_and_run_llm_call(
+    let result = prepare_and_run_llm_call(
         &state,
         &client,
         &provider_config,
@@ -459,16 +459,28 @@ pub async fn process_llm_request( // AI: See function to process it here
         &event_bus,
         parent_id,
     )
-    .await
-    {
-        Ok(content) => StateCommand::UpdateMessage {
-            id: assistant_message_id,
-            update: MessageUpdate {
-                content: Some(content),
-                status: Some(MessageStatus::Completed),
-                ..Default::default()
-            },
-        },
+    .await;
+
+    let update_cmd = match result {
+        Ok(content) => {
+            // Small preview for logs so tests / debug can observe the returned text.
+            let preview = content.chars().take(200).collect::<String>();
+            tracing::info!(
+                "LLM produced response for parent_id={} -> assistant_message_id={}. preview={}",
+                parent_id,
+                assistant_message_id,
+                preview
+            );
+
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(content),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
+            }
+        }
         Err(e) => {
             let err_string = e.to_string();
             // Inform the user in-chat so the "Pending..." isn't left hanging without context.

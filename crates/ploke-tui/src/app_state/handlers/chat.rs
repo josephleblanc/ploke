@@ -11,19 +11,22 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
-pub async fn update_message( // AI: Then we update the message here. Maybe we can use the id from
-    // the original message sent to track when the LLM message is received and print that through
-    // tracing or something? We want to be able to view the returned message from the llm in our
-    // test
+pub async fn update_message(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     id: Uuid,
     update: MessageUpdate,
 ) {
     tracing::Span::current().record("msg_id", format!("{}", id));
-    tracing::debug!(
-        content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
-        "Updating message"
+    tracing::info!(
+        "Updating message {} status={:?} content_preview={}",
+        id,
+        update.status,
+        update
+            .content
+            .as_ref()
+            .map(|c| truncate_string(c, 100))
+            .unwrap_or_default()
     );
     let mut chat_guard = state.chat.0.write().await;
 
