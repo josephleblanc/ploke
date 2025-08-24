@@ -214,7 +214,7 @@ async fn choose_tools_endpoint_for_model(
                     .iter()
                     .any(|p| p.eq_ignore_ascii_case("tool_choice"))
         })
-        .inspect(|cand| info!("candidate: {:#?}", cand))
+        .inspect(|cand| tracing::trace!("candidate: {:#?}", cand))
         .collect();
 
     // Cache tools-capable endpoint names for later reference/diagnostics
@@ -453,7 +453,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             continue;
         };
 
-        info!(
+        tracing::trace!(
             "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
             endpoint.name,
             endpoint.context_length,

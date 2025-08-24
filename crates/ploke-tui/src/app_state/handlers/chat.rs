@@ -35,7 +35,7 @@ pub async fn update_message(
 
     if let Some(message) = chat_guard.messages.get_mut(&id) {
         let old_status = message.status.clone();
-        let msg_kind = message.kind.clone();
+        let msg_kind = message.kind;
         let new_status = update.status.clone().unwrap_or(old_status.clone());
         match message.try_update(update) {
             Ok(_) => {

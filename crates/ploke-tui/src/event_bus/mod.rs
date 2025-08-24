@@ -192,7 +192,7 @@ impl EventBus {
         }
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
         tracing::debug!("event_priority: {:?}", priority);
