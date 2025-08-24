@@ -67,19 +67,82 @@ Tool call event flow:
 
 
 ## In-depth Analysis
-// AI: add your response here
+
+What is working well
+- Event flow: LlmTool::Requested is emitted, dispatcher routes by tool name, tool handlers emit SystemEvent::ToolCallCompleted/Failed; await_tool_result correlates by (request_id, call_id) with timeout. Concurrency via JoinSet with deterministic ordering by call_id is solid.
+- Session loop: RequestSession::run enforces a character-budgeted message history, builds OpenAI-compatible payloads, supports tools, and appends tool outputs back into messages to allow iterative tool-call cycles.
+- Error reporting: Clear mapping of HTTP status codes to user-friendly messages with extra guidance for 404 "tool not supported" endpoints. Provider 200-bodies containing error objects are detected.
+- Request payloads: build_openai_request produces stable, snapshot-tested JSON, including provider preferences when tools are in play.
+
+Gaps and risks
+- Tool fallback mismatch: The code comment says “be ready to retry once without tools on a 404,” but the current behavior returns an error immediately. Also, a tools_fallback_attempted flag is declared but never used.
+- Stringly typed tool IO: Tool arguments and returns are mostly serde_json::Value and String. handle_request_context returns a free-form JSON string of ids/scores, not typed structs. This reduces safety and complicates evolution.
+- Context quality: handle_request_context uses hybrid_search and only returns node IDs and scores. It should assemble real code snippets under a token budget via RagService::get_context and context::assemble_context.
+- Budgeting by chars, not tokens: cap_messages_by_chars uses byte/char length as a proxy. It is quick but can either over-trim or under-trim compared to token-aware budgeting.
+- Deprecated path: SystemEvent::ToolCallRequested remains as a compatibility path. It adds complexity and doubles routing until removed.
+- DB query in apply_code_edit_tool: Uses formatted CozoScript with inlined JSON literals. It’s careful with escaping but still fragile. Consider parameterized queries if/when supported.
+- Cloning and allocations: Several clones of Strings and Vecs occur on hot paths (e.g., tool specs, messages). These are reasonable now but should be revisited in perf-sensitive contexts.
+
+Observability and test coverage
+- Good tracing coverage with concise, structured logs for dispatch and API responses.
+- Snapshot tests for request payloads exist. Missing are end-to-end tests for the tool-call cycle and typed tool IO round-trips.
 
 ## Plan for improvement
-// AI: Add your response here
+
+1) Make tool IO strongly typed
+- Define typed structs for tool inputs/outputs in a shared module (e.g., ploke_core::rag_types or a new ploke_core::tool_io).
+- For request_code_context:
+  - Input: RequestCodeContextArgs { token_budget: u32, hint: Option<String> } already exists; reuse it end-to-end.
+  - Output: RequestCodeContextResult { ok: bool, query: String, top_k: usize, context: AssembledContext }.
+- Serialize outputs with serde_json::to_string before RequestMessage::new_tool, but validate types at boundaries.
+
+2) Return assembled snippets, not just IDs
+- Replace rag.hybrid_search() in handle_request_context with rag.get_context(query, top_k, budget, RetrievalStrategy::Hybrid { .. }).
+- Thread a TokenBudget derived from token_budget, and use RagService defaults for ordering and policy.
+- Send back AssembledContext in the tool output so the LLM can cite exact text.
+
+3) Decide and implement tool fallback policy
+- Option A (strict): keep current fail-fast on 404 with user guidance.
+- Option B (lenient): retry once without tools if 404 "tool unsupported" and tools are required.
+- Gate behavior by a config flag (e.g., provider_registry.require_tool_support or a new flag), remove unused tools_fallback_attempted var.
+
+4) Improve budgeting
+- Add a token-based history budgeting function (cap_messages_by_tokens) using an injected TokenCounter; default to ApproxCharTokenizer for now.
+- Keep char-budgeting as a fallback for providers without tokenizer info.
+
+5) Clean up deprecated paths and sharp edges
+- Migrate all call sites to LlmTool events and remove SystemEvent::ToolCallRequested once downstreams are updated.
+- Audit clones in tool_call.rs and session.rs; prefer &str and small borrows where practical.
+
+6) Tests and docs
+- Add end-to-end tests for the tool-call cycle, including timeout and failure propagation.
+- Add tests for typed tool IO (serde round-trip), and for assemble_context integration.
+- Update docs with the final policy decisions and typed schemas.
 
 ## Questions Requiring Decision
-// AI: Add your response here
+
+- Tool fallback policy: Should we retry once without tools on 404, or remain strict and surface guidance? Should this be configurable?
+- Tool output schema: Do we standardize on RequestCodeContextResult carrying AssembledContext? Any versioning or “type” field needed for forward compatibility?
+- Presentation to the LLM: Send structured JSON as the tool role content (current), or pre-render textual snippets? Recommendation: structured JSON; let the prompt instruct the model to read fields.
+- Concurrency limits: Keep unbounded JoinSet or cap concurrent tool calls (e.g., N at a time)? If capped, what default?
+- Auto-approval of edits: Should auto_confirm_edits default to off in production profiles? Who is the authority to approve (explicit user command vs. policy rule)?
+- Provider preference: Include provider.order even when tools are disabled, or keep current behavior where it’s only set with tools?
+- Token budgeting: Adopt token-based budgeting for history by default, retaining char-based as fallback?
 
 ## Quality Checklist
 - [ ] Remove transitive allocations, use iterators
 - [ ] Identify and remove unnecessary `.clone()`, use clear ownership
 - [ ] Use strong types with Serialize/Deserialize, **NEVER** use stringly types
 - [ ] Check again for stringly types
-// AI: Add more here
+- [ ] Replace handle_request_context hybrid_search with get_context returning AssembledContext
+- [ ] Introduce RequestCodeContextResult and other typed tool IO structs; add serde tests
+- [ ] Decide and implement tool 404 fallback policy; remove unused tools_fallback_attempted
+- [ ] Add token-based history budgeting with a TokenCounter; keep char-budget as fallback
+- [ ] Add end-to-end tests for tool-call cycle (success, failure, timeout, ordering)
+- [ ] Remove deprecated SystemEvent::ToolCallRequested flow once migration is complete
+- [ ] Review Cozo query construction in apply_code_edit_tool; prefer parameterization when feasible
+- [ ] Ensure deterministic ordering of tool outcomes and stable call_id semantics
+- [ ] Expand tracing with request_id/parent_id/call_id spans; ensure no PII/API keys in logs
+- [ ] Validate file paths and namespaces rigorously; verify tracking hashes before edits
+- [ ] Document provider preference rules and when provider.order is applied
 
-// Address the `AI:` comments above, filling in areas, reviewing the provided code, addressing my initial notes, providing feedback and in-depths analysis, creating a new plan moving forward AI!
