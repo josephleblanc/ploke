@@ -60,6 +60,16 @@ use uuid::Uuid;
 /// Cap for live test token budget
 const LLM_TOKEN_BUDGET: usize = 512;
 
+struct ToolRoundtripOutcome {
+    pub tool_name: String,
+    pub model_id: String,
+    pub provider_slug: Option<String>,
+    pub first_status: u16,
+    pub tool_called: bool,
+    pub second_status: Option<u16>,
+    pub body_excerpt_first: String,
+}
+
 lazy_static! {
     /// Shared DB restored from a backup of `fixture_nodes` (if present), with primary index created.
     pub static ref TEST_DB_NODES: Result<Arc<Database>, ploke_error::Error> = {
@@ -341,7 +351,7 @@ async fn run_tool_roundtrip(
     tool_args: Value,
     rag: &RagService,
     db: &Database,
-) {
+) -> ToolRoundtripOutcome {
     // Prime messages for tool forcing
     let mut messages = vec![
         json!({
@@ -383,6 +393,12 @@ async fn run_tool_roundtrip(
     };
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
+    let first_status_u16 = status.as_u16();
+    let body_excerpt_first: String = if body.is_empty() {
+        String::new()
+    } else {
+        body.chars().take(240).collect()
+    };
     info!("first leg '{}' -> {}", tool_name, status);
 
     let parsed = serde_json::from_str::<Value>(&body).expect("Could not parse json return value");
@@ -402,7 +418,15 @@ async fn run_tool_roundtrip(
             tool_name,
             if body.is_empty() { "<empty>" } else { &body }
         );
-        return;
+        return ToolRoundtripOutcome {
+            tool_name: tool_name.to_string(),
+            model_id: model_id.to_string(),
+            provider_slug: provider_slug_hint.map(|s| s.to_string()),
+            first_status: first_status_u16,
+            tool_called: false,
+            second_status: None,
+            body_excerpt_first,
+        };
     }
     let tool_calls = tool_calls_opt.unwrap();
 
@@ -492,9 +516,27 @@ async fn run_tool_roundtrip(
                 })
                 .unwrap_or_default();
             info!("second leg '{}' -> {}. content: {}", tool_name, status, &content);
+            return ToolRoundtripOutcome {
+                tool_name: tool_name.to_string(),
+                model_id: model_id.to_string(),
+                provider_slug: provider_slug_hint.map(|s| s.to_string()),
+                first_status: first_status_u16,
+                tool_called: true,
+                second_status: Some(status.as_u16()),
+                body_excerpt_first,
+            };
         }
         Err(e) => {
             warn!("second leg '{}' failed: {}", tool_name, e);
+            return ToolRoundtripOutcome {
+                tool_name: tool_name.to_string(),
+                model_id: model_id.to_string(),
+                provider_slug: provider_slug_hint.map(|s| s.to_string()),
+                first_status: first_status_u16,
+                tool_called: true,
+                second_status: None,
+                body_excerpt_first,
+            };
         }
     }
 }
@@ -554,6 +596,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         .unwrap_or(5); // slightly lower default to keep this test snappy
 
     let tools = tool_defs();
+    let mut outcomes: Vec<ToolRoundtripOutcome> = Vec::new();
 
     let mut processed = 0usize;
     for m in models {
@@ -585,7 +628,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             ("get_file_metadata", gfm_args),
             ("apply_code_edit", ace_args),
         ]) {
-            run_tool_roundtrip(
+            let outcome = run_tool_roundtrip(
                 &client,
                 &base_url,
                 &api_key,
@@ -598,11 +641,29 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 db_handle,
             )
             .await;
+            outcomes.push(outcome);
         }
 
         processed += 1;
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+
+    // Summary of outcomes across models/tools
+    let total = outcomes.len();
+    let successes = outcomes
+        .iter()
+        .filter(|o| o.tool_called && matches!(o.second_status, Some(s) if (200..=299).contains(&s)))
+        .count();
+    let no_tool_calls = outcomes.iter().filter(|o| !o.tool_called).count();
+    let first_404 = outcomes.iter().filter(|o| o.first_status == 404).count();
+    let any_429 = outcomes
+        .iter()
+        .filter(|o| o.first_status == 429 || matches!(o.second_status, Some(429)))
+        .count();
+    info!(
+        "Summary: total_outcomes={} successes={} no_tool_calls={} http_404_first_leg={} http_429_any_leg={}",
+        total, successes, no_tool_calls, first_404, any_429
+    );
 
     Ok(())
 }
