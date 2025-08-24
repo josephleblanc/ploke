@@ -1,5 +1,5 @@
+use ploke_core::rag_types::AssembledContext;
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
-use ploke_rag::AssembledContext;
 use ploke_rag::RagService;
 use ploke_rag::RetrievalStrategy;
 use ploke_rag::RrfConfig;
@@ -29,6 +29,24 @@ use crate::RagEvent;
 
 use super::chat;
 use super::embedding::wait_on_oneshot;
+// AI: This file is starting to sprawl. Create a new organizational structure for this file and
+// submodules. Then list the functions that will go into each submodule. Put this into a new
+// markdown file in the same directory. **DO NOT** change or relocate the functions now. This is
+// only to plan.
+// It should allow for extensibility as we add more tools and capabilities while the project grows.
+// In addition, create documentation for this module. The file-level documentation should start
+// with a `//!`, but only if it is the first comment in the file.
+// In the documentation you add, make sure you only document the items that you can see here, and
+// only report in the documentation on the observable characteristics from this file. Do not
+// assume anything about the files and functions that are referenced but thatyou cannot see
+// directly.
+// Create a plan for testing these items as well, and put that into another markdown file in this
+// directory.
+// I've included some other files in our conversation as well, to track up through the import
+// statements into lib.rs, and help to provide some additional context to understand the role of
+// this file within the larger project. Include some of that contextual information in the
+// file-level doc comment, and within the documentation on different files if you find it would be
+// helpful. AI!
 
 static PROMPT_HEADER: &str = r#"
 <-- SYSTEM PROMPT -->
@@ -170,18 +188,571 @@ fn json_lit<T: serde::Serialize>(v: &T) -> String {
     // Helper to embed safe JSON literals inside Cozo script (prototype).
     serde_json::to_string(v).unwrap()
 }
+#[derive(Clone, Debug)]
+pub struct ToolCallParams<'a> {
+    pub state: &'a Arc<AppState>,
+    pub event_bus: &'a Arc<EventBus>,
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub vendor: llm::ToolVendor,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub call_id: String,
+}
 
-#[tracing::instrument(skip(state, event_bus, arguments), fields(%request_id, %parent_id, call_id = %call_id, tool = %name))]
-pub async fn handle_tool_call_requested(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-    parent_id: Uuid,
-    vendor: llm::ToolVendor,
-    name: String,
-    arguments: serde_json::Value,
-    call_id: String,
+impl<'a> ToolCallParams<'a> {
+    fn tool_call_failed(&self, error: String) {
+        let _ = self.event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: self.request_id,
+                parent_id: self.parent_id,
+                call_id: self.call_id.clone(),
+                error,
+            }));
+    }
+}
+
+pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        vendor,
+        name,
+        arguments,
+        call_id,
+    } = tool_call_params.clone();
+    // Validate args
+    let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
+        tool_call_params.tool_call_failed("Missing required argument 'file_path'".to_string());
+        return;
+    };
+
+    let path = PathBuf::from(file_path_str);
+    // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);
+            // Get basic metadata
+            let (byte_len, modified_ms) = match tokio::fs::metadata(&path).await {
+                Ok(md) => {
+                    let len = md.len();
+                    let modified_ms = md.modified().ok().and_then(|mtime| {
+                        mtime
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_millis() as i64)
+                    });
+                    (len, modified_ms)
+                }
+                Err(_) => (bytes.len() as u64, None),
+            };
+
+            let content = serde_json::json!({
+                "ok": true,
+                "file_path": path.display().to_string(),
+                "exists": true,
+                "byte_len": byte_len,
+                "modified_ms": modified_ms,
+                "file_hash": hash_uuid.to_string(),
+                "tracking_hash": hash_uuid.to_string(),
+            })
+            .to_string();
+
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    content,
+                }));
+        }
+        Err(e) => {
+            let err = format!("Failed to read file '{}': {}", path.display(), e);
+            tool_call_params.tool_call_failed(err);
+        }
+    }
+}
+
+pub async fn apply_code_edit_tool<'a>(
+    tool_call_params: ToolCallParams<'a>
 ) {
+
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        vendor,
+        name,
+        arguments,
+        call_id,
+    } = tool_call_params.clone();
+    // Idempotency: guard duplicate requests
+    {
+        let reg = state.proposals.read().await;
+        if reg.contains_key(&request_id) {
+            let msg = format!(
+                "Duplicate apply_code_edit request ignored for request_id {}",
+                request_id
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
+                .await;
+            return;
+        }
+    }
+
+    // Parse args (new, concise schema)
+    let args: ApplyCodeEditArgs = match serde_json::from_value(arguments.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            let err = format!("Invalid apply_code_edit payload: {}", e);
+            tool_call_params.tool_call_failed(err);
+            return;
+        }
+    };
+
+    if args.edits.is_empty() {
+        tool_call_params.tool_call_failed("No edits provided".to_string());
+        chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            "apply_code_edit: No edits provided".to_string(),
+            MessageKind::SysInfo,
+        )
+        .await;
+        return;
+    }
+
+    // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
+    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let editing_cfg = { state.config.read().await.editing.clone() };
+    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(args.edits.len());
+    let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+
+    for e in &args.edits {
+        // Only code_edit supported for now
+        match e.action {
+            Action::CodeEdit => {}
+        }
+        // Validate relation string (prototype allow-list)
+        if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
+            let err = format!("Unsupported node_type: {}", e.node_type);
+        tool_call_params.tool_call_failed(err);
+            return;
+        }
+
+        // Compute absolute path (best-effort; prefer crate_root, else absolute or CWD)
+        let abs_path = {
+            let p = PathBuf::from(&e.file);
+            if p.is_absolute() {
+                p
+            } else if let Some(root) = crate_root.as_ref() {
+                root.join(&e.file)
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(&e.file)
+            }
+        };
+
+        // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
+        let canon = e.canon.trim();
+        if canon.is_empty() {
+            tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string());
+            return;
+        }
+        let (mods_slice, item_name) = match canon.rfind("::") {
+            Some(idx) => (&canon[..idx], &canon[idx + 2..]),
+            None => ("", canon),
+        };
+        if item_name.is_empty() {
+            tool_call_params.tool_call_failed("Invalid 'canon': missing item name".to_string());
+            return;
+        }
+        // Build module path as &str slices without allocating new Strings
+        let mut mod_path: Vec<&str> = Vec::new();
+        mod_path.push("crate");
+        if !mods_slice.is_empty() {
+            mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
+        }
+
+        // PROTOTYPE: parameterless Cozo query with inlined JSON literals (escape-safe via serde_json)
+        // WARNING: This relies on exact relation names and NOW snapshots; subject to change.
+        let rel = &e.node_type;
+        let file_path_lit = json_lit(&abs_path.to_string_lossy().to_string());
+        let item_name_lit = json_lit(&item_name);
+        let mod_path_lit = json_lit(&mod_path);
+
+        let script = format!(
+            r#"
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path, tracking_hash @ 'NOW' }},
+  *file_mod{{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+        );
+
+        let qr = match state.db.raw_query(&script) {
+            Ok(q) => q,
+            Err(e) => {
+                let err = format!("DB query failed: {}", e);
+            tool_call_params.tool_call_failed(err.to_string());
+                return;
+            }
+        };
+
+        let mut nodes = match qr.to_embedding_nodes() {
+            Ok(v) => v,
+            Err(e) => {
+                let err = format!("Failed to parse DB result: {}", e);
+            tool_call_params.tool_call_failed(err.to_string());
+                return;
+            }
+        };
+
+        if nodes.is_empty() {
+            let err = format!(
+                "No matching node found for canon={} in file={}",
+                e.canon,
+                abs_path.display()
+            );
+            tool_call_params.tool_call_failed(err.to_string());
+            return;
+        }
+        if nodes.len() > 1 {
+            // Ambiguity: require model to be more specific (could add 'kind' if needed)
+            let err = format!(
+                "Ambiguous node resolution ({} candidates) for canon={} in file={}",
+                nodes.len(),
+                e.canon,
+                abs_path.display()
+            );
+            tool_call_params.tool_call_failed(err.to_string());
+            return;
+        }
+
+        let ed = nodes.remove(0);
+        let ws = WriteSnippetData {
+            id: uuid::Uuid::new_v4(),
+            name: e.canon.clone(),
+            file_path: ed.file_path.clone(),
+            expected_file_hash: ed.file_tracking_hash,
+            start_byte: ed.start_byte,
+            end_byte: ed.end_byte,
+            replacement: e.code.clone(),
+            namespace: ed.namespace,
+        };
+        files_set.insert(ed.file_path.clone());
+        edits.push(ws);
+    }
+
+    // Compute a simple args hash for auditing
+    // BUG: This is incorrect hashing approach. Should use TrackingHash::generate instead
+    let mut hasher = Sha256::new();
+    hasher.update(arguments.to_string().as_bytes());
+    let args_hash = format!("{:x}", hasher.finalize());
+
+    // Build preview (reuse minimal version from prior implementation)
+    let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
+    let mut unified_diff = String::new();
+    for path in files_set.iter() {
+        // Fetch full file content via IoManager (verified against tracking hash)
+        let (file_hash, namespace) = edits
+            .iter()
+            .find(|e| &e.file_path == path)
+            .map(|e| (e.expected_file_hash, e.namespace))
+            .unwrap_or((TrackingHash(Uuid::nil()), Uuid::nil()));
+        let before = match state
+            .io_handle
+            .read_full_verified(path.clone(), file_hash, namespace)
+            .await
+        {
+            Ok(Ok(s)) => s,
+            _ => "<unreadable or binary file>".to_string(),
+        };
+        // Apply all edits for this file in-memory (descending by start to keep indices stable)
+        let mut bytes = before.clone().into_bytes();
+        let mut file_edits: Vec<&WriteSnippetData> =
+            edits.iter().filter(|e| &e.file_path == path).collect();
+        file_edits.sort_by_key(|e| e.start_byte);
+        file_edits.reverse();
+        for e in file_edits {
+            let start = e.start_byte.min(bytes.len());
+            let end = e.end_byte.min(bytes.len());
+            if start > end {
+                continue;
+            }
+            let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
+            new_bytes.extend_from_slice(&bytes[..start]);
+            new_bytes.extend_from_slice(e.replacement.as_bytes());
+            new_bytes.extend_from_slice(&bytes[end..]);
+            bytes = new_bytes;
+        }
+        let after = String::from_utf8_lossy(&bytes).to_string();
+
+        let display_path = if let Some(root) = crate_root.as_ref() {
+            path.strip_prefix(root)
+                .unwrap_or(path.as_path())
+                .to_path_buf()
+        } else {
+            path.clone()
+        };
+        per_file.push(crate::app_state::core::BeforeAfter {
+            file_path: display_path.clone(),
+            before: before.clone(),
+            after: after.clone(),
+        });
+        if matches!(
+            editing_cfg.preview_mode,
+            crate::app_state::core::PreviewMode::Diff
+        ) {
+            let header_a = format!("a/{}", display_path.display());
+            let header_b = format!("b/{}", display_path.display());
+            let diff = TextDiff::from_lines(&before, &after)
+                .unified_diff()
+                .header(&header_a, &header_b)
+                .to_string();
+            unified_diff.push_str(&diff);
+            if !unified_diff.ends_with('\n') {
+                unified_diff.push('\n');
+            }
+        }
+    }
+
+    let files: Vec<PathBuf> = files_set.into_iter().collect();
+    let display_files: Vec<String> = files
+        .iter()
+        .map(|p| {
+            if let Some(root) = crate_root.as_ref() {
+                p.strip_prefix(root)
+                    .map(|rp| rp.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string())
+            } else {
+                p.display().to_string()
+            }
+        })
+        .collect();
+
+    let preview_label = if matches!(
+        editing_cfg.preview_mode,
+        crate::app_state::core::PreviewMode::Diff
+    ) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+
+    let truncate = |s: &str| -> String {
+        let max = editing_cfg.max_preview_lines;
+        let mut out = String::new();
+        for (i, line) in s.lines().enumerate() {
+            if i >= max {
+                out.push_str("\n... [truncated]\n");
+                break;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    };
+
+    let preview_snippet = if matches!(
+        editing_cfg.preview_mode,
+        crate::app_state::core::PreviewMode::Diff
+    ) {
+        truncate(&unified_diff)
+    } else {
+        let mut buf = String::new();
+        for ba in &per_file {
+            buf.push_str(&format!(
+                "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
+                ba.file_path.display(),
+                truncate(&ba.before),
+                truncate(&ba.after)
+            ));
+        }
+        buf
+    };
+
+    // Stash proposal in registry
+    {
+        use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
+        let mut reg = state.proposals.write().await;
+        reg.insert(
+            request_id,
+            EditProposal {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                edits,
+                files: files.clone(),
+                args_hash,
+                preview: if matches!(
+                    editing_cfg.preview_mode,
+                    crate::app_state::core::PreviewMode::Diff
+                ) {
+                    crate::app_state::core::DiffPreview::UnifiedDiff {
+                        text: unified_diff.clone(),
+                    }
+                } else {
+                    crate::app_state::core::DiffPreview::CodeBlocks {
+                        per_file: per_file.clone(),
+                    }
+                },
+                status: EditProposalStatus::Pending,
+            },
+        );
+    }
+
+    // Emit SysInfo summary with how to approve/deny
+    let summary = format!(
+        "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nPreview (mode={}, first {} lines per section):\n{}\n\nApprove:  edit approve {}\nDeny:     edit deny {}{}",
+        request_id,
+        call_id,
+        display_files.join("\n  "),
+        preview_label,
+        editing_cfg.max_preview_lines,
+        preview_snippet,
+        request_id,
+        request_id,
+        if editing_cfg.auto_confirm_edits {
+            "\n\nAuto-approval enabled: applying now..."
+        } else {
+            ""
+        }
+    );
+    chat::add_msg_immediate(
+        state,
+        event_bus,
+        Uuid::new_v4(),
+        summary,
+        MessageKind::SysInfo,
+    )
+    .await;
+
+    if editing_cfg.auto_confirm_edits {
+        let state2 = Arc::clone(state);
+        let event_bus2 = Arc::clone(event_bus);
+        tokio::spawn(async move {
+            approve_edits(&state2, &event_bus2, request_id).await;
+        });
+    }
+}
+
+pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
+
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        vendor,
+        name,
+        arguments,
+        call_id,
+    } = tool_call_params.clone();
+    // Parse arguments
+    let token_budget = arguments
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+    if token_budget.is_none() || token_budget == Some(0) {
+        let msg = "Invalid or missing token_budget".to_string();
+        tool_call_params.tool_call_failed(msg);
+        return;
+    }
+    let token_budget = token_budget.unwrap();
+    let hint = arguments
+        .get("hint")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Determine query: prefer hint, otherwise last user message
+    let query = if let Some(h) = hint.filter(|s| !s.trim().is_empty()) {
+        h
+    } else {
+        let guard = state.chat.read().await;
+        match guard.last_user_msg() {
+            Ok(Some((_id, content))) => content,
+            _ => String::new(),
+        }
+    };
+
+    if query.trim().is_empty() {
+        let msg = "No query available (no hint provided and no recent user message)".to_string();
+        tool_call_params.tool_call_failed(msg);
+        return;
+    }
+
+    let top_k = calc_top_k_for_budget(token_budget);
+
+    if let Some(rag) = &state.rag {
+        match rag.hybrid_search(&query, top_k).await {
+            Ok(results) => {
+                let results_json: Vec<serde_json::Value> = results
+                    .into_iter()
+                    .map(|(id, score)| serde_json::json!({"id": id.to_string(), "score": score}))
+                    .collect();
+
+                let content = serde_json::json!({
+                    "ok": true,
+                    "query": query,
+                    "top_k": top_k,
+                    "results": results_json
+                })
+                .to_string();
+
+                let _ =
+                    event_bus
+                        .realtime_tx
+                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            parent_id,
+                            call_id: call_id.clone(),
+                            content,
+                        }));
+            }
+            Err(e) => {
+                let msg = format!("RAG hybrid_search failed: {}", e);
+                tracing::warn!("{}", msg);
+                tool_call_params.tool_call_failed(msg);
+            }
+        }
+    } else {
+        let msg = "RAG service unavailable".to_string();
+        tracing::warn!("{}", msg);
+        tool_call_params.tool_call_failed(msg);
+    }
+}
+
+#[tracing::instrument(skip(tool_call_params))]
+pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>) {
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        vendor,
+        name,
+        arguments,
+        call_id,
+    } = tool_call_params.clone();
     tracing::info!(
         "handle_tool_call_requested: vendor={:?}, name={}",
         vendor,
@@ -199,450 +770,35 @@ pub async fn handle_tool_call_requested(
         })
     };
 
-    // Handle atomic code edit application via ploke-io (M2: rewrite by canonical path; staged for approval)
-    if name == "apply_code_edit" {
-        // Idempotency: guard duplicate requests
-        {
-            let reg = state.proposals.read().await;
-            if reg.contains_key(&request_id) {
-                let msg = format!(
-                    "Duplicate apply_code_edit request ignored for request_id {}",
-                    request_id
-                );
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed("Duplicate request_id".to_string()));
-                chat::add_msg_immediate(
+    let tool_call_params = ToolCallParams {
                     state,
                     event_bus,
-                    Uuid::new_v4(),
-                    msg,
-                    MessageKind::SysInfo,
-                )
-                .await;
-                return;
-            }
-        }
-
-        // Parse args (new, concise schema)
-        let args: ApplyCodeEditArgs = match serde_json::from_value(arguments.clone()) {
-            Ok(v) => v,
-            Err(e) => {
-                let err = format!("Invalid apply_code_edit payload: {}", e);
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                return;
-            }
-        };
-
-        if args.edits.is_empty() {
-            let _ = event_bus
-                .realtime_tx
-                .send(tool_call_failed("No edits provided".to_string()));
-            chat::add_msg_immediate(
-                state,
-                event_bus,
-                Uuid::new_v4(),
-                "apply_code_edit: No edits provided".to_string(),
-                MessageKind::SysInfo,
-            )
-            .await;
-            return;
-        }
-
-        // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
-        let crate_root = { state.system.read().await.crate_focus.clone() };
-        let editing_cfg = { state.config.read().await.editing.clone() };
-        let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(args.edits.len());
-        let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-
-        for e in &args.edits {
-            // Only code_edit supported for now
-            match e.action {
-                Action::CodeEdit => {}
-            }
-            // Validate relation string (prototype allow-list)
-            if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
-                let err = format!("Unsupported node_type: {}", e.node_type);
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                return;
-            }
-
-            // Compute absolute path (best-effort; prefer crate_root, else absolute or CWD)
-            let abs_path = {
-                let p = PathBuf::from(&e.file);
-                if p.is_absolute() {
-                    p
-                } else if let Some(root) = crate_root.as_ref() {
-                    root.join(&e.file)
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(&e.file)
-                }
-            };
-
-            // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
-            let canon = e.canon.trim();
-            if canon.is_empty() {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed("Invalid 'canon': empty".to_string()));
-                return;
-            }
-            let (mods_slice, item_name) = match canon.rfind("::") {
-                Some(idx) => (&canon[..idx], &canon[idx + 2..]),
-                None => ("", canon),
-            };
-            if item_name.is_empty() {
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed(
-                        "Invalid 'canon': missing item name".to_string(),
-                    ));
-                return;
-            }
-            // Build module path as &str slices without allocating new Strings
-            let mut mod_path: Vec<&str> = Vec::new();
-            mod_path.push("crate");
-            if !mods_slice.is_empty() {
-                mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
-            }
-
-            // PROTOTYPE: parameterless Cozo query with inlined JSON literals (escape-safe via serde_json)
-            // WARNING: This relies on exact relation names and NOW snapshots; subject to change.
-            let rel = &e.node_type;
-            let file_path_lit = json_lit(&abs_path.to_string_lossy().to_string());
-            let item_name_lit = json_lit(&item_name);
-            let mod_path_lit = json_lit(&mod_path);
-
-            let script = format!(
-                r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
-
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
-?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
-  *{rel}{{ id, name @ 'NOW', tracking_hash: hash @ 'NOW', span @ 'NOW' }},
-  ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path @ 'NOW', tracking_hash @ 'NOW' }},
-  *file_mod{{ owner_id: mod_id, file_path @ 'NOW', namespace @ 'NOW' }},
-  name == {item_name_lit},
-  file_path == {file_path_lit},
-  mod_path == {mod_path_lit}
-"#
-            );
-
-            let qr = match state.db.raw_query(&script) {
-                Ok(q) => q,
-                Err(e) => {
-                    let err = format!("DB query failed: {}", e);
-                    let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                    return;
-                }
-            };
-
-            let mut nodes = match qr.to_embedding_nodes() {
-                Ok(v) => v,
-                Err(e) => {
-                    let err = format!("Failed to parse DB result: {}", e);
-                    let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                    return;
-                }
-            };
-
-            if nodes.is_empty() {
-                let err = format!(
-                    "No matching node found for canon={} in file={}",
-                    e.canon,
-                    abs_path.display()
-                );
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                return;
-            }
-            if nodes.len() > 1 {
-                // Ambiguity: require model to be more specific (could add 'kind' if needed)
-                let err = format!(
-                    "Ambiguous node resolution ({} candidates) for canon={} in file={}",
-                    nodes.len(),
-                    e.canon,
-                    abs_path.display()
-                );
-                let _ = event_bus.realtime_tx.send(tool_call_failed(err));
-                return;
-            }
-
-            let ed = nodes.remove(0);
-            let ws = WriteSnippetData {
-                id: uuid::Uuid::new_v4(),
-                name: e.canon.clone(),
-                file_path: ed.file_path.clone(),
-                expected_file_hash: ed.file_tracking_hash,
-                start_byte: ed.start_byte,
-                end_byte: ed.end_byte,
-                replacement: e.code.clone(),
-                namespace: ed.namespace,
-            };
-            files_set.insert(ed.file_path.clone());
-            edits.push(ws);
-        }
-
-        // Compute a simple args hash for auditing
-        // BUG: This is incorrect hashing approach. Should use TrackingHash::generate instead
-        let mut hasher = Sha256::new();
-        hasher.update(arguments.to_string().as_bytes());
-        let args_hash = format!("{:x}", hasher.finalize());
-
-        // Build preview (reuse minimal version from prior implementation)
-        let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
-        let mut unified_diff = String::new();
-        for path in files_set.iter() {
-            // Fetch full file content via IoManager (verified against tracking hash)
-            let (file_hash, namespace) = edits
-                .iter()
-                .find(|e| &e.file_path == path)
-                .map(|e| (e.expected_file_hash, e.namespace))
-                .unwrap_or((TrackingHash(Uuid::nil()), Uuid::nil()));
-            let before = match state
-                .io_handle
-                .read_full_verified(path.clone(), file_hash, namespace)
-                .await
-            {
-                Ok(Ok(s)) => s,
-                _ => "<unreadable or binary file>".to_string(),
-            };
-            // Apply all edits for this file in-memory (descending by start to keep indices stable)
-            let mut bytes = before.clone().into_bytes();
-            let mut file_edits: Vec<&WriteSnippetData> =
-                edits.iter().filter(|e| &e.file_path == path).collect();
-            file_edits.sort_by_key(|e| e.start_byte);
-            file_edits.reverse();
-            for e in file_edits {
-                let start = e.start_byte.min(bytes.len());
-                let end = e.end_byte.min(bytes.len());
-                if start > end {
-                    continue;
-                }
-                let mut new_bytes = Vec::with_capacity(bytes.len() + e.replacement.len());
-                new_bytes.extend_from_slice(&bytes[..start]);
-                new_bytes.extend_from_slice(e.replacement.as_bytes());
-                new_bytes.extend_from_slice(&bytes[end..]);
-                bytes = new_bytes;
-            }
-            let after = String::from_utf8_lossy(&bytes).to_string();
-
-            let display_path = if let Some(root) = crate_root.as_ref() {
-                path.strip_prefix(root)
-                    .unwrap_or(path.as_path())
-                    .to_path_buf()
-            } else {
-                path.clone()
-            };
-            per_file.push(crate::app_state::core::BeforeAfter {
-                file_path: display_path.clone(),
-                before: before.clone(),
-                after: after.clone(),
-            });
-            if matches!(
-                editing_cfg.preview_mode,
-                crate::app_state::core::PreviewMode::Diff
-            ) {
-                let header_a = format!("a/{}", display_path.display());
-                let header_b = format!("b/{}", display_path.display());
-                let diff = TextDiff::from_lines(&before, &after)
-                    .unified_diff()
-                    .header(&header_a, &header_b)
-                    .to_string();
-                unified_diff.push_str(&diff);
-                if !unified_diff.ends_with('\n') {
-                    unified_diff.push('\n');
-                }
-            }
-        }
-
-        let files: Vec<PathBuf> = files_set.into_iter().collect();
-        let display_files: Vec<String> = files
-            .iter()
-            .map(|p| {
-                if let Some(root) = crate_root.as_ref() {
-                    p.strip_prefix(root)
-                        .map(|rp| rp.display().to_string())
-                        .unwrap_or_else(|_| p.display().to_string())
-                } else {
-                    p.display().to_string()
-                }
-            })
-            .collect();
-
-        let preview_label = if matches!(
-            editing_cfg.preview_mode,
-            crate::app_state::core::PreviewMode::Diff
-        ) {
-            "diff"
-        } else {
-            "codeblock"
-        };
-
-        let truncate = |s: &str| -> String {
-            let max = editing_cfg.max_preview_lines;
-            let mut out = String::new();
-            for (i, line) in s.lines().enumerate() {
-                if i >= max {
-                    out.push_str("\n... [truncated]\n");
-                    break;
-                }
-                out.push_str(line);
-                out.push('\n');
-            }
-            out
-        };
-
-        let preview_snippet = if matches!(
-            editing_cfg.preview_mode,
-            crate::app_state::core::PreviewMode::Diff
-        ) {
-            truncate(&unified_diff)
-        } else {
-            let mut buf = String::new();
-            for ba in &per_file {
-                buf.push_str(&format!(
-                    "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
-                    ba.file_path.display(),
-                    truncate(&ba.before),
-                    truncate(&ba.after)
-                ));
-            }
-            buf
-        };
-
-        // Stash proposal in registry
-        {
-            use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
-            let mut reg = state.proposals.write().await;
-            reg.insert(
-                request_id,
-                EditProposal {
                     request_id,
                     parent_id,
+                    vendor,
+                    name: name.clone(),
+                    arguments: arguments.clone(),
                     call_id: call_id.clone(),
-                    proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                    edits,
-                    files: files.clone(),
-                    args_hash,
-                    preview: if matches!(
-                        editing_cfg.preview_mode,
-                        crate::app_state::core::PreviewMode::Diff
-                    ) {
-                        crate::app_state::core::DiffPreview::UnifiedDiff {
-                            text: unified_diff.clone(),
-                        }
-                    } else {
-                        crate::app_state::core::DiffPreview::CodeBlocks {
-                            per_file: per_file.clone(),
-                        }
-                    },
-                    status: EditProposalStatus::Pending,
-                },
-            );
-        }
-
-        // Emit SysInfo summary with how to approve/deny
-        let summary = format!(
-            "Staged code edits (request_id: {}, call_id: {}).\nFiles:\n  {}\n\nPreview (mode={}, first {} lines per section):\n{}\n\nApprove:  edit approve {}\nDeny:     edit deny {}{}",
-            request_id,
-            call_id,
-            display_files.join("\n  "),
-            preview_label,
-            editing_cfg.max_preview_lines,
-            preview_snippet,
-            request_id,
-            request_id,
-            if editing_cfg.auto_confirm_edits {
-                "\n\nAuto-approval enabled: applying now..."
-            } else {
-                ""
-            }
-        );
-        chat::add_msg_immediate(
-            state,
-            event_bus,
-            Uuid::new_v4(),
-            summary,
-            MessageKind::SysInfo,
-        )
-        .await;
-
-        if editing_cfg.auto_confirm_edits {
-            let state2 = Arc::clone(state);
-            let event_bus2 = Arc::clone(event_bus);
-            tokio::spawn(async move {
-                approve_edits(&state2, &event_bus2, request_id).await;
-            });
-        }
-
-        // Do not send Completed/Failed now; wait for user approval (unless auto-approval enabled)
-        return;
-    }
-
-    // New: get_file_metadata tool for fetching current file hash and basic metadata
-    if name == "get_file_metadata" {
-        // Validate args
-        let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
-            let _ = event_bus
-                .realtime_tx
-                .send(tool_call_failed("Missing required argument 'file_path'".to_string()));
-            return;
-        };
-
-        let path = PathBuf::from(file_path_str);
-        // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
-        match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);
-                // Get basic metadata
-                let (byte_len, modified_ms) = match tokio::fs::metadata(&path).await {
-                    Ok(md) => {
-                        let len = md.len();
-                        let modified_ms = md.modified().ok().and_then(|mtime| {
-                            mtime
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .ok()
-                                .map(|d| d.as_millis() as i64)
-                        });
-                        (len, modified_ms)
-                    }
-                    Err(_) => (bytes.len() as u64, None),
                 };
-
-                let content = serde_json::json!({
-                    "ok": true,
-                    "file_path": path.display().to_string(),
-                    "exists": true,
-                    "byte_len": byte_len,
-                    "modified_ms": modified_ms,
-                    "file_hash": hash_uuid.to_string(),
-                    "tracking_hash": hash_uuid.to_string(),
-                })
-                .to_string();
-
-                let _ =
-                    event_bus
-                        .realtime_tx
-                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            request_id,
-                            parent_id,
-                            call_id: call_id.clone(),
-                            content,
-                        }));
-            }
-            Err(e) => {
-                let err = format!("Failed to read file '{}': {}", path.display(), e);
-                let _ = event_bus
-                    .realtime_tx
-                    .send(tool_call_failed(err));
-            }
+    match name.as_str() {
+        "apply_code_edit" => {
+            apply_code_edit_tool(tool_call_params)
+            .await
         }
-        return;
+        // New: get_file_metadata tool for fetching current file hash and basic metadata
+        "get_file_metadata" => {
+            get_file_metadata_tool(tool_call_params)
+            .await
+        }
+        "request_code_context" => {
+
+        }
+        _ => { 
+            tracing::warn!("Unsupported tool call: {}", name);
+            let err = format!("Unsupported tool: {}", name);
+            let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+            return;
+        },
     }
 
     if name != "request_code_context" {
@@ -969,13 +1125,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
 
 fn calc_top_k_for_budget(token_budget: u32) -> usize {
     let top_k = (token_budget / 200) as usize;
-    if top_k < 5 {
-        5
-    } else if top_k > 20 {
-        20
-    } else {
-        top_k
-    }
+    top_k.clamp(5, 20)
 }
 
 pub async fn process_with_rag(
@@ -1382,7 +1532,7 @@ pub async fn assemble_context(
     };
 
     if let Some(rag) = &state.rag {
-        match rag.get_context(&user_query, top_k, &budget, strategy).await {
+        match rag.get_context(&user_query, top_k, budget, strategy).await {
             Ok(_ctx) => {
                 let msg = format!(
                     "Assembled context successfully (req_id: {}, top_k: {})",
