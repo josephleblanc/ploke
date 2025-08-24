@@ -33,6 +33,7 @@ use ploke_tui::user_config::OPENROUTER_URL;
 
 const LLM_TOKEN_BUDGET: usize = 512;
 
+#[allow(dead_code)]
 struct ContextToolResponse {
     name: String,
     path: String,
@@ -445,7 +446,7 @@ async fn run_tool_roundtrip(
                 let np: Result<NodePaths, Error> = rows.try_into().map_err(Error::from);
                 np
                 } ).try_collect().expect("Could not parse NodePaths from NamedRows");
-            let node_paths = maybe_node_paths.expect("Could not parse NodePaths from NamedRows");
+            let _node_paths = maybe_node_paths.expect("Could not parse NodePaths from NamedRows");
 
 
             let rag_json =
