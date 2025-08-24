@@ -1,5 +1,8 @@
 use chrono::Utc;
-use ploke_db::observability::{ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity};
+use ploke_db::observability::{
+    ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
+};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -13,6 +16,12 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
     // Prepare a simple JSON payload
     let args_json = serde_json::json!({"foo":"bar"}).to_string();
 
+    let args_sha256 = {
+        let mut hasher = Sha256::new();
+        hasher.update(args_json.as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
+    };
+
     // Record "requested"
     let req = ToolCallReq {
         request_id,
@@ -20,18 +29,14 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
         parent_id,
         vendor: "openai".into(),
         tool_name: "dummy".into(),
-        // SHA-256 precomputed by caller in M0 path (observability does this for app flow)
-        args_sha256: {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(args_json.as_bytes());
-            format!("sha256:{:x}", hasher.finalize())
-        },
+        args_sha256,
         arguments_json: Some(args_json),
         started_at: Validity {
             at: Utc::now().timestamp_millis(),
             is_valid: true,
         },
+        model: todo!(),
+        provider_slug: todo!(),
     };
     db.record_tool_call_requested(req)
         .expect("requested upsert should succeed");
@@ -97,6 +102,8 @@ async fn tool_call_terminal_status_is_immutable() {
             at: Utc::now().timestamp_millis(),
             is_valid: true,
         },
+        model: todo!(),
+        provider_slug: todo!(),
     };
     db.record_tool_call_requested(req)
         .expect("requested upsert should succeed");

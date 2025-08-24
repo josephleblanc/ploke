@@ -407,7 +407,7 @@ pub async fn llm_manager(
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
 #[instrument(skip(state, client, provider_config))]
-pub async fn process_llm_request(
+pub async fn process_llm_request( // AI: See function to process it here
     request: Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,

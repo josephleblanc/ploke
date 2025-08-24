@@ -64,8 +64,8 @@ impl CommonFields {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NodePaths {
-    file: String,
-    canon: String,
+    pub file: String,
+    pub canon: String,
 }
 
 impl TryFrom<cozo::NamedRows> for NodePaths {

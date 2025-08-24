@@ -30,7 +30,6 @@ pub mod rag;
 pub mod test_utils;
 pub use test_utils::mock;
 
-#[cfg(test)]
 pub mod test_harness;
 
 use app::App;
@@ -180,6 +179,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         }
     };
 
+    // NOTE: Now that we got rid of `context_manager`, this event is unused.
     let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
     // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
     // tokio::spawn(context_manager.run());

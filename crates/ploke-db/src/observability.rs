@@ -1,3 +1,7 @@
+// WARN: Note that none of these database methods have been tested, and must be validated.
+// - This is difficult without having a clear tool calling implementation, wait on further
+// implementation of observability until we have working tools.
+
 use std::collections::BTreeMap;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};

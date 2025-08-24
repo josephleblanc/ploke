@@ -28,8 +28,11 @@ What it does not cover (yet)
 
 Open questions
 - Should the E2E test drive the internal event loops (llm_manager/observability) to validate ToolEvent persistence?
+  - No, we can add more tests for those once we have nailed down these tests.
 - Where to set caps/timeouts to keep CI robust while still providing signal (e.g., max models, provider selection policy)?
+  - In user_config.rs
 - Do we standardize expectations for `request_code_context` content shape (e.g., minimal JSON contract) for forward compatibility?
+  - YES
 
 Next steps
 - Wire a minimal in-test loop running `llm_manager` to dispatch real tool handlers (rag::dispatcher) and verify on-bus outcomes.

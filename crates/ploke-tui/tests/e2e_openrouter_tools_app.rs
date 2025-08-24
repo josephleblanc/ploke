@@ -41,12 +41,16 @@ use ploke_error::Error;
 use ploke_rag::{RagConfig, RagService, RrfConfig, TokenBudget};
 use ploke_test_utils::workspace_root;
 use ploke_tui::app::App;
-use ploke_tui::app_state::{AppState, ChatState, ConfigState, StateCommand, SystemState};
+use ploke_tui::app_state::{
+    AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager,
+};
 use ploke_tui::chat_history::ChatHistory;
+use ploke_tui::llm::{self, llm_manager};
+use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
 use ploke_tui::test_harness::TEST_APP;
 use ploke_tui::tracing_setup::init_tracing;
 use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model};
-use ploke_tui::{EventBus, EventBusCaps, app_state};
+use ploke_tui::{AppEvent, EventBus, EventBusCaps, EventPriority, app_state};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
@@ -164,6 +168,7 @@ async fn choose_tools_endpoint_for_model(
     base_url: &str,
     api_key: &str,
     model_id: &str,
+    providers_map: &HashMap<String, String>,
 ) -> Option<(
     String, /*author*/
     String, /*slug*/
@@ -177,35 +182,6 @@ async fn choose_tools_endpoint_for_model(
     }
     let (author, slug) = (parts[0].to_string(), parts[1].to_string());
 
-    // Optional: build provider name -> slug map
-    let providers_map: std::collections::HashMap<String, String> = match client
-        .get(format!("{}/providers", base_url))
-        .bearer_auth(api_key)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(resp) => match resp.json::<Value>().await {
-            Ok(v) => {
-                info!("Full response infodump:\n{:#?}\n", v);
-                v.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                let name = p.get("name").and_then(|x| x.as_str())?;
-                                let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                Some((name.to_string(), slug.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
-            Err(_) => Default::default(),
-        },
-        Err(_) => Default::default(),
-    };
-
     let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
     let payload = client
         .get(&url)
@@ -216,6 +192,7 @@ async fn choose_tools_endpoint_for_model(
         .ok()?
         .json::<ploke_tui::llm::provider_endpoints::ModelEndpointsResponse>()
         .await
+        .inspect(|resp| tracing::trace!("url: {url}\nResponse:\n{:#?}", resp))
         .ok()?;
 
     let mut candidates: Vec<ploke_tui::llm::provider_endpoints::ModelEndpoint> = payload
@@ -226,7 +203,12 @@ async fn choose_tools_endpoint_for_model(
             ep.supported_parameters
                 .iter()
                 .any(|p| p.eq_ignore_ascii_case("tools"))
+                && ep
+                    .supported_parameters
+                    .iter()
+                    .any(|p| p.eq_ignore_ascii_case("tool_choice"))
         })
+        .inspect(|cand| info!("candidate: {:#?}", cand))
         .collect();
 
     if candidates.is_empty() {
@@ -376,6 +358,7 @@ async fn run_tool_roundtrip(
     tool_args: Value,
     rag: &RagService,
     db: &Database,
+    state: &Arc<AppState>,
 ) -> ToolRoundtripOutcome {
     // Prime messages for tool forcing
     let user_message = json!({
@@ -631,6 +614,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     let rag = rag.expect("rag service not created correctly");
     rag.bm25_rebuild().await?;
 
+    let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
     // Shared app state
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
@@ -648,7 +632,22 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     });
 
     // Command channel (not wired to a state_manager loop in tests)
-    let (cmd_tx, _cmd_rx) = mpsc::channel::<StateCommand>(1024);
+    let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+    // Spawn state manager first
+    tokio::spawn(state_manager(
+        state.clone(),
+        cmd_rx,
+        event_bus.clone(),
+        rag_event_tx,
+    ));
+
+    tokio::spawn(llm_manager(
+        event_bus.subscribe(EventPriority::Background),
+        state.clone(),
+        cmd_tx.clone(), // Clone for each subsystem
+        event_bus.clone(),
+    ));
 
     // Build the App
     let command_style = config.command_style;
@@ -688,20 +687,10 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     let mut processed = 0usize;
 
-    let models_with_tools = "https://openrouter.ai/models?supported_parameters=tools";
-    // let providers_map: std::collections::HashMap<String, String> = match client
-    // AI: Let's just try to print the raw response, I'm not sure what format it uses
-    // DO NOT CHANGE ANYTHING ELSE, JUST PRINT REPONSE FROM models_with_tools AI!
-    let resp = client
-        .get(models_with_tools)
-        // .bearer_auth(&api_key)
-        .send()
-        .await.unwrap();
-    let resp_json: Value = resp.json().await.unwrap();
-    info!("Response: {:#?}", resp_json);
-    let providers_map: HashMap<String, String> = match client
-        .get(models_with_tools)
-        // .bearer_auth(&api_key)
+    // Optional: build provider name -> slug map
+    let providers_map: std::collections::HashMap<String, String> = match client
+        .get(format!("{}/providers", base_url))
+        .bearer_auth(&api_key)
         .send()
         .await
         .and_then(|r| r.error_for_status())
@@ -726,7 +715,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         },
         Err(_) => Default::default(),
     };
-    // --- start: temporary for making sure choose_tools_endpoint_for_model works correctly
+
     for m in models {
         if processed >= max_models {
             break;
@@ -735,29 +724,15 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         let model_id = m.id;
         info!("model: {}", model_id);
 
-        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
-        let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
-            info!("  no tools-capable endpoints; skipping {}", model_id);
-            continue;
-        };
-
-        info!(
-            "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
-            endpoint.name,
-            endpoint.context_length,
-            endpoint_price_hint(&endpoint)
-        );
-    }
-    // --- end: temporary for making sure choose_tools_endpoint_for_model works correctly
-    for m in models {
-        if processed >= max_models {
-            break;
-        }
-
-        let model_id = m.id;
-        info!("model: {}", model_id);
-
-        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
+        let chosen = choose_tools_endpoint_for_model(
+            &client,
+            &base_url,
+            &api_key,
+            &model_id,
+            &providers_map,
+        ) // AI: We should save the output from all of these model choices somewhere so we can know for
+        // other plans and implementations which endpoints support tool use and tool choice
+        .await;
         let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
             continue;
@@ -770,32 +745,31 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             endpoint_price_hint(&endpoint)
         );
 
-        // Context-only focus: exercise only the request_code_context tool
-        let rc_args = json!({"token_budget": LLM_TOKEN_BUDGET, "hint":"SimpleStruct"});
+        let parent_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let new_msg_id = Uuid::new_v4();
+        let system_instr = [ PROMPT_HEADER, PROMPT_CODE ].join("");
+        let user_instr = String::from("Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.");
+        event_bus.send(AppEvent::Llm(llm::Event::PromptConstructed {
+            parent_id, 
+            prompt: vec![
+                (
+                    ploke_tui::chat_history::MessageKind::System,
+                    system_instr,
+                ),
+                (ploke_tui::chat_history::MessageKind::User, user_instr),
+            ],
+        }));
 
-        for (def, (name, args)) in tools.iter().zip(vec![("request_code_context", rc_args)]) {
-            let outcome = run_tool_roundtrip(
-                &client,
-                &base_url,
-                &api_key,
-                &model_id,
-                provider_slug_hint.as_deref(),
-                def,
-                name,
-                args,
-                &rag,
-                db_handle,
-            )
-            .await;
-            outcomes.push(outcome);
-        }
-
-        processed += 1;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // AI: How can we observe the output from the LLM response above? Can we use the event
+        // emitted by process_llm_request, StateCommand::UpdateMessage, somehow? Perhaps the
+        // conversation history can show us the output?
     }
 
     // Summary of outcomes across models/tools
     let total = outcomes.len();
+    // AI: How can we adjust this to show us more helful information now that we are changing to
+    // using the actual calls to the internal LLM systems?
     let successes = outcomes
         .iter()
         .filter(|o| o.tool_called && matches!(o.second_status, Some(s) if (200..=299).contains(&s)))

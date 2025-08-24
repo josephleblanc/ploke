@@ -11,7 +11,10 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
-pub async fn update_message(
+pub async fn update_message( // AI: Then we update the message here. Maybe we can use the id from
+    // the original message sent to track when the LLM message is received and print that through
+    // tracing or something? We want to be able to view the returned message from the llm in our
+    // test
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     id: Uuid,

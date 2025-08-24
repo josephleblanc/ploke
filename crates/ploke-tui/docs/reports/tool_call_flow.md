@@ -134,8 +134,6 @@ Review the implementation of the plan in `tool_call_flow.md`. What has been impl
 
 In addition, identify which steps should come next, and create a list of files required for each step. Create a new document with a short description of each file, a list of relevant functions or code items with short descriptions of each, and when it would be useful to reference the file. This should help provide us with a condensed source of information that will allow us to keep our cognitive overhead lean, but still have a good reference for when we need more precise information while building out the next steps in the implementation.
 
-<!-- End new instructions -->
-
 ## In-depth Analysis
 
 What is working well

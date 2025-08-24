@@ -8,7 +8,7 @@ use crate::{app_state::handlers::{chat, embedding::wait_on_oneshot}, chat_histor
 
 use super::*;
 
-static PROMPT_HEADER: &str = r#"
+pub static PROMPT_HEADER: &str = r#"
 <-- SYSTEM PROMPT -->
 You are a highly skilled software engineer, specializing in the Rust programming language.
 
@@ -16,7 +16,7 @@ You will be asked to provide some assistance in collaborating with the user.
 "#;
 
 // TODO: Review the prompt, I think the LLM fucked it up.
-static PROMPT_CODE: &str = r#"
+pub static PROMPT_CODE: &str = r#"
 Tool-aware code collaboration instructions
 
 You can call tools to request more context and to stage code edits for user approval.

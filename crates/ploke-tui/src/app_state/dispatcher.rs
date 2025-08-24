@@ -31,7 +31,7 @@ pub async fn state_manager(
         let span = tracing::debug_span!("processing", cmd = %cmd.discriminant());
         let _enter = span.enter();
 
-        match cmd {
+        match cmd { // AI: Looks like we receive the message from the llm process here
             StateCommand::UpdateMessage { id, update } => {
                 handlers::chat::update_message(&state, &event_bus, id, update).await;
             }

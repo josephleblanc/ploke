@@ -18,6 +18,8 @@ fn tool_call_requested_idempotent() {
             at: 0,
             is_valid: true,
         },
+        model: todo!(),
+        provider_slug: todo!(),
     };
 
     // First insert
@@ -57,6 +59,8 @@ fn tool_call_done_idempotent_and_transition_rules() {
             at: 0,
             is_valid: true,
         },
+        model: todo!(),
+        provider_slug: todo!(),
     };
     db.record_tool_call_requested(req).expect("requested");
 
