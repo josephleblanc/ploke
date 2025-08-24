@@ -510,6 +510,7 @@ pub async fn process_llm_request(
     }
 }
 
+// AI: use the `instrument` for better tracking here
 #[instrument(skip(provider, state, client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,

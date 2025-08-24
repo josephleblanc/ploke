@@ -11,6 +11,11 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
+// AI: update_message updates found here
+// How can we add tracking during our test so we can ensure we see the expected outcomes? For now
+// we just want to be able to see what the LLM is doing when we send the tool call request, but we
+// would also like to find a way of actually testing that the tool runs as expected. Let's start by
+// making sure we can see the tracing output for the LLM messages and tool calls in our test AI!
 pub async fn update_message(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,

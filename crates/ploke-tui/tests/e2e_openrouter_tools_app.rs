@@ -163,6 +163,8 @@ async fn post_with_retries(
 }
 
 /// Pick the cheapest tools-capable endpoint for a model (by prompt+completion price).
+// AI: Let's save the returned models that fit our filter of "tools" and "tool_choice" for later
+// reference
 async fn choose_tools_endpoint_for_model(
     client: &Client,
     base_url: &str,
@@ -249,311 +251,6 @@ fn tool_defs() -> Vec<Value> {
     vec![request_code_context]
 }
 
-/// Local execution for get_file_metadata against a temporary file.
-fn local_get_file_metadata(file_path: &Path) -> String {
-    let mut f = fs::File::open(file_path).expect("open temp file");
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf).expect("read temp file");
-    let size = buf.len() as u64;
-    let mut hasher = Sha256::new();
-    hasher.update(&buf);
-    let hash_hex = format!("{:x}", hasher.finalize());
-
-    let ns = uuid::Uuid::NAMESPACE_OID;
-    let tracking_hash = Uuid::new_v5(&ns, hash_hex.as_bytes());
-
-    serde_json::to_string(&json!({
-        "size": size,
-        "sha256": hash_hex,
-        "tracking_hash": tracking_hash.to_string(),
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
-}
-
-fn local_apply_code_edit(file_path: &Path, start: usize, end: usize, replacement: &str) -> String {
-    let data = fs::read(file_path).expect("read temp file");
-    let end = end.min(data.len());
-    let start = start.min(end);
-    let mut new_data = Vec::new();
-    new_data.extend_from_slice(&data[..start]);
-    new_data.extend_from_slice(replacement.as_bytes());
-    new_data.extend_from_slice(&data[end..]);
-
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(file_path)
-        .expect("reopen temp file");
-    f.write_all(&new_data).expect("write splice");
-    f.flush().ok();
-
-    serde_json::to_string(&json!({
-        "applied": 1,
-        "bytes_after": new_data.len()
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
-}
-
-/// Assemble a small JSON payload for request_code_context using real RAG with a pre-loaded DB.
-async fn rag_request_code_context(
-    rag: &RagService,
-    db: &Database,
-    hint: &str,
-    token_budget_max: u32,
-) -> String {
-    let mut token_budget = TokenBudget::default();
-    token_budget.max_total = token_budget_max as usize;
-    let rag_result = rag
-        .get_context(
-            hint,
-            5,
-            &token_budget,
-            ploke_rag::RetrievalStrategy::Hybrid {
-                rrf: RrfConfig::default(),
-                mmr: None,
-            },
-        )
-        .await
-        .expect("Rag get_context failed");
-
-    // Build an enriched payload for the LLM:
-    // - Typed RequestCodeContextResult (includes snippets and file_path)
-    // - Plus a compact paths array mapping id -> { file_path, canon }
-    let mut paths_json: Vec<Value> = Vec::new();
-    for p in &rag_result.parts {
-        if let Ok(rows) = db.paths_from_id(p.id) {
-            if let Ok(np) = TryInto::<NodePaths>::try_into(rows) {
-                paths_json.push(json!({
-                    "id": p.id,
-                    "file_path": np.file,
-                    "canon": np.canon
-                }));
-            }
-        }
-    }
-
-    let result = ploke_core::rag_types::RequestCodeContextResult {
-        ok: true,
-        query: hint.to_string(),
-        top_k: 5,
-        context: rag_result,
-    };
-
-    let mut obj = serde_json::to_value(&result).unwrap_or_else(|_| json!({"ok": false}));
-    if let Some(map) = obj.as_object_mut() {
-        map.insert("paths".to_string(), Value::Array(paths_json));
-    }
-    serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// Execute one forced tool round-trip against a model endpoint.
-async fn run_tool_roundtrip(
-    client: &Client,
-    base_url: &str,
-    api_key: &str,
-    model_id: &str,
-    provider_slug_hint: Option<&str>,
-    tool_def: &Value,
-    tool_name: &str,
-    tool_args: Value,
-    rag: &RagService,
-    db: &Database,
-    state: &Arc<AppState>,
-) -> ToolRoundtripOutcome {
-    // Prime messages for tool forcing
-    let user_message = json!({
-        "role":"user",
-        "content": format!(
-            "Please call the tool '{}' with these JSON arguments, then wait for results:\n{}",
-            tool_name, tool_args.to_string()
-        )
-    });
-
-    let mut messages = vec![
-        json!({
-            "role":"system",
-            "content":"You are a tool-using assistant. Prefer calling a tool when one is available. All source code is Rust; use ```rust``` fenced code blocks for any snippets. Do not suggest or attempt to modify system files (e.g., /etc/hosts); operate only on ephemeral test paths. If a tool is unavailable, respond briefly and do not fabricate tool results."
-        }),
-        user_message.clone(),
-    ];
-
-    let mut root = json!({
-        "model": model_id,
-        "messages": messages,
-        "tools": [tool_def.clone()],
-        "tool_choice": {"type":"function","function":{"name": tool_name}},
-        "max_tokens": 128
-    });
-
-    if let Some(slug) = provider_slug_hint {
-        root.as_object_mut()
-            .unwrap()
-            .insert("provider".to_string(), json!({"order": [slug]}));
-    }
-
-    let url = format!("{}/chat/completions", base_url);
-    let first = post_with_retries(client, &url, api_key, &root, 3).await;
-
-    let Ok(resp) = first else {
-        panic!(
-            "first leg request failed for tool '{}': {}",
-            tool_name,
-            first.err().unwrap()
-        );
-    };
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    let first_status_u16 = status.as_u16();
-    let body_excerpt_first: String = if body.is_empty() {
-        String::new()
-    } else {
-        body.chars().take(240).collect()
-    };
-    info!("first leg '{}' -> {}", tool_name, status);
-
-    let parsed = serde_json::from_str::<Value>(&body).expect("Could not parse json return value");
-    let tool_calls_opt = parsed
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c0| c0.get("message"))
-        .and_then(|m| m.get("tool_calls"))
-        .and_then(|a| a.as_array())
-        .cloned();
-
-    // Some providers may ignore tool_choice for certain tools/endpoints. Treat as a soft skip.
-    if tool_calls_opt
-        .as_ref()
-        .map(|v| v.is_empty())
-        .unwrap_or(true)
-    {
-        warn!(
-            "No tool_calls returned for '{}' on first leg. Provider may have ignored tool_choice. Body: {}",
-            tool_name,
-            if body.is_empty() { "<empty>" } else { &body }
-        );
-        return ToolRoundtripOutcome {
-            tool_name: tool_name.to_string(),
-            model_id: model_id.to_string(),
-            provider_slug: provider_slug_hint.map(|s| s.to_string()),
-            first_status: first_status_u16,
-            tool_called: false,
-            second_status: None,
-            body_excerpt_first,
-        };
-    }
-    let tool_calls = tool_calls_opt.unwrap();
-
-    // Execute locally (temp targets) or via RAG for request_code_context
-    let tool_call_id = tool_calls
-        .first()
-        .and_then(|x| x.get("id"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("call_1")
-        .to_string();
-
-    let local_result = match tool_name {
-        "get_file_metadata" => {
-            let mut tf = NamedTempFile::new().expect("temp file");
-            writeln!(tf, "Hello from Ploke E2E at {}", chrono::Utc::now()).ok();
-            local_get_file_metadata(tf.path())
-        }
-        "apply_code_edit" => {
-            let mut tf = NamedTempFile::new().expect("temp file");
-            write!(tf, "hello world").ok();
-            let content = fs::read_to_string(tf.path()).unwrap_or_default();
-            let pos = content.find("world").unwrap_or(0);
-            local_apply_code_edit(tf.path(), pos, pos + 5, "ploke")
-        }
-        "request_code_context" => {
-            let hint = tool_args
-                .get("hint")
-                .and_then(|h| h.as_str())
-                .unwrap_or("SimpleStruct");
-            let token_budget_max = tool_args
-                .get("token_budget")
-                .and_then(|t| t.as_u64())
-                .unwrap_or(LLM_TOKEN_BUDGET as u64) as u32;
-            rag_request_code_context(rag, db, hint, token_budget_max).await
-        }
-        _ => {
-            warn!("unknown tool '{}'", tool_name);
-            "{}".to_string()
-        }
-    };
-
-    // Second leg: post tool result with proper message structure
-    // According to OpenRouter docs, we need to include:
-    // 1. The original user message
-    // 2. The assistant message with tool_calls
-    // 3. The tool message with the result
-    let assistant_msg = json!({
-        "role": "assistant",
-        "content": null,
-        "tool_calls": tool_calls.first().unwrap()
-    });
-
-    let tool_msg = json!({
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": local_result
-    });
-
-    messages = vec![user_message, assistant_msg, tool_msg];
-
-    let followup = json!({
-        "model": model_id,
-        "messages": messages,
-        "tools": [tool_def.clone()],
-        "max_tokens": LLM_TOKEN_BUDGET
-    });
-
-    let second = post_with_retries(client, &url, api_key, &followup, 3).await;
-
-    match second {
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let content = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|v| {
-                    v.get("choices")
-                        .and_then(|c| c.as_array())
-                        .and_then(|arr| arr.first())
-                        .and_then(|c0| c0.get("message"))
-                        .and_then(|m| m.get("content"))
-                        .and_then(|s| s.as_str().map(|s| s.to_string()))
-                })
-                .unwrap_or_default();
-            info!(
-                "second leg '{}' -> {}. content: {}",
-                tool_name, status, &content
-            );
-            return ToolRoundtripOutcome {
-                tool_name: tool_name.to_string(),
-                model_id: model_id.to_string(),
-                provider_slug: provider_slug_hint.map(|s| s.to_string()),
-                first_status: first_status_u16,
-                tool_called: true,
-                second_status: Some(status.as_u16()),
-                body_excerpt_first,
-            };
-        }
-        Err(e) => {
-            warn!("second leg '{}' failed: {}", tool_name, e);
-            return ToolRoundtripOutcome {
-                tool_name: tool_name.to_string(),
-                model_id: model_id.to_string(),
-                provider_slug: provider_slug_hint.map(|s| s.to_string()),
-                first_status: first_status_u16,
-                tool_called: true,
-                second_status: None,
-                body_excerpt_first,
-            };
-        }
-    }
-}
-
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     let _guard = init_tracing();
@@ -586,7 +283,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     // BM25 service (used by indexer/RAG)
     let bm25_cmd =
-        bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0).expect("start bm25 service");
+        bm25_index::bm25_service::start(Arc::clone(db_handle), 0.0).expect("start bm25 service");
 
     // Indexer task
     let indexer_task = IndexerTask::new(
@@ -770,6 +467,10 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 (ploke_tui::chat_history::MessageKind::User, user_instr),
             ],
         }));
+        // AI: How can we see the eventual outcome of this message? We want to be able to visually
+        // inspect the output of the LLM endpoint response and verify that the tool was indeed
+        // called as requested, as well as that the return values of those tools were what we
+        // expected
 
     }
 
