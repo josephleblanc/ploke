@@ -11,9 +11,10 @@ use crate::{
     EventBus, EventBusCaps,
     user_config::{UserConfig, default_model},
 };
-use ploke_db::bm25_index;
+use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
 use ploke_rag::{RagConfig, RagService, TokenBudget};
+use ploke_test_utils::workspace_root;
 
 lazy_static! {
     /// A globally accessible App instance for tests, wrapped in Arc<Mutex<...>>.
@@ -29,8 +30,26 @@ lazy_static! {
         // Convert to runtime configuration
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
-        // Initialize an in-memory database with schema
-        let db = ploke_db::Database::init_with_schema().expect("init test db");
+        // Initialize an in-memory database with schema; optionally restore a pre-loaded backup for realistic tests
+        let mut db = ploke_db::Database::init_with_schema().expect("init test db");
+
+        // Prefer env override; otherwise use the standard fixture backup path if it exists
+        let backup_path = std::env::var("PLOKE_TEST_DB_BACKUP")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let mut p = workspace_root();
+                p.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+                p
+            });
+
+        if backup_path.exists() {
+            let prior_rels_vec = db.relations_vec().expect("relations_vec");
+            db.import_from_backup(&backup_path, &prior_rels_vec)
+                .expect("import_from_backup");
+        }
+        // Ensure primary index exists for consistent behavior in tests using Rag/DB lookups
+        create_index_primary(&db).expect("create primary index");
+
         let db_handle = Arc::new(db);
 
         // IO manager
