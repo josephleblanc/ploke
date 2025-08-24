@@ -296,45 +296,20 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
             mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
         }
 
-        // PROTOTYPE: parameterless Cozo query with inlined JSON literals (escape-safe via serde_json)
-        // WARNING: This relies on exact relation names and NOW snapshots; subject to change.
+        // Use typed DB helper to resolve canonical node in file (NOW snapshot)
         let rel = &e.node_type;
-        let file_path_lit = serde_json::to_string(&abs_path.to_string_lossy().to_string()).unwrap();
-        let item_name_lit = serde_json::to_string(&item_name).unwrap();
-        let mod_path_lit = serde_json::to_string(&mod_path).unwrap();
-
-        let script = format!(
-            r#"
-parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
-
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
-?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
-  *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
-  ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path, tracking_hash @ 'NOW' }},
-  *file_mod{{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
-  name == {item_name_lit},
-  file_path == {file_path_lit},
-  mod_path == {mod_path_lit}
-"#
-        );
-
-        let qr = match state.db.raw_query(&script) {
-            Ok(q) => q,
-            Err(e) => {
-                let err = format!("DB query failed: {}", e);
-                tool_call_params.tool_call_failed(err.to_string());
-                return;
-            }
-        };
-
-        let mut nodes = match qr.to_embedding_nodes() {
+        let mod_path_owned: Vec<String> = mod_path.iter().map(|s| s.to_string()).collect();
+        let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(
+            &state.db,
+            rel,
+            &abs_path,
+            &mod_path_owned,
+            item_name,
+        ) {
             Ok(v) => v,
             Err(e) => {
-                let err = format!("Failed to parse DB result: {}", e);
-                tool_call_params.tool_call_failed(err.to_string());
+                let err = format!("DB resolve failed: {}", e);
+                tool_call_params.tool_call_failed(err);
                 return;
             }
         };
