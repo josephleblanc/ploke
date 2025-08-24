@@ -331,7 +331,7 @@ async fn run_tool_roundtrip(
     tool_name: &str,
     tool_args: Value,
     rag: &RagService,
-    db: &Database
+    db: &Database,
 ) {
     // Prepare messages
     let mut messages = vec![
@@ -440,14 +440,17 @@ async fn run_tool_roundtrip(
                 .await
                 .expect("Rag get_context failed");
 
-            let maybe_node_paths: Result< Vec<NodePaths>, Error > = rag_result.parts.iter().map(|p| {
-                 db.paths_from_id(p.id)
-            }).map_ok(|rows| {
-                let np: Result<NodePaths, Error> = rows.try_into().map_err(Error::from);
-                np
-                } ).try_collect().expect("Could not parse NodePaths from NamedRows");
+            let maybe_node_paths: Result<Vec<NodePaths>, Error> = rag_result
+                .parts
+                .iter()
+                .map(|p| db.paths_from_id(p.id))
+                .map_ok(|rows| {
+                    let np: Result<NodePaths, Error> = rows.try_into().map_err(Error::from);
+                    np
+                })
+                .try_collect()
+                .expect("Could not parse NodePaths from NamedRows");
             let _node_paths = maybe_node_paths.expect("Could not parse NodePaths from NamedRows");
-
 
             let rag_json =
                 serde_json::to_value(rag_result).expect("Could not parse rag result to json Value");
@@ -647,7 +650,7 @@ async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
                 name,
                 args,
                 &rag,
-                db_handle
+                db_handle,
             )
             .await;
         }

@@ -1,4 +1,4 @@
-use crate::rag::{tools::{apply_code_edit_tool, get_file_metadata_tool}};
+use crate::rag::tools::{apply_code_edit_tool, get_file_metadata_tool};
 
 use super::{tools::handle_request_context, utils::ToolCallParams, *};
 

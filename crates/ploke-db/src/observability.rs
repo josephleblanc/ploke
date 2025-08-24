@@ -351,12 +351,10 @@ impl ObservabilityStore for Database {
 
         // Use DataValue::Json for JSON data, or Null when absent
         let arguments_json_value = match &req.arguments_json {
-            Some(json_str) => {
-                match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(v) => DataValue::Json(cozo::JsonData(v)),
-                    Err(_) => DataValue::Null,
-                }
-            }
+            Some(json_str) => match serde_json::from_str::<serde_json::Value>(json_str) {
+                Ok(v) => DataValue::Json(cozo::JsonData(v)),
+                Err(_) => DataValue::Null,
+            },
             None => DataValue::Null,
         };
 
@@ -763,9 +761,7 @@ impl ObservabilityStore for Database {
         params.insert("diffs_json".into(), diffs_val);
         params.insert(
             "confidence".into(),
-            confidence
-                .map(DataValue::from)
-                .unwrap_or(DataValue::Null),
+            confidence.map(DataValue::from).unwrap_or(DataValue::Null),
         );
 
         let script = r#"
@@ -936,7 +932,11 @@ impl ObservabilityStore for Database {
 
         let confidence = row[*hid.get("confidence").unwrap()]
             .get_float()
-            .or_else(|| row[*hid.get("confidence").unwrap()].get_int().map(|i| i as f64));
+            .or_else(|| {
+                row[*hid.get("confidence").unwrap()]
+                    .get_int()
+                    .map(|i| i as f64)
+            });
 
         let status = to_string(&row[*hid.get("status").unwrap()])?;
         let decided_at_ms = row[*hid.get("decided_at_ms").unwrap()]
@@ -949,7 +949,9 @@ impl ObservabilityStore for Database {
             .get_str()
             .map(|s| s.to_string());
 
-        let at_ms = row[*hid.get("at_ms").unwrap()].get_int().unwrap_or_default();
+        let at_ms = row[*hid.get("at_ms").unwrap()]
+            .get_int()
+            .unwrap_or_default();
         let at_valid = row[*hid.get("at_valid").unwrap()]
             .get_bool()
             .unwrap_or(true);

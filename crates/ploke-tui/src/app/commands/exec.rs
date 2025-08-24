@@ -12,26 +12,25 @@
 //! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
-use super::parser::Command;
 use super::HELP_COMMANDS;
+use super::parser::Command;
 use crate::app::App;
+use crate::llm::openrouter_catalog::ModelEntry;
 use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing};
-use crate::{app_state::StateCommand, chat_history::MessageKind, emit_app_event, AppEvent};
+use crate::user_config::{OPENROUTER_URL, ProviderRegistryStrictness, ProviderType, UserConfig};
+use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
-use std::path::PathBuf;
-use tokio::sync::oneshot;
-use uuid::Uuid;
-use crate::user_config::{ProviderRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::llm::openrouter_catalog::ModelEntry;
-use tracing::{debug, info_span, warn, instrument};
+use std::path::PathBuf;
+use tokio::sync::oneshot;
+use tracing::{debug, info_span, instrument, warn};
+use uuid::Uuid;
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
 const TEST_QUERY_RESULTS: &str = "results.json";
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEndpoint {
@@ -79,9 +78,7 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::ModelUse(alias) => {
             // Delegate to existing state manager path to broadcast and apply
-            app.send_cmd(StateCommand::SwitchModel {
-                alias_or_id: alias,
-            });
+            app.send_cmd(StateCommand::SwitchModel { alias_or_id: alias });
         }
         Command::ModelRefresh { remote } => {
             let state = app.state.clone();
@@ -102,7 +99,8 @@ pub fn execute(app: &mut App, command: Command) {
                             Ok(_) => {
                                 let _ = cmd_tx
                                     .send(StateCommand::AddMessageImmediate {
-                                        msg: "Refreshed model capabilities from OpenRouter.".to_string(),
+                                        msg: "Refreshed model capabilities from OpenRouter."
+                                            .to_string(),
                                         kind: MessageKind::SysInfo,
                                         new_msg_id: Uuid::new_v4(),
                                     })
@@ -111,7 +109,10 @@ pub fn execute(app: &mut App, command: Command) {
                             Err(e) => {
                                 let _ = cmd_tx
                                     .send(StateCommand::AddMessageImmediate {
-                                        msg: format!("Failed to refresh OpenRouter model registry: {}", e),
+                                        msg: format!(
+                                            "Failed to refresh OpenRouter model registry: {}",
+                                            e
+                                        ),
                                         kind: MessageKind::SysInfo,
                                         new_msg_id: Uuid::new_v4(),
                                     })
@@ -261,9 +262,15 @@ pub fn execute(app: &mut App, command: Command) {
                     .await;
             });
         }
-        Command::ProviderSelect { model_id, provider_slug } => {
+        Command::ProviderSelect {
+            model_id,
+            provider_slug,
+        } => {
             // Delegate to state layer to pin a specific provider endpoint for a model
-            app.send_cmd(StateCommand::SelectModelProvider { model_id, provider_id: provider_slug });
+            app.send_cmd(StateCommand::SelectModelProvider {
+                model_id,
+                provider_id: provider_slug,
+            });
         }
         Command::Update => spawn_update(app),
         Command::EditApprove(id) => {
@@ -321,10 +328,16 @@ fn show_model_info_async(app: &App) {
             let params = p.llm_params.clone().unwrap_or_default();
             let caps = reg.capabilities.get(&p.model);
 
-            let fmt_opt_f32 = |o: Option<f32>| o.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "-".to_string());
-            let fmt_opt_u32 = |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-            let fmt_opt_usize = |o: Option<usize>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-            let fmt_opt_u64 = |o: Option<u64>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_f32 = |o: Option<f32>| {
+                o.map(|v| format!("{:.3}", v))
+                    .unwrap_or_else(|| "-".to_string())
+            };
+            let fmt_opt_u32 =
+                |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_usize =
+                |o: Option<usize>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+            let fmt_opt_u64 =
+                |o: Option<u64>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
 
             let mut lines = vec![
                 "Current model settings:".to_string(),
@@ -332,32 +345,58 @@ fn show_model_info_async(app: &App) {
                 format!("  Model: {}", p.model),
                 format!("  Base URL: {}", p.base_url),
                 format!("  Provider type: {:?}", p.provider_type),
-                format!("  Provider slug: {}", p.provider_slug.as_deref().unwrap_or("-")),
+                format!(
+                    "  Provider slug: {}",
+                    p.provider_slug.as_deref().unwrap_or("-")
+                ),
                 "".to_string(),
                 "  LLM parameters:".to_string(),
                 format!("    temperature: {}", fmt_opt_f32(params.temperature)),
                 format!("    top_p: {}", fmt_opt_f32(params.top_p)),
                 format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
-                format!("    presence_penalty: {}", fmt_opt_f32(params.presence_penalty)),
-                format!("    frequency_penalty: {}", fmt_opt_f32(params.frequency_penalty)),
+                format!(
+                    "    presence_penalty: {}",
+                    fmt_opt_f32(params.presence_penalty)
+                ),
+                format!(
+                    "    frequency_penalty: {}",
+                    fmt_opt_f32(params.frequency_penalty)
+                ),
                 format!("    stop_sequences: [{}]", params.stop_sequences.join(", ")),
                 format!("    parallel_tool_calls: {}", params.parallel_tool_calls),
                 format!("    response_format: {:?}", params.response_format),
-                format!("    tool_max_retries: {}", fmt_opt_u32(params.tool_max_retries)),
-                format!("    tool_token_limit: {}", fmt_opt_u32(params.tool_token_limit)),
-                format!("    tool_timeout_secs: {}", fmt_opt_u64(params.tool_timeout_secs)),
-                format!("    history_char_budget: {}", fmt_opt_usize(params.history_char_budget)),
+                format!(
+                    "    tool_max_retries: {}",
+                    fmt_opt_u32(params.tool_max_retries)
+                ),
+                format!(
+                    "    tool_token_limit: {}",
+                    fmt_opt_u32(params.tool_token_limit)
+                ),
+                format!(
+                    "    tool_timeout_secs: {}",
+                    fmt_opt_u64(params.tool_timeout_secs)
+                ),
+                format!(
+                    "    history_char_budget: {}",
+                    fmt_opt_usize(params.history_char_budget)
+                ),
             ];
 
             lines.push("".to_string());
-            lines.push(format!("  Tool policy: require_tool_support: {}", reg.require_tool_support));
+            lines.push(format!(
+                "  Tool policy: require_tool_support: {}",
+                reg.require_tool_support
+            ));
             if let Some(c) = caps {
                 lines.push("".to_string());
                 lines.push("  Capabilities (cache):".to_string());
                 lines.push(format!("    supports_tools: {}", c.supports_tools));
                 lines.push(format!(
                     "    context_length: {}",
-                    c.context_length.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())
+                    c.context_length
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string())
                 ));
                 lines.push(format!(
                     "    input_cost_per_million: {}",
@@ -453,7 +492,10 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
 "#
         .to_string()
     } else {
-        format!("Unknown help topic '{}'. Try 'help model', 'help edit', 'help bm25', 'help provider', or 'help index'.", topic_prefix)
+        format!(
+            "Unknown help topic '{}'. Try 'help model', 'help edit', 'help bm25', 'help provider', or 'help index'.",
+            topic_prefix
+        )
     };
 
     app.send_cmd(StateCommand::AddMessageImmediate {
@@ -561,7 +603,10 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         if parts.len() != 2 {
             let _ = cmd_tx
                 .send(StateCommand::AddMessageImmediate {
-                    msg: format!("Invalid model id '{}'. Expected format '<author>/<slug>'.", model_id),
+                    msg: format!(
+                        "Invalid model id '{}'. Expected format '<author>/<slug>'.",
+                        model_id
+                    ),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 })
@@ -582,20 +627,19 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             .and_then(|r| r.error_for_status())
         {
             Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => {
-                    v.get("data")
-                        .and_then(|d| d.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|p| {
-                                    let name = p.get("name").and_then(|x| x.as_str())?;
-                                    let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                    Some((name.to_string(), slug.to_string()))
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                }
+                Ok(v) => v
+                    .get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| {
+                                let name = p.get("name").and_then(|x| x.as_str())?;
+                                let slug = p.get("slug").and_then(|x| x.as_str())?;
+                                Some((name.to_string(), slug.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 Err(_) => Default::default(),
             },
             Err(_) => Default::default(),
@@ -614,7 +658,10 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         {
             Ok(resp) => match resp.json::<ModelEndpointsResponse>().await {
                 Ok(payload) => {
-                    debug!("endpoints response parsed: {} endpoints", payload.data.endpoints.len());
+                    debug!(
+                        "endpoints response parsed: {} endpoints",
+                        payload.data.endpoints.len()
+                    );
                     let mut lines = vec![
                         format!("Available endpoints for model '{}':", model_id),
                         "  (Providers marked [tools] advertise tool support)".to_string(),
@@ -702,7 +749,12 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 .provider_registry
                 .providers
                 .iter()
-                .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                .find(|p| {
+                    matches!(
+                        p.provider_type,
+                        crate::user_config::ProviderType::OpenRouter
+                    )
+                })
                 .map(|p| p.resolve_api_key())
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .unwrap_or_default();
@@ -737,12 +789,17 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     })
                     .collect();
                 filtered.sort_by(|a, b| a.id.cmp(&b.id));
-                debug!("model search filtered {} results for keyword '{}'", filtered.len(), keyword_str);
+                debug!(
+                    "model search filtered {} results for keyword '{}'",
+                    filtered.len(),
+                    keyword_str
+                );
                 // Always emit results; UI will show "0 results" if none
                 emit_app_event(AppEvent::ModelSearchResults {
                     keyword: keyword_str,
                     items: filtered,
-                }).await;
+                })
+                .await;
             }
             Err(e) => {
                 let _ = cmd_tx
@@ -1023,7 +1080,6 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
     }
 }
 
-
 #[cfg(test)]
 mod typed_response_tests {
     use super::*;
@@ -1050,11 +1106,17 @@ mod typed_response_tests {
             }
         });
 
-        let parsed: ModelEndpointsResponse = serde_json::from_value(payload).expect("valid response");
+        let parsed: ModelEndpointsResponse =
+            serde_json::from_value(payload).expect("valid response");
         assert_eq!(parsed.data.endpoints.len(), 2);
         assert_eq!(parsed.data.endpoints[0].name, "foo/bar");
         assert_eq!(parsed.data.endpoints[0].context_length, 8192);
-        assert!(parsed.data.endpoints[0].supported_parameters.iter().any(|t| t.eq_ignore_ascii_case("tools")));
+        assert!(
+            parsed.data.endpoints[0]
+                .supported_parameters
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case("tools"))
+        );
         assert_eq!(parsed.data.endpoints[1].name, "");
         assert!(parsed.data.endpoints[1].context_length == 0);
     }

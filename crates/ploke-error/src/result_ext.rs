@@ -2,15 +2,15 @@ use super::{ErrorPolicy, Result};
 
 /// Extension trait for `Result` enabling policy-driven emission without
 /// contaminating core control-flow with side-effects.
-/// 
+///
 /// Typical usage: at subsystem boundaries in applications, call one of the
 /// helpers to emit errors via your chosen [`ErrorPolicy`], while preserving
 /// the original result for further handling.
-/// 
+///
 /// Example
 /// ```rust,ignore
 /// use ploke_error::{Result, ResultExt, ErrorPolicy, DomainError};
-/// 
+///
 /// fn do_work(policy: &impl ErrorPolicy) -> Result<()> {
 ///     let r: Result<()> = Err(DomainError::Ui { message: "bad input".into() }.into());
 ///     r.emit_error(policy) // Emitted according to policy, still Err for caller to handle
@@ -19,13 +19,13 @@ use super::{ErrorPolicy, Result};
 pub trait ResultExt<T> {
     /// Emit the error using the provided policy and return the result unchanged
     fn emit_event(self, policy: &impl ErrorPolicy) -> Self;
-    
+
     /// If the result is an error, emit it as a warning using the policy
     fn emit_warning(self, policy: &impl ErrorPolicy) -> Self;
-    
+
     /// If the result is an error, emit it as an error using the policy
     fn emit_error(self, policy: &impl ErrorPolicy) -> Self;
-    
+
     /// If the result is an error, emit it as a fatal using the policy
     fn emit_fatal(self, policy: &impl ErrorPolicy) -> Self;
 }

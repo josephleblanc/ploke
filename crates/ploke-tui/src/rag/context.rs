@@ -4,7 +4,11 @@ use ploke_core::rag_types::AssembledContext;
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
-use crate::{app_state::handlers::{chat, embedding::wait_on_oneshot}, chat_history::{Message, MessageKind}, error::ErrorExt as _};
+use crate::{
+    app_state::handlers::{chat, embedding::wait_on_oneshot},
+    chat_history::{Message, MessageKind},
+    error::ErrorExt as _,
+};
 
 use super::*;
 

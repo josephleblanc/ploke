@@ -4,13 +4,13 @@
 pub mod bm25_index;
 mod database;
 mod error;
+pub mod get_by_id;
+pub mod helpers;
 mod index;
 pub mod observability;
 mod query;
 mod result;
 mod span;
-pub mod get_by_id;
-pub mod helpers;
 pub(crate) mod utils;
 
 pub use database::{to_usize, Database, TypedEmbedData};

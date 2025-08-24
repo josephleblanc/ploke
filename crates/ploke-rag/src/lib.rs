@@ -138,8 +138,7 @@ pub use fusion::{
 };
 pub mod context;
 pub use context::{
-    assemble_context, ApproxCharTokenizer,  AssemblyPolicy, 
-     Ordering, TokenBudget, TokenCounter,
+    assemble_context, ApproxCharTokenizer, AssemblyPolicy, Ordering, TokenBudget, TokenCounter,
 };
 pub mod core;
 pub use core::{NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy};

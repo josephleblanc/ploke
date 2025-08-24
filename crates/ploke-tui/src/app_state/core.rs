@@ -1,11 +1,11 @@
+use ploke_core::TrackingHash;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::collections::HashMap;
-use ploke_core::TrackingHash;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::{ProviderRegistry, CommandStyle, EmbeddingConfig, UserConfig};
+use crate::user_config::{CommandStyle, EmbeddingConfig, ProviderRegistry, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -108,7 +108,6 @@ pub enum PreviewMode {
     CodeBlock,
     Diff,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct EditingConfig {

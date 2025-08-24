@@ -82,29 +82,29 @@ Guidance
 "#]
 
 pub mod context;
+pub mod domain;
 pub mod fatal;
 pub mod internal;
-pub mod warning;
-pub mod domain;
-pub mod severity;
 pub mod policy;
 pub mod result_ext;
+pub mod severity;
+pub mod warning;
 
- // public exports
-pub use context::{ContextualError, ErrorContext, SourceSpan, ContextExt};
+// public exports
+pub use context::{ContextExt, ContextualError, ErrorContext, SourceSpan};
+pub use domain::DomainError;
 pub use fatal::FatalError;
 pub use internal::InternalError;
-pub use warning::WarningError;
-pub use domain::DomainError;
-pub use severity::Severity;
-pub use policy::{ErrorPolicy, NoopPolicy, CombinedPolicy};
-#[cfg(feature = "tracing")]
-pub use policy::TracingPolicy;
 #[cfg(feature = "diagnostic")]
 pub use policy::MiettePolicy;
-pub use result_ext::{ResultExt, IterResultExt};
+#[cfg(feature = "tracing")]
+pub use policy::TracingPolicy;
+pub use policy::{CombinedPolicy, ErrorPolicy, NoopPolicy};
+pub use result_ext::{IterResultExt, ResultExt};
+pub use severity::Severity;
+pub use warning::WarningError;
 
- // common imports for submodules
+// common imports for submodules
 
 /// Workspace-wide result alias used by all crates in the project.
 /// The default error type is this crate's [`Error`].
@@ -162,8 +162,11 @@ impl Error {
         match self {
             Error::Warning(_) => Severity::Warning,
             Error::Fatal(_) => Severity::Fatal,
-            Error::Internal(_) | Error::Domain(_) | Error::Context(_) 
-            | Error::UiError(_) | Error::TransformError(_) => Severity::Error,
+            Error::Internal(_)
+            | Error::Domain(_)
+            | Error::Context(_)
+            | Error::UiError(_)
+            | Error::TransformError(_) => Severity::Error,
         }
     }
 }

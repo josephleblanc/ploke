@@ -5,10 +5,10 @@ mod session;
 mod tool_call;
 
 use ploke_rag::TokenCounter as _;
+use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use ploke_rag::context::ApproxCharTokenizer;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -697,7 +697,6 @@ pub(super) fn cap_messages_by_tokens<'a>(
     kept.reverse();
     kept.into_iter().cloned().collect()
 }
-
 
 // Example tool-call handler (stub)
 

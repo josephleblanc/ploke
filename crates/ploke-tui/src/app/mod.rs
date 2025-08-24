@@ -16,9 +16,9 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use app_state::{AppState, StateCommand};
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{ProviderConfig, ProviderType, OPENROUTER_URL};
+use crate::user_config::{OPENROUTER_URL, ProviderConfig, ProviderType};
+use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -30,8 +30,8 @@ use crossterm::execute;
 use itertools::Itertools;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
-use ratatui::widgets::Gauge;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
@@ -443,7 +443,11 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            if self.model_browser.is_some() { Mode::Normal } else { self.mode },
+            if self.model_browser.is_some() {
+                Mode::Normal
+            } else {
+                self.mode
+            },
             input_title,
         );
         // Add progress bar at bottom if indexing
@@ -520,7 +524,9 @@ impl App {
             let width = area.width.saturating_mul(8) / 10;
             let height = area.height.saturating_mul(8) / 10;
             let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
-            let y = area.y.saturating_add(area.height.saturating_sub(height) / 2);
+            let y = area
+                .y
+                .saturating_add(area.height.saturating_sub(height) / 2);
             let rect = ratatui::layout::Rect::new(x, y, width.max(40), height.max(10));
 
             // Clear the underlying content in the overlay area to avoid "bleed-through"
@@ -542,7 +548,11 @@ impl App {
             // Build list content (styled)
             let mut lines: Vec<Line> = Vec::new();
             lines.push(Line::from(Span::styled(
-                format!("Model Browser — {} results for \"{}\"", mb.items.len(), mb.keyword),
+                format!(
+                    "Model Browser — {} results for \"{}\"",
+                    mb.items.len(),
+                    mb.keyword
+                ),
                 overlay_style,
             )));
             lines.push(Line::from(Span::styled(
@@ -572,12 +582,30 @@ impl App {
                 };
 
                 let mut line = Line::from(vec![
-                    Span::styled(if i == mb.selected { ">" } else { " " }, if i == mb.selected { selected_style } else { overlay_style }),
+                    Span::styled(
+                        if i == mb.selected { ">" } else { " " },
+                        if i == mb.selected {
+                            selected_style
+                        } else {
+                            overlay_style
+                        },
+                    ),
                     Span::raw(" "),
-                    Span::styled(title, if i == mb.selected { selected_style } else { overlay_style }),
+                    Span::styled(
+                        title,
+                        if i == mb.selected {
+                            selected_style
+                        } else {
+                            overlay_style
+                        },
+                    ),
                 ]);
                 // Ensure entire line style is applied (for background fill)
-                line.style = if i == mb.selected { selected_style } else { overlay_style };
+                line.style = if i == mb.selected {
+                    selected_style
+                } else {
+                    overlay_style
+                };
                 lines.push(line);
 
                 if it.expanded {

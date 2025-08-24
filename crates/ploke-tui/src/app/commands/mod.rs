@@ -1,7 +1,7 @@
 mod exec;
-pub mod parser;
 mod exec_live_tests;
 mod exec_real_tools_live_tests;
+pub mod parser;
 
 use crate::app::App;
 

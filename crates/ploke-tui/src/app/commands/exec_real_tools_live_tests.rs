@@ -2,10 +2,10 @@
 
 use lazy_static::lazy_static;
 use ploke_test_utils::workspace_root;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
@@ -38,7 +38,10 @@ fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     let referer = HeaderName::from_static("http-referer");
     let x_title = HeaderName::from_static("x-title");
-    headers.insert(referer, HeaderValue::from_static("https://github.com/ploke-ai/ploke"));
+    headers.insert(
+        referer,
+        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+    );
     headers.insert(x_title, HeaderValue::from_static("Ploke TUI Tests"));
     headers
 }
@@ -53,7 +56,12 @@ async fn post_with_retries(
 ) -> Result<reqwest::Response, reqwest::Error> {
     let attempts = attempts.max(1);
     for i in 0..attempts {
-        let resp = client.post(url).bearer_auth(api_key).json(body).send().await;
+        let resp = client
+            .post(url)
+            .bearer_auth(api_key)
+            .json(body)
+            .send()
+            .await;
         match resp {
             Ok(r) => {
                 if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && i + 1 < attempts {
@@ -81,14 +89,18 @@ fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelEndpoint) -> f6
     p + c
 }
 
-
 /// Pick the cheapest tools-capable endpoint for a model (by prompt+completion price).
 async fn choose_tools_endpoint_for_model(
     client: &Client,
     base_url: &str,
     api_key: &str,
     model_id: &str,
-) -> Option<(String /*author*/, String /*slug*/, crate::llm::provider_endpoints::ModelEndpoint, Option<String> /*provider slug hint*/)> {
+) -> Option<(
+    String, /*author*/
+    String, /*slug*/
+    crate::llm::provider_endpoints::ModelEndpoint,
+    Option<String>, /*provider slug hint*/
+)> {
     let parts: Vec<&str> = model_id.split('/').collect();
     if parts.len() != 2 {
         warn!("model '{}' is not '<author>/<slug>'", model_id);
@@ -105,20 +117,19 @@ async fn choose_tools_endpoint_for_model(
         .and_then(|r| r.error_for_status())
     {
         Ok(resp) => match resp.json::<Value>().await {
-            Ok(v) => {
-                v.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                let name = p.get("name").and_then(|x| x.as_str())?;
-                                let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                Some((name.to_string(), slug.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
+            Ok(v) => v
+                .get("data")
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|p| {
+                            let name = p.get("name").and_then(|x| x.as_str())?;
+                            let slug = p.get("slug").and_then(|x| x.as_str())?;
+                            Some((name.to_string(), slug.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             Err(_) => Default::default(),
         },
         Err(_) => Default::default(),
@@ -140,13 +151,21 @@ async fn choose_tools_endpoint_for_model(
         .data
         .endpoints
         .into_iter()
-        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+        .filter(|ep| {
+            ep.supported_parameters
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("tools"))
+        })
         .collect();
 
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(|a, b| endpoint_price_hint(a).partial_cmp(&endpoint_price_hint(b)).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        endpoint_price_hint(a)
+            .partial_cmp(&endpoint_price_hint(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let chosen = candidates.remove(0);
     let slug_hint = providers_map.get(&chosen.name).cloned();
@@ -366,7 +385,11 @@ async fn run_tool_roundtrip(
     let first = post_with_retries(client, &url, api_key, &root, 3).await;
 
     let Ok(resp) = first else {
-        warn!("first leg request failed for tool '{}': {}", tool_name, first.err().unwrap());
+        warn!(
+            "first leg request failed for tool '{}': {}",
+            tool_name,
+            first.err().unwrap()
+        );
         return;
     };
     let status = resp.status();
@@ -385,12 +408,21 @@ async fn run_tool_roundtrip(
         .unwrap_or_default();
 
     if tool_calls.is_empty() {
-        warn!("no tool_calls produced for '{}'; body (first 512): {}", tool_name, &body.chars().take(512).collect::<String>());
+        warn!(
+            "no tool_calls produced for '{}'; body (first 512): {}",
+            tool_name,
+            &body.chars().take(512).collect::<String>()
+        );
         return;
     }
 
     // Create temp targets and execute locally
-    let tool_call_id = tool_calls.get(0).and_then(|x| x.get("id")).and_then(|s| s.as_str()).unwrap_or("call_1").to_string();
+    let tool_call_id = tool_calls
+        .get(0)
+        .and_then(|x| x.get("id"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("call_1")
+        .to_string();
     let local_result = match tool_name {
         "get_file_metadata" => {
             let mut tf = NamedTempFile::new().expect("temp file");
@@ -412,7 +444,10 @@ async fn run_tool_roundtrip(
                 .get("hint")
                 .and_then(|h| h.as_str())
                 .unwrap_or("SimpleStruct");
-            let token_budget = tool_args.get("token_budget").and_then(|t| t.as_u64()).unwrap_or(512) as u32;
+            let token_budget = tool_args
+                .get("token_budget")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(512) as u32;
             // Optional: If we ever wire RagService, we'd call bm25_rebuild() here.
             local_request_code_context(Some(hint), token_budget)
         }
@@ -536,7 +571,9 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         info!(
             "  chosen endpoint: provider='{}' slug_hint='{}' context_length={} price_hint={:.8}",
             endpoint.name,
-            provider_slug_hint.clone().unwrap_or_else(|| "-".to_string()),
+            provider_slug_hint
+                .clone()
+                .unwrap_or_else(|| "-".to_string()),
             endpoint.context_length,
             endpoint_price_hint(&endpoint)
         );

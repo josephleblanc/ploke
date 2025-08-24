@@ -53,7 +53,7 @@ pub struct ModelEntry {
 /// Pricing information for a model.
 pub struct ModelPricing {
     /// USD per 1M input tokens
-    pub input: Option<f64>,  // USD per 1M input tokens
+    pub input: Option<f64>, // USD per 1M input tokens
     /// USD per 1M output tokens
     pub output: Option<f64>, // USD per 1M output tokens
 }
@@ -109,21 +109,29 @@ where
             let mut output: Option<f64> = None;
 
             if let Some(iv) = obj.get("input") {
-                input = iv.as_f64().or_else(|| iv.as_str().and_then(|s| s.parse::<f64>().ok()));
+                input = iv
+                    .as_f64()
+                    .or_else(|| iv.as_str().and_then(|s| s.parse::<f64>().ok()));
             }
             if let Some(ov) = obj.get("output") {
-                output = ov.as_f64().or_else(|| ov.as_str().and_then(|s| s.parse::<f64>().ok()));
+                output = ov
+                    .as_f64()
+                    .or_else(|| ov.as_str().and_then(|s| s.parse::<f64>().ok()));
             }
 
             // Fallback to prompt/completion keys used by OpenRouter
             if input.is_none() {
                 if let Some(pv) = obj.get("prompt") {
-                    input = pv.as_f64().or_else(|| pv.as_str().and_then(|s| s.parse::<f64>().ok()));
+                    input = pv
+                        .as_f64()
+                        .or_else(|| pv.as_str().and_then(|s| s.parse::<f64>().ok()));
                 }
             }
             if output.is_none() {
                 if let Some(cv) = obj.get("completion") {
-                    output = cv.as_f64().or_else(|| cv.as_str().and_then(|s| s.parse::<f64>().ok()));
+                    output = cv
+                        .as_f64()
+                        .or_else(|| cv.as_str().and_then(|s| s.parse::<f64>().ok()));
                 }
             }
 

@@ -85,21 +85,53 @@ pub struct TopProvider {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Pricing {
     // Accept either numbers or strings from the API, but keep a numeric type internally.
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     prompt: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     completion: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     image: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     request: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     web_search: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     internal_reasoning: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     input_cache_read: f64,
-    #[serde(default, deserialize_with = "de_f64_from_str_or_num", serialize_with = "ser_f64_as_string")]
+    #[serde(
+        default,
+        deserialize_with = "de_f64_from_str_or_num",
+        serialize_with = "ser_f64_as_string"
+    )]
     input_cache_write: f64,
 }
 
@@ -111,9 +143,9 @@ where
 {
     let v = serde_json::Value::deserialize(deserializer)?;
     match v {
-        serde_json::Value::Number(n) => n
-            .as_f64()
-            .ok_or_else(|| <D::Error as serde::de::Error>::custom("number not representable as f64")),
+        serde_json::Value::Number(n) => n.as_f64().ok_or_else(|| {
+            <D::Error as serde::de::Error>::custom("number not representable as f64")
+        }),
         serde_json::Value::String(s) => s
             .trim()
             .parse::<f64>()

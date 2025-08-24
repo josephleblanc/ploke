@@ -12,7 +12,10 @@ pub use snippet::CodeSnippet;
 use uuid::Uuid;
 
 use crate::{
-    database::{to_string, to_usize, to_uuid}, error::DbError, get_by_id::CommonFields, NodeType
+    database::{to_string, to_usize, to_uuid},
+    error::DbError,
+    get_by_id::CommonFields,
+    NodeType,
 };
 use cozo::NamedRows;
 
@@ -22,7 +25,6 @@ pub struct QueryResult {
     pub rows: Vec<Vec<cozo::DataValue>>,
     pub headers: Vec<String>,
 }
-
 
 // // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
 // #[derive(Debug, Clone)]

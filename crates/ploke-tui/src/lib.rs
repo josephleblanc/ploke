@@ -34,8 +34,8 @@ pub mod test_harness;
 
 use app::App;
 use app_state::{
-    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
-    core::RuntimeConfig,
+    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
+    core::RuntimeConfig, state_manager,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -52,13 +52,14 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{default_model, ProviderConfig, ProviderType, UserConfig, OPENROUTER_URL};
+use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, UserConfig, default_model};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
+use crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture};
 use futures::{FutureExt, StreamExt};
 use once_cell::sync::Lazy;
 use ratatui::{
@@ -66,7 +67,6 @@ use ratatui::{
     style::Stylize,
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
-use crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture};
 // for list
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
@@ -358,7 +358,10 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(system::SystemEvent),
-    ModelSearchResults { keyword: String, items: Vec<crate::llm::openrouter_catalog::ModelEntry> },
+    ModelSearchResults {
+        keyword: String,
+        items: Vec<crate::llm::openrouter_catalog::ModelEntry>,
+    },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),

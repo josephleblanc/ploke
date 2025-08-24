@@ -37,11 +37,11 @@ impl std::ops::Deref for Database {
 }
 
 pub trait ImmutQuery {
-    fn raw_query(&self, query: &str) -> Result< NamedRows , DbError>;
+    fn raw_query(&self, query: &str) -> Result<NamedRows, DbError>;
 }
 
 impl ImmutQuery for Database {
-    fn raw_query(&self, query: &str) -> Result< NamedRows , DbError> {
+    fn raw_query(&self, query: &str) -> Result<NamedRows, DbError> {
         self.run_script(query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
             .map_err(DbError::from)
     }
@@ -116,7 +116,10 @@ impl Database {
     /// database and return the `EmbeddingData` so the snippet for the node can be found from a
     /// file read.
     /// Returns the database error or the embedding data for the item.
-    pub fn get_node_from_canon(&self, canonical_path: &[&str]) -> Result<EmbeddingData, PlokeError> {
+    pub fn get_node_from_canon(
+        &self,
+        canonical_path: &[&str],
+    ) -> Result<EmbeddingData, PlokeError> {
         todo!()
     }
 

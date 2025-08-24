@@ -205,10 +205,8 @@ impl RagService {
     /// Convenience constructor for tests with an in-memory database and mock embedder.
     pub fn new_mock() -> Self {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("init test db"));
-        let dense_embedder =
-            Arc::new(ploke_embed::indexer::EmbeddingProcessor::new_mock());
-        let bm_embedder =
-            bm25_service::start_default(db.clone()).expect("start bm25");
+        let dense_embedder = Arc::new(ploke_embed::indexer::EmbeddingProcessor::new_mock());
+        let bm_embedder = bm25_service::start_default(db.clone()).expect("start bm25");
         Self {
             db,
             dense_embedder,

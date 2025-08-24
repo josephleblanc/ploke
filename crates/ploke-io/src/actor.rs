@@ -175,7 +175,6 @@ impl IoManager {
                     let _ = responder.send(results);
                 });
             }
-            ,
             IoRequest::ReadFullVerified {
                 file_path,
                 expected_hash,

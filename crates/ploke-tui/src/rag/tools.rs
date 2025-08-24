@@ -4,15 +4,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /* NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
-   crate, when we will have a real namespace uuid. */
-use ploke_core::{WriteSnippetData, PROJECT_NAMESPACE_UUID};
-use similar::TextDiff;
-use ploke_core::rag_types::{RequestCodeContextArgs, RequestCodeContextResult, GetFileMetadataResult, ApplyCodeEditResult};
+crate, when we will have a real namespace uuid. */
+use ploke_core::rag_types::{
+    ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
+};
+use ploke_core::{PROJECT_NAMESPACE_UUID, WriteSnippetData};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
+use similar::TextDiff;
 
-use crate::{app_state::{core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode}, handlers::chat}, chat_history::MessageKind};
+use crate::{
+    app_state::{
+        core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode},
+        handlers::chat,
+    },
+    chat_history::MessageKind,
+};
 
-use super::{editing::approve_edits, utils::{calc_top_k_for_budget, Action, ApplyCodeEditArgs, ToolCallParams, ALLOWED_RELATIONS}, *};
+use super::{
+    editing::approve_edits,
+    utils::{ALLOWED_RELATIONS, Action, ApplyCodeEditArgs, ToolCallParams, calc_top_k_for_budget},
+    *,
+};
 
 pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
@@ -172,8 +184,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
             let file_path_str = match file_path_str {
                 Some(s) => s,
                 None => {
-                    tool_call_params
-                        .tool_call_failed("Missing 'file_path' in edit".to_string());
+                    tool_call_params.tool_call_failed("Missing 'file_path' in edit".to_string());
                     return;
                 }
             };
@@ -191,9 +202,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
             };
 
             // Parse expected_file_hash (string UUID) -> TrackingHash
-            let expected_hash_str = raw_edit
-                .get("expected_file_hash")
-                .and_then(|v| v.as_str());
+            let expected_hash_str = raw_edit.get("expected_file_hash").and_then(|v| v.as_str());
             let expected_file_hash = match expected_hash_str {
                 Some(s) => match uuid::Uuid::parse_str(s) {
                     Ok(u) => ploke_core::TrackingHash(u),
@@ -401,10 +410,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
             before: before.clone(),
             after: after.clone(),
         });
-        if matches!(
-            editing_cfg.preview_mode,
-            PreviewMode::Diff
-        ) {
+        if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
             let header_a = format!("a/{}", display_path.display());
             let header_b = format!("b/{}", display_path.display());
             let diff = TextDiff::from_lines(&before, &after)
@@ -432,10 +438,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         })
         .collect();
 
-    let preview_label = if matches!(
-        editing_cfg.preview_mode,
-        PreviewMode::Diff
-    ) {
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
         "diff"
     } else {
         "codeblock"
@@ -455,10 +458,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         out
     };
 
-    let preview_snippet = if matches!(
-        editing_cfg.preview_mode,
-        PreviewMode::Diff
-    ) {
+    let preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
         truncate(&unified_diff)
     } else {
         let mut buf = String::new();
@@ -505,7 +505,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
 
     // Emit SysInfo summary with how to approve/deny
     let summary = format!(
-r#"Staged code edits (request_id: {request_id}, call_id: {call_id}).
+        r#"Staged code edits (request_id: {request_id}, call_id: {call_id}).
 Files:
     {0}
 
@@ -520,7 +520,7 @@ Deny:     edit deny {request_id}{2}"#,
             "\n\nAuto-approval enabled: applying now..."
         } else {
             ""
-        }, 
+        },
     );
     chat::add_msg_immediate(
         state,
@@ -592,8 +592,7 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
         }
     };
     if args.token_budget == 0 {
-        tool_call_params
-            .tool_call_failed("Invalid or missing token_budget".to_string());
+        tool_call_params.tool_call_failed("Invalid or missing token_budget".to_string());
         return;
     }
 
@@ -648,14 +647,15 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
                         return;
                     }
                 };
-                let _ = event_bus
-                    .realtime_tx
-                    .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        content,
-                    }));
+                let _ =
+                    event_bus
+                        .realtime_tx
+                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                            request_id,
+                            parent_id,
+                            call_id: call_id.clone(),
+                            content,
+                        }));
             }
             Err(e) => {
                 let msg = format!("RAG get_context failed: {}", e);

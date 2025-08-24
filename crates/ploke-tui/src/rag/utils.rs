@@ -5,7 +5,6 @@ pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
     top_k.clamp(5, 20)
 }
 
-
 #[derive(Debug, Deserialize)]
 pub(super) struct ApplyCodeEditArgs {
     pub(super) edits: Vec<EditInput>,
@@ -30,7 +29,6 @@ pub(super) struct EditInput {
     /// Full rewritten item text (attributes/docs included if applicable)
     pub(super) code: String,
 }
-
 
 pub(super) const ALLOWED_RELATIONS: &[&str] = &[
     "function",

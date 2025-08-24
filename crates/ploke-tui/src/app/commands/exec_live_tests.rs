@@ -1,17 +1,17 @@
 #![cfg(test)]
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
+use crate::llm::openrouter_catalog;
 use crate::llm::provider_endpoints::ModelEndpointsResponse;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
-use crate::llm::openrouter_catalog;
 
 // Leverage the in-crate test harness (Arc<Mutex<App>>) for constructing a realistic App.
 use crate::test_harness::app;
@@ -32,7 +32,10 @@ fn default_headers() -> HeaderMap {
     // They are not strictly required, but some providers behave better with them.
     let referer = HeaderName::from_static("http-referer");
     let x_title = HeaderName::from_static("x-title");
-    headers.insert(referer, HeaderValue::from_static("https://github.com/ploke-ai/ploke"));
+    headers.insert(
+        referer,
+        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+    );
     headers.insert(x_title, HeaderValue::from_static("Ploke TUI Tests"));
     headers
 }
@@ -47,7 +50,6 @@ async fn choose_tools_model(
     api_key: &str,
     preferred: Option<&str>,
 ) -> String {
-
     if let Some(pref) = preferred {
         // Inline probe of endpoints to see if preferred model advertises "tools"
         let parts: Vec<&str> = pref.split('/').collect();
@@ -65,11 +67,11 @@ async fn choose_tools_model(
                 Ok(resp) => {
                     if let Ok(text) = resp.text().await {
                         if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
-                            parsed
-                                .data
-                                .endpoints
-                                .iter()
-                                .any(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                            parsed.data.endpoints.iter().any(|ep| {
+                                ep.supported_parameters
+                                    .iter()
+                                    .any(|p| p.eq_ignore_ascii_case("tools"))
+                            })
                         } else {
                             false
                         }
@@ -84,10 +86,16 @@ async fn choose_tools_model(
                 info!("choose_tools_model: using preferred model '{}'", pref);
                 return pref.to_string();
             } else {
-                warn!("choose_tools_model: preferred model '{}' did not advertise tools; probing catalog for alternatives", pref);
+                warn!(
+                    "choose_tools_model: preferred model '{}' did not advertise tools; probing catalog for alternatives",
+                    pref
+                );
             }
         } else {
-            warn!("choose_tools_model: preferred model '{}' invalid; expected '<author>/<slug>'", pref);
+            warn!(
+                "choose_tools_model: preferred model '{}' invalid; expected '<author>/<slug>'",
+                pref
+            );
         }
     }
 
@@ -100,21 +108,30 @@ async fn choose_tools_model(
                     .map(|sp| sp.iter().any(|p| p.eq_ignore_ascii_case("tools")))
                     .unwrap_or(false)
             }) {
-                info!("choose_tools_model: selected tools-capable model from user catalog: {}", m.id);
+                info!(
+                    "choose_tools_model: selected tools-capable model from user catalog: {}",
+                    m.id
+                );
                 return m.id.clone();
             }
             // Try provider-level signals if model-level is missing
             if let Some(m) = models.iter().find(|m| {
-                m.providers.as_ref().map(|ps| {
-                    ps.iter().any(|p| {
-                        p.supported_parameters
-                            .as_ref()
-                            .map(|sp| sp.iter().any(|x| x.eq_ignore_ascii_case("tools")))
-                            .unwrap_or(false)
+                m.providers
+                    .as_ref()
+                    .map(|ps| {
+                        ps.iter().any(|p| {
+                            p.supported_parameters
+                                .as_ref()
+                                .map(|sp| sp.iter().any(|x| x.eq_ignore_ascii_case("tools")))
+                                .unwrap_or(false)
+                        })
                     })
-                }).unwrap_or(false)
+                    .unwrap_or(false)
             }) {
-                info!("choose_tools_model: selected tools-capable provider variant: {}", m.id);
+                info!(
+                    "choose_tools_model: selected tools-capable provider variant: {}",
+                    m.id
+                );
                 return m.id.clone();
             }
             warn!("choose_tools_model: no tools-capable model found in user catalog; falling back");
@@ -144,7 +161,10 @@ async fn openrouter_model_tools_support_check() {
         .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
     let parts: Vec<&str> = model_id.split('/').collect();
     if parts.len() != 2 {
-        warn!("Invalid model id '{}'; expected '<author>/<slug>'", model_id);
+        warn!(
+            "Invalid model id '{}'; expected '<author>/<slug>'",
+            model_id
+        );
         return;
     }
     let author = parts[0];
@@ -176,11 +196,21 @@ async fn openrouter_model_tools_support_check() {
                         .data
                         .endpoints
                         .iter()
-                        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                        .filter(|ep| {
+                            ep.supported_parameters
+                                .iter()
+                                .any(|p| p.eq_ignore_ascii_case("tools"))
+                        })
                         .count();
-                    info!("model={} endpoints total={}, tools_capable={}", model_id, total, tools_cnt);
+                    info!(
+                        "model={} endpoints total={}, tools_capable={}",
+                        model_id, total, tools_cnt
+                    );
                     for ep in parsed.data.endpoints.iter() {
-                        let supports_tools = ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools"));
+                        let supports_tools = ep
+                            .supported_parameters
+                            .iter()
+                            .any(|p| p.eq_ignore_ascii_case("tools"));
                         info!(
                             "  - provider='{}' slug_hint='{}' supports_tools={} context_length={}",
                             ep.name,
@@ -241,20 +271,33 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         "max_tokens": 64
     });
 
-    info!("forced_choice request payload:\n{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+    info!(
+        "forced_choice request payload:\n{}",
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    );
 
     let url = format!("{}/chat/completions", base_url);
     let start = Instant::now();
-    match client.post(&url).bearer_auth(&api_key).json(&payload).send().await {
+    match client
+        .post(&url)
+        .bearer_auth(&api_key)
+        .json(&payload)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             let saved = save_response_body("tools_forced_diag", &body);
             let elapsed_ms = start.elapsed().as_millis();
-            info!("forced_choice -> status={}, elapsed_ms={}, saved={}", status, elapsed_ms, saved);
+            info!(
+                "forced_choice -> status={}, elapsed_ms={}, saved={}",
+                status, elapsed_ms, saved
+            );
 
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                let used_tool = v.get("choices")
+                let used_tool = v
+                    .get("choices")
                     .and_then(|c| c.as_array())
                     .and_then(|arr| arr.first())
                     .and_then(|c0| c0.get("message"))
@@ -262,13 +305,17 @@ async fn openrouter_tools_forced_choice_diagnostics() {
                     .and_then(|tc| tc.as_array())
                     .map(|a| !a.is_empty())
                     .unwrap_or(false);
-                let finish_reason = v.get("choices")
+                let finish_reason = v
+                    .get("choices")
                     .and_then(|c| c.as_array())
                     .and_then(|arr| arr.get(0))
                     .and_then(|c0| c0.get("finish_reason"))
                     .and_then(|fr| fr.as_str())
                     .unwrap_or("<none>");
-                info!("forced_choice -> used_tool={}, finish_reason={}", used_tool, finish_reason);
+                info!(
+                    "forced_choice -> used_tool={}, finish_reason={}",
+                    used_tool, finish_reason
+                );
             } else {
                 warn!("forced_choice -> non-JSON response; inspect {}", saved);
             }
@@ -313,7 +360,10 @@ async fn harness_smoke_app_constructs() {
     let app_arc = app();
     let app_lock = app_arc.lock().await;
     // Print a few things for visibility in logs.
-    info!("Harness app constructed. show_context_preview={}", app_lock.show_context_preview);
+    info!(
+        "Harness app constructed. show_context_preview={}",
+        app_lock.show_context_preview
+    );
     // Drop lock explicitly at end.
     drop(app_lock);
 }
@@ -385,15 +435,15 @@ async fn openrouter_endpoints_live_smoke() {
             let text = resp.text().await.unwrap_or_default();
             info!("body ({} bytes)", text.len());
             let saved = save_response_body("openrouter_endpoints", &text);
-            info!("saved endpoints body to {} (and logs/openrouter_endpoints_latest.json)", saved);
+            info!(
+                "saved endpoints body to {} (and logs/openrouter_endpoints_latest.json)",
+                saved
+            );
 
             // Try to parse strongly-typed to validate our schema
             match serde_json::from_str::<ModelEndpointsResponse>(&text) {
                 Ok(parsed) => {
-                    info!(
-                        "Parsed endpoints: {} entries",
-                        parsed.data.endpoints.len()
-                    );
+                    info!("Parsed endpoints: {} entries", parsed.data.endpoints.len());
                     // Soft assertion: Expect at least one endpoint in most cases
                     // Avoids being too brittle; we mainly validate deserialization.
                     assert!(
@@ -461,7 +511,11 @@ async fn openrouter_tools_success_matrix() {
                         .data
                         .endpoints
                         .iter()
-                        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                        .filter(|ep| {
+                            ep.supported_parameters
+                                .iter()
+                                .any(|p| p.eq_ignore_ascii_case("tools"))
+                        })
                         .count();
                     endpoints_tools_count = Some(cnt);
                     info!(
@@ -470,7 +524,9 @@ async fn openrouter_tools_success_matrix() {
                         cnt
                     );
                 } else {
-                    warn!("endpoints probe: failed to parse response; inspect logs/tools_matrix_endpoints_probe_latest.json");
+                    warn!(
+                        "endpoints probe: failed to parse response; inspect logs/tools_matrix_endpoints_probe_latest.json"
+                    );
                 }
             }
             Err(e) => {
@@ -478,7 +534,10 @@ async fn openrouter_tools_success_matrix() {
             }
         }
     } else {
-        warn!("model id '{}' is not '<author>/<slug>'; skipping endpoints probe", model_id);
+        warn!(
+            "model id '{}' is not '<author>/<slug>'; skipping endpoints probe",
+            model_id
+        );
     }
 
     // Define tools (placeholder until wired to our registry export)
@@ -528,15 +587,9 @@ async fn openrouter_tools_success_matrix() {
         "Find code files that mention 'serde_json::from_str' and summarize.",
     ];
 
-    let tool_choice_variants = vec![
-        "auto",
-        "force_search_workspace",
-    ];
+    let tool_choice_variants = vec!["auto", "force_search_workspace"];
 
-    let provider_prefs = vec![
-        "none",
-        "order_openai",
-    ];
+    let provider_prefs = vec!["none", "order_openai"];
 
     #[derive(Debug, Serialize)]
     struct CaseResult {
@@ -594,10 +647,15 @@ async fn openrouter_tools_success_matrix() {
                     // tool_choice
                     match *tc {
                         "auto" => {
-                            root.as_object_mut().unwrap().insert("tool_choice".to_string(), json!("auto"));
+                            root.as_object_mut()
+                                .unwrap()
+                                .insert("tool_choice".to_string(), json!("auto"));
                         }
                         "force_search_workspace" => {
-                            root.as_object_mut().unwrap().insert("tool_choice".to_string(), json!({"type":"function","function":{"name":"search_workspace"}}));
+                            root.as_object_mut().unwrap().insert(
+                                "tool_choice".to_string(),
+                                json!({"type":"function","function":{"name":"search_workspace"}}),
+                            );
                         }
                         _ => {}
                     }
@@ -606,7 +664,9 @@ async fn openrouter_tools_success_matrix() {
                     match *pref {
                         "none" => {}
                         "order_openai" => {
-                            root.as_object_mut().unwrap().insert("provider".to_string(), json!({"order": ["openai"]}));
+                            root.as_object_mut()
+                                .unwrap()
+                                .insert("provider".to_string(), json!({"order": ["openai"]}));
                         }
                         _ => {}
                     }
@@ -627,15 +687,18 @@ async fn openrouter_tools_success_matrix() {
 
                             let parsed_json = serde_json::from_str::<serde_json::Value>(&body).ok();
 
-                            let used_tool = parsed_json.as_ref().and_then(|v| {
-                                v.get("choices")
-                                    .and_then(|c| c.as_array())
-                                    .and_then(|arr| arr.get(0))
-                                    .and_then(|c0| c0.get("message"))
-                                    .and_then(|m| m.get("tool_calls"))
-                                    .and_then(|tc| tc.as_array())
-                                    .map(|a| !a.is_empty())
-                            }).unwrap_or(false);
+                            let used_tool = parsed_json
+                                .as_ref()
+                                .and_then(|v| {
+                                    v.get("choices")
+                                        .and_then(|c| c.as_array())
+                                        .and_then(|arr| arr.get(0))
+                                        .and_then(|c0| c0.get("message"))
+                                        .and_then(|m| m.get("tool_calls"))
+                                        .and_then(|tc| tc.as_array())
+                                        .map(|a| !a.is_empty())
+                                })
+                                .unwrap_or(false);
 
                             let finish_reason = parsed_json.as_ref().and_then(|v| {
                                 v.get("choices")
@@ -653,24 +716,36 @@ async fn openrouter_tools_success_matrix() {
                                     .and_then(|fr| fr.as_str().map(|s| s.to_string()))
                             });
 
-                            let response_model = parsed_json.as_ref().and_then(|v| v.get("model")).and_then(|m| m.as_str()).map(|s| s.to_string());
+                            let response_model = parsed_json
+                                .as_ref()
+                                .and_then(|v| v.get("model"))
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string());
 
                             // Error details (top-level or per-choice)
-                            let (error_code, error_message) = if let Some(v) = parsed_json.as_ref() {
+                            let (error_code, error_message) = if let Some(v) = parsed_json.as_ref()
+                            {
                                 let top = v.get("error");
                                 if let Some(err) = top {
                                     let code = err.get("code").and_then(|c| c.as_i64());
-                                    let msg = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                                    let msg = err
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .map(|s| s.to_string());
                                     (code, msg)
                                 } else {
                                     // Check first choice error if present
-                                    let choice_err = v.get("choices")
+                                    let choice_err = v
+                                        .get("choices")
                                         .and_then(|c| c.as_array())
                                         .and_then(|arr| arr.get(0))
                                         .and_then(|c0| c0.get("error"));
                                     if let Some(ej) = choice_err {
                                         let code = ej.get("code").and_then(|c| c.as_i64());
-                                        let msg = ej.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                                        let msg = ej
+                                            .get("message")
+                                            .and_then(|m| m.as_str())
+                                            .map(|s| s.to_string());
                                         (code, msg)
                                     } else {
                                         (None, None)
@@ -680,26 +755,38 @@ async fn openrouter_tools_success_matrix() {
                                 (None, None)
                             };
 
-                            let label = format!("tools_matrix_s={},u={},tc={},p={}",
+                            let label = format!(
+                                "tools_matrix_s={},u={},tc={},p={}",
                                 if system.is_empty() { "none" } else { "var" },
                                 match *user {
-                                    "Search the workspace for references to trait implementations of Iterator." => "repo",
+                                    "Search the workspace for references to trait implementations of Iterator." =>
+                                        "repo",
                                     "What's the weather in Paris right now?" => "weather",
                                     _ => "code",
                                 },
                                 tc,
                                 pref
                             );
-                            let saved = save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
-                            info!("saved case body to {} (and logs/{}_latest.json)", saved, label.replace([' ', '/', '\n'], "_"));
+                            let saved =
+                                save_response_body(&label.replace([' ', '/', '\n'], "_"), &body);
+                            info!(
+                                "saved case body to {} (and logs/{}_latest.json)",
+                                saved,
+                                label.replace([' ', '/', '\n'], "_")
+                            );
 
                             let elapsed_ms = start.elapsed().as_millis() as u64;
                             info!(
                                 "case {} -> status={}, used_tool={}, finish_reason={:?}, native_finish_reason={:?}, elapsed_ms={}",
-                                label, status, used_tool, finish_reason, native_finish_reason, elapsed_ms
+                                label,
+                                status,
+                                used_tool,
+                                finish_reason,
+                                native_finish_reason,
+                                elapsed_ms
                             );
 
-                            results.push(CaseResult{
+                            results.push(CaseResult {
                                 system: system.to_string(),
                                 user: user.to_string(),
                                 tool_choice: tc.to_string(),
@@ -720,7 +807,7 @@ async fn openrouter_tools_success_matrix() {
                                 "case build/send error for system='{}', user='{}', tool_choice='{}', provider_pref='{}': {}",
                                 system, user, tc, pref, e
                             );
-                            results.push(CaseResult{
+                            results.push(CaseResult {
                                 system: system.to_string(),
                                 user: user.to_string(),
                                 tool_choice: tc.to_string(),
@@ -745,7 +832,7 @@ async fn openrouter_tools_success_matrix() {
     let successes = results.iter().filter(|r| r.used_tool).count();
     let failures = results.len() - successes;
 
-    let summary = Summary{
+    let summary = Summary {
         model: model_id,
         total: results.len(),
         successes,
@@ -754,11 +841,17 @@ async fn openrouter_tools_success_matrix() {
     };
 
     let serialized = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string());
-    info!("tools_success_matrix summary: total={}, success={}, failure={}", summary.total, summary.successes, summary.failures);
+    info!(
+        "tools_success_matrix summary: total={}, success={}, failure={}",
+        summary.total, summary.successes, summary.failures
+    );
 
     // Save the full summary to timestamped and 'latest' paths.
     let summary_path = save_response_body("tools_success_matrix", &serialized);
-    info!("tools_success_matrix saved to {} and logs/tools_success_matrix_latest.json", summary_path);
+    info!(
+        "tools_success_matrix saved to {} and logs/tools_success_matrix_latest.json",
+        summary_path
+    );
 
     // Minimal, meaningful assertion: when tool_choice is forced for our declared tool,
     // we expect at least one call to register as using a tool. If not, fail the test.
@@ -796,7 +889,6 @@ Hints:
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_provider_preference_experiment() {
-
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
@@ -820,7 +912,9 @@ async fn openrouter_provider_preference_experiment() {
             ]
         });
         if let Some(p) = provider_obj {
-            root.as_object_mut().unwrap().insert("provider".to_string(), p);
+            root.as_object_mut()
+                .unwrap()
+                .insert("provider".to_string(), p);
         }
         root
     };
@@ -848,7 +942,12 @@ async fn openrouter_provider_preference_experiment() {
                 let status = rsp.status();
                 let headers = rsp.headers().clone();
                 for (k, v) in headers.iter() {
-                    info!("{} header {}: {}", label, k, v.to_str().unwrap_or("<binary>"));
+                    info!(
+                        "{} header {}: {}",
+                        label,
+                        k,
+                        v.to_str().unwrap_or("<binary>")
+                    );
                 }
                 let body = rsp.text().await.unwrap_or_default();
                 info!(
@@ -857,12 +956,20 @@ async fn openrouter_provider_preference_experiment() {
                     status,
                     &body.chars().take(512).collect::<String>()
                 );
-                let saved = save_response_body(&format!("provider_pref_{}", label.replace([' ', ':'], "_")), &body);
-                info!("{} -> saved body to {} (and logs/provider_pref_{}_latest.json)", label, saved, label.replace([' ', ':'], "_"));
+                let saved = save_response_body(
+                    &format!("provider_pref_{}", label.replace([' ', ':'], "_")),
+                    &body,
+                );
+                info!(
+                    "{} -> saved body to {} (and logs/provider_pref_{}_latest.json)",
+                    label,
+                    saved,
+                    label.replace([' ', ':'], "_")
+                );
             }
             Err(e) => {
                 warn!("{} -> Request error: {}", label, e);
-            panic!("Test failed")
+                panic!("Test failed")
             }
         }
     }
@@ -925,7 +1032,11 @@ async fn openrouter_tools_smoke() {
             let status = rsp.status();
             let headers = rsp.headers().clone();
             for (k, v) in headers.iter() {
-                info!("tools_smoke header {}: {}", k, v.to_str().unwrap_or("<binary>"));
+                info!(
+                    "tools_smoke header {}: {}",
+                    k,
+                    v.to_str().unwrap_or("<binary>")
+                );
             }
             let body = rsp.text().await.unwrap_or_default();
             info!("tools_smoke -> Status: {}", status);
@@ -934,8 +1045,13 @@ async fn openrouter_tools_smoke() {
                 &body.chars().take(1024).collect::<String>()
             );
             let saved = save_response_body("tools_smoke", &body);
-            info!("tools_smoke -> saved body to {} (and logs/tools_smoke_latest.json)", saved);
-            warn!("tools_smoke is currently using a synthetic tool schema. Integrate real tools from our registry for stronger validation.");
+            info!(
+                "tools_smoke -> saved body to {} (and logs/tools_smoke_latest.json)",
+                saved
+            );
+            warn!(
+                "tools_smoke is currently using a synthetic tool schema. Integrate real tools from our registry for stronger validation."
+            );
         }
         Err(e) => {
             warn!("tools_smoke -> Request error: {}", e);
@@ -1026,22 +1142,31 @@ async fn openrouter_tools_model_touchpoints() {
 
         let url = format!("{}/chat/completions", base_url);
         let start = Instant::now();
-        match client.post(&url).bearer_auth(&api_key).json(&payload).send().await {
+        match client
+            .post(&url)
+            .bearer_auth(&api_key)
+            .json(&payload)
+            .send()
+            .await
+        {
             Ok(resp) => {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
 
                 let parsed_json = serde_json::from_str::<serde_json::Value>(&body).ok();
 
-                let used_tool = parsed_json.as_ref().and_then(|v| {
-                    v.get("choices")
-                        .and_then(|c| c.as_array())
-                        .and_then(|arr| arr.get(0))
-                        .and_then(|c0| c0.get("message"))
-                        .and_then(|m| m.get("tool_calls"))
-                        .and_then(|tc| tc.as_array())
-                        .map(|a| !a.is_empty())
-                }).unwrap_or(false);
+                let used_tool = parsed_json
+                    .as_ref()
+                    .and_then(|v| {
+                        v.get("choices")
+                            .and_then(|c| c.as_array())
+                            .and_then(|arr| arr.get(0))
+                            .and_then(|c0| c0.get("message"))
+                            .and_then(|m| m.get("tool_calls"))
+                            .and_then(|tc| tc.as_array())
+                            .map(|a| !a.is_empty())
+                    })
+                    .unwrap_or(false);
 
                 let finish_reason = parsed_json.as_ref().and_then(|v| {
                     v.get("choices")
@@ -1063,16 +1188,23 @@ async fn openrouter_tools_model_touchpoints() {
                     let top = v.get("error");
                     if let Some(err) = top {
                         let code = err.get("code").and_then(|c| c.as_i64());
-                        let msg = err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                        let msg = err
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_string());
                         (code, msg)
                     } else {
-                        let choice_err = v.get("choices")
+                        let choice_err = v
+                            .get("choices")
                             .and_then(|c| c.as_array())
                             .and_then(|arr| arr.get(0))
                             .and_then(|c0| c0.get("error"));
                         if let Some(ej) = choice_err {
                             let code = ej.get("code").and_then(|c| c.as_i64());
-                            let msg = ej.get("message").and_then(|m| m.as_str()).map(|s| s.to_string());
+                            let msg = ej
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string());
                             (code, msg)
                         } else {
                             (None, None)
@@ -1083,14 +1215,17 @@ async fn openrouter_tools_model_touchpoints() {
                 };
 
                 let elapsed_ms = start.elapsed().as_millis() as u64;
-                let label = format!("tools_touchpoint_{}", model_id.replace([' ', '/', '\n', ':'], "_"));
+                let label = format!(
+                    "tools_touchpoint_{}",
+                    model_id.replace([' ', '/', '\n', ':'], "_")
+                );
                 let saved = save_response_body(&label, &body);
                 info!(
                     "touchpoint model='{}' -> status={}, used_tool={}, finish_reason={:?}, native_finish_reason={:?}, saved={}",
                     model_id, status, used_tool, finish_reason, native_finish_reason, saved
                 );
 
-                results.push(Touchpoint{
+                results.push(Touchpoint {
                     model: model_id,
                     status: status.as_u16(),
                     used_tool,
@@ -1102,11 +1237,8 @@ async fn openrouter_tools_model_touchpoints() {
                 });
             }
             Err(e) => {
-                info!(
-                    "touchpoint request error for model='{}': {}",
-                    model_id, e
-                );
-                results.push(Touchpoint{
+                info!("touchpoint request error for model='{}': {}", model_id, e);
+                results.push(Touchpoint {
                     model: model_id,
                     status: 0,
                     used_tool: false,

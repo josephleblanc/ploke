@@ -5,10 +5,10 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
+    EventBus, EventBusCaps,
     app::App,
     app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState},
     chat_history::ChatHistory,
-    EventBus, EventBusCaps,
     user_config::{UserConfig, default_model},
 };
 use ploke_db::{bm25_index, create_index_primary};

@@ -17,12 +17,8 @@ pub fn resolve_nodes_by_canon_in_file(
     item_name: &str,
 ) -> Result<Vec<EmbeddingData>, DbError> {
     // Escape values safely via serde_json string literals
-    let file_path_lit = serde_json::to_string(
-        &file_path
-            .to_string_lossy()
-            .to_string(),
-    )
-    .unwrap_or_else(|_| "\"\"".to_string());
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
     let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
     let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
 

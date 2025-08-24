@@ -133,7 +133,11 @@ impl UserConfig {
 
     /// Save the configuration to the specified path.
     /// If `redact_keys` is true, provider API keys are removed before saving.
-    pub fn save_to_path(&self, path: &std::path::Path, redact_keys: bool) -> color_eyre::Result<()> {
+    pub fn save_to_path(
+        &self,
+        path: &std::path::Path,
+        redact_keys: bool,
+    ) -> color_eyre::Result<()> {
         let mut cfg = self.clone();
 
         if redact_keys {
@@ -194,8 +198,7 @@ pub struct EditingAgentConfig {
     pub min_confidence: f32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 /// Editing UI and agent behavior configuration.
 pub struct EditingConfig {
     #[serde(default)]
@@ -203,7 +206,6 @@ pub struct EditingConfig {
     #[serde(default)]
     pub agent: EditingAgentConfig,
 }
-
 
 fn default_agent_min_confidence() -> f32 {
     0.8
@@ -430,7 +432,10 @@ impl ProviderRegistry {
                 matches!(provider.provider_type, ProviderType::OpenRouter)
             }
             ProviderRegistryStrictness::AllowCustom => {
-                matches!(provider.provider_type, ProviderType::OpenRouter | ProviderType::Custom)
+                matches!(
+                    provider.provider_type,
+                    ProviderType::OpenRouter | ProviderType::Custom
+                )
             }
             ProviderRegistryStrictness::AllowAny => true,
         };
@@ -515,14 +520,22 @@ impl ProviderRegistry {
                         p.supported_parameters
                             .as_ref()
                             .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                            .unwrap_or_else(|| p.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false))
+                            .unwrap_or_else(|| {
+                                p.capabilities
+                                    .as_ref()
+                                    .and_then(|c| c.tools)
+                                    .unwrap_or(false)
+                            })
                     })
                 })
                 .unwrap_or(false);
 
             let supports_tools = model_level_tools
                 || provider_tools
-                || m.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false);
+                || m.capabilities
+                    .as_ref()
+                    .and_then(|c| c.tools)
+                    .unwrap_or(false);
 
             let caps = ModelCapabilities {
                 supports_tools,

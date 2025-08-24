@@ -12,7 +12,10 @@
 //! are documented in `plans.md` for subsequent iterations.
 use std::collections::{HashMap, HashSet};
 
-use ploke_core::{rag_types::{AssembledContext, ContextPart, ContextPartKind, ContextStats, Modality}, EmbeddingData};
+use ploke_core::{
+    rag_types::{AssembledContext, ContextPart, ContextPartKind, ContextStats, Modality},
+    EmbeddingData,
+};
 use ploke_db::{Database, NodeType};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
@@ -44,7 +47,6 @@ impl Default for TokenBudget {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ordering {

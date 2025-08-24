@@ -24,7 +24,7 @@ use super::{Error, Severity};
 pub trait ErrorPolicy: Send + Sync {
     /// Classify the error's severity
     fn classify(&self, error: &Error) -> Severity;
-    
+
     /// Emit the error according to the policy (e.g., log, send to UI, etc.)
     fn emit(&self, error: &Error);
 }
@@ -55,8 +55,8 @@ impl ErrorPolicy for TracingPolicy {
     }
 
     fn emit(&self, error: &Error) {
-        use tracing::{event, Level};
-        
+        use tracing::{Level, event};
+
         match error.severity() {
             Severity::Warning => event!(Level::WARN, error = %error),
             Severity::Error | Severity::Fatal => event!(Level::ERROR, error = %error),
@@ -103,12 +103,16 @@ pub struct CombinedPolicy {
 impl CombinedPolicy {
     /// Create an empty CombinedPolicy.
     pub fn new() -> Self {
-        Self { policies: Vec::new() }
+        Self {
+            policies: Vec::new(),
+        }
     }
 
     /// Pre-allocate capacity for N policies.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self { policies: Vec::with_capacity(capacity) }
+        Self {
+            policies: Vec::with_capacity(capacity),
+        }
     }
 
     /// Construct from an existing vector of boxed policies.

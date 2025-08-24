@@ -80,7 +80,11 @@ impl<'a> RequestSession<'a> {
                 self.provider,
                 effective_messages,
                 &self.params,
-                if use_tools { Some(self.tools.clone()) } else { None },
+                if use_tools {
+                    Some(self.tools.clone())
+                } else {
+                    None
+                },
                 use_tools,
             );
 
@@ -114,9 +118,7 @@ impl<'a> RequestSession<'a> {
 
                 // Deterministic enforcement for tool use: fail fast when endpoint lacks tool support.
                 // Example provider body: {"error":{"message":"No endpoints found that support tool use.", "code":404}}
-                if status == 404
-                    && use_tools
-                    && error_text.to_lowercase().contains("support tool")
+                if status == 404 && use_tools && error_text.to_lowercase().contains("support tool")
                 {
                     tracing::warn!(
                         model = %self.provider.model,
@@ -316,9 +318,6 @@ impl<'a> RequestSession<'a> {
             }
         }
     }
-    
-
-
 }
 pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ProviderConfig,
@@ -345,20 +344,17 @@ pub fn build_openai_request<'a>(
             None
         },
         provider: if use_tools {
-            provider
-                .provider_slug
-                .as_ref()
-                .and_then(|slug| {
-                    let s = slug.trim();
-                    if s.is_empty() || s == "-" {
-                        None
-                    } else {
-                        Some(super::ProviderPreferences {
-                            order: vec![s.to_string()],
-                            ..Default::default()
-                        })
-                    }
-                })
+            provider.provider_slug.as_ref().and_then(|slug| {
+                let s = slug.trim();
+                if s.is_empty() || s == "-" {
+                    None
+                } else {
+                    Some(super::ProviderPreferences {
+                        order: vec![s.to_string()],
+                        ..Default::default()
+                    })
+                }
+            })
         } else {
             None
         },
@@ -380,7 +376,8 @@ pub async fn await_tool_result(
     call_id: &str,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let span = tracing::info_span!("await_tool_result", request_id = %request_id, call_id = %call_id);
+    let span =
+        tracing::info_span!("await_tool_result", request_id = %request_id, call_id = %call_id);
     let _enter = span.enter();
     tracing::debug!("Awaiting tool result");
     let wait = async {
@@ -442,10 +439,10 @@ mod tests {
 
     use tokio::time::sleep;
 
-    use crate::llm::ToolFunctionDef;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
+    use crate::llm::ToolFunctionDef;
     use crate::system::SystemEvent;
     use uuid::Uuid;
 
@@ -463,8 +460,9 @@ mod tests {
 
             if let Ok(file) = std::fs::File::create(&path) {
                 let (nb, guard) = tracing_appender::non_blocking(file);
-                static GUARD: once_cell::sync::OnceCell<tracing_appender::non_blocking::WorkerGuard> =
-                    once_cell::sync::OnceCell::new();
+                static GUARD: once_cell::sync::OnceCell<
+                    tracing_appender::non_blocking::WorkerGuard,
+                > = once_cell::sync::OnceCell::new();
                 let _ = GUARD.set(guard);
 
                 let subscriber = tracing_subscriber::fmt()
@@ -693,13 +691,8 @@ mod tests {
         };
 
         // Act: build request with tools and auto tool_choice
-        let payload = super::build_openai_request(
-            &provider,
-            messages,
-            &params,
-            Some(vec![tool]),
-            true,
-        );
+        let payload =
+            super::build_openai_request(&provider, messages, &params, Some(vec![tool]), true);
         let json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Snapshot: expected payload (stable field order)

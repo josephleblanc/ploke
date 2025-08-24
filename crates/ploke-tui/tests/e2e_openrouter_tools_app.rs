@@ -99,7 +99,7 @@ lazy_static! {
         Ok(Arc::new(db))
     };
 }
- 
+
 lazy_static! {
     static ref TOOL_ENDPOINT_CANDIDATES: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> =
         std::sync::Mutex::new(std::collections::HashMap::new());
@@ -225,7 +225,11 @@ async fn choose_tools_endpoint_for_model(
     tracing::info!(
         "tools-capable endpoints cached for {}: {}",
         model_id,
-        candidates.iter().map(|e| e.name.clone()).collect::<Vec<_>>().join(", ")
+        candidates
+            .iter()
+            .map(|e| e.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     if candidates.is_empty() {
@@ -470,15 +474,14 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         let parent_id = Uuid::new_v4();
         let request_id = Uuid::new_v4();
         let new_msg_id = Uuid::new_v4();
-        let system_instr = [ PROMPT_HEADER, PROMPT_CODE ].join("");
-        let user_instr = String::from("Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.");
+        let system_instr = [PROMPT_HEADER, PROMPT_CODE].join("");
+        let user_instr = String::from(
+            "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.",
+        );
         event_bus.send(AppEvent::Llm(llm::Event::PromptConstructed {
-            parent_id, 
+            parent_id,
             prompt: vec![
-                (
-                    ploke_tui::chat_history::MessageKind::System,
-                    system_instr,
-                ),
+                (ploke_tui::chat_history::MessageKind::System, system_instr),
                 (ploke_tui::chat_history::MessageKind::User, user_instr),
             ],
         }));
@@ -489,7 +492,13 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         while std::time::Instant::now() < observe_until {
             match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
                 Ok(Ok(ev)) => match ev {
-                    AppEvent::Llm(llm::Event::ToolCall { name, arguments, call_id, vendor, .. }) => {
+                    AppEvent::Llm(llm::Event::ToolCall {
+                        name,
+                        arguments,
+                        call_id,
+                        vendor,
+                        ..
+                    }) => {
                         tracing::info!(%model_id, tool=%name, vendor=?vendor, call_id=?call_id, args=%arguments, "E2E observed ToolCall");
                         saw_tool = true;
                     }
@@ -497,7 +506,9 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                         tracing::info!(%model_id, tool=%name, call_id=%call_id, "E2E observed ToolEvent::Requested");
                         saw_tool = true;
                     }
-                    AppEvent::LlmTool(llm::ToolEvent::Completed { call_id, content, .. }) => {
+                    AppEvent::LlmTool(llm::ToolEvent::Completed {
+                        call_id, content, ..
+                    }) => {
                         let excerpt: String = content.chars().take(200).collect();
                         tracing::info!(%model_id, call_id=%call_id, excerpt=%excerpt, "E2E observed ToolEvent::Completed");
                     }
@@ -523,7 +534,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             second_status: None,
             body_excerpt_first: "event observation complete".to_string(),
         });
-
     }
 
     // Summary of outcomes across models/tools

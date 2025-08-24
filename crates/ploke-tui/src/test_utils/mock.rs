@@ -8,16 +8,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::RagEvent;
 use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
-use crate::user_config::CommandStyle;
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::RagEvent;
-use ploke_rag::{RagService, TokenBudget};
+use crate::user_config::CommandStyle;
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
+use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::mpsc;
 
 pub fn create_mock_app_state() -> AppState {
@@ -27,7 +27,7 @@ pub fn create_mock_app_state() -> AppState {
     let rag = Arc::new(RagService::new_mock());
     let budget = TokenBudget::default();
     let (rag_tx, _rag_rx) = mpsc::channel::<RagEvent>(10);
-    
+
     AppState {
         chat: crate::app_state::ChatState::new(ChatHistory::new()),
         config: crate::app_state::ConfigState::new(crate::app_state::RuntimeConfig::default()),
@@ -49,7 +49,7 @@ pub fn create_mock_app() -> App {
     let (cmd_tx, _cmd_rx) = mpsc::channel(1024);
     let event_bus = EventBus::new(crate::EventBusCaps::default());
     let active_model_id = "mock-model".to_string();
-    
+
     App::new(
         CommandStyle::Slash,
         state,
@@ -61,7 +61,7 @@ pub fn create_mock_app() -> App {
 
 pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
     let db = Database::init_with_schema().unwrap();
-    
+
     if num_unindexed > 0 {
         let script = r#"
         ?[id, file_path, tracking_hash, start_byte, end_byte, namespace] <- [
@@ -78,12 +78,16 @@ pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
             embedding => <F32; 384> default null
         }
         "#;
-        
-        db.run_script(script, std::collections::BTreeMap::new(), ScriptMutability::Mutable)
-            .unwrap();
+
+        db.run_script(
+            script,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .unwrap();
     }
-    
-    Arc::new( db )
+
+    Arc::new(db)
 }
 
 #[derive(Debug, PartialEq, Eq)]

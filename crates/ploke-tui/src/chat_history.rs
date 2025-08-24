@@ -569,17 +569,25 @@ impl ChatHistory {
                 // Remove the node placeholder
                 parent.children.remove(pos);
                 // Insert children in its place preserving order
-                parent.children.splice(pos..pos, children_ids.iter().copied());
+                parent
+                    .children
+                    .splice(pos..pos, children_ids.iter().copied());
 
                 // If the parent's selected_child pointed at the deleted node, choose a reasonable replacement
                 if parent.selected_child == Some(id) {
-                    parent.selected_child = children_ids.first().copied().or_else(|| parent.children.last().copied());
+                    parent.selected_child = children_ids
+                        .first()
+                        .copied()
+                        .or_else(|| parent.children.last().copied());
                 }
             } else {
                 // If position not found, append children to parent (fallback)
                 parent.children.extend(children_ids.iter().copied());
                 if parent.selected_child == Some(id) {
-                    parent.selected_child = children_ids.first().copied().or_else(|| parent.children.last().copied());
+                    parent.selected_child = children_ids
+                        .first()
+                        .copied()
+                        .or_else(|| parent.children.last().copied());
                 }
             }
         }
@@ -754,11 +762,7 @@ impl ChatHistory {
         md.push_str("# Ploke Chat History\n\n");
 
         for message in self.get_full_path() {
-            md.push_str(&format!(
-                "## [{}]\n\n{}\n\n",
-                message.kind,
-                message.content
-            ));
+            md.push_str(&format!("## [{}]\n\n{}\n\n", message.kind, message.content));
         }
 
         md

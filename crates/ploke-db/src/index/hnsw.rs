@@ -45,18 +45,18 @@ pub fn hnsw_all_types(
     //     let rel_rhs = [
     //         rel,
     //         r#"{
-    //                 id, 
-    //                 name, 
+    //                 id,
+    //                 name,
     //                 embedding: v
     //             },
     //             ~"#,
     //         rel,
     //         HNSW_SUFFIX,
-    //         r#"{id, name| 
-    //                 query: v, 
+    //         r#"{id, name|
+    //                 query: v,
     //                 k: $"#,
     //         k_for_ty.as_str(),
-    //         r#", 
+    //         r#",
     //                 ef: $ef,
     //                 bind_distance: distance
     //             }
@@ -572,8 +572,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_init() -> Result<(), Error> {
-        let db_arc = TEST_DB_NODES.clone().expect("problem loading fixture_nodes from cold start");
-        let db = db_arc.lock().expect("problem getting lock on test db for fixture_nodes");
+        let db_arc = TEST_DB_NODES
+            .clone()
+            .expect("problem loading fixture_nodes from cold start");
+        let db = db_arc
+            .lock()
+            .expect("problem getting lock on test db for fixture_nodes");
         let k = 20;
         let ef = 40;
         hnsw_all_types(&db, k, ef)?;
@@ -582,7 +586,5 @@ mod tests {
         let embedded = db.count_pending_embeddings()?;
         println!("embedded: {embedded}");
         Ok(())
-    }   
+    }
 }
-
-

@@ -24,18 +24,17 @@
 //! - The module is invoked by the state manager/dispatcher and other handlers; it does not own
 //!   background loops itself. It relies on the EventBus for communicating with the UI and LLM manager.
 
-pub mod tools;
 pub mod context;
 pub mod dispatcher;
-pub mod search;
-pub mod utils;
 pub mod editing;
+pub mod search;
+pub mod tools;
+pub mod utils;
 
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{AppEvent, EventBus, app_state::AppState, llm, system::SystemEvent};
-

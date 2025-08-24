@@ -1,9 +1,9 @@
-use ploke_tui::app::commands::parser::{parse, Command};
 use ploke_tui::app::App;
+use ploke_tui::app::commands::parser::{Command, parse};
 use ploke_tui::app_state::core::PreviewMode;
+use ploke_tui::mock::create_mock_app;
 use ploke_tui::user_config::CommandStyle;
 use uuid::Uuid;
-use ploke_tui::mock::create_mock_app;
 
 #[test]
 #[ignore = "needs refactor, fails without tokio runtime"]

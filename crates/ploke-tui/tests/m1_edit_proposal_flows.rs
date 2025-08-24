@@ -9,9 +9,18 @@ use std::sync::Arc;
 
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
 use ploke_tui::{
+    EventBus,
     app_state::{
-        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState}, RuntimeConfig
-    }, event_bus::EventBusCaps, rag::{dispatcher::handle_tool_call_requested, editing::{approve_edits, deny_edits}, utils::ToolCallParams}, user_config::UserConfig, EventBus
+        RuntimeConfig,
+        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
+    },
+    event_bus::EventBusCaps,
+    rag::{
+        dispatcher::handle_tool_call_requested,
+        editing::{approve_edits, deny_edits},
+        utils::ToolCallParams,
+    },
+    user_config::UserConfig,
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;

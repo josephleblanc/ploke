@@ -28,7 +28,7 @@ fn sample_registry() -> ProviderRegistry {
                 id: "custom-local".to_string(),
                 api_key: "SECRET_CUSTOM".to_string(),
                 api_key_env: None,
-            provider_slug: None,
+                provider_slug: None,
                 base_url: "http://localhost:9999".to_string(),
                 model: "local/dev".to_string(),
                 display_name: Some("Local Dev".to_string()),
@@ -55,7 +55,10 @@ fn save_load_redacts_keys_by_default() {
     cfg.save_to_path(&path, true).expect("save redacted");
 
     let content = fs::read_to_string(&path).expect("read");
-    assert!(content.contains(r#"api_key = """#), "expected redacted keys");
+    assert!(
+        content.contains(r#"api_key = """#),
+        "expected redacted keys"
+    );
 
     let loaded = UserConfig::load_from_path(&path).expect("load");
     for p in loaded.registry.providers {
@@ -100,7 +103,10 @@ fn strictness_enforced_on_switch() {
 
     reg.strictness = ProviderRegistryStrictness::OpenRouterOnly;
     assert!(!reg.set_active("custom-local"), "custom should be rejected");
-    assert!(reg.set_active("openrouter-default"), "openrouter is allowed");
+    assert!(
+        reg.set_active("openrouter-default"),
+        "openrouter is allowed"
+    );
     assert_eq!(reg.active_provider, "openrouter-default");
 
     reg.strictness = ProviderRegistryStrictness::AllowCustom;
@@ -111,8 +117,10 @@ fn strictness_enforced_on_switch() {
 #[test]
 fn alias_lookup_and_switching() {
     let mut reg = sample_registry();
-    reg.aliases.insert("gpt".to_string(), "openrouter-default".to_string());
-    reg.aliases.insert("local".to_string(), "custom-local".to_string());
+    reg.aliases
+        .insert("gpt".to_string(), "openrouter-default".to_string());
+    reg.aliases
+        .insert("local".to_string(), "custom-local".to_string());
 
     assert!(reg.set_active("gpt"));
     assert_eq!(reg.active_provider, "openrouter-default");

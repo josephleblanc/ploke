@@ -138,7 +138,8 @@ impl<T> ContextExt<T> for Result<T, Error> {
 
     fn with_snippet<S: Into<String>>(self, snippet: S) -> Result<T> {
         self.map_err(|e| {
-            let context = ErrorContext::new(PathBuf::from("<unknown>")).with_snippet(snippet.into());
+            let context =
+                ErrorContext::new(PathBuf::from("<unknown>")).with_snippet(snippet.into());
             Error::from(ContextualError::WithContext {
                 source: Box::new(e),
                 context,
@@ -148,7 +149,8 @@ impl<T> ContextExt<T> for Result<T, Error> {
 
     fn with_backtrace(self) -> Result<T> {
         self.map_err(|e| {
-            let context = ErrorContext::new(PathBuf::from("<unknown>")).with_backtrace(Backtrace::capture());
+            let context =
+                ErrorContext::new(PathBuf::from("<unknown>")).with_backtrace(Backtrace::capture());
             Error::from(ContextualError::WithContext {
                 source: Box::new(e),
                 context,

@@ -8,8 +8,8 @@
 //!   keeping the UI thread non-blocking.
 
 use crate::app::App;
-use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
 use crate::app_state::core::PreviewMode;
+use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
 use uuid::Uuid;
 
 /// Parsed command variants handled by the executor.
@@ -22,15 +22,23 @@ pub enum Command {
     ModelList,
     ModelInfo,
     ModelUse(String),
-    ModelRefresh { remote: bool },
+    ModelRefresh {
+        remote: bool,
+    },
     ModelLoad(Option<String>),
-    ModelSave { path: Option<String>, with_keys: bool },
+    ModelSave {
+        path: Option<String>,
+        with_keys: bool,
+    },
     ModelSearch(String),
     ModelSearchHelp,
     ModelProviders(String),
     ProviderStrictness(ProviderRegistryStrictness),
     ProviderToolsOnly(bool),
-    ProviderSelect { model_id: String, provider_slug: String },
+    ProviderSelect {
+        model_id: String,
+        provider_slug: String,
+    },
     Update,
     EditApprove(Uuid),
     EditDeny(Uuid),
@@ -74,7 +82,11 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
         }
         s if s.starts_with("model load") => {
             let rest = s.trim_start_matches("model load").trim();
-            let path = if rest.is_empty() { None } else { Some(rest.to_string()) };
+            let path = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            };
             Command::ModelLoad(path)
         }
         s if s.starts_with("model save") => {
@@ -110,17 +122,27 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         s if s.starts_with("provider strictness ") => {
-            let mode = s.trim_start_matches("provider strictness ").trim().to_lowercase();
+            let mode = s
+                .trim_start_matches("provider strictness ")
+                .trim()
+                .to_lowercase();
             let strictness = match mode.as_str() {
-                "openrouter-only" | "openrouter_only" | "openrouteronly" => ProviderRegistryStrictness::OpenRouterOnly,
-                "allow-custom" | "allow_custom" | "allowcustom" => ProviderRegistryStrictness::AllowCustom,
+                "openrouter-only" | "openrouter_only" | "openrouteronly" => {
+                    ProviderRegistryStrictness::OpenRouterOnly
+                }
+                "allow-custom" | "allow_custom" | "allowcustom" => {
+                    ProviderRegistryStrictness::AllowCustom
+                }
                 "allow-any" | "allow_any" | "allowany" => ProviderRegistryStrictness::AllowAny,
                 _ => return Command::Raw(trimmed.to_string()),
             };
             Command::ProviderStrictness(strictness)
         }
         s if s.starts_with("provider tools-only ") => {
-            let t = s.trim_start_matches("provider tools-only ").trim().to_lowercase();
+            let t = s
+                .trim_start_matches("provider tools-only ")
+                .trim()
+                .to_lowercase();
             let enabled = matches!(t.as_str(), "on" | "true" | "1" | "enabled" | "enable");
             Command::ProviderToolsOnly(enabled)
         }
@@ -129,20 +151,16 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             let rest = s.trim_start_matches("provider select ").trim();
             let mut parts = rest.split_whitespace();
             match (parts.next(), parts.next()) {
-                (Some(provider_slug), None) => {
-                    Command::ProviderSelect {
-                        model_id: app.active_model_id.clone(),
-                        provider_slug: provider_slug.to_string(),
-                    }
-                }
-                (Some(model_id), Some(provider_slug)) => {
-                    Command::ProviderSelect {
-                        model_id: model_id.to_string(),
-                        provider_slug: provider_slug.to_string(),
-                    }
-                }
-                _ => Command::Raw(trimmed.to_string())
-            }   
+                (Some(provider_slug), None) => Command::ProviderSelect {
+                    model_id: app.active_model_id.clone(),
+                    provider_slug: provider_slug.to_string(),
+                },
+                (Some(model_id), Some(provider_slug)) => Command::ProviderSelect {
+                    model_id: model_id.to_string(),
+                    provider_slug: provider_slug.to_string(),
+                },
+                _ => Command::Raw(trimmed.to_string()),
+            }
         }
         s if s.starts_with("provider pin ") => {
             // provider pin <model_id> <provider_slug> (alias of provider select)
