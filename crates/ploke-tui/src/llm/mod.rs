@@ -498,6 +498,7 @@ pub async fn process_llm_request(
     }
 }
 
+// AI: Add tracking for the context and within for the contents of what the tool calls return AI!
 #[instrument(skip(provider, state, client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,

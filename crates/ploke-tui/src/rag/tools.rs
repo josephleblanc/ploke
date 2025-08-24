@@ -566,6 +566,7 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
+// AI: Add tracing so we can see the returned code snippets in the logs
 pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
         state,

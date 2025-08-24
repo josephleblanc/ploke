@@ -2,6 +2,7 @@ use crate::rag::{tools::{apply_code_edit_tool, get_file_metadata_tool}};
 
 use super::{tools::handle_request_context, utils::ToolCallParams, *};
 
+// AI: Add tracing for arguments, vendor, name, call_id
 #[tracing::instrument(skip(tool_call_params))]
 pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {

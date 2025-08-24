@@ -58,6 +58,7 @@ impl<'a> RequestSession<'a> {
     }
 
     /// Execute the request loop until completion or error.
+    // AI: Add instrument tracing for messages and LLMParameters
     pub async fn run(mut self) -> Result<String, LlmError> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
         // Some OpenRouter provider endpoints don't support tool calls even if the model does.
@@ -318,7 +319,8 @@ impl<'a> RequestSession<'a> {
 
 }
 
-pub(crate) fn build_openai_request<'a>(
+// AI: add logging with tracing instrument on provider and messages
+pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ProviderConfig,
     messages: Vec<super::RequestMessage<'a>>,
     params: &super::LLMParameters,
@@ -371,6 +373,7 @@ pub(crate) fn build_openai_request<'a>(
 ///
 /// Returns Ok(content) when ToolCallCompleted is received with matching (request_id, call_id),
 /// or Err(error_string) when ToolCallFailed or other failure occurs (including timeout).
+// AI: Add instrument tracing for received ToolEvent and ToolCallCompleted/Failed
 pub async fn await_tool_result(
     mut rx: broadcast::Receiver<AppEvent>,
     request_id: Uuid,
