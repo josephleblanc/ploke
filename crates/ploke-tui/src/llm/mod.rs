@@ -697,6 +697,25 @@ pub(super) fn cap_messages_by_chars<'a>(
     kept.into_iter().cloned().collect()
 }
 
+pub(super) fn cap_messages_by_tokens<'a>(
+    messages: &'a [RequestMessage<'a>],
+    token_budget: usize,
+) -> Vec<RequestMessage<'a>> {
+    // Approximate tokens as ceil(chars / 4)
+    let mut used = 0usize;
+    let mut kept: Vec<&RequestMessage> = Vec::new();
+    for m in messages.iter().rev() {
+        let tokens = (m.content.chars().count() + 3) / 4;
+        if used.saturating_add(tokens) > token_budget && !kept.is_empty() {
+            break;
+        }
+        used = used.saturating_add(tokens);
+        kept.push(m);
+    }
+    kept.reverse();
+    kept.into_iter().cloned().collect()
+}
+
 
 // Example tool-call handler (stub)
 

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::tool_call;
 use super::{
     GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage, ToolDefinition,
-    ToolVendor, cap_messages_by_chars,
+    ToolVendor, cap_messages_by_chars, cap_messages_by_tokens,
 };
 use crate::EventBus;
 
@@ -63,17 +63,12 @@ impl<'a> RequestSession<'a> {
         let mut tools_fallback_attempted = false;
 
         loop {
-            let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget
-            {
-                budget
+            let effective_messages = if let Some(budget_chars) = self.params.history_char_budget {
+                cap_messages_by_chars(&self.messages, budget_chars)
             } else {
-                self.params
-                    .max_tokens
-                    .map(|t| (t as usize).saturating_mul(4))
-                    .unwrap_or(12000)
+                let budget_tokens = self.params.max_tokens.map(|t| t as usize).unwrap_or(3000);
+                cap_messages_by_tokens(&self.messages, budget_tokens)
             };
-
-            let effective_messages = cap_messages_by_chars(&self.messages, history_budget_chars);
 
             let request_payload = build_openai_request(
                 self.provider,

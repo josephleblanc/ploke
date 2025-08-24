@@ -36,3 +36,8 @@ Follow-up review and gaps
 - The SystemEvent::ToolCallRequested compatibility path remains; slated for later removal.
 - Only request_code_context is strongly typed so far; get_file_metadata and apply_code_edit still return ad-hoc JSON. Next steps: define typed outputs in ploke_core::rag_types and migrate.
 - Add serde round-trip tests for RequestCodeContextArgs/Result; add e2e tests for tool-call cycle with typed payloads.
+
+Update (this commit)
+- Added cap_messages_by_tokens in ploke_tui::llm and switched RequestSession to token-based history budgeting with char-budget fallback.
+- No request payload shape changes; existing snapshot tests remain valid.
+- Updated tool_call_flow.md to reflect the implemented 404 fallback policy and token-based budgeting.

@@ -75,13 +75,13 @@ What is working well
 - Request payloads: build_openai_request produces stable, snapshot-tested JSON, including provider preferences when tools are in play.
 
 Gaps and risks
-- Tool fallback mismatch: The code comment says “be ready to retry once without tools on a 404,” but the current behavior returns an error immediately. Also, a tools_fallback_attempted flag is declared but never used.
-- Stringly typed tool IO: Tool arguments and returns are mostly serde_json::Value and String. handle_request_context returns a free-form JSON string of ids/scores, not typed structs. This reduces safety and complicates evolution.
-- Context quality: handle_request_context uses hybrid_search and only returns node IDs and scores. It should assemble real code snippets under a token budget via RagService::get_context and context::assemble_context.
-- Budgeting by chars, not tokens: cap_messages_by_chars uses byte/char length as a proxy. It is quick but can either over-trim or under-trim compared to token-aware budgeting.
-- Deprecated path: SystemEvent::ToolCallRequested remains as a compatibility path. It adds complexity and doubles routing until removed.
-- DB query in apply_code_edit_tool: Uses formatted CozoScript with inlined JSON literals. It’s careful with escaping but still fragile. Consider parameterized queries if/when supported.
-- Cloning and allocations: Several clones of Strings and Vecs occur on hot paths (e.g., tool specs, messages). These are reasonable now but should be revisited in perf-sensitive contexts.
+- Tool fallback policy: We now retry once without tools on a 404 “support tool” response and add a system message with remediation; make this configurable later.
+- Stringly typed tool IO: Mostly addressed for request_code_context; get_file_metadata and apply_code_edit still return ad‑hoc JSON and should be migrated to typed results next.
+- Context quality: request_code_context now assembles real snippets via RagService::get_context; further refinements like richer metadata and range stitching remain.
+- History budgeting: Added token-based capping (approx chars/4) with char-based fallback; wire real tokenizer adapters later.
+- Deprecated path: SystemEvent::ToolCallRequested remains as a compatibility path; schedule removal after downstream migration.
+- DB query in apply_code_edit_tool: CozoScript still inlined JSON; prefer parameterization when feasible.
+- Cloning and allocations: Reasonable for now; audit hot paths post-migration.
 
 Observability and test coverage
 - Good tracing coverage with concise, structured logs for dispatch and API responses.
