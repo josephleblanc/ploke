@@ -490,10 +490,7 @@ impl ChatHistory {
     /// Returns the new `current` message id if deletion occurred, otherwise `None`.
     pub fn delete_message(&mut self, id: Uuid) -> Option<Uuid> {
         // Cannot delete if not found or if root
-        let parent_id = match self.messages.get(&id).and_then(|m| m.parent) {
-            Some(pid) => pid,
-            None => return None, // root or missing
-        };
+        let parent_id = self.messages.get(&id).and_then(|m| m.parent)?;
 
         // Collect subtree nodes to delete (DFS)
         let mut stack = vec![id];

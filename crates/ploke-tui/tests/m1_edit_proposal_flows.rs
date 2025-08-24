@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
-use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
+use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
 use ploke_tui::{
+    EventBus,
     app_state::{
-        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
-        handlers::rag::{approve_edits, deny_edits, handle_tool_call_requested},
         RuntimeConfig,
-    }, event_bus::EventBusCaps, user_config::UserConfig, EventBus
+        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
+        handlers::rag::{ToolCallParams, approve_edits, deny_edits, handle_tool_call_requested},
+    },
+    event_bus::EventBusCaps,
+    user_config::UserConfig,
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;
@@ -84,16 +87,16 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(
-        &state,
-        &event_bus,
+    handle_tool_call_requested(ToolCallParams {
+        state: &state,
+        event_bus: &event_bus,
         request_id,
         parent_id,
-        ploke_tui::llm::ToolVendor::OpenAI,
-        "apply_code_edit".to_string(),
-        args,
+        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+        name: "apply_code_edit".to_string(),
+        arguments: args,
         call_id,
-    )
+    })
     .await;
 
     // Verify proposal exists and is Pending with a preview
@@ -139,16 +142,16 @@ async fn approve_applies_edits_and_updates_status() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(
-        &state,
-        &event_bus,
+    handle_tool_call_requested(ToolCallParams {
+        state: &state,
+        event_bus: &event_bus,
         request_id,
         parent_id,
-        ploke_tui::llm::ToolVendor::OpenAI,
-        "apply_code_edit".to_string(),
-        args,
+        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+        name: "apply_code_edit".to_string(),
+        arguments: args,
         call_id,
-    )
+    })
     .await;
 
     approve_edits(&state, &event_bus, request_id).await;
@@ -195,16 +198,16 @@ async fn deny_marks_denied_and_does_not_change_file() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(
-        &state,
-        &event_bus,
+    handle_tool_call_requested(ToolCallParams {
+        state: &state,
+        event_bus: &event_bus,
         request_id,
         parent_id,
-        ploke_tui::llm::ToolVendor::OpenAI,
-        "apply_code_edit".to_string(),
-        args,
+        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+        name: "apply_code_edit".to_string(),
+        arguments: args,
         call_id,
-    )
+    })
     .await;
 
     deny_edits(&state, &event_bus, request_id).await;

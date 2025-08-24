@@ -1,8 +1,8 @@
-pub mod registry;
 pub mod openrouter_catalog;
+pub mod provider_endpoints;
+pub mod registry;
 mod session;
 mod tool_call;
-pub mod provider_endpoints;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::app_state::handlers::rag as rag_handlers;
+use crate::app_state::handlers::rag::{self as rag_handlers, ToolCallParams};
 use crate::app_state::{AppState, StateCommand};
 use crate::{AppEvent, EventBus};
 use crate::{
@@ -388,9 +388,16 @@ pub async fn llm_manager(
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    rag_handlers::handle_tool_call_requested(
-                        &state, &event_bus, request_id, parent_id, vendor, name, arguments, call_id,
-                    )
+                    rag_handlers::handle_tool_call_requested(ToolCallParams {
+                        state: &state,
+                        event_bus: &event_bus,
+                        request_id,
+                        parent_id,
+                        vendor,
+                        name,
+                        arguments,
+                        call_id,
+                    })
                     .await;
                 });
             }
@@ -412,9 +419,16 @@ pub async fn llm_manager(
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    rag_handlers::handle_tool_call_requested(
-                        &state, &event_bus, request_id, parent_id, vendor, name, arguments, call_id,
-                    )
+                    rag_handlers::handle_tool_call_requested(ToolCallParams {
+                        state: &state,
+                        event_bus: &event_bus,
+                        request_id,
+                        parent_id,
+                        vendor,
+                        name,
+                        arguments,
+                        call_id,
+                    })
                     .await;
                 });
             }

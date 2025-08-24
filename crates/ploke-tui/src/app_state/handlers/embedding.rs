@@ -88,7 +88,7 @@ async fn embedding_search_similar(
     Ok(())
 }
 
-pub(super) async fn wait_on_oneshot<T>(
+pub(crate) async fn wait_on_oneshot<T>(
     new_msg_id: Uuid,
     completion_rx: oneshot::Receiver<T>,
 ) -> ControlFlow<()> {

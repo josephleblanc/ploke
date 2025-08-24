@@ -1,16 +1,18 @@
 #![cfg(test)]
 
+use itertools::Itertools;
 use lazy_static::lazy_static;
-use ploke_db::{create_index_primary, Database};
+use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
+use ploke_db::{Database, create_index_primary};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
 use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
 use ploke_error::Error;
-use ploke_rag::{MmrConfig, RagService, RrfConfig, TokenBudget};
+use ploke_rag::{RagConfig, RagService, RrfConfig, TokenBudget};
 use ploke_test_utils::workspace_root;
 use ploke_tui::error::ErrorExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::Client;
-use serde_json::{json, Value};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
@@ -21,12 +23,22 @@ use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use ploke_tui::llm::{apply_code_edit_tool_def, get_file_metadata_tool_def, openrouter_catalog, request_code_context_tool_def};
 use ploke_tui::llm::provider_endpoints::ModelEndpointsResponse;
+use ploke_tui::llm::{
+    apply_code_edit_tool_def, get_file_metadata_tool_def, openrouter_catalog,
+    request_code_context_tool_def,
+};
 use ploke_tui::tracing_setup::init_tracing;
 use ploke_tui::user_config::OPENROUTER_URL;
 
 const LLM_TOKEN_BUDGET: usize = 512;
+
+struct ContextToolResponse {
+    name: String,
+    path: String,
+    file: String,
+    snippet: String,
+}
 
 /// Read OPENROUTER_API_KEY and base URL from environment.
 fn openrouter_env() -> Option<(String, String)> {
@@ -42,7 +54,10 @@ fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     let referer = HeaderName::from_static("http-referer");
     let x_title = HeaderName::from_static("x-title");
-    headers.insert(referer, HeaderValue::from_static("https://github.com/ploke-ai/ploke"));
+    headers.insert(
+        referer,
+        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+    );
     headers.insert(x_title, HeaderValue::from_static("Ploke TUI Tests"));
     headers
 }
@@ -57,7 +72,12 @@ async fn post_with_retries(
 ) -> Result<reqwest::Response, reqwest::Error> {
     let attempts = attempts.max(1);
     for i in 0..attempts {
-        let resp = client.post(url).bearer_auth(api_key).json(body).send().await;
+        let resp = client
+            .post(url)
+            .bearer_auth(api_key)
+            .json(body)
+            .send()
+            .await;
         match resp {
             Ok(r) => {
                 if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && i + 1 < attempts {
@@ -88,7 +108,12 @@ async fn choose_tools_endpoint_for_model(
     base_url: &str,
     api_key: &str,
     model_id: &str,
-) -> Option<(String /*author*/, String /*slug*/, ploke_tui::llm::provider_endpoints::ModelEndpoint, Option<String> /*provider slug hint*/)> {
+) -> Option<(
+    String, /*author*/
+    String, /*slug*/
+    ploke_tui::llm::provider_endpoints::ModelEndpoint,
+    Option<String>, /*provider slug hint*/
+)> {
     let parts: Vec<&str> = model_id.split('/').collect();
     if parts.len() != 2 {
         warn!("model '{}' is not '<author>/<slug>'", model_id);
@@ -105,20 +130,19 @@ async fn choose_tools_endpoint_for_model(
         .and_then(|r| r.error_for_status())
     {
         Ok(resp) => match resp.json::<Value>().await {
-            Ok(v) => {
-                v.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                let name = p.get("name").and_then(|x| x.as_str())?;
-                                let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                Some((name.to_string(), slug.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
+            Ok(v) => v
+                .get("data")
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|p| {
+                            let name = p.get("name").and_then(|x| x.as_str())?;
+                            let slug = p.get("slug").and_then(|x| x.as_str())?;
+                            Some((name.to_string(), slug.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             Err(_) => Default::default(),
         },
         Err(_) => Default::default(),
@@ -140,16 +164,22 @@ async fn choose_tools_endpoint_for_model(
         .data
         .endpoints
         .into_iter()
-        .filter(|ep| ep.supported_parameters.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+        .filter(|ep| {
+            ep.supported_parameters
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("tools"))
+        })
         .collect();
 
     if candidates.is_empty() {
         warn!("{model_id} | No candidates found for model with tools");
         return None;
     }
-    candidates.sort_by(|a, b| endpoint_price_hint(a)
-        .partial_cmp(&endpoint_price_hint(b))
-        .unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        endpoint_price_hint(a)
+            .partial_cmp(&endpoint_price_hint(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let chosen = candidates.remove(0);
     let slug_hint = providers_map.get(&chosen.name).cloned().or_else(|| {
@@ -160,7 +190,11 @@ async fn choose_tools_endpoint_for_model(
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect::<String>();
-        if derived.is_empty() { None } else { Some(derived) }
+        if derived.is_empty() {
+            None
+        } else {
+            Some(derived)
+        }
     });
     Some((author, slug, chosen, slug_hint))
 }
@@ -277,6 +311,7 @@ lazy_static! {
                 .map_err(ploke_db::DbError::from)
                 .map_err(ploke_error::Error::from)?;
         }
+        create_index_primary(&db)?;
         Ok(Arc::new(db))
     };
 }
@@ -294,7 +329,8 @@ async fn run_tool_roundtrip(
     tool_def: &Value,
     tool_name: &str,
     tool_args: Value,
-    rag: &RagService
+    rag: &RagService,
+    db: &Database
 ) {
     // Prepare messages
     let mut messages = vec![
@@ -304,7 +340,7 @@ async fn run_tool_roundtrip(
         ),
         json!({
             "role":"user",
-            "content": format!("Please call the tool '{}' with these JSON arguments, then wait for results:\n{}", 
+            "content": format!("Please call the tool '{}' with these JSON arguments, then wait for results:\n{}",
             tool_name, tool_args.to_string())
         }),
     ];
@@ -327,7 +363,11 @@ async fn run_tool_roundtrip(
     let first = post_with_retries(client, &url, api_key, &root, 3).await;
 
     let Ok(resp) = first else {
-        panic!("first leg request failed for tool '{}': {}", tool_name, first.err().unwrap());
+        panic!(
+            "first leg request failed for tool '{}': {}",
+            tool_name,
+            first.err().unwrap()
+        );
     };
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
@@ -348,11 +388,16 @@ async fn run_tool_roundtrip(
         !tool_calls.is_empty(),
         "Expected tool_calls for '{}', none found. Body (first LLM_TOKEN_BUDGET): {}",
         tool_name,
-        if body.is_empty() {"Response body empty"} else { &body }
+        if body.is_empty() {
+            "Response body empty"
+        } else {
+            &body
+        }
     );
 
     // Create temp targets and execute locally
-    let tool_call_id = tool_calls.first()
+    let tool_call_id = tool_calls
+        .first()
         .and_then(|x| x.get("id"))
         .and_then(|s| s.as_str())
         .unwrap_or("call_1")
@@ -376,15 +421,38 @@ async fn run_tool_roundtrip(
                 .and_then(|h| h.as_str())
                 .unwrap_or("SimpleStruct");
             let mut token_budget = TokenBudget::default();
-            let token_budget_max = tool_args.get("token_budget").and_then(|t| t.as_u64()).unwrap_or(LLM_TOKEN_BUDGET as u64);
+            let token_budget_max = tool_args
+                .get("token_budget")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(LLM_TOKEN_BUDGET as u64);
             token_budget.max_total = token_budget_max as usize;
-            let rag_result = rag.get_context(hint, 5, &token_budget,  ploke_rag::RetrievalStrategy::Hybrid {
-                rrf: RrfConfig::default(),
-                mmr: None,
-            }).await.expect("Rag get_context failed");
-            let rag_json = serde_json::to_value(rag_result).expect("Could not parse rag result to json Value");
+            let rag_result = rag
+                .get_context(
+                    hint,
+                    5,
+                    &token_budget,
+                    ploke_rag::RetrievalStrategy::Hybrid {
+                        rrf: RrfConfig::default(),
+                        mmr: None,
+                    },
+                )
+                .await
+                .expect("Rag get_context failed");
 
-            let pretty_print = serde_json::to_string_pretty(&rag_json).expect("Could not format rag json to pretty");
+            let maybe_node_paths: Result< Vec<NodePaths>, Error > = rag_result.parts.iter().map(|p| {
+                 db.paths_from_id(p.id)
+            }).map_ok(|rows| {
+                let np: Result<NodePaths, Error> = rows.try_into().map_err(Error::from);
+                np
+                } ).try_collect().expect("Could not parse NodePaths from NamedRows");
+            let node_paths = maybe_node_paths.expect("Could not parse NodePaths from NamedRows");
+
+
+            let rag_json =
+                serde_json::to_value(rag_result).expect("Could not parse rag result to json Value");
+
+            let pretty_print = serde_json::to_string_pretty(&rag_json)
+                .expect("Could not format rag json to pretty");
             info!("Tool call success, returning value:\n{}", pretty_print);
 
             // TODO: Transition this to use the rag_json value instead once we have nailed down our
@@ -447,9 +515,7 @@ async fn run_tool_roundtrip(
                 .unwrap_or_default();
             info!(
                 "second leg '{}' -> {}. content: {}",
-                tool_name,
-                status,
-                &content
+                tool_name, status, &content
             );
         }
         Err(e) => {
@@ -472,14 +538,32 @@ async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
     let _guard = init_tracing();
 
     // ----- setup start -----
-    let db = TEST_DB_NODES
+    let db_handle = TEST_DB_NODES
         .as_ref()
         .expect("Must set up TEST_DB_NODES correctly.");
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-    let rag = RagService::new(db.clone(), embedding_processor)?;
+    let proc_arc = Arc::new(EmbeddingProcessor::new(source));
+
+    let io_handle = ploke_io::IoManagerHandle::new();
+
+    // RAG service (optional)
+    let rag = match RagService::new_full(
+        db_handle.clone(),
+        Arc::clone(&proc_arc),
+        io_handle.clone(),
+        RagConfig::default(),
+    ) {
+        Ok(svc) => Some(Arc::new(svc)),
+        Err(e) => {
+            e.emit_error();
+            None
+        }
+    }
+    .expect("Failed to create full rag service.");
+
+    info!("Success: RAG service built with IO.");
 
     // Should not error
     rag.bm25_rebuild().await?;
@@ -529,7 +613,9 @@ async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
         info!(
             "  chosen endpoint: provider='{}' slug_hint='{}' context_length={} price_hint={:.8}",
             endpoint.name,
-            provider_slug_hint.clone().unwrap_or_else(|| "-".to_string()),
+            provider_slug_hint
+                .clone()
+                .unwrap_or_else(|| "-".to_string()),
             endpoint.context_length,
             endpoint_price_hint(&endpoint)
         );
@@ -559,7 +645,8 @@ async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
                 def,
                 name,
                 args,
-                &rag
+                &rag,
+                db_handle
             )
             .await;
         }

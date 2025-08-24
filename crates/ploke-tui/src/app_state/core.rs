@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::collections::HashMap;
+use ploke_core::TrackingHash;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
@@ -208,7 +209,6 @@ pub struct EditProposal {
     pub proposed_at_ms: i64,
     pub edits: Vec<ploke_core::WriteSnippetData>,
     pub files: Vec<PathBuf>,
-    pub args_hash: String,
     pub preview: DiffPreview,
     pub status: EditProposalStatus,
 }

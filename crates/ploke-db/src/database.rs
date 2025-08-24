@@ -36,6 +36,17 @@ impl std::ops::Deref for Database {
     }
 }
 
+pub trait ImmutQuery {
+    fn raw_query(&self, query: &str) -> Result< NamedRows , DbError>;
+}
+
+impl ImmutQuery for Database {
+    fn raw_query(&self, query: &str) -> Result< NamedRows , DbError> {
+        self.run_script(query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(DbError::from)
+    }
+}
+
 /// Safely converts a Cozo DataValue to a Uuid.
 pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
     if let DataValue::Uuid(UuidWrapper(uuid)) = val {

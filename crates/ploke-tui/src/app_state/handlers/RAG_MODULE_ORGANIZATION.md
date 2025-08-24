@@ -55,17 +55,17 @@ Proposed module layout (all under `app_state::handlers`):
 - rag::utils
   - Purpose: Small helpers and local types used by multiple rag submodules.
   - Functions:
-    - calc_top_k_for_budget
-    - json_lit
+    - [x] calc_top_k_for_budget
+    - [x] json_lit
   - Types:
-    - ApplyCodeEditArgs
-    - Action
-    - EditInput
-    - PerEditResult
-    - ApplyCodeEditResult
-    - ToolCallParams
+    - [x] ApplyCodeEditArgs
+    - [x] Action
+    - [x] EditInput
+    - [x] PerEditResult
+    - [x] ApplyCodeEditResult
+    - [x] ToolCallParams
   - Constants:
-    - ALLOWED_RELATIONS
+    - [x] ALLOWED_RELATIONS
 
 Notes:
 - Modules reference AppState and EventBus by Arc to avoid global singletons.

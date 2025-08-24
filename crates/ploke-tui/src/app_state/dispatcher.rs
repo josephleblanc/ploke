@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::commands::StateCommand;
 use super::core::AppState;
-use super::handlers;
+use super::{database, handlers};
 use crate::chat_history::MessageKind;
 use uuid::Uuid;
 
@@ -193,7 +193,7 @@ pub async fn state_manager(
                 handlers::db::read_query(&event_bus, query_name, file_name).await;
             }
             StateCommand::SaveDb => {
-                handlers::db::save_db(&state, &event_bus).await;
+                database::save_db(&state, &event_bus).await;
             }
             StateCommand::BatchPromptSearch {
                 prompt_file,

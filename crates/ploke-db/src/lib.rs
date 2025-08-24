@@ -9,6 +9,8 @@ pub mod observability;
 mod query;
 mod result;
 mod span;
+pub mod get_by_id;
+pub(crate) mod utils;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;

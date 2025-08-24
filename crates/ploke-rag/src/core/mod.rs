@@ -9,6 +9,7 @@
 //! context assembly policy. For diversity or learning-to-rank experiments, plug in a custom [`Reranker`].
 mod unit_tests;
 use super::*;
+use ploke_core::rag_types::AssembledContext;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
 use std::future::Future;

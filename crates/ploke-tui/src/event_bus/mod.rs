@@ -235,7 +235,7 @@ mod tests {
         });
 
         // Wait for event bus readiness signal instead of sleeping
-        let _ = timeout(Duration::from_secs(1), async {
+        timeout(Duration::from_secs(1), async {
             loop {
                 match rx.recv().await {
                     Ok(AppEvent::EventBusStarted) => break,
@@ -281,7 +281,7 @@ mod tests {
         });
 
         // Wait for event bus readiness signal instead of sleeping
-        let _ = timeout(Duration::from_secs(1), async {
+        timeout(Duration::from_secs(1), async {
             loop {
                 match rx.recv().await {
                     Ok(AppEvent::EventBusStarted) => break,

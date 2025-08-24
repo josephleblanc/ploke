@@ -22,63 +22,69 @@ pub fn hnsw_all_types(
     k: usize,
     ef: usize,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
-    let mut script = String::from(
-        r#"
-            ?[id, name, distance] := "#,
-    );
-
-    let mut rel_params = std::collections::BTreeMap::new();
-    for (i, ty) in NodeType::primary_nodes().iter().enumerate() {
-        let rel = ty.relation_str();
-        let k_for_ty = format!("{}{}", rel, k);
-        let ef_for_ty = format!("{}{}", rel, ef);
-        rel_params.insert(k_for_ty.clone(), DataValue::from(k as i64));
-        rel_params.insert(ef_for_ty.clone(), DataValue::from(ef as i64));
-        rel_params.insert(rel.to_string(), DataValue::from(rel));
-
-        let rel_rhs = [
-            rel,
-            r#"{
-                    id, 
-                    name, 
-                    embedding: v
-                },
-                ~"#,
-            rel,
-            HNSW_SUFFIX,
-            r#"{id, name| 
-                    query: v, 
-                    k: $"#,
-            k_for_ty.as_str(),
-            r#", 
-                    ef: $ef,
-                    bind_distance: distance
-                }
-            "#,
-        ]
-        .into_iter();
-        script.extend(rel_rhs);
-        if !i > NodeType::primary_nodes().len() {
-            script.push_str(" or ");
-        }
-    }
-
-    let result = run_script_warn(db, &script, rel_params, ScriptMutability::Immutable)?;
     let mut results = Vec::new();
-    use cozo::Vector;
-    for row in result.rows.into_iter() {
-        tracing::trace!("{:?}", row);
-        let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::trace!("{:?}", id);
-            id
-        } else {
-            uuid::Uuid::max()
-        };
-        let content = row[1].get_str().unwrap().to_string();
-        results.push((id, content, row[2].to_owned()));
+    for ty in NodeType::primary_nodes() {
+        let ty_ret: Vec<Embedding> = hnsw_of_type(db, ty, k, ef)?;
+        results.extend(ty_ret);
     }
-
     Ok(results)
+    // let mut script = String::from(
+    //     r#"
+    //         ?[id, name, distance] := "#,
+    // );
+    //
+    // let mut rel_params = std::collections::BTreeMap::new();
+    // for (i, ty) in NodeType::primary_nodes().iter().enumerate() {
+    //     let rel = ty.relation_str();
+    //     let k_for_ty = format!("{}{}", rel, k);
+    //     let ef_for_ty = format!("{}{}", rel, ef);
+    //     rel_params.insert(k_for_ty.clone(), DataValue::from(k as i64));
+    //     rel_params.insert(ef_for_ty.clone(), DataValue::from(ef as i64));
+    //     rel_params.insert(rel.to_string(), DataValue::from(rel));
+    //
+    //     let rel_rhs = [
+    //         rel,
+    //         r#"{
+    //                 id, 
+    //                 name, 
+    //                 embedding: v
+    //             },
+    //             ~"#,
+    //         rel,
+    //         HNSW_SUFFIX,
+    //         r#"{id, name| 
+    //                 query: v, 
+    //                 k: $"#,
+    //         k_for_ty.as_str(),
+    //         r#", 
+    //                 ef: $ef,
+    //                 bind_distance: distance
+    //             }
+    //         "#,
+    //     ]
+    //     .into_iter();
+    //     script.extend(rel_rhs);
+    //     if !i > NodeType::primary_nodes().len() {
+    //         script.push_str(" or ");
+    //     }
+    // }
+    //
+    // let result = run_script_warn(db, &script, rel_params, ScriptMutability::Immutable)?;
+    // let mut results = Vec::new();
+    // use cozo::Vector;
+    // for row in result.rows.into_iter() {
+    //     tracing::trace!("{:?}", row);
+    //     let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
+    //         tracing::trace!("{:?}", id);
+    //         id
+    //     } else {
+    //         uuid::Uuid::max()
+    //     };
+    //     let content = row[1].get_str().unwrap().to_string();
+    //     results.push((id, content, row[2].to_owned()));
+    // }
+    //
+    // Ok(results)
 }
 
 pub fn run_script_warn(
@@ -124,15 +130,17 @@ pub fn hnsw_of_type(
                     id, 
                     name, 
                     embedding: v
+                    @ 'NOW'
                 },
+                !is_null(v),
                 ~"#,
         rel,
         HNSW_SUFFIX,
-        r#"{id, name| 
+        r#"{id, name | 
                     query: v, 
                     k: $k, 
                     ef: $ef,
-                    bind_distance: distance
+                    bind_distance: distance,
                 }
             "#,
     ]
@@ -545,3 +553,36 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::create_index_primary;
+    use crate::hnsw_all_types;
+    use crate::utils::test_utils::TEST_DB_NODES;
+    use crate::DbError;
+    use ploke_test_utils::workspace_root;
+    use tokio::sync::Mutex;
+
+    use lazy_static::lazy_static;
+    use ploke_error::Error;
+
+    use crate::Database;
+
+    #[tokio::test]
+    async fn test_hnsw_init() -> Result<(), Error> {
+        let db_arc = TEST_DB_NODES.clone().expect("problem loading fixture_nodes from cold start");
+        let db = db_arc.lock().expect("problem getting lock on test db for fixture_nodes");
+        let k = 20;
+        let ef = 40;
+        hnsw_all_types(&db, k, ef)?;
+        let unembedded = db.count_unembedded_nonfiles()?;
+        println!("unembedded: {unembedded}");
+        let embedded = db.count_pending_embeddings()?;
+        println!("embedded: {embedded}");
+        Ok(())
+    }   
+}
+
+

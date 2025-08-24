@@ -25,6 +25,7 @@ pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
+pub mod rag;
 
 pub mod test_utils;
 pub use test_utils::mock;
@@ -98,7 +99,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Global panic hook to restore terminal state on unexpected panics
     std::panic::set_hook(Box::new(|_info| {
-        let _ = ratatui::restore();
+        ratatui::restore();
         let _ = crossterm::execute!(
             std::io::stdout(),
             DisableBracketedPaste,
