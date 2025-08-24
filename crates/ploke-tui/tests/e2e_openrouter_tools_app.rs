@@ -730,8 +730,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             &api_key,
             &model_id,
             &providers_map,
-        ) // AI: We should save the output from all of these model choices somewhere so we can know for
-        // other plans and implementations which endpoints support tool use and tool choice AI!
+        )
         .await;
         let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
@@ -776,8 +775,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     // Summary of outcomes across models/tools
     let total = outcomes.len();
-    // AI: How can we adjust this to show us more helful information now that we are changing to
-    // using the actual calls to the internal LLM systems?
     let successes = outcomes
         .iter()
         .filter(|o| o.tool_called && matches!(o.second_status, Some(s) if (200..=299).contains(&s)))
