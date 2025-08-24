@@ -5,7 +5,7 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     use crate::app_state::core::EditProposalStatus;
     let mut reg = state.proposals.write().await;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
+        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
     };
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
         let msg = format!(
@@ -145,7 +145,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
     use crate::app_state::core::EditProposalStatus;
     let mut reg = state.proposals.write().await;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
+        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
     };
 
     let Some(mut proposal) = reg.get(&request_id).cloned() else {

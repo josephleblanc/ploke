@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use crate::rag::context::process_with_rag;
 use crate::system::SystemEvent;
-use crate::{EventBus, RagEvent};
+use crate::{EventBus, RagEvent, rag};
 use tokio::sync::mpsc;
 
 use super::commands::StateCommand;
@@ -113,14 +114,7 @@ pub async fn state_manager(
                 completion_rx,
                 scan_rx,
             } => {
-                handlers::rag::process_with_rag(
-                    &state,
-                    &event_bus,
-                    scan_rx,
-                    new_msg_id,
-                    completion_rx,
-                )
-                .await;
+                process_with_rag(&state, &event_bus, scan_rx, new_msg_id, completion_rx).await;
                 // handlers::embedding::handle_embed_message(&state, &context_tx, new_msg_id, completion_rx, scan_rx).await;
             }
             // StateCommand::ProcessWithRag { user_query, strategy, budget } => {
@@ -218,33 +212,31 @@ pub async fn state_manager(
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }
 
-            StateCommand::Bm25Rebuild => handlers::rag::bm25_rebuild(&state, &event_bus).await,
+            StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,
             StateCommand::Bm25Search { query, top_k } => {
-                handlers::rag::bm25_search(&state, &event_bus, query, top_k).await
+                rag::search::bm25_search(&state, &event_bus, query, top_k).await
             }
             StateCommand::HybridSearch { query, top_k } => {
-                handlers::rag::hybrid_search(&state, &event_bus, query, top_k).await
+                rag::search::hybrid_search(&state, &event_bus, query, top_k).await
             }
-            StateCommand::RagBm25Status => handlers::rag::bm25_status(&state, &event_bus).await,
+            StateCommand::RagBm25Status => rag::search::bm25_status(&state, &event_bus).await,
             StateCommand::RagBm25Save { path } => {
-                handlers::rag::bm25_save(&state, &event_bus, path).await
+                rag::search::bm25_save(&state, &event_bus, path).await
             }
             StateCommand::RagBm25Load { path } => {
-                handlers::rag::bm25_load(&state, &event_bus, path).await
+                rag::search::bm25_load(&state, &event_bus, path).await
             }
             StateCommand::RagSparseSearch {
                 req_id,
                 query,
                 top_k,
                 strict,
-            } => {
-                handlers::rag::sparse_search(&state, &event_bus, req_id, query, top_k, strict).await
-            }
+            } => rag::search::sparse_search(&state, &event_bus, req_id, query, top_k, strict).await,
             StateCommand::RagDenseSearch {
                 req_id,
                 query,
                 top_k,
-            } => handlers::rag::dense_search(&state, &event_bus, req_id, query, top_k).await,
+            } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
             StateCommand::RagAssembleContext {
                 req_id,
                 user_query,
@@ -252,18 +244,21 @@ pub async fn state_manager(
                 budget,
                 strategy,
             } => {
-                handlers::rag::assemble_context(
+                rag::context::assemble_context(
                     &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
                 )
                 .await
             }
             StateCommand::ApproveEdits { request_id } => {
-                handlers::rag::approve_edits(&state, &event_bus, request_id).await;
+                rag::editing::approve_edits(&state, &event_bus, request_id).await;
             }
             StateCommand::DenyEdits { request_id } => {
-                handlers::rag::deny_edits(&state, &event_bus, request_id).await;
+                rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
-            StateCommand::SelectModelProvider { model_id, provider_id } => {
+            StateCommand::SelectModelProvider {
+                model_id,
+                provider_id,
+            } => {
                 {
                     let mut cfg = state.config.write().await;
                     let reg = &mut cfg.provider_registry;
@@ -300,12 +295,17 @@ pub async fn state_manager(
                     &state,
                     &event_bus,
                     Uuid::new_v4(),
-                    format!("Switched active model to {} via provider {}", model_id, provider_id),
+                    format!(
+                        "Switched active model to {} via provider {}",
+                        model_id, provider_id
+                    ),
                     MessageKind::SysInfo,
                 )
                 .await;
 
-                event_bus.send(crate::AppEvent::System(SystemEvent::ModelSwitched(model_id)));
+                event_bus.send(crate::AppEvent::System(SystemEvent::ModelSwitched(
+                    model_id,
+                )));
             }
 
             _ => {}

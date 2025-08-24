@@ -13,8 +13,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::app_state::handlers::rag::{self as rag_handlers, ToolCallParams};
 use crate::app_state::{AppState, StateCommand};
+use crate::rag::utils::ToolCallParams;
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -388,7 +388,7 @@ pub async fn llm_manager(
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    rag_handlers::handle_tool_call_requested(ToolCallParams {
+                    rag::dispatcher::handle_tool_call_requested(ToolCallParams {
                         state: &state,
                         event_bus: &event_bus,
                         request_id,
@@ -419,7 +419,7 @@ pub async fn llm_manager(
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 tokio::spawn(async move {
-                    rag_handlers::handle_tool_call_requested(ToolCallParams {
+                    rag::dispatcher::handle_tool_call_requested(ToolCallParams {
                         state: &state,
                         event_bus: &event_bus,
                         request_id,
