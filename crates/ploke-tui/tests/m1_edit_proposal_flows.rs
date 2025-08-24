@@ -1,15 +1,17 @@
+// TODO: Tests currently failing.
+// - Need to assess whether our recent changes have broken the tests in ways that invalidate the
+// tests, or if the tests are still defining correct behavior and we need to adjust our
+// implementation of the editing tool.
+// - Should add more tests with realistic targets to see if the errors are being caused by a poor
+// mocking framework for testing the edits.
+
 use std::sync::Arc;
 
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
 use ploke_tui::{
-    EventBus,
     app_state::{
-        RuntimeConfig,
-        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
-        handlers::rag::{ToolCallParams, approve_edits, deny_edits, handle_tool_call_requested},
-    },
-    event_bus::EventBusCaps,
-    user_config::UserConfig,
+        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState}, RuntimeConfig
+    }, event_bus::EventBusCaps, rag::{dispatcher::handle_tool_call_requested, editing::{approve_edits, deny_edits}, utils::ToolCallParams}, user_config::UserConfig, EventBus
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;
@@ -101,6 +103,7 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
 
     // Verify proposal exists and is Pending with a preview
     let reg = state.proposals.read().await;
+    // BUG: Failing here
     let proposal = reg.get(&request_id).expect("proposal not found");
     match &proposal.status {
         EditProposalStatus::Pending => {}
@@ -157,6 +160,7 @@ async fn approve_applies_edits_and_updates_status() {
     approve_edits(&state, &event_bus, request_id).await;
 
     let updated = std::fs::read_to_string(&file_path).unwrap();
+    // BUG: Failing here
     assert!(
         updated.contains("demo_ok"),
         "file did not contain applied replacement: {updated}"
@@ -217,6 +221,7 @@ async fn deny_marks_denied_and_does_not_change_file() {
     assert_eq!(updated, initial, "file should be unchanged after denial");
 
     let reg = state.proposals.read().await;
+    // BUG: Failing here
     let status = &reg.get(&request_id).expect("proposal not found").status;
     match status {
         EditProposalStatus::Denied => {}
