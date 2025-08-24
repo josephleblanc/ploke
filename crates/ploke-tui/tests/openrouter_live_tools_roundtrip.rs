@@ -337,7 +337,7 @@ async fn run_tool_roundtrip(
     let mut messages = vec![
         json!({
             "role":"system",
-            "content":"You are a tool-using assistant. Prefer calling a tool when one is available."}
+            "content":"You are a tool-using assistant. Prefer calling a tool when one is available. All source code is Rust; use ```rust``` fenced code blocks for any snippets. Do not suggest or attempt to modify system files (e.g., /etc/hosts); operate only on ephemeral test paths. If a tool is unavailable, respond briefly and do not fabricate tool results."}
         ),
         json!({
             "role":"user",
@@ -629,8 +629,8 @@ async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
 
         // get_file_metadata | apply_code_edit prepare their own temporary targets internally
         // Use plausible arguments to encourage tool invocation; local execution ignores these values.
-        let gfm_args = json!({"file_path":"/etc/hosts"});
-        let ace_args = json!({"edits":[{"file_path":"/etc/hosts","expected_file_hash":"ignored","start_byte":0,"end_byte":0,"replacement":"ploke"}]});
+        let gfm_args = json!({"file_path":"/tmp/ploke_tools_test.txt"});
+        let ace_args = json!({"edits":[{"file_path":"/tmp/ploke_tools_test.txt","expected_file_hash":"0000000000000000000000000000000000000000000000000000000000000000","start_byte":0,"end_byte":5,"replacement":"HELLO"}]});
 
         for (def, (name, args)) in tools.iter().zip(vec![
             ("request_code_context", rc_args),

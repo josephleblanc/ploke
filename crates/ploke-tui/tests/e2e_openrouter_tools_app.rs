@@ -60,6 +60,7 @@ use uuid::Uuid;
 /// Cap for live test token budget
 const LLM_TOKEN_BUDGET: usize = 512;
 
+#[allow(dead_code)]
 struct ToolRoundtripOutcome {
     pub tool_name: String,
     pub model_id: String,
@@ -356,7 +357,7 @@ async fn run_tool_roundtrip(
     let mut messages = vec![
         json!({
             "role":"system",
-            "content":"You are a tool-using assistant. Prefer calling a tool when one is available."
+            "content":"You are a tool-using assistant. Prefer calling a tool when one is available. All source code is Rust; use ```rust``` fenced code blocks for any snippets. Do not suggest or attempt to modify system files (e.g., /etc/hosts); operate only on ephemeral test paths. If a tool is unavailable, respond briefly and do not fabricate tool results."
         }),
         json!({
             "role":"user",
