@@ -122,12 +122,23 @@ Observability and test coverage
 ## Questions Requiring Decision
 
 - Tool fallback policy: Should we retry once without tools on 404, or remain strict and surface guidance? Should this be configurable?
+  - Retry once, should be configurable, outside scope of current plan.
 - Tool output schema: Do we standardize on RequestCodeContextResult carrying AssembledContext? Any versioning or “type” field needed for forward compatibility?
+  - "type" field not yet fully designed, can leave mostly stub for now.
+  - See following answer.
 - Presentation to the LLM: Send structured JSON as the tool role content (current), or pre-render textual snippets? Recommendation: structured JSON; let the prompt instruct the model to read fields.
+  - Use structured JSON, but do not expose details that would confuse the LLM. Consider: What is useful to the LLM in the context response? It only needs:
+    - snippets for context
+    - name + canonical path of code item
+    - local file location
+  - Any more does not add anything useful to the LLM, and provides opportunity for failure. Agreed?
 - Concurrency limits: Keep unbounded JoinSet or cap concurrent tool calls (e.g., N at a time)? If capped, what default?
 - Auto-approval of edits: Should auto_confirm_edits default to off in production profiles? Who is the authority to approve (explicit user command vs. policy rule)?
+  - User config, outside current scope of plan.
 - Provider preference: Include provider.order even when tools are disabled, or keep current behavior where it’s only set with tools?
+  - Keep current behavior
 - Token budgeting: Adopt token-based budgeting for history by default, retaining char-based as fallback?
+  - Yes, agreed
 
 ## Quality Checklist
 - [ ] Remove transitive allocations, use iterators
@@ -137,6 +148,8 @@ Observability and test coverage
 - [ ] Replace handle_request_context hybrid_search with get_context returning AssembledContext
 - [ ] Introduce RequestCodeContextResult and other typed tool IO structs; add serde tests
 - [ ] Decide and implement tool 404 fallback policy; remove unused tools_fallback_attempted
+  - DECISION: Try again without tool call, use `add_message_immedaite` to let user know the API provider endpoint does not support tool calls (even if the model does)
+  - Add placeholder for config variable behavior, full implementation out of scope for this plan.
 - [ ] Add token-based history budgeting with a TokenCounter; keep char-budget as fallback
 - [ ] Add end-to-end tests for tool-call cycle (success, failure, timeout, ordering)
 - [ ] Remove deprecated SystemEvent::ToolCallRequested flow once migration is complete
