@@ -1,3 +1,4 @@
+#![allow(clippy::needless_lifetimes)]
 use std::collections::BTreeSet;
 
 // NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
@@ -5,7 +6,7 @@ use std::collections::BTreeSet;
 use ploke_core::{TrackingHash, WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use similar::TextDiff;
 
-use crate::{app_state::handlers::chat, chat_history::MessageKind};
+use crate::{app_state::{core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode}, handlers::chat}, chat_history::MessageKind};
 
 use super::{editing::approve_edits, utils::{calc_top_k_for_budget, Action, ApplyCodeEditArgs, ToolCallParams, ALLOWED_RELATIONS}, *};
 
@@ -255,7 +256,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
     }
 
     // Build preview (reuse minimal version from prior implementation)
-    let mut per_file: Vec<crate::app_state::core::BeforeAfter> = Vec::new();
+    let mut per_file: Vec<BeforeAfter> = Vec::new();
     let mut unified_diff = String::new();
     for path in files_set.iter() {
         // Fetch full file content via IoManager (verified against tracking hash)
@@ -300,14 +301,14 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         } else {
             path.clone()
         };
-        per_file.push(crate::app_state::core::BeforeAfter {
+        per_file.push(BeforeAfter {
             file_path: display_path.clone(),
             before: before.clone(),
             after: after.clone(),
         });
         if matches!(
             editing_cfg.preview_mode,
-            crate::app_state::core::PreviewMode::Diff
+            PreviewMode::Diff
         ) {
             let header_a = format!("a/{}", display_path.display());
             let header_b = format!("b/{}", display_path.display());
@@ -338,7 +339,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
 
     let preview_label = if matches!(
         editing_cfg.preview_mode,
-        crate::app_state::core::PreviewMode::Diff
+        PreviewMode::Diff
     ) {
         "diff"
     } else {
@@ -361,7 +362,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
 
     let preview_snippet = if matches!(
         editing_cfg.preview_mode,
-        crate::app_state::core::PreviewMode::Diff
+        PreviewMode::Diff
     ) {
         truncate(&unified_diff)
     } else {
@@ -379,7 +380,6 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
 
     // Stash proposal in registry
     {
-        use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
         let mut reg = state.proposals.write().await;
         reg.insert(
             request_id,
@@ -444,6 +444,8 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
+// TODO: This should be not only getting the ids of the relevant nodes, but also getting the code
+// snippets as well.
 pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
         state,
@@ -491,6 +493,8 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
     let top_k = calc_top_k_for_budget(token_budget);
 
     if let Some(rag) = &state.rag {
+        // TODO: Need to do more than hybrid search here, there is another function within
+        // `ploke-rag` that does also get snippets
         match rag.hybrid_search(&query, top_k).await {
             Ok(results) => {
                 let results_json: Vec<serde_json::Value> = results
