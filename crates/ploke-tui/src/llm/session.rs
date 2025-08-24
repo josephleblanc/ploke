@@ -11,7 +11,6 @@ use crate::system::SystemEvent;
 
 use reqwest::Client;
 use serde_json::{Value, json};
-use serde::Serialize;
 use std::sync::Arc;
 
 use super::tool_call;
@@ -60,8 +59,8 @@ impl<'a> RequestSession<'a> {
         let max_retries: u32 = self.params.tool_max_retries.unwrap_or(2);
         // Some OpenRouter provider endpoints don't support tool calls even if the model does.
         // Start with tools if configured, but be ready to retry once without tools on a 404 error.
-        let use_tools: bool = !self.tools.is_empty();
-        let tools_fallback_attempted = false;
+        let mut use_tools: bool = !self.tools.is_empty();
+        let mut tools_fallback_attempted = false;
 
         loop {
             let history_budget_chars: usize = if let Some(budget) = self.params.history_char_budget
@@ -138,6 +137,17 @@ impl<'a> RequestSession<'a> {
                     ));
                     guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
                     guidance.push_str(&format!("Details: {}", error_text));
+
+                    // Fallback once without tools: inform the model via a system message, then retry.
+                    if !tools_fallback_attempted {
+                        self.messages.push(RequestMessage::new_system(format!(
+                            "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
+                            guidance
+                        )));
+                        tools_fallback_attempted = true;
+                        use_tools = false;
+                        continue;
+                    }
 
                     return Err(LlmError::Api {
                         status,

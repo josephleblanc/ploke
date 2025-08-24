@@ -1,9 +1,11 @@
 #![allow(clippy::needless_lifetimes)]
 use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-// NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
-// crate, when we will ahve a real namespace uuid.
-use ploke_core::{TrackingHash, WriteSnippetData, PROJECT_NAMESPACE_UUID};
+/* NOTE: Placeholder until we implement multi-crate parsing and hash the Cargo.toml of the target
+   crate, when we will have a real namespace uuid. */
+use ploke_core::{WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use similar::TextDiff;
 use ploke_core::rag_types::{RequestCodeContextArgs, RequestCodeContextResult};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};

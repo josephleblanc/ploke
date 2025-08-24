@@ -27,3 +27,12 @@ Risks and mitigations
 - Backward compatibility: The tool content remains JSON; prompts may need minor instruction updates.
 - Performance: serde adds negligible overhead compared to retrieval. No hot-path regressions expected.
 - Token budgeting: We currently use ApproxCharTokenizer via RagService defaults; real tokenizer adapters can be wired later.
+
+Follow-up review and gaps
+- Fixed missing imports in rag::tools (PathBuf, Arc); removed unused TrackingHash import.
+- Removed an unused serde::Serialize import in llm::session to resolve warnings.
+- Removed an unused calc_top_k_for_budget import in rag::dispatcher.
+- Implemented a single retry fallback in llm::session: on 404 "support tool" responses, we now add a system message and retry once without tools before surfacing an error. This aligns with the checklist decision.
+- The SystemEvent::ToolCallRequested compatibility path remains; slated for later removal.
+- Only request_code_context is strongly typed so far; get_file_metadata and apply_code_edit still return ad-hoc JSON. Next steps: define typed outputs in ploke_core::rag_types and migrate.
+- Add serde round-trip tests for RequestCodeContextArgs/Result; add e2e tests for tool-call cycle with typed payloads.
