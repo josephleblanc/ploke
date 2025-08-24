@@ -19,9 +19,6 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         vendor,
         name
     );
-    tracing::warn!(
-        "DEPRECATED PATH: SystemEvent::ToolCallRequested execution path is deprecated; will be refactored into dedicated tool events. Kept for compatibility."
-    );
     let tool_call_failed = |error| {
         AppEvent::System(SystemEvent::ToolCallFailed {
             request_id,

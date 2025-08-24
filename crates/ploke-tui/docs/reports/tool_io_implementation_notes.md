@@ -32,7 +32,7 @@ Follow-up review and gaps
 - Removed an unused serde::Serialize import in llm::session to resolve warnings.
 - Removed an unused calc_top_k_for_budget import in rag::dispatcher.
 - Implemented a single retry fallback in llm::session: on 404 "support tool" responses, we now add a system message and retry once without tools before surfacing an error. This aligns with the checklist decision.
-- The SystemEvent::ToolCallRequested compatibility path remains; slated for later removal.
+- Removed SystemEvent::ToolCallRequested path; unified on LlmTool::Requested in llm_manager.
 - Migrated get_file_metadata and apply_code_edit to typed outputs in ploke_core::rag_types and updated tool handlers to emit ToolCallCompleted with typed JSON strings.
 - Add serde round-trip tests for RequestCodeContextArgs/Result; add e2e tests for tool-call cycle with typed payloads.
 
@@ -40,4 +40,4 @@ Update (this commit)
 - Added cap_messages_by_tokens in ploke_tui::llm and switched RequestSession to token-based history budgeting with char-budget fallback.
 - Migrated get_file_metadata and apply_code_edit to typed results; apply_code_edit now emits ToolCallCompleted after staging with auto-confirm hint.
 - No request payload shape changes; existing snapshot tests remain valid.
-- Updated tool_call_flow.md to reflect typed IO and the implemented 404 fallback policy and token-based budgeting.
+- Updated tool_call_flow.md to reflect typed IO, the implemented 404 fallback policy, token-based budgeting, and removal of the deprecated SystemEvent::ToolCallRequested path.

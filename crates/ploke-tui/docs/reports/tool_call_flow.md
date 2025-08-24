@@ -79,7 +79,7 @@ Gaps and risks
 - Stringly typed tool IO: Eliminated for request_code_context and get_file_metadata; apply_code_edit now returns a typed ApplyCodeEditResult with staging info. Next: add serde round‑trips and versioning fields.
 - Context quality: request_code_context assembles real snippets via RagService::get_context; further refinements like richer metadata and range stitching remain.
 - History budgeting: Token-based capping (approx chars/4) with char-based fallback; wire real tokenizer adapters later.
-- Deprecated path: SystemEvent::ToolCallRequested remains as a compatibility path; schedule removal after downstream migration.
+- Deprecated path: Removed in favor of unified LlmTool::Requested dispatch in llm_manager.
 - DB query in apply_code_edit_tool: CozoScript still inlined JSON; prefer parameterization when feasible.
 - Cloning and allocations: Reasonable for now; audit hot paths post-migration.
 

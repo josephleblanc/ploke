@@ -349,18 +349,14 @@ pub async fn llm_manager(
             }) => {
                 let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
                 tracing::info!(
-                    "ToolCall event routed: vendor={:?}, request_id={}, parent_id={}, call_id={}, name={}, arguments={}",
-                    vendor,
-                    request_id,
-                    parent_id,
-                    call_id,
-                    name,
-                    arguments
+                    request_id = %request_id,
+                    parent_id = %parent_id,
+                    call_id = %call_id,
+                    vendor = ?vendor,
+                    tool = %name,
+                    "Dispatching ToolEvent::Requested (unified path)"
                 );
-                tracing::warn!(
-                    "DEPRECATED: Routing tool calls via SystemEvent::ToolCallRequested; this path will be replaced by dedicated tool events in a future EventBus refactor."
-                );
-                event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
                     request_id,
                     parent_id,
                     vendor,
@@ -384,37 +380,6 @@ pub async fn llm_manager(
                     vendor = ?vendor,
                     tool = %name,
                     "Dispatching ToolEvent::Requested in LLM manager"
-                );
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-                tokio::spawn(async move {
-                    rag::dispatcher::handle_tool_call_requested(ToolCallParams {
-                        state: &state,
-                        event_bus: &event_bus,
-                        request_id,
-                        parent_id,
-                        vendor,
-                        name,
-                        arguments,
-                        call_id,
-                    })
-                    .await;
-                });
-            }
-            AppEvent::System(SystemEvent::ToolCallRequested {
-                request_id,
-                parent_id,
-                vendor,
-                name,
-                arguments,
-                call_id,
-            }) => {
-                tracing::info!(
-                    "Dispatching ToolCallRequested in system handler: name={}",
-                    name
-                );
-                tracing::warn!(
-                    "DEPRECATED PATH: SystemEvent::ToolCallRequested handling is deprecated and will be refactored into dedicated event types; retained for compatibility."
                 );
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
