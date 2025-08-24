@@ -34,9 +34,9 @@ pub async fn update_message(
     let mut chat_guard = state.chat.0.write().await;
 
     if let Some(message) = chat_guard.messages.get_mut(&id) {
-        let old_status = message.status;
-        let msg_kind = message.kind;
-        let new_status = update.status.unwrap_or(old_status);
+        let old_status = message.status.clone();
+        let msg_kind = message.kind.clone();
+        let new_status = update.status.clone().unwrap_or(old_status.clone());
         match message.try_update(update) {
             Ok(_) => {
                 tracing::info!(
