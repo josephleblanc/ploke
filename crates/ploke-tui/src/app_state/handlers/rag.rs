@@ -1,3 +1,30 @@
+#![allow(clippy::module_name_repetitions)]
+//! RAG handlers and tool integrations for the TUI layer.
+//!
+//! This module provides asynchronous handlers that:
+//! - Dispatch LLM tool calls and return results via the EventBus as System events
+//!   (ToolCallCompleted / ToolCallFailed) and SysInfo chat messages.
+//! - Stage source-code edits as proposals (including human-readable previews) and
+//!   apply/deny them on user command.
+//! - Run sparse (BM25), dense, and hybrid search via an optional RagService stored
+//!   on AppState, and surface results as chat messages.
+//! - Assemble a prompt context from retrieved snippets and the current conversation,
+//!   emitting a constructed prompt event for the LLM subsystem.
+//!
+//! Observable characteristics (from this file):
+//! - Handlers accept Arc<AppState> and Arc<EventBus) and communicate by sending AppEvent
+//!   instances via the EventBus (realtime/background). No implicit global state is modified,
+//!   aside from fields within AppState accessed through provided references.
+//! - When required services or inputs are missing, functions emit SysInfo chat messages and/or
+//!   ToolCallFailed events instead of panicking.
+//! - IO and database operations are delegated to other subsystems (IoManager, Database, RagService);
+//!   this module validates inputs, constructs requests, and forwards results as events/messages.
+//!
+//! Context in the larger project (as visible here):
+//! - Events and system integration types come from the crate root (AppEvent, SystemEvent, llm::Event).
+//! - The module is invoked by the state manager/dispatcher and other handlers; it does not own
+//!   background loops itself. It relies on the EventBus for communicating with the UI and LLM manager.
+
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_rag::RagService;
@@ -29,24 +56,6 @@ use crate::RagEvent;
 
 use super::chat;
 use super::embedding::wait_on_oneshot;
-// AI: This file is starting to sprawl. Create a new organizational structure for this file and
-// submodules. Then list the functions that will go into each submodule. Put this into a new
-// markdown file in the same directory. **DO NOT** change or relocate the functions now. This is
-// only to plan.
-// It should allow for extensibility as we add more tools and capabilities while the project grows.
-// In addition, create documentation for this module. The file-level documentation should start
-// with a `//!`, but only if it is the first comment in the file.
-// In the documentation you add, make sure you only document the items that you can see here, and
-// only report in the documentation on the observable characteristics from this file. Do not
-// assume anything about the files and functions that are referenced but thatyou cannot see
-// directly.
-// Create a plan for testing these items as well, and put that into another markdown file in this
-// directory.
-// I've included some other files in our conversation as well, to track up through the import
-// statements into lib.rs, and help to provide some additional context to understand the role of
-// this file within the larger project. Include some of that contextual information in the
-// file-level doc comment, and within the documentation on different files if you find it would be
-// helpful. AI!
 
 static PROMPT_HEADER: &str = r#"
 <-- SYSTEM PROMPT -->
