@@ -252,13 +252,8 @@ fn tool_defs() -> Vec<Value> {
     let request_code_context = serde_json::to_value(ploke_tui::llm::request_code_context_tool_def())
         .expect("Error with code context tool translation to json");
 
-    let get_file_metadata = serde_json::to_value(ploke_tui::llm::get_file_metadata_tool_def())
-        .expect("Error with file metadata tool translation to json");
-
-    let apply_code_edit = serde_json::to_value(ploke_tui::llm::apply_code_edit_tool_def())
-        .expect("Error with apply_code_edit tool translation to json");
-
-    vec![request_code_context, get_file_metadata, apply_code_edit]
+    // Context-only focus: only expose the request_code_context tool in this E2E
+    vec![request_code_context]
 }
 
 /// Local execution for get_file_metadata against a temporary file.
@@ -323,21 +318,34 @@ async fn rag_request_code_context(rag: &RagService, db: &Database, hint: &str, t
         .await
         .expect("Rag get_context failed");
 
-    // Fetch canonical paths for each returned id (validates DB path resolution works on pre-loaded data)
-    // Avoid complex try_collect type inference; just attempt per-part conversion and ignore errors.
+    // Build an enriched payload for the LLM:
+    // - Typed RequestCodeContextResult (includes snippets and file_path)
+    // - Plus a compact paths array mapping id -> { file_path, canon }
+    let mut paths_json: Vec<Value> = Vec::new();
     for p in &rag_result.parts {
         if let Ok(rows) = db.paths_from_id(p.id) {
-            let _parsed: Result<NodePaths, Error> = rows.try_into().map_err(Error::from);
-            let _ = _parsed;
+            if let Ok(np) = TryInto::<NodePaths>::try_into(rows) {
+                paths_json.push(json!({
+                    "id": p.id,
+                    "file_path": np.file,
+                    "canon": np.canon
+                }));
+            }
         }
     }
 
-    serde_json::to_string(&serde_json::json!({
-        "hint": hint,
-        "parts": rag_result.parts.len(),
-        "stats": rag_result.stats
-    }))
-    .unwrap_or_else(|_| "{}".to_string())
+    let result = ploke_core::rag_types::RequestCodeContextResult {
+        ok: true,
+        query: hint.to_string(),
+        top_k: 5,
+        context: rag_result,
+    };
+
+    let mut obj = serde_json::to_value(&result).unwrap_or_else(|_| json!({"ok": false}));
+    if let Some(map) = obj.as_object_mut() {
+        map.insert("paths".to_string(), Value::Array(paths_json));
+    }
+    serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Execute one forced tool round-trip against a model endpoint.
@@ -619,15 +627,11 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             endpoint.name, endpoint.context_length, endpoint_price_hint(&endpoint)
         );
 
-        // request_code_context args encourage tool invocation; other tools manage their own temp targets
+        // Context-only focus: exercise only the request_code_context tool
         let rc_args = json!({"token_budget": LLM_TOKEN_BUDGET, "hint":"SimpleStruct"});
-        let gfm_args = json!({"file_path":"/tmp/ploke_tools_test.txt"});
-        let ace_args = json!({"edits":[{"file_path":"/tmp/ploke_tools_test.txt","expected_file_hash":"0000000000000000000000000000000000000000000000000000000000000000","start_byte":0,"end_byte":5,"replacement":"HELLO"}]});
 
         for (def, (name, args)) in tools.iter().zip(vec![
             ("request_code_context", rc_args),
-            ("get_file_metadata", gfm_args),
-            ("apply_code_edit", ace_args),
         ]) {
             let outcome = run_tool_roundtrip(
                 &client,
