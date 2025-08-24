@@ -362,18 +362,20 @@ async fn run_tool_roundtrip(
     db: &Database,
 ) -> ToolRoundtripOutcome {
     // Prime messages for tool forcing
+    let user_message = json!({
+        "role":"user",
+        "content": format!(
+            "Please call the tool '{}' with these JSON arguments, then wait for results:\n{}",
+            tool_name, tool_args.to_string()
+        )
+    });
+
     let mut messages = vec![
         json!({
             "role":"system",
             "content":"You are a tool-using assistant. Prefer calling a tool when one is available. All source code is Rust; use ```rust``` fenced code blocks for any snippets. Do not suggest or attempt to modify system files (e.g., /etc/hosts); operate only on ephemeral test paths. If a tool is unavailable, respond briefly and do not fabricate tool results."
         }),
-        json!({
-            "role":"user",
-            "content": format!(
-                "Please call the tool '{}' with these JSON arguments, then wait for results:\n{}",
-                tool_name, tool_args.to_string()
-            )
-        }),
+        user_message.clone(),
     ];
 
     let mut root = json!({
@@ -477,28 +479,28 @@ async fn run_tool_roundtrip(
         }
     };
 
-    // Second leg: post tool result
+    // Second leg: post tool result with proper message structure
+    // According to OpenRouter docs, we need to include:
+    // 1. The original user message
+    // 2. The assistant message with tool_calls
+    // 3. The tool message with the result
     let assistant_msg = json!({
         "role": "assistant",
-        "content": Value::Null,
-        "tool_calls": [{
-            "id": tool_call_id,
-            "type": "function",
-            "function": {
-                "name": tool_name,
-                "arguments": serde_json::to_string(&tool_args).unwrap_or_else(|_| "{}".to_string())
-            }
-        }]
+        "content": null,
+        "tool_calls": tool_calls.first().unwrap()
     });
 
     let tool_msg = json!({
         "role": "tool",
-        "tool_call_id": assistant_msg["tool_calls"][0]["id"].as_str().unwrap_or("call_1"),
+        "tool_call_id": tool_call_id,
         "content": local_result
     });
 
-    messages.push(assistant_msg);
-    messages.push(tool_msg);
+    messages = vec![
+        user_message,
+        assistant_msg,
+        tool_msg,
+    ];
 
     let followup = json!({
         "model": model_id,
