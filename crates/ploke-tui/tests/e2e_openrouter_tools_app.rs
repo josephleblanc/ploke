@@ -99,6 +99,11 @@ lazy_static! {
         Ok(Arc::new(db))
     };
 }
+ 
+lazy_static! {
+    static ref TOOL_ENDPOINT_CANDIDATES: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> =
+        std::sync::Mutex::new(std::collections::HashMap::new());
+}
 
 /// Read OPENROUTER_API_KEY and base URL from environment.
 fn openrouter_env() -> Option<(String, String)> {
@@ -163,7 +168,6 @@ async fn post_with_retries(
 }
 
 /// Pick the cheapest tools-capable endpoint for a model (by prompt+completion price).
-// AI: Let's save the returned models that fit our filter of "tools" and "tool_choice" for later
 // reference
 async fn choose_tools_endpoint_for_model(
     client: &Client,
@@ -212,6 +216,17 @@ async fn choose_tools_endpoint_for_model(
         })
         .inspect(|cand| info!("candidate: {:#?}", cand))
         .collect();
+
+    // Cache tools-capable endpoint names for later reference/diagnostics
+    if let Ok(mut map) = TOOL_ENDPOINT_CANDIDATES.lock() {
+        let names: Vec<String> = candidates.iter().map(|ep| ep.name.clone()).collect();
+        map.insert(model_id.to_string(), names);
+    }
+    tracing::info!(
+        "tools-capable endpoints cached for {}: {}",
+        model_id,
+        candidates.iter().map(|e| e.name.clone()).collect::<Vec<_>>().join(", ")
+    );
 
     if candidates.is_empty() {
         warn!("{model_id} | No candidates found for model with tools");
@@ -467,10 +482,47 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 (ploke_tui::chat_history::MessageKind::User, user_instr),
             ],
         }));
-        // AI: How can we see the eventual outcome of this message? We want to be able to visually
-        // inspect the output of the LLM endpoint response and verify that the tool was indeed
-        // called as requested, as well as that the return values of those tools were what we
-        // expected
+        // Observe LLM and Tool events so logs show the tool-call lifecycle and responses
+        let mut rx = event_bus.subscribe(EventPriority::Background);
+        let observe_until = std::time::Instant::now() + Duration::from_secs(10);
+        let mut saw_tool = false;
+        while std::time::Instant::now() < observe_until {
+            match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+                Ok(Ok(ev)) => match ev {
+                    AppEvent::Llm(llm::Event::ToolCall { name, arguments, call_id, vendor, .. }) => {
+                        tracing::info!(%model_id, tool=%name, vendor=?vendor, call_id=?call_id, args=%arguments, "E2E observed ToolCall");
+                        saw_tool = true;
+                    }
+                    AppEvent::LlmTool(llm::ToolEvent::Requested { name, call_id, .. }) => {
+                        tracing::info!(%model_id, tool=%name, call_id=%call_id, "E2E observed ToolEvent::Requested");
+                        saw_tool = true;
+                    }
+                    AppEvent::LlmTool(llm::ToolEvent::Completed { call_id, content, .. }) => {
+                        let excerpt: String = content.chars().take(200).collect();
+                        tracing::info!(%model_id, call_id=%call_id, excerpt=%excerpt, "E2E observed ToolEvent::Completed");
+                    }
+                    AppEvent::LlmTool(llm::ToolEvent::Failed { call_id, error, .. }) => {
+                        tracing::warn!(%model_id, call_id=%call_id, error=%error, "E2E observed ToolEvent::Failed");
+                    }
+                    AppEvent::Llm(llm::Event::Response { content, model, .. }) => {
+                        let excerpt: String = content.chars().take(200).collect();
+                        tracing::info!(%model_id, %model, excerpt=%excerpt, "E2E observed LLM Response");
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+
+        outcomes.push(ToolRoundtripOutcome {
+            tool_name: "request_code_context".to_string(),
+            model_id: model_id.clone(),
+            provider_slug: provider_slug_hint.clone(),
+            first_status: 0,
+            tool_called: saw_tool,
+            second_status: None,
+            body_excerpt_first: "event observation complete".to_string(),
+        });
 
     }
 

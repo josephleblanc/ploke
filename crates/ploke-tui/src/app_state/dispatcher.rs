@@ -32,7 +32,7 @@ pub async fn state_manager(
         let _enter = span.enter();
 
         match cmd {
-            StateCommand::UpdateMessage { id, update } => { // AI: update_message happens here
+            StateCommand::UpdateMessage { id, update } => {
                 handlers::chat::update_message(&state, &event_bus, id, update).await;
             }
             StateCommand::DeleteMessage { id } => {

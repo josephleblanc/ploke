@@ -11,18 +11,16 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
-// AI: update_message updates found here
 // How can we add tracking during our test so we can ensure we see the expected outcomes? For now
 // we just want to be able to see what the LLM is doing when we send the tool call request, but we
 // would also like to find a way of actually testing that the tool runs as expected. Let's start by
-// making sure we can see the tracing output for the LLM messages and tool calls in our test AI!
+#[instrument(skip(state, event_bus, update), fields(msg_id = %id, new_status = ?update.status))]
 pub async fn update_message(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     id: Uuid,
     update: MessageUpdate,
 ) {
-    tracing::Span::current().record("msg_id", format!("{}", id));
     tracing::info!(
         "Updating message {} status={:?} content_preview={}",
         id,
@@ -36,11 +34,28 @@ pub async fn update_message(
     let mut chat_guard = state.chat.0.write().await;
 
     if let Some(message) = chat_guard.messages.get_mut(&id) {
+        let old_status = message.status;
+        let msg_kind = message.kind;
+        let new_status = update.status.unwrap_or(old_status);
         match message.try_update(update) {
             Ok(_) => {
+                tracing::info!(
+                    msg_id = %id,
+                    kind = ?msg_kind,
+                    old_status = ?old_status,
+                    new_status = ?new_status,
+                    "Message updated successfully; dispatching MessageUpdatedEvent"
+                );
                 event_bus.send(MessageUpdatedEvent::new(id).into());
             }
             Err(e) => {
+                tracing::error!(
+                    msg_id = %id,
+                    kind = ?msg_kind,
+                    old_status = ?old_status,
+                    error = %e,
+                    "Message update failed; dispatching UpdateFailedEvent"
+                );
                 event_bus.send(UpdateFailedEvent::new(id, e).into());
             }
         }
