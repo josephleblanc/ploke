@@ -4,6 +4,7 @@ pub mod registry;
 mod session;
 mod tool_call;
 
+use ploke_rag::TokenCounter as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
