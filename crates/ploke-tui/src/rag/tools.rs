@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 // crate, when we will ahve a real namespace uuid.
 use ploke_core::{TrackingHash, WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use similar::TextDiff;
+use ploke_core::rag_types::{RequestCodeContextArgs, RequestCodeContextResult};
+use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 
 use crate::{app_state::{core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode}, handlers::chat}, chat_history::MessageKind};
 
@@ -444,38 +446,36 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-// TODO: This should be not only getting the ids of the relevant nodes, but also getting the code
-// snippets as well.
 pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
         state,
         event_bus,
         request_id,
         parent_id,
-        vendor,
-        name,
+        vendor: _,
+        name: _,
         arguments,
         call_id,
     } = tool_call_params.clone();
-    // Parse arguments
-    let token_budget = arguments
-        .get("token_budget")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32);
-    if token_budget.is_none() || token_budget == Some(0) {
-        let msg = "Invalid or missing token_budget".to_string();
-        tool_call_params.tool_call_failed(msg);
+
+    // Parse typed arguments
+    let args: RequestCodeContextArgs = match serde_json::from_value(arguments.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("Invalid request_code_context payload: {}", e);
+            tool_call_params.tool_call_failed(msg);
+            return;
+        }
+    };
+    if args.token_budget == 0 {
+        tool_call_params
+            .tool_call_failed("Invalid or missing token_budget".to_string());
         return;
     }
-    let token_budget = token_budget.unwrap();
-    let hint = arguments
-        .get("hint")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
 
     // Determine query: prefer hint, otherwise last user message
-    let query = if let Some(h) = hint.filter(|s| !s.trim().is_empty()) {
-        h
+    let query = if let Some(h) = args.hint.as_ref().filter(|s| !s.trim().is_empty()) {
+        h.clone()
     } else {
         let guard = state.chat.read().await;
         match guard.last_user_msg() {
@@ -490,38 +490,51 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
         return;
     }
 
-    let top_k = calc_top_k_for_budget(token_budget);
+    let top_k = calc_top_k_for_budget(args.token_budget);
+
+    // Build token budget for RAG
+    let mut budget = TokenBudget::default();
+    budget.max_total = args.token_budget as usize;
 
     if let Some(rag) = &state.rag {
-        // TODO: Need to do more than hybrid search here, there is another function within
-        // `ploke-rag` that does also get snippets
-        match rag.hybrid_search(&query, top_k).await {
-            Ok(results) => {
-                let results_json: Vec<serde_json::Value> = results
-                    .into_iter()
-                    .map(|(id, score)| serde_json::json!({"id": id.to_string(), "score": score}))
-                    .collect();
-
-                let content = serde_json::json!({
-                    "ok": true,
-                    "query": query,
-                    "top_k": top_k,
-                    "results": results_json
-                })
-                .to_string();
-
-                let _ =
-                    event_bus
-                        .realtime_tx
-                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            request_id,
-                            parent_id,
-                            call_id: call_id.clone(),
-                            content,
-                        }));
+        match rag
+            .get_context(
+                &query,
+                top_k,
+                &budget,
+                RetrievalStrategy::Hybrid {
+                    rrf: RrfConfig::default(),
+                    mmr: None,
+                },
+            )
+            .await
+        {
+            Ok(context) => {
+                let result = RequestCodeContextResult {
+                    ok: true,
+                    query,
+                    top_k,
+                    context,
+                };
+                let content = match serde_json::to_string(&result) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let msg = format!("Failed to serialize RequestCodeContextResult: {}", e);
+                        tool_call_params.tool_call_failed(msg);
+                        return;
+                    }
+                };
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        content,
+                    }));
             }
             Err(e) => {
-                let msg = format!("RAG hybrid_search failed: {}", e);
+                let msg = format!("RAG get_context failed: {}", e);
                 tracing::warn!("{}", msg);
                 tool_call_params.tool_call_failed(msg);
             }

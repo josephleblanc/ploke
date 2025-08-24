@@ -50,3 +50,18 @@ pub enum Modality {
     #[serde(rename = "hybrid_fused")]
     HybridFused,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestCodeContextArgs {
+    pub token_budget: u32,
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestCodeContextResult {
+    pub ok: bool,
+    pub query: String,
+    pub top_k: usize,
+    pub context: AssembledContext,
+}

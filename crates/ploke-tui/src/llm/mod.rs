@@ -697,13 +697,6 @@ pub(super) fn cap_messages_by_chars<'a>(
     kept.into_iter().cloned().collect()
 }
 
-// Example tool-call argument struct
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct RequestCodeContextArgs {
-    pub token_budget: u32,
-    #[serde(default)]
-    pub hint: Option<String>,
-}
 
 // Example tool-call handler (stub)
 
