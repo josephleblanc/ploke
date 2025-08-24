@@ -7,6 +7,7 @@ mod tool_call;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use ploke_rag::context::ApproxCharTokenizer;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -666,11 +667,12 @@ pub(super) fn cap_messages_by_tokens<'a>(
     messages: &'a [RequestMessage<'a>],
     token_budget: usize,
 ) -> Vec<RequestMessage<'a>> {
-    // Approximate tokens as ceil(chars / 4)
+    // Use shared TokenCounter to approximate tokens deterministically
+    let tokenizer = ApproxCharTokenizer;
     let mut used = 0usize;
     let mut kept: Vec<&RequestMessage> = Vec::new();
     for m in messages.iter().rev() {
-        let tokens = (m.content.chars().count() + 3) / 4;
+        let tokens = tokenizer.count(&m.content);
         if used.saturating_add(tokens) > token_budget && !kept.is_empty() {
             break;
         }
