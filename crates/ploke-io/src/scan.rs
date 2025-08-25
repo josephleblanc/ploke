@@ -9,8 +9,8 @@ use super::*;
 #[cfg(test)]
 pub(crate) mod test_instrumentation {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::time::Duration;
     use std::sync::Mutex;
+    use std::time::Duration;
     use uuid::Uuid;
 
     static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -119,7 +119,6 @@ pub(crate) mod test_instrumentation {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

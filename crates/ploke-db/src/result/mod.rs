@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
     database::{to_string, to_usize, to_uuid},
     error::DbError,
+    get_by_id::CommonFields,
     NodeType,
 };
 use cozo::NamedRows;
@@ -122,13 +123,13 @@ impl QueryResult {
     }
 }
 
-fn get_byte_offsets(span: &&[cozo::DataValue]) -> (usize, usize) {
+pub(crate) fn get_byte_offsets(span: &&[cozo::DataValue]) -> (usize, usize) {
     let error_msg = "Invariant Violated: All Nodes must have a start/end byte";
     let start_byte = span.first().expect(error_msg).get_int().expect(error_msg) as usize;
     let end_byte = span.last().expect(error_msg).get_int().expect(error_msg) as usize;
     (start_byte, end_byte)
 }
-fn get_pos(v: &[String], field: &str) -> Result<usize, DbError> {
+pub(crate) fn get_pos(v: &[String], field: &str) -> Result<usize, DbError> {
     v.iter()
         .position(|s| s == field)
         .ok_or_else(|| DbError::Cozo(format!("Could not locate field {} in NamedRows", field)))

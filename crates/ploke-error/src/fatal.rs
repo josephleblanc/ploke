@@ -1,6 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Fatal errors terminate the current operation and typically require caller intervention.
+///
+/// This variant family captures irrecoverable issues for a task (not necessarily
+/// for the whole process), such as I/O failures and content mismatches.
+/// They map to [`crate::Severity::Fatal`].
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
     #[error("Invalid Rust syntax: {0}")]
@@ -66,6 +72,27 @@ pub enum FatalError {
 // TODO: Cumbersome, make this better.
 impl From<(std::io::Error, &'static str, PathBuf)> for FatalError {
     fn from((source, operation, path): (std::io::Error, &'static str, PathBuf)) -> Self {
+        FatalError::FileOperation {
+            operation,
+            path,
+            source: Arc::new(source),
+        }
+    }
+}
+
+impl FatalError {
+    /// Return the raw OS error code when available (matklad-inspired API).
+    /// Helps callers handle specific IO conditions programmatically without
+    /// exposing std::io::Error in the public API.
+    pub fn os_code(&self) -> Option<i32> {
+        match self {
+            FatalError::FileOperation { source, .. } => source.raw_os_error(),
+            _ => None,
+        }
+    }
+
+    /// Convenience constructor for FileOperation that avoids tuple-based From.
+    pub fn file_operation(operation: &'static str, path: PathBuf, source: std::io::Error) -> Self {
         FatalError::FileOperation {
             operation,
             path,

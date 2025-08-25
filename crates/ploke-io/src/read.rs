@@ -33,7 +33,10 @@ pub(crate) async fn read_file_to_string_abs(path: &Path) -> Result<String, IoErr
     })?;
     Ok(content)
 }
-pub(crate) fn parse_tokens_from_str(content: &str, path: &Path) -> Result<proc_macro2::TokenStream, IoError> {
+pub(crate) fn parse_tokens_from_str(
+    content: &str,
+    path: &Path,
+) -> Result<proc_macro2::TokenStream, IoError> {
     let parsed = syn::parse_file(content).map_err(|e| IoError::ParseError {
         path: path.to_path_buf(),
         message: e.to_string(),
@@ -66,7 +69,6 @@ pub(crate) fn extract_snippet_str(
 
     Ok(content[start..end].to_string())
 }
-
 
 // async fn handle_read_snippet_batch(requests: Vec<EmbeddingData>, semaphore: Arc<Semaphore>) -> Vec<Result<String, PlokeError>> { ... }
 // async fn handle_read_snippet_batch_with_roots(requests: Vec<EmbeddingData>, semaphore: Arc<Semaphore>, roots: Option<Arc<Vec<PathBuf>>>) -> Vec<Result<String, PlokeError>> { ... }
@@ -113,7 +115,7 @@ pub(crate) mod tests {
         TrackingHash::generate(namespace, file_path, &tokens)
     }
 
-// Tests to move here:
+    // Tests to move here:
     #[tokio::test]
     #[ignore = "needs redisign to have the id (NodeId) of file"]
     #[allow(unreachable_code)]
@@ -916,7 +918,10 @@ pub(crate) mod tests {
             namespace,
         };
 
-        let results = handle.get_snippets_batch(vec![ok_req, bad_req]).await.unwrap();
+        let results = handle
+            .get_snippets_batch(vec![ok_req, bad_req])
+            .await
+            .unwrap();
 
         assert_eq!(results[0].as_ref().unwrap(), "inside");
         assert!(matches!(
@@ -925,4 +930,3 @@ pub(crate) mod tests {
         ));
     }
 }
-

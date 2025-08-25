@@ -95,3 +95,10 @@ PR slicing (suggested)
 References
 - See crates/ploke-tui/docs/ploke_db_contract.md for DB API and invariants.
 - See crates/ploke-tui/docs/agentic_system_plan.md for roadmap context.
+
+Progress update — 2025-08-20
+- Implemented: Observability latency_ms computed from requested→done (DB lookup via get_tool_call).
+- Implemented: SSoT tests for Completed and Failed passing (single forwarder).
+- Implemented: EventBus readiness signal to eliminate sleeps in tests.
+- Implemented: SHA-256 for args_sha256 (replacing FNV-1a placeholder).
+- Implemented: Observability E2E tests and observability guide doc.

@@ -45,6 +45,17 @@ impl EmbeddingProcessor {
         Self { source }
     }
 
+    /// Create a lightweight mock embedder for tests.
+    /// Uses the Cozo backend placeholder with a fixed dimension.
+    pub fn new_mock() -> Self {
+        Self {
+            source: EmbeddingSource::Cozo(CozoBackend {
+                endpoint: "mock://cozo".to_string(),
+                dimensions: 384,
+            }),
+        }
+    }
+
     pub async fn generate_embeddings(
         &self,
         snippets: Vec<String>,

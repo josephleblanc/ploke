@@ -122,7 +122,7 @@ impl<'a> GitClient<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> crate::types::GitOps for GitClient<'a> {
+impl crate::types::GitOps for GitClient<'_> {
     async fn status(&self, repo_path: &str) -> Result<String, McpError> {
         GitClient::status(self, repo_path).await
     }

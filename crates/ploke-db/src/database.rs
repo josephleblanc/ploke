@@ -36,6 +36,17 @@ impl std::ops::Deref for Database {
     }
 }
 
+pub trait ImmutQuery {
+    fn raw_query(&self, query: &str) -> Result<NamedRows, DbError>;
+}
+
+impl ImmutQuery for Database {
+    fn raw_query(&self, query: &str) -> Result<NamedRows, DbError> {
+        self.run_script(query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(DbError::from)
+    }
+}
+
 /// Safely converts a Cozo DataValue to a Uuid.
 pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
     if let DataValue::Uuid(UuidWrapper(uuid)) = val {
@@ -100,6 +111,18 @@ impl Database {
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
     "#;
+
+    /// Get the embedding data from the canonical path of a given node, find the node in the
+    /// database and return the `EmbeddingData` so the snippet for the node can be found from a
+    /// file read.
+    /// Returns the database error or the embedding data for the item.
+    pub fn get_node_from_canon(
+        &self,
+        canonical_path: &[&str],
+    ) -> Result<EmbeddingData, PlokeError> {
+        todo!()
+    }
+
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
         Self { db }

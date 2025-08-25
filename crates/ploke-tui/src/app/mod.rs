@@ -16,6 +16,9 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
+use crate::emit_app_event;
+use crate::llm::openrouter_catalog::ModelEntry;
+use crate::user_config::{OPENROUTER_URL, ModelConfig, ProviderType};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -28,11 +31,29 @@ use crossterm::execute;
 use itertools::Itertools;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
+use view::components::model_browser::{render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow};
+
+// Ensure terminal modes are always restored on unwind (panic or early return)
+struct TerminalModeGuard;
+
+impl Drop for TerminalModeGuard {
+    fn drop(&mut self) {
+        // Best-effort disable; ignore errors to avoid panicking in Drop
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture,
+        );
+        // ratatui::restore is called by the outer try_main panic hook as an extra safety net
+    }
+}
 
 #[derive(Debug)]
 pub struct App {
@@ -63,6 +84,11 @@ pub struct App {
     pending_char: Option<char>,
     needs_redraw: bool,
     show_context_preview: bool,
+    // Modal overlay for interactive model discovery/selection
+    model_browser: Option<ModelBrowserState>,
+    // Input history browsing (Insert mode)
+    input_history: Vec<String>,
+    input_history_pos: Option<usize>,
 }
 
 impl App {
@@ -93,6 +119,9 @@ impl App {
             pending_char: None,
             needs_redraw: true,
             show_context_preview: false,
+            model_browser: None,
+            input_history: Vec::new(),
+            input_history_pos: None,
         }
     }
 
@@ -115,6 +144,8 @@ impl App {
         ) {
             tracing::warn!("Failed to enable terminal modes: {}", e);
         }
+        // RAII guard to ensure terminal modes are disabled on unwind
+        let _terminal_mode_guard = TerminalModeGuard;
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
@@ -383,7 +414,11 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            self.mode,
+            if self.model_browser.is_some() {
+                Mode::Normal
+            } else {
+                self.mode
+            },
             input_title,
         );
         // Add progress bar at bottom if indexing
@@ -454,6 +489,43 @@ impl App {
             }
         }
 
+        // Render model browser overlay if visible
+        if let Some(mb) = &self.model_browser {
+            let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
+
+            let widget = Paragraph::new(lines)
+                .style(overlay_style)
+                .block(
+                    Block::bordered()
+                        .title(" Model Browser ")
+                        .style(overlay_style),
+                )
+                // Preserve leading indentation in detail lines
+                .wrap(ratatui::widgets::Wrap { trim: false });
+            frame.render_widget(widget, body_area);
+
+            // Footer: bottom-right help toggle or expanded help
+            if mb.help_visible {
+                let help = Paragraph::new(
+                    "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
+                     Save/Load/Search:\n\
+                     - model save [path] [--with-keys]\n\
+                     - model load [path]\n\
+                     - model search <keyword>",
+                )
+                .style(overlay_style)
+                .block(Block::bordered().title(" Help ").style(overlay_style))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+                frame.render_widget(help, footer_area);
+            } else {
+                let hint = Paragraph::new(" ? Help ")
+                    .style(overlay_style)
+                    .alignment(ratatui::layout::Alignment::Right)
+                    .block(Block::default().style(overlay_style));
+                frame.render_widget(hint, footer_area);
+            }
+        }
+
         // Cursor position is handled by InputView.
     }
 
@@ -485,9 +557,150 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        // Intercept keys for model browser overlay when visible
+        if self.model_browser.is_some() {
+            let mut chosen_id: Option<String> = None;
+            if let Some(mb) = self.model_browser.as_mut() {
+                use KeyCode::*;
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.model_browser = None;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if mb.selected > 0 {
+                            mb.selected -= 1;
+                        } else {
+                            mb.selected = mb.items.len().saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if mb.items.is_empty() {
+                            // nothing
+                        } else if mb.selected + 1 < mb.items.len() {
+                            mb.selected += 1;
+                        } else {
+                            mb.selected = 0;
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                            item.expanded = !item.expanded;
+                            // On expand, if providers not yet loaded, request endpoints
+                            if item.expanded && item.providers.is_empty() && !item.loading_providers {
+                                item.loading_providers = true;
+                                let model_id = item.id.clone();
+                                tokio::spawn(async move {
+                                    crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                });
+                            }
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                            if item.providers.is_empty() {
+                                // Fetch endpoints first, then auto-select when results arrive
+                                if !item.loading_providers {
+                                    item.loading_providers = true;
+                                    item.pending_select = true;
+                                    let model_id = item.id.clone();
+                                    tokio::spawn(async move {
+                                        crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                    });
+                                } else {
+                                    // Already loading; just mark pending select
+                                    item.pending_select = true;
+                                }
+                            } else {
+                                // Choose a provider that supports tools if available, otherwise first provider
+                                let provider_choice = item
+                                    .providers
+                                    .iter()
+                                    .find(|p| p.supports_tools)
+                                    .or_else(|| item.providers.first())
+                                    .map(|p| p.id.clone());
+                                if let Some(pid) = provider_choice {
+                                    chosen_id = Some(format!("{}::{}", item.id, pid));
+                                } else {
+                                    chosen_id = Some(item.id.clone());
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('?') => {
+                        mb.help_visible = !mb.help_visible;
+                    }
+                    _ => {}
+                }
+            }
+            // Drop the mutable borrow of self.model_browser before switching model
+            if let Some(id) = chosen_id {
+                // id format: "model_id::provider_id" when provider selected, or just model_id
+                if let Some((model_id, provider_id)) = id.split_once("::") {
+                    self.apply_model_provider_selection(model_id, Some(provider_id));
+                } else {
+                    self.apply_model_provider_selection(&id, None);
+                }
+                self.model_browser = None;
+            }
+            self.needs_redraw = true;
+            return;
+        }
+
+        // Insert mode input history navigation
+        if self.mode == Mode::Insert {
+            use KeyCode::*;
+            match key.code {
+                KeyCode::Up => {
+                    self.input_history_prev();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Down => {
+                    self.input_history_next();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::PageUp => {
+                    self.input_history_first();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::PageDown => {
+                    self.input_history_last();
+                    self.needs_redraw = true;
+                    return;
+                }
+                _ => {}
+            }
+        } else {
+            // Normal mode: delete the currently selected message with Del
+            if matches!(key.code, crossterm::event::KeyCode::Delete) {
+                let id = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let guard = self.state.chat.0.read().await;
+                        guard.current
+                    })
+                });
+                // Use node-only deletion semantics (re-parent children)
+                self.send_cmd(StateCommand::DeleteNode { id });
+                self.needs_redraw = true;
+                return;
+            }
+        }
+
         if let Some(action) = to_action(self.mode, key, self.command_style) {
             self.handle_action(action);
         }
+        self.needs_redraw = true;
+    }
+
+    fn apply_model_provider_selection(&mut self, model_id: &str, provider_slug: Option<&str>) {
+        // Delegate persistence and broadcasts to the state manager (non-blocking for UI)
+        let provider_id = provider_slug.unwrap_or("-");
+        self.send_cmd(StateCommand::SelectModelProvider {
+            model_id: model_id.to_string(),
+            provider_id: provider_id.to_string(),
+        });
         self.needs_redraw = true;
     }
 
@@ -507,6 +720,8 @@ impl App {
             }
 
             Action::InsertChar(c) => {
+                // While typing, keep the viewport stable (disable auto-centering on selection)
+                self.conversation.set_free_scrolling(true);
                 // Special-case: Slash style treats leading '/' as entering Command mode.
                 if self.mode == Mode::Insert
                     && self.command_style == CommandStyle::Slash
@@ -527,6 +742,8 @@ impl App {
                 {
                     self.mode = Mode::Insert;
                 }
+                // While editing, avoid auto-scrolling caused by selection adjustments
+                self.conversation.set_free_scrolling(true);
                 self.handle_backspace();
             }
 
@@ -554,12 +771,18 @@ impl App {
                         parent_id: new_msg_id,
                         child_id: Uuid::new_v4(),
                     });
+                    // Snap to bottom to ensure the full assistant/system response is visible.
+                    self.conversation.request_bottom();
+                    self.conversation.set_free_scrolling(true);
                     self.input_buffer.clear();
                 }
             }
 
             Action::ExecuteCommand => {
                 self.execute_command();
+                // Ensure snap-to-bottom so long outputs (e.g., /help) are fully visible.
+                self.conversation.request_bottom();
+                self.conversation.set_free_scrolling(true);
                 self.input_buffer.clear();
                 self.mode = Mode::Insert;
             }
@@ -680,7 +903,205 @@ impl App {
     }
 
     fn add_input_char(&mut self, c: char) {
+        // Typing resets input-history browsing
+        self.input_history_pos = None;
         self.input_buffer.push(c);
+    }
+
+    /// Rebuild the per-conversation user-input history from the current path.
+    fn rebuild_input_history(&mut self) {
+        let msgs = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let guard = self.state.chat.0.read().await;
+                guard
+                    .get_full_path()
+                    .into_iter()
+                    .filter(|m| m.kind == MessageKind::User && !m.content.is_empty())
+                    .map(|m| m.content.clone())
+                    .collect::<Vec<String>>()
+            })
+        });
+        self.input_history = msgs;
+    }
+
+    fn input_history_prev(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        match self.input_history_pos {
+            None => {
+                // Start from most recent (last)
+                let last = self.input_history.len().saturating_sub(1);
+                self.input_history_pos = Some(last);
+                self.input_buffer = self.input_history[last].clone();
+            }
+            Some(pos) => {
+                if pos > 0 {
+                    let new_pos = pos - 1;
+                    self.input_history_pos = Some(new_pos);
+                    self.input_buffer = self.input_history[new_pos].clone();
+                }
+            }
+        }
+    }
+
+    fn input_history_next(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        match self.input_history_pos {
+            None => {
+                // Nothing selected; keep buffer as-is
+            }
+            Some(pos) => {
+                if pos + 1 < self.input_history.len() {
+                    let new_pos = pos + 1;
+                    self.input_history_pos = Some(new_pos);
+                    self.input_buffer = self.input_history[new_pos].clone();
+                } else {
+                    // Beyond the newest -> clear buffer and exit history mode
+                    self.input_history_pos = None;
+                    self.input_buffer.clear();
+                }
+            }
+        }
+    }
+
+    fn input_history_first(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        self.input_history_pos = Some(0);
+        self.input_buffer = self.input_history[0].clone();
+    }
+
+    fn input_history_last(&mut self) {
+        if self.input_history.is_empty() {
+            self.rebuild_input_history();
+        }
+        if self.input_history.is_empty() {
+            return;
+        }
+        let last = self.input_history.len().saturating_sub(1);
+        self.input_history_pos = Some(last);
+        self.input_buffer = self.input_history[last].clone();
+    }
+
+    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelEntry>) {
+        let items = items
+            .into_iter()
+            .map(|m| {
+                // Provider rows
+                let provider_rows = m
+                    .providers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| ModelProviderRow {
+                        id: p.id,
+                        context_length: p.context_length,
+                        input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
+                        output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                        supports_tools: p
+                            .supported_parameters
+                            .as_ref()
+                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                            .or_else(|| p.capabilities.as_ref().and_then(|c| c.tools))
+                            .unwrap_or(false),
+                    })
+                    .collect::<Vec<_>>();
+
+                // Model-level tools: true if any provider supports tools OR model supported_parameters says so
+                let model_supports_tools = m
+                    .supported_parameters
+                    .as_ref()
+                    .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                    .unwrap_or(false)
+                    || provider_rows.iter().any(|p| p.supports_tools);
+
+                ModelBrowserItem {
+                    id: m.id,
+                    name: m.name,
+                    context_length: m
+                        .context_length
+                        .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
+                    input_cost: m.pricing.as_ref().and_then(|p| p.input),
+                    output_cost: m.pricing.as_ref().and_then(|p| p.output),
+                    supports_tools: model_supports_tools,
+                    providers: provider_rows,
+                    expanded: false,
+                    loading_providers: false,
+                    pending_select: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.model_browser = Some(ModelBrowserState {
+            visible: true,
+            keyword,
+            selected: 0,
+            items,
+            help_visible: false,
+        });
+        self.needs_redraw = true;
+    }
+
+    fn close_model_browser(&mut self) {
+        self.model_browser = None;
+        self.needs_redraw = true;
+    }
+
+    fn switch_to_model(&mut self, model_id: &str) {
+        // Mutate runtime config to promote or select the model, then broadcast info
+        let state = Arc::clone(&self.state);
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut cfg = state.config.write().await;
+                let reg = &mut cfg.model_registry;
+
+                let exists = reg.providers.iter().any(|p| p.id == model_id);
+                if !exists {
+                    // Promote discovered model into registry
+                    reg.providers.push(ModelConfig {
+                        id: model_id.to_string(),
+                        api_key: String::new(),
+                        provider_slug: None,
+                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+                        base_url: OPENROUTER_URL.to_string(),
+                        model: model_id.to_string(),
+                        display_name: Some(model_id.to_string()),
+                        provider_type: ProviderType::OpenRouter,
+                        llm_params: Some(crate::llm::LLMParameters {
+                            model: model_id.to_string(),
+                            // AI: Maybe we should add a field here to require models with tools?
+                            ..Default::default()
+                        }),
+                    });
+                    // Load keys across providers
+                    reg.load_api_keys();
+                }
+
+                // Switch active provider
+                reg.active_model_config = model_id.to_string();
+            });
+        });
+
+        self.active_model_id = model_id.to_string();
+        self.active_model_indicator = Some((self.active_model_id.clone(), Instant::now()));
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: format!("Switched active model to {}", model_id),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+        self.needs_redraw = true;
     }
 
     fn execute_command(&mut self) {
@@ -707,7 +1128,7 @@ impl App {
 
         let mut lines = vec!["Available models:".to_string()];
 
-        for pc in &cfg.provider_registry.providers {
+        for pc in &cfg.model_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
             lines.push(format!("  {:<28}  {}", pc.id, display));
         }
@@ -742,5 +1163,9 @@ impl App {
     /// Set running to false to quit the application.
     fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn set_selected_model(&mut self, model_id: String) {
+        self.active_model_id = model_id;
     }
 }

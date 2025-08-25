@@ -1,7 +1,6 @@
 use super::App;
 use crate::app::view::EventSubscriber;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -10,6 +9,7 @@ use uuid::Uuid;
 use super::AppEvent;
 use super::system;
 use super::utils::display_file_info;
+use crate::app::view::components::model_browser::ModelProviderRow;
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
@@ -20,11 +20,73 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }
+        AppEvent::ModelSearchResults { keyword, items } => {
+            // Populate or update the Model Browser overlay with async results
+            app.open_model_browser(keyword, items);
+        }
+        AppEvent::ModelEndpointsResults { model_id, providers } => {
+            // Defer selection and overlay close until after we release the borrow on model_browser
+            let mut select_after: Option<(String, String)> = None;
+            if let Some(mb) = app.model_browser.as_mut() {
+                if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
+                    // Map ProviderEntry -> ModelProviderRow
+                    let rows = providers
+                        .into_iter()
+                        .map(|p| {
+                            let supports_tools = p
+                                .supported_parameters
+                                .as_ref()
+                                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                                .unwrap_or_else(|| {
+                                    p.capabilities
+                                        .as_ref()
+                                        .and_then(|c| c.tools)
+                                        .unwrap_or(false)
+                                });
+                            ModelProviderRow {
+                                id: p.id,
+                                context_length: p.context_length,
+                                input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
+                                output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                                supports_tools,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    item.providers = rows;
+                    item.loading_providers = false;
+
+                    // If user pressed 's' while loading, compute best provider now
+                    if item.pending_select {
+                        let provider_choice = item
+                            .providers
+                            .iter()
+                            .find(|p| p.supports_tools)
+                            .or_else(|| item.providers.first())
+                            .map(|p| p.id.clone());
+
+                        if let Some(pid) = provider_choice {
+                            // Defer selection until after borrow ends
+                            select_after = Some((item.id.clone(), pid));
+                        }
+                        item.pending_select = false;
+                    }
+                }
+            }
+            if let Some((mid, pid)) = select_after {
+                app.apply_model_provider_selection(&mid, Some(&pid));
+                app.model_browser = None;
+            }
+        }
+        AppEvent::ModelEndpointsRequest { .. } => {
+            // Request event: handled by llm_manager; UI waits for ModelEndpointsResults.
+        }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
         }
         AppEvent::Ui(_ui_event) => {}
         AppEvent::Llm(_event) => {}
+        AppEvent::LlmTool(_event) => {}
+        AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
         AppEvent::Error(error_event) => {
             let msg = format!("Error: {}", error_event.message);
@@ -98,6 +160,14 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     app.send_cmd(StateCommand::WriteQuery {
                         query_name,
                         query_content,
+                    });
+                }
+                system::SystemEvent::HistorySaved { file_path } => {
+                    tracing::debug!("App receives HistorySaved: {}", file_path);
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Chat history exported to {}", file_path),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
                     });
                 }
                 system::SystemEvent::BackupDb {

@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::{WriteResult, WriteSnippetData};
+use ploke_core::{TrackingHash, WriteResult, WriteSnippetData};
 
 /**
 A handle to the IoManager actor.
@@ -158,6 +158,31 @@ impl IoManagerHandle {
         response_rx.await.map_err(|_| RecvError::RecvError)
     }
 
+    /// Read and verify the entire file content against an expected TrackingHash.
+    ///
+    /// Normalizes the path against configured roots and symlink policy (if set),
+    /// reads the file as UTF-8, parses as Rust to compute the tracking hash,
+    /// and compares it to expected_hash.
+    pub async fn read_full_verified(
+        &self,
+        file_path: std::path::PathBuf,
+        expected_hash: TrackingHash,
+        namespace: uuid::Uuid,
+    ) -> Result<Result<String, PlokeError>, errors::RecvError> {
+        let (responder, response_rx) = oneshot::channel();
+        let request = IoRequest::ReadFullVerified {
+            file_path,
+            expected_hash,
+            namespace,
+            responder,
+        };
+        self.request_sender
+            .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError)?;
+        response_rx.await.map_err(|_| RecvError::RecvError)
+    }
+
     /// Scan a batch of files for content changes (tracking-hash mismatch).
     ///
     /// Returns `Ok(Ok(Vec<Option<ChangedFileData>>))` on success; the inner vector preserves
@@ -267,7 +292,10 @@ impl IoManagerHandle {
         requests: Vec<WriteSnippetData>,
     ) -> Result<Vec<Result<WriteResult, PlokeError>>, IoError> {
         let (responder, response_rx) = oneshot::channel();
-        let request = IoRequest::WriteSnippetBatch { requests, responder };
+        let request = IoRequest::WriteSnippetBatch {
+            requests,
+            responder,
+        };
         self.request_sender
             .send(IoManagerMessage::Request(request))
             .await

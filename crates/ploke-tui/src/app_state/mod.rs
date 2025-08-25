@@ -15,7 +15,7 @@ mod helpers;
 // Public re-exports to keep external API stable
 pub use commands::{ListNavigation, StateCommand, StateError};
 pub use core::{
-    AppState, ChatState, Config, ConfigState, IndexingState, SystemState, SystemStatus,
+    AppState, ChatState, ConfigState, IndexingState, RuntimeConfig, SystemState, SystemStatus,
 };
 pub use dispatcher::state_manager;
 pub use events::MessageUpdatedEvent;

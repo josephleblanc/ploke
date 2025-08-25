@@ -24,7 +24,7 @@ pub(crate) fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
     let path_canon = canonicalize_best_effort(path);
     roots
         .iter()
-        .any(|root| path_canon.starts_with(&canonicalize_best_effort(root)))
+        .any(|root| path_canon.starts_with(canonicalize_best_effort(root)))
 }
 
 pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<PathBuf, IoError> {
@@ -164,4 +164,3 @@ pub(crate) fn path_within_roots_with_policy(
     // TODO(Phase 7): Implement strict symlink policy evaluation
     path_within_roots(path, roots)
 }
-

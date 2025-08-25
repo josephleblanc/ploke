@@ -14,7 +14,7 @@ pub enum NavigationDirection {
     Previous,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ChatError {
     ParentNotFound(Uuid),
     SiblingNotFound(Uuid),
@@ -352,7 +352,7 @@ impl ChatHistory {
     }
 
     /// Rebuilds the cached root -> tail path.
-    fn rebuild_path_cache(&mut self) {
+    pub(crate) fn rebuild_path_cache(&mut self) {
         let mut path = Vec::new();
         let mut cur = Some(self.tail);
         while let Some(id) = cur {
@@ -479,6 +479,138 @@ impl ChatHistory {
         // NOTE: Assumes the same kind (safe for sibling of message)
         let new_id = Uuid::new_v4();
         self.add_child(parent_id, new_id, content, status, sibling.kind)
+    }
+
+    /// Deletes a message and its descendant subtree from the conversation history.
+    ///
+    /// - The root message cannot be deleted.
+    /// - If the deleted subtree contains `current` or `tail`, they are moved to the parent.
+    /// - Rebuilds the cached path after mutation.
+    ///
+    /// Returns the new `current` message id if deletion occurred, otherwise `None`.
+    pub fn delete_message(&mut self, id: Uuid) -> Option<Uuid> {
+        // Cannot delete if not found or if root
+        let parent_id = self.messages.get(&id).and_then(|m| m.parent)?;
+
+        // Collect subtree nodes to delete (DFS)
+        let mut stack = vec![id];
+        let mut to_delete: Vec<Uuid> = Vec::new();
+        while let Some(node_id) = stack.pop() {
+            if let Some(msg) = self.messages.get(&node_id) {
+                for &child in &msg.children {
+                    stack.push(child);
+                }
+            }
+            to_delete.push(node_id);
+        }
+
+        // Update parent's children and selected_child
+        if let Some(parent) = self.messages.get_mut(&parent_id) {
+            parent.children.retain(|cid| *cid != id);
+            if parent.selected_child == Some(id) {
+                // Prefer the last remaining child if any
+                parent.selected_child = parent.children.last().copied();
+            }
+        }
+
+        // Track whether current/tail are being deleted
+        let deletes_current = to_delete.iter().any(|n| *n == self.current);
+        let deletes_tail = to_delete.iter().any(|n| *n == self.tail);
+
+        // Remove all collected nodes
+        for node in to_delete {
+            self.messages.remove(&node);
+        }
+
+        // Adjust tail/current if they were part of the deleted subtree
+        if deletes_tail {
+            self.tail = parent_id;
+        }
+        if deletes_current {
+            self.current = parent_id;
+        }
+
+        // Rebuild path cache to reflect new tree structure
+        self.rebuild_path_cache();
+
+        Some(self.current)
+    }
+
+    /// Removes only the specified node, preserving and re-parenting its children to the node's parent.
+    ///
+    /// Semantics:
+    /// - Does NOT delete the subtree. Instead, the node's children are spliced into the parent's
+    ///   children at the same index where the deleted node was located, preserving order.
+    /// - Root node cannot be deleted.
+    /// - Selection updates:
+    ///   - If `current` was the deleted node, it becomes the first re-parented child, or the parent if no children.
+    ///   - If `tail` was the deleted node, it becomes the last re-parented child, or the parent if no children.
+    /// - Rebuilds the cached path after mutation.
+    ///
+    /// Returns the new `current` message id if deletion occurred, otherwise `None`.
+    pub fn delete_node(&mut self, id: Uuid) -> Option<Uuid> {
+        // Cannot delete root or missing node
+        let (parent_id, children_ids) = {
+            let node = self.messages.get(&id)?;
+            let pid = node.parent?;
+            (pid, node.children.clone())
+        };
+
+        // Update each child's parent pointer
+        for child_id in &children_ids {
+            if let Some(child) = self.messages.get_mut(child_id) {
+                child.parent = Some(parent_id);
+            }
+        }
+
+        // Splice children into the parent's children list at the position of the deleted node
+        if let Some(parent) = self.messages.get_mut(&parent_id) {
+            if let Some(pos) = parent.children.iter().position(|&cid| cid == id) {
+                // Remove the node placeholder
+                parent.children.remove(pos);
+                // Insert children in its place preserving order
+                parent
+                    .children
+                    .splice(pos..pos, children_ids.iter().copied());
+
+                // If the parent's selected_child pointed at the deleted node, choose a reasonable replacement
+                if parent.selected_child == Some(id) {
+                    parent.selected_child = children_ids
+                        .first()
+                        .copied()
+                        .or_else(|| parent.children.last().copied());
+                }
+            } else {
+                // If position not found, append children to parent (fallback)
+                parent.children.extend(children_ids.iter().copied());
+                if parent.selected_child == Some(id) {
+                    parent.selected_child = children_ids
+                        .first()
+                        .copied()
+                        .or_else(|| parent.children.last().copied());
+                }
+            }
+        }
+
+        // Track selection adjustments
+        let deletes_current = self.current == id;
+        let deletes_tail = self.tail == id;
+
+        // Remove the node itself
+        self.messages.remove(&id);
+
+        // Adjust tail/current if they were the deleted node
+        if deletes_tail {
+            self.tail = children_ids.last().copied().unwrap_or(parent_id);
+        }
+        if deletes_current {
+            self.current = children_ids.first().copied().unwrap_or(parent_id);
+        }
+
+        // Rebuild path cache to reflect new structure
+        self.rebuild_path_cache();
+
+        Some(self.current)
     }
 
     /// Gets the index position of a message within its parent's children list
@@ -630,12 +762,7 @@ impl ChatHistory {
         md.push_str("# Ploke Chat History\n\n");
 
         for message in self.get_full_path() {
-            md.push_str(&format!(
-                "## [{}] {}\n\n{}\n\n",
-                message.kind,
-                chrono::Utc::now().to_rfc3339(),
-                message.content
-            ));
+            md.push_str(&format!("## [{}]\n\n{}\n\n", message.kind, message.content));
         }
 
         md
@@ -747,4 +874,316 @@ pub(crate) async fn atomic_write(
     temp.persist(path)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn delete_root_returns_none_and_no_changes() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+        let orig_len = ch.messages.len();
+
+        let res = ch.delete_message(root);
+
+        assert!(res.is_none());
+        assert_eq!(ch.messages.len(), orig_len);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_nonexistent_returns_none_and_no_effect() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let res = ch.delete_message(Uuid::new_v4());
+
+        assert!(res.is_none());
+        assert_eq!(ch.messages.len(), 1);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_leaf_updates_state() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "User: hi",
+            MessageStatus::Completed,
+            MessageKind::User,
+        )
+        .unwrap();
+
+        // Set current to the leaf to exercise current-move behavior
+        ch.current = u1;
+
+        let res = ch.delete_message(u1);
+
+        assert_eq!(res, Some(root));
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.current, root);
+
+        // Parent should have no children and no selected child
+        let parent = ch.messages.get(&root).unwrap();
+        assert!(parent.children.is_empty());
+        assert!(parent.selected_child.is_none());
+
+        // Path cache should be rebuilt to just root
+        assert_eq!(ch.path_len(), 1);
+        let ids: Vec<Uuid> = ch.full_path_ids().collect();
+        assert_eq!(ids, vec![root]);
+    }
+
+    #[test]
+    fn delete_internal_node_removes_subtree() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // Set current inside the subtree to be deleted
+        ch.current = a1;
+
+        let res = ch.delete_message(u1);
+
+        assert_eq!(res, Some(root));
+        assert_eq!(ch.messages.len(), 1);
+        let parent = ch.messages.get(&root).unwrap();
+        assert!(parent.children.is_empty());
+        assert!(parent.selected_child.is_none());
+        assert_eq!(ch.tail, root);
+        assert_eq!(ch.current, root);
+        assert_eq!(ch.path_len(), 1);
+    }
+
+    #[test]
+    fn delete_sibling_updates_selected_child_and_tail() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // After adding a2, selected_child should point to a2
+        assert_eq!(ch.messages.get(&u1).unwrap().selected_child, Some(a2));
+
+        // Set current to a1 (the sibling that will remain)
+        ch.current = a1;
+
+        let res = ch.delete_message(a2);
+
+        // Deletion returns Some(current) and current should remain a1
+        assert_eq!(res, Some(a1));
+        assert_eq!(ch.current, a1);
+
+        // Tail should have moved up to u1 (since tail was a2)
+        assert_eq!(ch.tail, u1);
+
+        // Parent should now only contain a1 and select a1
+        let parent = ch.messages.get(&u1).unwrap();
+        assert_eq!(parent.children, vec![a1]);
+        assert_eq!(parent.selected_child, Some(a1));
+
+        // Path root -> u1
+        assert_eq!(ch.path_len(), 2);
+        let ids: Vec<Uuid> = ch.full_path_ids().collect();
+        assert_eq!(ids, vec![root, u1]);
+    }
+
+    #[test]
+    fn add_sibling_on_root_errors() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let res = ch.add_sibling(root, "x", MessageStatus::Completed);
+
+        assert!(matches!(res, Err(ChatError::RootHasNoSiblings)));
+    }
+
+    #[test]
+    fn navigate_sibling_requires_two_children() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+        ch.current = u1;
+
+        let res = ch.navigate_sibling(NavigationDirection::Next);
+
+        assert!(matches!(res, Err(ChatError::SiblingNotFound(_))));
+    }
+
+    #[test]
+    fn last_user_msg_behaves() {
+        let mut ch = ChatHistory::new();
+
+        // No user message yet
+        assert!(ch.last_user_msg().unwrap().is_none());
+
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A1",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a1;
+        let (id, content) = ch
+            .last_user_msg()
+            .unwrap()
+            .expect("should find nearest user");
+        assert_eq!(id, u1);
+        assert_eq!(content, "Q1");
+
+        // Deeper conversation
+        let u2 = Uuid::new_v4();
+        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a2 = Uuid::new_v4();
+        ch.add_child(
+            u2,
+            a2,
+            "A2",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a2;
+        let (id2, content2) = ch
+            .last_user_msg()
+            .unwrap()
+            .expect("should find deeper user");
+        assert_eq!(id2, u2);
+        assert_eq!(content2, "Q2");
+    }
+
+    #[test]
+    fn current_path_ids_sequence() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        ch.current = a1;
+
+        let ids: Vec<Uuid> = ch.current_path_ids().collect();
+        assert_eq!(ids, vec![root, u1, a1]);
+    }
+
+    #[test]
+    fn iter_path_matches_tail_chain() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "A",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // Tail is a1 by construction
+        let ids: Vec<Uuid> = ch.iter_path().map(|m| m.id).collect();
+        assert_eq!(ch.path_len(), 3);
+        assert_eq!(ids, vec![root, u1, a1]);
+    }
+
+    #[tokio::test]
+    async fn persist_writes_expected_content() {
+        let ch = ChatHistory::new();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.md");
+
+        let expected = ch.format_for_persistence();
+        ch.persist(&path).await.unwrap();
+
+        let read = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(read, expected);
+    }
 }

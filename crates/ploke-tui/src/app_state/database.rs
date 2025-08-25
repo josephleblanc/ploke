@@ -761,8 +761,8 @@ mod test {
             )
             .add_source(config::Environment::default().separator("_"))
             .build()?
-            .try_deserialize::<crate::user_config::Config>()
-            .unwrap_or_else(|_| crate::user_config::Config::default());
+            .try_deserialize::<crate::user_config::UserConfig>()
+            .unwrap_or_else(|_| crate::user_config::UserConfig::default());
 
         // Merge curated defaults with user overrides
         config.registry = config.registry.with_defaults();
@@ -809,6 +809,7 @@ mod test {
             db: db_handle.clone(),
             embedder: Arc::clone(&proc_arc),
             io_handle: io_handle.clone(),
+            proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             rag: Some(Arc::new(rag)),
             budget: TokenBudget::default(), // rag_tx: rag_event_tx.clone()
         });

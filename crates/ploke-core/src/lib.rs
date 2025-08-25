@@ -12,15 +12,12 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
-use std::path::PathBuf;
-
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
-pub mod graph;
-
 pub mod io_types;
-pub use io_types::{ ChangedFileData, EmbeddingData, FileData, WriteSnippetData, WriteResult };
+pub use io_types::{ChangedFileData, EmbeddingData, FileData, WriteResult, WriteSnippetData};
+pub mod rag_types;
 
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
@@ -797,7 +794,6 @@ mod ids {
 }
 
 pub use ids::*;
-use uuid::Uuid;
 
 /// Error type for ID conversions.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)] // Removed Copy

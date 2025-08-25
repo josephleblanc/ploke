@@ -3874,8 +3874,11 @@ dependencies = [
 name = "ploke-error"
 version = "0.1.0"
 dependencies = [
+ "miette",
  "proc-macro2",
+ "serde",
  "thiserror 2.0.12",
+ "tracing",
  "uuid",
 ]
 
@@ -3921,6 +3924,7 @@ dependencies = [
  "ploke-error",
  "ploke-io",
  "ploke-test-utils",
+ "serde",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -4006,6 +4010,7 @@ dependencies = [
  "governor",
  "insta",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "nonzero_ext",
  "num_cpus",
@@ -4024,6 +4029,8 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
+ "similar",
  "syn 2.0.100",
  "syn_parser",
  "tempfile",

@@ -8,16 +8,16 @@ pub(super) async fn switch_model(
     tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
 
     let mut cfg = state.config.write().await;
-    if cfg.provider_registry.set_active(&alias_or_id) {
+    if cfg.model_registry.set_active(&alias_or_id) {
         tracing::debug!(
             "sending AppEvent::System(SystemEvent::ModelSwitched {}
-                        Trying to find cfg.provider_registry.get_active_provider(): {:#?}",
+                        Trying to find cfg.model_registry.get_active_model_config(): {:#?}",
             alias_or_id,
-            cfg.provider_registry.get_active_provider(),
+            cfg.model_registry.get_active_model_config(),
         );
         let actual_model = cfg
-            .provider_registry
-            .get_active_provider()
+            .model_registry
+            .get_active_model_config()
             .map(|p| p.model.clone())
             .unwrap_or_else(|| alias_or_id.clone());
         event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(

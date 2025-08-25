@@ -81,3 +81,129 @@ Open decisions (M0 focus)
 How to use
 - Add new items at the bottom; include the four required parts (context, options, recommendation, blocker).
 - Reference the related implementation-log-XXX.md entries when a decision is finalized.
+
+New items added 2025-08-19 (accelerated M0)
+6) ObservabilityStore integration (BLOCKER)
+   - Context: ploke-db needs to expose the ObservabilityStore contract (conversation_turn, tool_call with Validity and Json) to unlock DB-first persistence in TUI.
+   - Options:
+     a) Land minimal ObservabilityStore with required methods only; expand later.
+     b) Gate behind feature flag; fall back to no-op when disabled.
+   - Recommended: (a) minimal API first to unblock TUI integration.
+   - Blocker: Yes — M0 requires this to persist chat history and tool-call lifecycle.
+      - USER: Added `crates/ploke-db/src/observability.rs` as read-only to conversation, unblocked.
+      - Further development coming in `ploke-db` to add tests, etc, but consider API stable
+
+7) Chat history DB persistence trigger (NEEDS DECISION)
+   - Context: TUI currently appends SysInfo/user/assistant in memory; FileManager export is optional. We need a consistent trigger for DB writes.
+   - Options:
+     a) Persist on every StateCommand::AddMessageImmediate/UpdateMessage.
+     b) Batch per N updates or on idle (debounce).
+   - Recommended: (a) for M0 simplicity; revisit batching in M1 with metrics.
+   - Blocker: Minor — requires aligning AppState/state_manager to call into ploke-db when adding/updating messages.
+    - USER: Agree on (a), added a TODO regarding adding a more ergonomic callback method on db to create a callback handler for the database to verify adding/updating messages in future db updates.
+
+8) Tool-call payload persistence default (CLARIFY)
+   - Context: Decision updated to store full arguments_json/outcome_json during fast iteration for debugging.
+   - Options:
+     a) Store full payloads now; add redaction toggles later.
+     b) Keep only hashes in M0.
+   - Recommended: (a) — store everything in M0; reintroduce redaction defaults pre prod-ready.
+   - Blocker: None — but schema and API should accept both for forward-compat.
+      - USER: Migration will occur, all current database items are prototype-only prior to prod-ready ploke-tui
+
+9) EventBus readiness for tests (NICE-TO-HAVE)
+   - Context: Broadcast channels only deliver to subscribed receivers; current tests use sleeps.
+   - Options:
+     a) Add a small Ready/Started event from run_event_bus after subscribing.
+     b) Keep sleeps in tests, document caveat (current approach).
+   - Recommended: (a) in a future PR; (b) acceptable for M0 timeframe.
+   - Blocker: No.
+      - USER: Follow recommendation for (b)
+
+10) Channel capacities configurability (FOLLOW-UP)
+   - Context: Defaults confirmed; power-user config requested.
+   - Options:
+     a) Add to user config with sane defaults; validate on load.
+     b) Keep as compile-time defaults until benchmarks suggest changes.
+   - Recommended: (a) in M1; keep (b) for M0.
+   - Blocker: No.
+      - USER: Agreed with recommendation
+
+11) Type-safety across ploke-db ObservabilityStore (FOLLOW-UP)
+   - Context: TUI now uses typed params and serde_json::Value for tool-call lifecycle. The current ploke-db API accepts Option<String> for arguments_json/outcome_json, requiring string round-trips.
+   - Options:
+     a) Extend ObservabilityStore to accept serde_json::Value (or a Json newtype) and convert internally to Cozo Json; keep String for backward compatibility during transition.
+     b) Keep String-only for M0 and revisit in M1.
+   - Recommended: (a) Adopt typed JSON inputs to reduce error surface and improve compile-time guarantees; provide From<Value> and TryFrom<String> conversions where helpful. Consider newtypes for Validity timestamps and ToolStatus.
+   - Blocker: Not for M0 (strings work), but desirable for M1 to improve type safety and reduce incidental bugs.
+
+Reference: See implementation-log-007.md for related changes and accelerated-pace requirement.
+
+New items added 2025-08-20 (M1 start)
+12) Preview mode defaults and truncation (NEEDS DECISION)
+   - Context: Diff previews can be large. We plan code-block previews by default with optional unified diff.
+   - Options:
+     a) Default "codeblock" (before/after) and cap to N lines per file (e.g., 300), with a "...truncated" footer.
+     b) Default "diff" (unified) and cap total preview size (e.g., 2000 lines), with per-file folding.
+   - Recommended: (a) for readability and minimal deps; add unified diff as opt-in later.
+   - Blocker: Minor — affects preview implementation and UI rendering.
+
+13) Auto-confirm edits threshold (QUESTION)
+   - Context: Tool payload can include a "confidence" value (0–1). We may allow auto-confirming above a threshold.
+   - Options:
+     a) Keep manual approval only in M1; ignore confidence.
+     b) Add config editing.auto_confirm_edits and editing.min_confidence (default disabled).
+   - Recommended: (b) as opt-in; default to manual approval.
+   - Blocker: None — requires adding config fields.
+
+14) Tool-call outcome on denial (CONFIRM)
+   - Context: On user denial, we currently emit ToolCallFailed with error_kind "denied by user".
+   - Options:
+     a) Keep as "failed" for observability simplicity.
+     b) Introduce a new "denied" terminal status in DB and eventing.
+   - Recommended: (a) for M1; revisit status semantics when ploke-db adds code_edit_proposal.
+   - Blocker: None — consistency decision for dashboards.
+
+15) Proposal retention policy (QUESTION)
+   - Context: After applied/denied, proposals remain in memory with terminal status.
+   - Options:
+     a) Keep them until session end; allow "edit clear <request_id>" later.
+     b) Evict after N minutes or when count exceeds a cap.
+   - Recommended: (a) for M1 simplicity.
+   - Blocker: None — minor memory considerations.
+
+16) Path normalization for previews (FOLLOW-UP)
+   - Context: Absolute paths can be noisy; we plan workspace-relative paths for display.
+   - Options:
+     a) Normalize paths against current crate focus or configured workspace root in TUI.
+     b) Keep absolute paths; rely on later normalization in DB layer.
+   - Recommended: (a) for UX; not blocking.
+   - Blocker: None.
+
+New items added 2025-08-20 (continued)
+17) Unified diff preview dependency (QUESTION)
+   - Context: Code-block previews are implemented; unified diff is optional for power users and reviewers.
+   - Options:
+     a) Add "similar" crate to generate unified diffs behind a config flag.
+     b) Keep code-blocks only in M1; revisit unified diff in M2.
+   - Recommended: (a) optional, default off; implement when time permits.
+   - Blocker: None.
+      - USER: Agreed
+
+18) DRY AppState construction (FOLLOW-UP)
+   - Context: Multiple callsites construct AppState directly, which can drift when fields change (e.g., proposals).
+   - Options:
+     a) Introduce an AppState::builder() or AppState::new_full(...) to centralize required fields.
+     b) Keep ad-hoc construction; update callsites as fields evolve.
+   - Recommended: (a) in a follow-up PR to reduce technical debt.
+   - Blocker: None.
+      - USER: Agreed, follow-up in PR
+
+19) Observability typed JSON inputs (FOLLOW-UP)
+   - Context: ObservabilityStore currently accepts Option<String> for JSON payloads.
+   - Options:
+     a) Extend APIs to accept serde_json::Value/newtypes with internal conversion to Cozo Json.
+     b) Keep String for M1; migrate later.
+   - Recommended: (a) for type-safety and fewer round-trips.
+   - Blocker: None (strings still work).
+      - USER: Agreed, follow-up in PR

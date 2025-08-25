@@ -11,6 +11,13 @@ Add a file-explorer side-panel.
 
 Add a default file name for instructions for the LLM, similar to the AGENT.md for some editors.
 
+- Create a way to drop the current database, or switch to a different database/crate for analysis
+
+## Possibly complex
+- Allow LLM to modify the AST for restructuring and reorganization.
+
+For example, it would be nice if the LLM could refactor by submitting a new organizational structure for functions, methods, etc, without needing to submit a full code edit. That way the LLm lan reason about the abstractions around project architecture and implement the user's requests. Stops the user from needing to copy/paste items around when doing refactoring, speeds things up.
+
 ## Code Context Map
 Crate a map that shows how the code snippets are connected in addition to
 providing code snippets relevant to the user query. The code-graph structure
@@ -19,6 +26,10 @@ functionality of enabling database queries.
 
 If we had this feature, it might have helped to avoid the error linked below:
 [See Potential Insights from E-DESIGN-DRIFT (Violating Core Design)] "Section 4 System/Tooling Factors"
+
+## Visual Representation of Vector Embeddings
+Open questions:
+- dimensionality reduction
 
 ## Cracked Smol Model
 

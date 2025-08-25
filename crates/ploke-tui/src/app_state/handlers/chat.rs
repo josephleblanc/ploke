@@ -11,28 +11,71 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
+// How can we add tracking during our test so we can ensure we see the expected outcomes? For now
+// we just want to be able to see what the LLM is doing when we send the tool call request, but we
+// would also like to find a way of actually testing that the tool runs as expected. Let's start by
+#[instrument(skip(state, event_bus, update), fields(msg_id = %id, new_status = ?update.status))]
 pub async fn update_message(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
     id: Uuid,
     update: MessageUpdate,
 ) {
-    tracing::Span::current().record("msg_id", format!("{}", id));
-    tracing::debug!(
-        content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
-        "Updating message"
+    tracing::info!(
+        "Updating message {} status={:?} content_preview={}",
+        id,
+        update.status,
+        update
+            .content
+            .as_ref()
+            .map(|c| truncate_string(c, 100))
+            .unwrap_or_default()
     );
     let mut chat_guard = state.chat.0.write().await;
 
     if let Some(message) = chat_guard.messages.get_mut(&id) {
+        let old_status = message.status.clone();
+        let msg_kind = message.kind;
+        let new_status = update.status.clone().unwrap_or(old_status.clone());
         match message.try_update(update) {
             Ok(_) => {
+                tracing::info!(
+                    msg_id = %id,
+                    kind = ?msg_kind,
+                    old_status = ?old_status,
+                    new_status = ?new_status,
+                    "Message updated successfully; dispatching MessageUpdatedEvent"
+                );
                 event_bus.send(MessageUpdatedEvent::new(id).into());
             }
             Err(e) => {
+                tracing::error!(
+                    msg_id = %id,
+                    kind = ?msg_kind,
+                    old_status = ?old_status,
+                    error = %e,
+                    "Message update failed; dispatching UpdateFailedEvent"
+                );
                 event_bus.send(UpdateFailedEvent::new(id, e).into());
             }
         }
+    }
+}
+
+pub async fn delete_message(state: &Arc<AppState>, event_bus: &Arc<EventBus>, id: Uuid) {
+    // Perform deletion and compute new current selection, if any
+    let new_current = {
+        let mut chat_guard = state.chat.0.write().await;
+        chat_guard.delete_message(id)
+    };
+
+    if let Some(curr) = new_current {
+        {
+            let mut chat_guard = state.chat.0.write().await;
+            chat_guard.current = curr;
+        }
+        // Notify UI to refresh based on the new current selection
+        event_bus.send(MessageUpdatedEvent::new(curr).into());
     }
 }
 

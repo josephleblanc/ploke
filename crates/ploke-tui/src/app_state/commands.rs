@@ -16,7 +16,11 @@ pub enum StateError {
 impl From<StateError> for ploke_error::Error {
     fn from(value: StateError) -> Self {
         match value {
-            StateError::MissingCrateFocus { msg } => ploke_error::Error::UiError(msg.to_string()),
+            StateError::MissingCrateFocus { msg } => {
+                ploke_error::Error::Domain(ploke_error::domain::DomainError::Ui {
+                    message: msg.to_string(),
+                })
+            }
         }
     }
 }
@@ -54,6 +58,9 @@ pub enum StateCommand {
         update: crate::chat_history::MessageUpdate,
     },
     DeleteMessage {
+        id: Uuid,
+    },
+    DeleteNode {
         id: Uuid,
     },
     ClearHistory {
@@ -161,6 +168,25 @@ pub enum StateCommand {
         strategy: RetrievalStrategy,
         budget: TokenBudget,
     },
+    SetEditingPreviewMode {
+        mode: crate::app_state::core::PreviewMode,
+    },
+    SetEditingMaxPreviewLines {
+        lines: usize,
+    },
+    SetEditingAutoConfirm {
+        enabled: bool,
+    },
+    ApproveEdits {
+        request_id: Uuid,
+    },
+    DenyEdits {
+        request_id: Uuid,
+    },
+    SelectModelProvider {
+        model_id: String,
+        provider_id: String,
+    },
 }
 
 impl StateCommand {
@@ -169,6 +195,7 @@ impl StateCommand {
         match self {
             AddMessage { .. } => "AddMessage",
             DeleteMessage { .. } => "DeleteMessage",
+            DeleteNode { .. } => "DeleteNode",
             AddUserMessage { .. } => "AddUserMessage",
             UpdateMessage { .. } => "UpdateMessage",
             ClearHistory { .. } => "ClearHistory",
@@ -206,6 +233,12 @@ impl StateCommand {
             RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
             ProcessWithRag { .. } => "ProcessWithRag",
+            SetEditingPreviewMode { .. } => "SetEditingPreviewMode",
+            SetEditingMaxPreviewLines { .. } => "SetEditingMaxPreviewLines",
+            SetEditingAutoConfirm { .. } => "SetEditingAutoConfirm",
+            ApproveEdits { .. } => "ApproveEdits",
+            DenyEdits { .. } => "DenyEdits",
+            SelectModelProvider { .. } => "SelectModelProvider",
         }
     }
 }

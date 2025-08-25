@@ -79,13 +79,6 @@ pub async fn read_query(event_bus: &Arc<EventBus>, query_name: String, file_name
         .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
 }
 
-pub async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-    use database::save_db;
-    if let std::ops::ControlFlow::Break(_) = save_db(state, event_bus).await {
-        return;
-    }
-}
-
 pub async fn batch_prompt_search(
     state: &Arc<AppState>,
     prompt_file: String,

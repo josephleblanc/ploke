@@ -14,12 +14,10 @@ Core eventing and telemetry
 - crates/ploke-tui/src/tracing_setup.rs
   - Default EnvFilter and file logging.
 
-Copy/paste-friendly list:
-crates/ploke-tui/src/event_bus/mod.rs
-crates/ploke-tui/src/app_state/handlers/indexing.rs
-crates/ploke-tui/src/app/events.rs
-crates/ploke-tui/src/error.rs
-crates/ploke-tui/src/tracing_setup.rs
+Minimal context list:
+- crates/ploke-tui/src/event_bus/mod.rs
+- crates/ploke-tui/src/app_state/handlers/indexing.rs
+- crates/ploke-tui/src/app/events.rs
 
 Tool-call bridge (compat path for M0)
 - crates/ploke-tui/src/llm/tool_call.rs
@@ -41,7 +39,14 @@ Docs and contracts
 
 Tests to add/update
 - EventBus SSoT test: inject IndexingStatus::Completed on index_tx, assert exactly one AppEvent::IndexingCompleted.
+  - Testing note: broadcast channels only deliver to currently-subscribed receivers. Ensure run_event_bus has subscribed to index_tx before sending (e.g., await a short sleep or a readiness signal).
 - (Optional) Tool-call await correlation test exists; extend with telemetry span fields.
 
 Notes
 - Do not change API surface to consumers in M0; focus on SSoT, telemetry, and DB persistence plan.
+
+Data type watchlist
+- ploke_embed::indexer::IndexingStatus has no Default and no From<IndexStatus> conversion. Construct it explicitly when sending over index_tx, for example:
+  - indexer::IndexingStatus { status: IndexStatus::Completed, recent_processed: 0, num_not_proc: 0, current_file: None, errors: vec![] }
+- IndexStatus::Failed(String) carries an error message; treat IndexStatus::Cancelled as a failure-equivalent in UI for M0.
+- IndexingStatus::calc_progress() returns 0.1 when num_not_proc == 0; do not assume strict 0.0..1.0 semantics when the denominator is zero.

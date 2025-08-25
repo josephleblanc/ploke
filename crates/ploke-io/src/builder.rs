@@ -152,8 +152,11 @@ impl IoManagerBuilder {
                         } else {
                             self.watcher_debounce
                         };
-                        let _watcher_handle =
-                            crate::watcher::start_watcher(roots.clone(), debounce, events_tx.clone());
+                        let _watcher_handle = crate::watcher::start_watcher(
+                            roots.clone(),
+                            debounce,
+                            events_tx.clone(),
+                        );
                         // intentionally detached; process lifetime-bound
                     }
                 }
@@ -164,7 +167,10 @@ impl IoManagerBuilder {
                 let symlink_policy_opt = if roots_empty {
                     None
                 } else {
-                    Some(self.symlink_policy.unwrap_or(path_policy::SymlinkPolicy::DenyCrossRoot))
+                    Some(
+                        self.symlink_policy
+                            .unwrap_or(path_policy::SymlinkPolicy::DenyCrossRoot),
+                    )
                 };
                 let manager = IoManager::new_with(
                     rx,

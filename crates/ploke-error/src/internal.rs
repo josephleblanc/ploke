@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+/// Errors indicating bugs, invalid states, or infrastructure failures inside the system.
+///
+/// These map to [`crate::Severity::Error`] and usually warrant investigation.
+#[cfg_attr(feature = "diagnostic", derive(miette::Diagnostic))]
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum InternalError {
     #[error("Internal compiler error: {0}")]

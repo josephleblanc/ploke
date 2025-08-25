@@ -16,3 +16,6 @@ Your coding style should:
 - prefer functional style over iterative.
 - minimize unnecessary or transitive allocations where possible.
 - include doc comments
+
+Specific Rules:
+- Use /// for item docs. Only use //! for file-top module docs when I explicitly say so.

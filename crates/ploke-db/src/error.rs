@@ -25,6 +25,9 @@ pub enum DbError {
     #[error("Do not change the max of the callback")]
     CallbackSetCheck,
 
+    #[error("Invalid lifecycle transition: {0}")]
+    InvalidLifecycle(String),
+
     #[error("Error receiving message: {0}")]
     CrossBeamSend(String),
 }

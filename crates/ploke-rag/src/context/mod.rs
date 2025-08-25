@@ -12,9 +12,13 @@
 //! are documented in `plans.md` for subsequent iterations.
 use std::collections::{HashMap, HashSet};
 
-use ploke_core::EmbeddingData;
+use ploke_core::{
+    rag_types::{AssembledContext, ContextPart, ContextPartKind, ContextStats, Modality},
+    EmbeddingData,
+};
 use ploke_db::{Database, NodeType};
 use ploke_io::IoManagerHandle;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
@@ -42,47 +46,6 @@ impl Default for TokenBudget {
             reserves: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ContextPartKind {
-    Code,
-    Doc,
-    Signature,
-    Metadata,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Modality {
-    Dense,
-    Sparse,
-    HybridFused,
-}
-
-#[derive(Debug, Clone)]
-pub struct ContextPart {
-    pub id: Uuid,
-    pub file_path: String,
-    pub ranges: Vec<(usize, usize)>,
-    pub kind: ContextPartKind,
-    pub text: String,
-    pub score: f32,
-    pub modality: Modality,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ContextStats {
-    pub total_tokens: usize,
-    pub files: usize,
-    pub parts: usize,
-    pub truncated_parts: usize,
-    pub dedup_removed: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct AssembledContext {
-    pub parts: Vec<ContextPart>,
-    pub stats: ContextStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

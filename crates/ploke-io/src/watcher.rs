@@ -63,7 +63,10 @@ pub fn start_watcher(
             move |res: Result<Event, notify::Error>| {
                 // Forward all results to the aggregator thread.
                 if let Err(send_err) = notify_tx.send(res) {
-                    tracing::warn!("ploke-io watcher: failed to forward notify event: {:?}", send_err);
+                    tracing::warn!(
+                        "ploke-io watcher: failed to forward notify event: {:?}",
+                        send_err
+                    );
                     // Best-effort surface as synthetic event
                     let _ = tx_broadcast.send(FileChangeEvent {
                         path: PathBuf::from("watcher-error:forward-failed"),
@@ -85,7 +88,11 @@ pub fn start_watcher(
                     old_path: None,
                     origin: None,
                 });
-                tracing::warn!("ploke-io watcher: failed to watch {}: {:?}", root.display(), e);
+                tracing::warn!(
+                    "ploke-io watcher: failed to watch {}: {:?}",
+                    root.display(),
+                    e
+                );
             }
         }
 
@@ -93,7 +100,8 @@ pub fn start_watcher(
         let _ = ready_tx.send(());
 
         // Debounce/coalesce loop
-        let mut pending: HashMap<PathBuf, (FileEventKind, Option<PathBuf>, Instant)> = HashMap::new();
+        let mut pending: HashMap<PathBuf, (FileEventKind, Option<PathBuf>, Instant)> =
+            HashMap::new();
 
         loop {
             // Use recv_timeout to provide a heartbeat for flushing
@@ -258,10 +266,10 @@ fn map_event_kind(kind: &EventKind) -> FileEventKind {
 #[cfg(all(test, feature = "watcher"))]
 mod tests {
     use super::*;
+    use std::time::Duration as StdDuration;
     use tempfile::tempdir;
     use tokio::sync::broadcast;
     use tokio::time::{timeout, Duration};
-    use std::time::Duration as StdDuration;
 
     async fn recv_kind_within(
         rx: &mut broadcast::Receiver<FileChangeEvent>,
@@ -277,9 +285,9 @@ mod tests {
             }
             match timeout(remaining, rx.recv()).await {
                 Ok(Ok(evt)) => {
-                    let kind_matches = std::mem::discriminant(&evt.kind)
-                        == std::mem::discriminant(&expected_kind);
-                    let path_matches = expected_path.map_or(true, |p| &evt.path == p);
+                    let kind_matches =
+                        std::mem::discriminant(&evt.kind) == std::mem::discriminant(&expected_kind);
+                    let path_matches = expected_path.map_or_else(|| true, |p| &evt.path == p);
                     if kind_matches && path_matches {
                         return true;
                     }
@@ -305,7 +313,13 @@ mod tests {
         // Create
         std::fs::write(&file, b"hello").unwrap();
         assert!(
-            recv_kind_within(&mut rx, FileEventKind::Created, Some(&file), Duration::from_secs(3)).await,
+            recv_kind_within(
+                &mut rx,
+                FileEventKind::Created,
+                Some(&file),
+                Duration::from_secs(3)
+            )
+            .await,
             "Did not receive Created event for {}",
             file.display()
         );
@@ -313,7 +327,13 @@ mod tests {
         // Modify
         std::fs::write(&file, b"world").unwrap();
         assert!(
-            recv_kind_within(&mut rx, FileEventKind::Modified, Some(&file), Duration::from_secs(3)).await,
+            recv_kind_within(
+                &mut rx,
+                FileEventKind::Modified,
+                Some(&file),
+                Duration::from_secs(3)
+            )
+            .await,
             "Did not receive Modified event for {}",
             file.display()
         );
@@ -321,7 +341,13 @@ mod tests {
         // Remove
         std::fs::remove_file(&file).unwrap();
         assert!(
-            recv_kind_within(&mut rx, FileEventKind::Removed, Some(&file), Duration::from_secs(3)).await,
+            recv_kind_within(
+                &mut rx,
+                FileEventKind::Removed,
+                Some(&file),
+                Duration::from_secs(3)
+            )
+            .await,
             "Did not receive Removed event for {}",
             file.display()
         );
@@ -342,7 +368,13 @@ mod tests {
 
         std::fs::write(&old_path, b"data").unwrap();
         // Wait for initial create to clear the pipeline
-        let _ = recv_kind_within(&mut rx, FileEventKind::Created, Some(&old_path), Duration::from_secs(3)).await;
+        let _ = recv_kind_within(
+            &mut rx,
+            FileEventKind::Created,
+            Some(&old_path),
+            Duration::from_secs(3),
+        )
+        .await;
 
         std::fs::rename(&old_path, &new_path).unwrap();
 
@@ -362,6 +394,11 @@ mod tests {
                 }
             }
         }
-        assert!(seen, "Did not receive Renamed event for rename {} -> {}", old_path.display(), new_path.display());
+        assert!(
+            seen,
+            "Did not receive Renamed event for rename {} -> {}",
+            old_path.display(),
+            new_path.display()
+        );
     }
 }

@@ -4,16 +4,24 @@
 pub mod bm25_index;
 mod database;
 mod error;
+pub mod get_by_id;
+pub mod helpers;
 mod index;
+pub mod observability;
 mod query;
 mod result;
 mod span;
+pub(crate) mod utils;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
 pub use index::hnsw::{
     create_index, create_index_primary, create_index_warn, hnsw_all_types, hnsw_of_type,
     replace_index_warn, search_similar, search_similar_args, EmbedDataVerbose, SimilarArgs,
+};
+pub use observability::{
+    CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,
+    Validity,
 };
 pub use query::{
     builder::FieldValue,

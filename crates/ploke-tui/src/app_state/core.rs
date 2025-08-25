@@ -1,8 +1,11 @@
+use ploke_core::TrackingHash;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::ProviderRegistry;
+use crate::user_config::{CommandStyle, EmbeddingConfig, ModelRegistry, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -24,6 +27,9 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub embedder: Arc<EmbeddingProcessor>,
     pub io_handle: IoManagerHandle,
+
+    // In-memory registry for staged code-edit proposals (M1)
+    pub proposals: RwLock<HashMap<Uuid, EditProposal>>,
 
     // RAG stuff
     pub rag: Option<Arc<ploke_rag::RagService>>,
@@ -48,16 +54,16 @@ impl std::ops::Deref for ChatState {
 }
 
 #[derive(Debug, Default)]
-pub struct ConfigState(RwLock<Config>);
+pub struct ConfigState(RwLock<RuntimeConfig>);
 
 impl ConfigState {
-    pub fn new(config: Config) -> Self {
-        ConfigState(RwLock::new(config))
+    pub fn new<C: Into<RuntimeConfig>>(config: C) -> Self {
+        ConfigState(RwLock::new(config.into()))
     }
 }
 
 impl std::ops::Deref for ConfigState {
-    type Target = RwLock<Config>;
+    type Target = RwLock<RuntimeConfig>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -95,10 +101,115 @@ impl std::ops::Deref for IndexingState {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Config {
+// Editing configuration for M1 safe-editing pipeline
+#[derive(Debug, Clone, Copy, Default)]
+pub enum PreviewMode {
+    #[default]
+    CodeBlock,
+    Diff,
+}
+
+#[derive(Debug, Clone)]
+pub struct EditingConfig {
+    pub preview_mode: PreviewMode,
+    pub auto_confirm_edits: bool,
+    pub max_preview_lines: usize,
+}
+
+impl Default for EditingConfig {
+    fn default() -> Self {
+        Self {
+            preview_mode: PreviewMode::CodeBlock,
+            auto_confirm_edits: false,
+            max_preview_lines: 300,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
-    pub provider_registry: ProviderRegistry,
+    pub model_registry: ModelRegistry,
+    pub editing: EditingConfig,
+    pub command_style: CommandStyle,
+    pub embedding: EmbeddingConfig,
+}
+
+impl From<UserConfig> for RuntimeConfig {
+    fn from(uc: UserConfig) -> Self {
+        let registry = uc.registry;
+        // Choose LLM params from active provider or default
+        let llm_params = registry
+            .get_active_model_config()
+            .and_then(|p| p.llm_params.clone())
+            .unwrap_or_default();
+
+        // Map persisted editing -> runtime editing
+        let editing = EditingConfig {
+            preview_mode: PreviewMode::CodeBlock,
+            auto_confirm_edits: uc.editing.auto_confirm_edits,
+            max_preview_lines: 300,
+        };
+
+        RuntimeConfig {
+            llm_params,
+            model_registry: registry,
+            editing,
+            command_style: uc.command_style,
+            embedding: uc.embedding,
+        }
+    }
+}
+
+impl RuntimeConfig {
+    /// Convert the live runtime config back into a persisted UserConfig for saving.
+    pub fn to_user_config(&self) -> UserConfig {
+        let editing = crate::user_config::EditingConfig {
+            auto_confirm_edits: self.editing.auto_confirm_edits,
+            agent: crate::user_config::EditingAgentConfig::default(),
+        };
+
+        UserConfig {
+            registry: self.model_registry.clone(),
+            command_style: self.command_style,
+            embedding: self.embedding.clone(),
+            editing,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum EditProposalStatus {
+    Pending,
+    Approved,
+    Denied,
+    Applied,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeAfter {
+    pub file_path: PathBuf,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum DiffPreview {
+    CodeBlocks { per_file: Vec<BeforeAfter> },
+    UnifiedDiff { text: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct EditProposal {
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub call_id: String,
+    pub proposed_at_ms: i64,
+    pub edits: Vec<ploke_core::WriteSnippetData>,
+    pub files: Vec<PathBuf>,
+    pub preview: DiffPreview,
+    pub status: EditProposalStatus,
 }
 
 impl AppState {
@@ -112,7 +223,7 @@ impl AppState {
     ) -> Self {
         Self {
             chat: ChatState(RwLock::new(ChatHistory::new())),
-            config: ConfigState(RwLock::new(Config::default())),
+            config: ConfigState(RwLock::new(RuntimeConfig::default())),
             system: SystemState(RwLock::new(SystemStatus::default())),
             indexing_state: RwLock::new(None),
             indexer_task: None,
@@ -120,9 +231,9 @@ impl AppState {
             db,
             embedder,
             io_handle,
+            proposals: RwLock::new(HashMap::new()),
             rag: Some(rag),
             budget,
-            // rag_tx,
         }
     }
 }

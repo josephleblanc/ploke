@@ -57,7 +57,7 @@ impl<'a> Context7Client<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> crate::types::DocsLookup for Context7Client<'a> {
+impl crate::types::DocsLookup for Context7Client<'_> {
     async fn resolve_library_id(&self, name: &str) -> Result<String, McpError> {
         self.mgr.ensure_started(&self.id).await?;
         let result = self

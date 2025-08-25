@@ -1,4 +1,16 @@
 #![allow(unused_variables, unused_imports, dead_code)]
+//! ploke-tui main library entry.
+//!
+//! Dataflow overview:
+//! - Config load: `try_main` reads config (toml/env), merges curated defaults, refreshes
+//!   OpenRouter capabilities, then resolves API keys and spins up subsystems.
+//! - Commands: UI routes parsed commands to `StateCommand` via channels; model/provider
+//!   commands update `ModelRegistry` and emit `SystemEvent::ModelSwitched`.
+//! - Persistence: config can be saved/loaded atomically with optional key redaction.
+//!
+//! Subsystems started in `try_main`:
+//! - State manager (app_state), LLM manager, EventBus, Observability, FileManager,
+//!   Indexer, optional RAG service.
 
 pub mod app;
 pub mod app_state;
@@ -7,18 +19,23 @@ pub mod error;
 pub mod event_bus;
 pub mod file_man;
 pub mod llm;
+pub mod observability;
 pub mod parser;
 pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
+pub mod rag;
 
-#[cfg(test)]
-mod test_utils;
+pub mod test_utils;
+pub use test_utils::mock;
+
+pub mod test_harness;
 
 use app::App;
 use app_state::{
-    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
+    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
+    core::RuntimeConfig, state_manager,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -35,13 +52,14 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, default_model};
+use user_config::{OPENROUTER_URL, ModelConfig, ProviderType, UserConfig, default_model};
 use utils::layout::layout_statusline;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
+use crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture};
 use futures::{FutureExt, StreamExt};
 use once_cell::sync::Lazy;
 use ratatui::{
@@ -69,8 +87,25 @@ pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
         event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
     }
 }
+
+pub async fn emit_app_event(event: AppEvent) {
+    if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
+        event_bus.send(event);
+    }
+}
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
+
+    // Global panic hook to restore terminal state on unexpected panics
+    std::panic::set_hook(Box::new(|_info| {
+        ratatui::restore();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture,
+        );
+    }));
 
     let mut config = config::Config::builder()
         .add_source(
@@ -84,15 +119,21 @@ pub async fn try_main() -> color_eyre::Result<()> {
         )
         .add_source(config::Environment::default().separator("_"))
         .build()?
-        .try_deserialize::<crate::user_config::Config>()
-        .unwrap_or_else(|_| crate::user_config::Config::default());
+        .try_deserialize::<UserConfig>()
+        .unwrap_or_else(|_| UserConfig::default());
 
     // Merge curated defaults with user overrides
     config.registry = config.registry.with_defaults();
 
+    // Refresh OpenRouter model registry (capabilities, pricing) for better routing/validation.
+    if let Err(e) = config.registry.refresh_from_openrouter().await {
+        tracing::warn!("Failed to refresh OpenRouter model registry: {}", e);
+    }
+
     // Apply API keys from environment variables to all providers
-    // config.registry.load_api_keys();
+    config.registry.load_api_keys();
     tracing::debug!("Registry after merge: {:#?}", config.registry);
+    let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
@@ -138,13 +179,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
         }
     };
 
+    // NOTE: Now that we got rid of `context_manager`, this event is unused.
     let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
     // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
     // tokio::spawn(context_manager.run());
 
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
-        config: ConfigState::default(),
+        config: ConfigState::new(runtime_cfg),
         system: SystemState::default(),
         indexing_state: RwLock::new(None), // Initialize as None
         indexer_task: Some(Arc::clone(&indexer_task)),
@@ -152,6 +194,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         db: db_handle,
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
+        proposals: RwLock::new(HashMap::new()),
         rag,
         // TODO: Add TokenBudget fields to Config
         budget: TokenBudget::default(),
@@ -192,6 +235,10 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+    tokio::spawn(observability::run_observability(
+        event_bus.clone(),
+        state.clone(),
+    ));
 
     let terminal = ratatui::init();
     let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
@@ -239,6 +286,9 @@ pub mod system {
     #[derive(Clone, Debug)]
     pub enum SystemEvent {
         SaveRequested(Vec<u8>), // Serialized content
+        HistorySaved {
+            file_path: String,
+        },
         MutationFailed(UiError),
         CommandDropped(&'static str),
         ReadSnippet(TypedEmbedData),
@@ -302,11 +352,23 @@ pub enum RagEvent {
 pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::Event),
+    LlmTool(llm::ToolEvent),
     // TODO:
     // File(file::Event),
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(system::SystemEvent),
+    ModelSearchResults {
+        keyword: String,
+        items: Vec<crate::llm::openrouter_catalog::ModelEntry>,
+    },
+    ModelEndpointsRequest {
+        model_id: String,
+    },
+    ModelEndpointsResults {
+        model_id: String,
+        providers: Vec<crate::llm::openrouter_catalog::ProviderEntry>,
+    },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
@@ -318,6 +380,7 @@ pub enum AppEvent {
     IndexingStarted,
     IndexingCompleted,
     IndexingFailed,
+    EventBusStarted,
     GenerateContext(Uuid),
 }
 
@@ -332,14 +395,24 @@ impl AppEvent {
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
+            AppEvent::LlmTool(ev) => match ev {
+                llm::ToolEvent::Requested { .. } => EventPriority::Background,
+                llm::ToolEvent::Completed { .. } | llm::ToolEvent::Failed { .. } => {
+                    EventPriority::Realtime
+                }
+            },
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::WriteQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::HistorySaved { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
+            AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
+            AppEvent::ModelEndpointsRequest { .. } => EventPriority::Background,
+            AppEvent::ModelEndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
@@ -352,6 +425,7 @@ impl AppEvent {
             AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
             AppEvent::Rag(_) => EventPriority::Background,
+            AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
         }
     }

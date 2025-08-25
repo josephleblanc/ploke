@@ -1,5 +1,6 @@
 use color_eyre::Result;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::instrument;
 
 use ploke_embed::indexer::{self, IndexStatus};
@@ -55,6 +56,10 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     #[allow(unused_mut)]
     let mut bg_rx = event_bus.background_tx.subscribe();
     // more here?
+    let mut started_sent = false;
+    let mut last_lag_warn: Option<Instant> = None;
+    // Signal readiness to subscribers/tests
+    let _ = event_bus.realtime_tx.send(AppEvent::EventBusStarted);
     loop {
         tokio::select! {
         // bg_event = bg_rx.recv() => {
@@ -96,11 +101,13 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                 Ok(status) => {
                     match status.status {
                         IndexStatus::Running => {
-                            tracing::info!("event bus sending {:?}", status.status);
-                            let result = event_bus
+                            if !started_sent {
+                                let _ = event_bus.realtime_tx.send(AppEvent::IndexingStarted);
+                                started_sent = true;
+                            }
+                            let _ = event_bus
                                 .realtime_tx
                                 .send(AppEvent::IndexingProgress(status));
-                            tracing::warn!("with result {:?}", result);
                             continue;
                         }
                         IndexStatus::Completed => {
@@ -110,17 +117,31 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                                 status.status,
                                 result
                             );
+                            // reset for next run
+                            started_sent = false;
                             continue;
                         }
                         IndexStatus::Cancelled => {
-                            // WARN: Consider whether this should count as a failure or not
-                            // when doing better error handling later.
+                            // Treat as failure-equivalent for UI in M0
                             let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
                             tracing::warn!(
                                 "event bus sending {:?} with result {:?}",
                                 status.status,
                                 result
                             );
+                            // reset for next run
+                            started_sent = false;
+                            continue;
+                        }
+                        IndexStatus::Failed(err) => {
+                            // Send failure notification to background channel; realtime gets a single SSOT event
+                            event_bus.send(AppEvent::Error(ErrorEvent {
+                                message: format!("Indexing failed: {}", err),
+                                severity: ErrorSeverity::Error,
+                            }));
+                            let _ = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
+                            // reset for next run
+                            started_sent = false;
                             continue;
                         }
                         _ => {}
@@ -132,17 +153,26 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                         // break;
                     }
                     RecvError::Lagged(lag) => {
+                        let now = Instant::now();
+                        let should_emit = last_lag_warn
+                            .map(|prev| now.duration_since(prev) >= Duration::from_secs(1))
+                            .unwrap_or(true);
                         let msg = format!(
                             "indexing task event channel lagging with {} messages",
                             lag
                         );
-                        tracing::warn!("{}", msg);
-                        let _ = event_bus
-                            .realtime_tx
-                            .send(AppEvent::Error(ErrorEvent {
-                                message: msg,
-                                severity: ErrorSeverity::Warning,
-                            }));
+                        if should_emit {
+                            tracing::warn!("{}", msg);
+                            let _ = event_bus
+                                .realtime_tx
+                                .send(AppEvent::Error(ErrorEvent {
+                                    message: msg,
+                                    severity: ErrorSeverity::Warning,
+                                }));
+                            last_lag_warn = Some(now);
+                        } else {
+                            tracing::debug!("{}", msg);
+                        }
                     }
                 },
             }
@@ -162,7 +192,7 @@ impl EventBus {
         }
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
         tracing::debug!("event_priority: {:?}", priority);
@@ -186,5 +216,104 @@ impl EventBus {
 
     pub fn index_subscriber(&self) -> broadcast::Receiver<indexer::IndexingStatus> {
         self.index_tx.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::time::{Duration, timeout};
+
+    #[tokio::test]
+    async fn ssot_forwards_indexing_completed_once() {
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.realtime_tx.subscribe();
+        let bus_clone = Arc::clone(&bus);
+        tokio::spawn(async move {
+            let _ = run_event_bus(bus_clone).await;
+        });
+
+        // Wait for event bus readiness signal instead of sleeping
+        timeout(Duration::from_secs(1), async {
+            loop {
+                match rx.recv().await {
+                    Ok(AppEvent::EventBusStarted) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for EventBusStarted");
+
+        // Inject a single Completed status into the indexing channel
+        let _ = bus.index_tx.send(indexer::IndexingStatus {
+            status: IndexStatus::Completed,
+            recent_processed: 0,
+            num_not_proc: 0,
+            current_file: None,
+            errors: vec![],
+        });
+
+        // Expect exactly one IndexingCompleted event
+        let ev = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("realtime channel closed");
+
+        match ev {
+            AppEvent::IndexingCompleted => {}
+            other => panic!("expected IndexingCompleted, got {:?}", other),
+        }
+
+        // No additional IndexingCompleted should be received immediately after
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn ssot_forwards_indexing_failed_once() {
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rx = bus.realtime_tx.subscribe();
+        let bus_clone = Arc::clone(&bus);
+        tokio::spawn(async move {
+            let _ = run_event_bus(bus_clone).await;
+        });
+
+        // Wait for event bus readiness signal instead of sleeping
+        timeout(Duration::from_secs(1), async {
+            loop {
+                match rx.recv().await {
+                    Ok(AppEvent::EventBusStarted) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for EventBusStarted");
+
+        // Inject a single Failed status into the indexing channel
+        let _ = bus.index_tx.send(indexer::IndexingStatus {
+            status: IndexStatus::Failed("boom".to_string()),
+            recent_processed: 0,
+            num_not_proc: 0,
+            current_file: None,
+            errors: vec![],
+        });
+
+        // Expect exactly one IndexingFailed event
+        let ev = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("realtime channel closed");
+
+        match ev {
+            AppEvent::IndexingFailed => {}
+            other => panic!("expected IndexingFailed, got {:?}", other),
+        }
+
+        // No additional IndexingFailed should be received immediately after
+        assert!(rx.try_recv().is_err());
     }
 }

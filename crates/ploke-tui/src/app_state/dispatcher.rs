@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use crate::rag::context::process_with_rag;
 use crate::system::SystemEvent;
-use crate::{EventBus, RagEvent};
+use crate::{EventBus, RagEvent, rag};
 use tokio::sync::mpsc;
 
 use super::commands::StateCommand;
 use super::core::AppState;
-use super::handlers;
+use super::{database, handlers};
 use crate::chat_history::MessageKind;
 use uuid::Uuid;
 
@@ -33,6 +34,16 @@ pub async fn state_manager(
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
                 handlers::chat::update_message(&state, &event_bus, id, update).await;
+            }
+            StateCommand::DeleteMessage { id } => {
+                handlers::chat::delete_message(&state, &event_bus, id).await;
+            }
+            StateCommand::DeleteNode { id } => {
+                {
+                    let mut guard = state.chat.0.write().await;
+                    let _ = guard.delete_node(id);
+                }
+                // No explicit message; UI will redraw on next tick
             }
             StateCommand::AddUserMessage {
                 content,
@@ -103,20 +114,64 @@ pub async fn state_manager(
                 completion_rx,
                 scan_rx,
             } => {
-                handlers::rag::process_with_rag(
-                    &state,
-                    &event_bus,
-                    scan_rx,
-                    new_msg_id,
-                    completion_rx,
-                )
-                .await;
+                process_with_rag(&state, &event_bus, scan_rx, new_msg_id, completion_rx).await;
                 // handlers::embedding::handle_embed_message(&state, &context_tx, new_msg_id, completion_rx, scan_rx).await;
             }
             // StateCommand::ProcessWithRag { user_query, strategy, budget } => {
             // }
             StateCommand::SwitchModel { alias_or_id } => {
                 handlers::model::switch_model(&state, &event_bus, alias_or_id).await;
+            }
+
+            StateCommand::SetEditingPreviewMode { mode } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.preview_mode = mode;
+                }
+                let mode_label = match mode {
+                    crate::app_state::core::PreviewMode::CodeBlock => "codeblock",
+                    crate::app_state::core::PreviewMode::Diff => "diff",
+                };
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!("Edit preview mode set to {}", mode_label),
+                    MessageKind::SysInfo,
+                )
+                .await;
+            }
+            StateCommand::SetEditingMaxPreviewLines { lines } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.max_preview_lines = lines;
+                }
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!("Edit preview lines set to {}", lines),
+                    MessageKind::SysInfo,
+                )
+                .await;
+            }
+            StateCommand::SetEditingAutoConfirm { enabled } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.editing.auto_confirm_edits = enabled;
+                }
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    if enabled {
+                        "Auto-approval of edits enabled".to_string()
+                    } else {
+                        "Auto-approval of edits disabled".to_string()
+                    },
+                    MessageKind::SysInfo,
+                )
+                .await;
             }
 
             StateCommand::WriteQuery {
@@ -132,7 +187,7 @@ pub async fn state_manager(
                 handlers::db::read_query(&event_bus, query_name, file_name).await;
             }
             StateCommand::SaveDb => {
-                handlers::db::save_db(&state, &event_bus).await;
+                database::save_db(&state, &event_bus).await;
             }
             StateCommand::BatchPromptSearch {
                 prompt_file,
@@ -157,33 +212,31 @@ pub async fn state_manager(
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }
 
-            StateCommand::Bm25Rebuild => handlers::rag::bm25_rebuild(&state, &event_bus).await,
+            StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,
             StateCommand::Bm25Search { query, top_k } => {
-                handlers::rag::bm25_search(&state, &event_bus, query, top_k).await
+                rag::search::bm25_search(&state, &event_bus, query, top_k).await
             }
             StateCommand::HybridSearch { query, top_k } => {
-                handlers::rag::hybrid_search(&state, &event_bus, query, top_k).await
+                rag::search::hybrid_search(&state, &event_bus, query, top_k).await
             }
-            StateCommand::RagBm25Status => handlers::rag::bm25_status(&state, &event_bus).await,
+            StateCommand::RagBm25Status => rag::search::bm25_status(&state, &event_bus).await,
             StateCommand::RagBm25Save { path } => {
-                handlers::rag::bm25_save(&state, &event_bus, path).await
+                rag::search::bm25_save(&state, &event_bus, path).await
             }
             StateCommand::RagBm25Load { path } => {
-                handlers::rag::bm25_load(&state, &event_bus, path).await
+                rag::search::bm25_load(&state, &event_bus, path).await
             }
             StateCommand::RagSparseSearch {
                 req_id,
                 query,
                 top_k,
                 strict,
-            } => {
-                handlers::rag::sparse_search(&state, &event_bus, req_id, query, top_k, strict).await
-            }
+            } => rag::search::sparse_search(&state, &event_bus, req_id, query, top_k, strict).await,
             StateCommand::RagDenseSearch {
                 req_id,
                 query,
                 top_k,
-            } => handlers::rag::dense_search(&state, &event_bus, req_id, query, top_k).await,
+            } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
             StateCommand::RagAssembleContext {
                 req_id,
                 user_query,
@@ -191,10 +244,68 @@ pub async fn state_manager(
                 budget,
                 strategy,
             } => {
-                handlers::rag::assemble_context(
+                rag::context::assemble_context(
                     &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
                 )
                 .await
+            }
+            StateCommand::ApproveEdits { request_id } => {
+                rag::editing::approve_edits(&state, &event_bus, request_id).await;
+            }
+            StateCommand::DenyEdits { request_id } => {
+                rag::editing::deny_edits(&state, &event_bus, request_id).await;
+            }
+            StateCommand::SelectModelProvider {
+                model_id,
+                provider_id,
+            } => {
+                {
+                    let mut cfg = state.config.write().await;
+                    let reg = &mut cfg.model_registry;
+
+                    if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
+                        p.model = model_id.clone();
+                        p.base_url = crate::user_config::OPENROUTER_URL.to_string();
+                        p.provider_type = crate::user_config::ProviderType::OpenRouter;
+                        p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
+                        p.provider_slug = Some(provider_id.clone());
+                    } else {
+                        reg.providers.push(crate::user_config::ModelConfig {
+                            id: model_id.clone(),
+                            api_key: String::new(),
+                            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+                            base_url: crate::user_config::OPENROUTER_URL.to_string(),
+                            model: model_id.clone(),
+                            display_name: Some(model_id.clone()),
+                            provider_type: crate::user_config::ProviderType::OpenRouter,
+                            llm_params: Some(crate::llm::LLMParameters {
+                                model: model_id.clone(),
+                                ..Default::default()
+                            }),
+                            provider_slug: Some(provider_id.clone()),
+                        });
+                    }
+                    // Ensure keys are resolved and activate this provider/model
+                    reg.load_api_keys();
+                    reg.active_model_config = model_id.clone();
+                }
+
+                // Inform the user and update the UI via events
+                handlers::chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    format!(
+                        "Switched active model to {} via provider {}",
+                        model_id, provider_id
+                    ),
+                    MessageKind::SysInfo,
+                )
+                .await;
+
+                event_bus.send(crate::AppEvent::System(SystemEvent::ModelSwitched(
+                    model_id,
+                )));
             }
 
             _ => {}

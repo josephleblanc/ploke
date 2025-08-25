@@ -71,36 +71,21 @@ command, and `ploke` will process a fixture. Once this is complete, you can ask 
 ## 🚧 Under Construction 🚧
 
 ploke is in rapid development, and can be considered in a prototype or alpha state. The core functionality works right now:
+#### 7/26/2025-8/20/2025
+
+#### 7/17/2025-7/25/2025
+- [x] Add `/query load <name> <file>` command to test different cozo queries
+- [x] Add `/ql` shortcut to read from `./query/default.dl` and write to `./query/output.md`
+- [x] Add documentation with recursive query example
+- [x] Revisit parser and solve remaining failure cases
+- [x] multiple `impl` blocks in one file led to ID collision
+- [x] unnamed `macro`s
+- [x] identical `use` statements within nested scope of functions, `impl`
+- [x] document [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md)
+- [x] Add more tests for module tree merging or partial per-file code graphs
+- [x] Use `syn_parser` to parse... ❗ 🙂 `syn_parser` 🙃 ❗ 
 - [x] facilitate LLM calls
 - [x] parse your code into a vector-graph database
-#### 7/17/2025
-- [x] automatically query your code base using our RAG (basic prototype queries, naive rag)
-- [x] parse a target rust crate (must have `Cargo.toml` and `src/lib.rs` or `src/main.rs`) into the database/rag pipeline
-#### 7/18/2025
-- [x] Select models that can be used as the LLM endpoint
-  - [x] Default model endpoint settings
-  - [ ] (deferred) Reasoning Support
-  - [ ] (deferred) User-defined config file
-#### 7/19/2025
-- [x] Better help messages `/help`
-  - [x] Normal Mode help: typing `?` normal mode should bring up the normal mode commands somehow. Think `whichkey`
-  - currently puts `/help` into the input buffer
-- [x] Show the cursor in input at correct offset
-- [x] Improve item selection UI
-- [x] Support for some hotkeys in vim-like "Normal" mode (see `/help`, or `h` in "Normal" mode)
-- [x] Add `/model list` command to show available models
-- [x] Show currently selected model in top right of screen
-  - [x] Ensure current model updates on model switch (`/model <name>`)
-  - [x] Add `SysInfo` message when model changes
-#### 7/20/2025
-- [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
-#### 7/21/2025
-- [x] Fix scrolling issue in chat interface
-- [x] (deferred from 7/18) User-defined config file
-  - [x] .toml file support
-#### 7/22/2025
-- [x] Fix bug in api specifications for openrouter (did it change?), see bug report in squashed.
-#### 7/23/2025
 - [x] Test different mcp client crates to determine best fit
   - [x] build test crate with own implementation from scratch
   - [x] build test crate with `rust-mcp-sdk`
@@ -112,17 +97,27 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [x] Extensive docs and example of context7 schema
     - [/] Doc tests
     - [x] Tool call tests 
-#### 7/24/2025-7/25/2025
-- [x] Add `/query load <name> <file>` command to test different cozo queries
-  - [x] Add `/ql` shortcut to read from `./query/default.dl` and write to `./query/output.md`
-  - [x] Add documentation with recursive query example
-- [x] Revisit parser and solve remaining failure cases
-  - [x] multiple `impl` blocks in one file led to ID collision
-  - [x] unnamed `macro`s
-  - [x] identical `use` statements within nested scope of functions, `impl`
-  - [x] document [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md)
-- [x] Add more tests for module tree merging or partial per-file code graphs
-- [x] Use `syn_parser` to parse... ❗ 🙂 `syn_parser` 🙃 ❗ 
+- [x] Fix bug in api specifications for openrouter (did it change?), see bug report in squashed.
+- [x] Fix scrolling issue in chat interface
+- [x] (deferred from 7/18) User-defined config file
+  - [x] .toml file support
+- [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
+- [x] Better help messages `/help`
+  - [x] Normal Mode help: typing `?` normal mode should bring up the normal mode commands somehow. Think `whichkey`
+  - currently puts `/help` into the input buffer
+- [x] Show the cursor in input at correct offset
+- [x] Improve item selection UI
+- [x] Support for some hotkeys in vim-like "Normal" mode (see `/help`, or `h` in "Normal" mode)
+- [x] Add `/model list` command to show available models
+- [x] Show currently selected model in top right of screen
+  - [x] Ensure current model updates on model switch (`/model <name>`)
+  - [x] Add `SysInfo` message when model changes
+- [x] automatically query your code base using our RAG (basic prototype queries, naive rag)
+- [x] parse a target rust crate (must have `Cargo.toml` and `src/lib.rs` or `src/main.rs`) into the database/rag pipeline
+- [x] Select models that can be used as the LLM endpoint
+  - [x] Default model endpoint settings
+  - [ ] (deferred) Reasoning Support
+  - [/] (in-progress) User-defined config file
 
 ### Coming Soon
 - **Minimum Expected Features**
