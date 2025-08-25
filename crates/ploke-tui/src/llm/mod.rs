@@ -791,13 +791,12 @@ pub(super) fn cap_messages_by_tokens<'a>(
 
 // Diagnostics helpers (env-driven, independent of tracing)
 fn diag_dir() -> Option<PathBuf> {
-    if let Ok(p) = env::var("PLOKE_E2E_DIAG_DIR") {
-        let pb = PathBuf::from(p);
-        let _ = fs::create_dir_all(&pb);
-        Some(pb)
-    } else {
-        None
-    }
+    // Prefer explicit env override; otherwise default to a stable test-output folder.
+    let path = env::var_os("PLOKE_E2E_DIAG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target/test-output/openrouter_e2e"));
+    let _ = fs::create_dir_all(&path);
+    Some(path)
 }
 fn now_ts() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};

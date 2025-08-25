@@ -275,10 +275,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     // Dedicated diagnostics directory (env-driven by LLM layer)
     let out_dir = std::path::PathBuf::from("target/test-output/openrouter_e2e");
     fs::create_dir_all(&out_dir).ok();
-    std::env::set_var(
-        "PLOKE_E2E_DIAG_DIR",
-        out_dir.to_string_lossy().to_string(),
-    );
     println!("[E2E] Diagnostics directory: {}", out_dir.display());
     // Build a realistic App instance without spawning UI/event loops.
     // Keep this synchronous for ergonomic use in tests.
@@ -374,7 +370,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     // Build the App
     let command_style = config.command_style;
-    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+    let app = App::new(command_style, state, cmd_tx.clone(), &event_bus, default_model());
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
