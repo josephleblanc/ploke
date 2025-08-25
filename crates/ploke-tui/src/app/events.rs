@@ -25,6 +25,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.open_model_browser(keyword, items);
         }
         AppEvent::ModelEndpointsResults { model_id, providers } => {
+            // Defer selection and overlay close until after we release the borrow on model_browser
+            let mut select_after: Option<(String, String)> = None;
             if let Some(mb) = app.model_browser.as_mut() {
                 if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
                     // Map ProviderEntry -> ModelProviderRow
@@ -53,7 +55,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     item.providers = rows;
                     item.loading_providers = false;
 
-                    // If user pressed 's' while loading, auto-select best provider now
+                    // If user pressed 's' while loading, compute best provider now
                     if item.pending_select {
                         let provider_choice = item
                             .providers
@@ -63,13 +65,16 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                             .map(|p| p.id.clone());
 
                         if let Some(pid) = provider_choice {
-                            // Apply selection and close browser
-                            app.apply_model_provider_selection(&item.id, Some(&pid));
-                            app.model_browser = None;
+                            // Defer selection until after borrow ends
+                            select_after = Some((item.id.clone(), pid));
                         }
                         item.pending_select = false;
                     }
                 }
+            }
+            if let Some((mid, pid)) = select_after {
+                app.apply_model_provider_selection(&mid, Some(&pid));
+                app.model_browser = None;
             }
         }
         AppEvent::ModelEndpointsRequest { .. } => {
