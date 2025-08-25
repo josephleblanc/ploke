@@ -61,7 +61,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -272,7 +272,14 @@ fn tool_defs() -> Vec<Value> {
 
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
-    let _guard = init_tracing();
+    // Dedicated diagnostics directory (env-driven by LLM layer)
+    let out_dir = std::path::PathBuf::from("target/test-output/openrouter_e2e");
+    fs::create_dir_all(&out_dir).ok();
+    std::env::set_var(
+        "PLOKE_E2E_DIAG_DIR",
+        out_dir.to_string_lossy().to_string(),
+    );
+    println!("[E2E] Diagnostics directory: {}", out_dir.display());
     // Build a realistic App instance without spawning UI/event loops.
     // Keep this synchronous for ergonomic use in tests.
     let mut config = UserConfig::default();
@@ -471,6 +478,19 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             body_excerpt_first: format!("chosen endpoint: {}", endpoint.name),
         });
 
+        // Configure the active provider/model for this loop iteration
+        if let Some(provider_slug_hint) = provider_slug_hint.clone() {
+            let _ = cmd_tx
+                .send(StateCommand::SelectModelProvider {
+                    model_id: model_id.clone(),
+                    provider_id: provider_slug_hint.clone(),
+                })
+                .await;
+            // Allow the dispatcher to apply the change
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Construct a synthetic user request + context to drive the full lifecycle
         let parent_id = Uuid::new_v4();
         let request_id = Uuid::new_v4();
         let new_msg_id = Uuid::new_v4();
@@ -478,6 +498,16 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         let user_instr = String::from(
             "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.",
         );
+
+        // First send the Request (pending in LLM manager) ...
+        event_bus.send(AppEvent::Llm(llm::Event::Request {
+            request_id,
+            parent_id,
+            new_msg_id,
+            prompt: user_instr.clone(),
+            parameters: Default::default(),
+        }));
+        // ... then send the PromptConstructed to trigger processing
         event_bus.send(AppEvent::Llm(llm::Event::PromptConstructed {
             parent_id,
             prompt: vec![
@@ -485,9 +515,10 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 (ploke_tui::chat_history::MessageKind::User, user_instr),
             ],
         }));
-        // Observe LLM and Tool events so logs show the tool-call lifecycle and responses
+
+        // Observe LLM and Tool events with a shorter window; break early on first tool signal
         let mut rx = event_bus.subscribe(EventPriority::Background);
-        let observe_until = std::time::Instant::now() + Duration::from_secs(10);
+        let observe_until = std::time::Instant::now() + Duration::from_secs(3);
         let mut saw_tool = false;
         while std::time::Instant::now() < observe_until {
             match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
@@ -499,31 +530,42 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                         vendor,
                         ..
                     }) => {
-                        tracing::info!(%model_id, tool=%name, vendor=?vendor, call_id=?call_id, args=%arguments, "E2E observed ToolCall");
+                        println!("[E2E] tool_call model={} name={} vendor={:?}", model_id, name, vendor);
                         saw_tool = true;
+                        break;
                     }
                     AppEvent::LlmTool(llm::ToolEvent::Requested { name, call_id, .. }) => {
-                        tracing::info!(%model_id, tool=%name, call_id=%call_id, "E2E observed ToolEvent::Requested");
+                        println!("[E2E] tool_requested model={} name={} call_id={}", model_id, name, call_id);
                         saw_tool = true;
+                        break;
                     }
                     AppEvent::LlmTool(llm::ToolEvent::Completed {
                         call_id, content, ..
                     }) => {
                         let excerpt: String = content.chars().take(200).collect();
-                        tracing::info!(%model_id, call_id=%call_id, excerpt=%excerpt, "E2E observed ToolEvent::Completed");
+                        println!("[E2E] tool_completed model={} call_id={} excerpt={}", model_id, call_id, excerpt);
+                        break;
                     }
                     AppEvent::LlmTool(llm::ToolEvent::Failed { call_id, error, .. }) => {
-                        tracing::warn!(%model_id, call_id=%call_id, error=%error, "E2E observed ToolEvent::Failed");
+                        println!("[E2E] tool_failed model={} call_id={} error={}", model_id, call_id, error);
+                        break;
                     }
                     AppEvent::Llm(llm::Event::Response { content, model, .. }) => {
-                        let excerpt: String = content.chars().take(200).collect();
-                        tracing::info!(%model_id, %model, excerpt=%excerpt, "E2E observed LLM Response");
+                        let excerpt: String = content.chars().take(180).collect();
+                        println!("[E2E] response model={} excerpt={}", model, excerpt);
                     }
                     _ => {}
                 },
                 _ => {}
             }
         }
+
+        println!(
+            "[E2E] summary model={} provider_hint={} saw_tool={}",
+            model_id,
+            provider_slug_hint.clone().unwrap_or_else(|| "-".into()),
+            saw_tool
+        );
 
         outcomes.push(ToolRoundtripOutcome {
             tool_name: "request_code_context".to_string(),
@@ -534,6 +576,15 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             second_status: None,
             body_excerpt_first: "event observation complete".to_string(),
         });
+
+        processed += 1;
+    }
+
+    // Persist discovered tools-capable endpoints for diagnostics
+    if let Ok(map) = TOOL_ENDPOINT_CANDIDATES.lock() {
+        let path = out_dir.join("openrouter_tools_candidates.json");
+        let _ = fs::write(&path, serde_json::to_string_pretty(&*map).unwrap_or_default());
+        println!("[E2E] wrote tools-capable endpoint summary to {}", path.display());
     }
 
     // Summary of outcomes across models/tools

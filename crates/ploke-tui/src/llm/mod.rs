@@ -9,7 +9,7 @@ use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, fs, path::PathBuf, env};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
@@ -358,6 +358,22 @@ pub async fn llm_manager(
                     tool = %name,
                     "Dispatching ToolEvent::Requested (unified path)"
                 );
+
+                // Persist observed tool-call for offline inspection
+                if let Some(dir) = diag_dir() {
+                    let fname = format!("{}-{}-toolcall.json", now_ts(), parent_id);
+                    let rec = json!({
+                        "phase": "tool_call_observed",
+                        "request_id": request_id,
+                        "parent_id": parent_id,
+                        "call_id": call_id,
+                        "vendor": format!("{:?}", vendor),
+                        "name": name,
+                        "arguments": arguments
+                    });
+                    let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&rec).unwrap_or_default());
+                }
+
                 event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
                     request_id,
                     parent_id,
@@ -614,6 +630,26 @@ async fn prepare_and_run_llm_call(
     );
 
     if require_tools && supports_tools_opt != Some(true) {
+        // Persist a concise decision record explaining why the call is aborted
+        if let Some(dir) = diag_dir() {
+            let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
+            let record = json!({
+                "phase": "preflight",
+                "reason": "tools_required_but_model_not_marked_tool_capable",
+                "provider": {
+                    "model": provider.model,
+                    "base_url": provider.base_url,
+                    "provider_type": format!("{:?}", provider.provider_type),
+                    "provider_slug": provider.provider_slug
+                },
+                "capabilities": {
+                    "supports_tools_cache": supports_tools_opt,
+                    "require_tools_policy": require_tools
+                }
+            });
+            let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&record).unwrap_or_default());
+        }
+
         return Err(LlmError::Api {
             status: 412,
             message: format!(
@@ -643,6 +679,41 @@ or disable enforcement with ':provider tools-only off'.",
         "llm_request_tools"
     );
 
+    // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis.
+    if let Some(dir) = diag_dir() {
+        let fname = format!("{}-{}-request.json", now_ts(), parent_id);
+        let request_plan = json!({
+            "phase": "request_plan",
+            "provider": {
+                "model": provider.model,
+                "base_url": provider.base_url,
+                "provider_type": format!("{:?}", provider.provider_type),
+                "provider_slug": provider.provider_slug
+            },
+            "capabilities": {
+                "supports_tools_cache": supports_tools_opt,
+                "require_tools_policy": require_tools
+            },
+            "decision": {
+                "use_tools": !tools.is_empty(),
+                "tool_names": tool_names
+            },
+            "parameters": params,
+            "messages": messages,
+            "tools": tools
+        });
+        let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&request_plan).unwrap_or_default());
+        // Also print a terse, sharable line for quick triage
+        println!(
+            "[E2E] model={} tools={} msgs={} cap={:?}/req_tools={}",
+            provider.model,
+            if tools.is_empty() { "off" } else { "on" },
+            request_plan["messages"].as_array().map(|a| a.len()).unwrap_or(0),
+            supports_tools_opt,
+            require_tools
+        );
+    }
+
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
     let session = session::RequestSession::new(
         client,
@@ -655,7 +726,27 @@ or disable enforcement with ':provider tools-only off'.",
         !require_tools,
     );
 
-    session.run().await
+    let result = session.run().await;
+
+    // Persist model output or error for later inspection
+    if let Some(dir) = diag_dir() {
+        match &result {
+            Ok(content) => {
+                let fname = format!("{}-{}-response.txt", now_ts(), parent_id);
+                let _ = fs::write(dir.join(fname), content.as_bytes());
+            }
+            Err(e) => {
+                let fname = format!("{}-{}-error.json", now_ts(), parent_id);
+                let rec = json!({
+                    "phase": "response",
+                    "error": e.to_string()
+                });
+                let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&rec).unwrap_or_default());
+            }
+        }
+    }
+
+    result
 }
 
 pub(super) fn cap_messages_by_chars<'a>(
@@ -696,6 +787,21 @@ pub(super) fn cap_messages_by_tokens<'a>(
     }
     kept.reverse();
     kept.into_iter().cloned().collect()
+}
+
+// Diagnostics helpers (env-driven, independent of tracing)
+fn diag_dir() -> Option<PathBuf> {
+    if let Ok(p) = env::var("PLOKE_E2E_DIAG_DIR") {
+        let pb = PathBuf::from(p);
+        let _ = fs::create_dir_all(&pb);
+        Some(pb)
+    } else {
+        None
+    }
+}
+fn now_ts() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
 // Example tool-call handler (stub)
