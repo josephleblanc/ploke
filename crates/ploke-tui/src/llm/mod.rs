@@ -55,6 +55,7 @@ pub struct ProviderPreferences {
     pub deny: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub order: Vec<String>,
+    #[serde(skip_serializing_if = "skip_bool_always")]
     pub require_parameters: bool,
 }
 
@@ -1244,5 +1245,9 @@ impl Default for LLMParameters {
 }
 
 fn default_true() -> bool {
+    true
+}
+
+fn skip_bool_always(_: &bool) -> bool {
     true
 }
