@@ -21,7 +21,7 @@ use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
     system::SystemEvent,
-    user_config::ProviderConfig,
+    user_config::ModelConfig,
 };
 
 // API and Config
@@ -55,6 +55,7 @@ pub struct ProviderPreferences {
     pub deny: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub order: Vec<String>,
+    pub require_parameters: bool,
 }
 
 impl<'a> OpenAiRequest<'a> {
@@ -259,7 +260,7 @@ pub async fn llm_manager(
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     event_bus: Arc<EventBus>,
-    // providers: crate::user_config::ProviderRegistry,
+    // providers: crate::user_config::ModelRegistry,
 ) {
     let client = Client::new();
     let mut pending_requests = Vec::new();
@@ -288,7 +289,7 @@ pub async fn llm_manager(
                 ready_contexts.insert(parent_id, context);
 
                 let guard = state.config.read().await;
-                let maybe_provider = guard.provider_registry.get_active_provider();
+                let maybe_provider = guard.model_registry.get_active_model_config();
                 if maybe_provider.is_none() {
                     tracing::warn!(
                         "Could not find active provider in registry, continuing event loop"
@@ -429,7 +430,7 @@ pub async fn process_llm_request(
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     event_bus: Arc<EventBus>,
-    provider_config: crate::user_config::ProviderConfig,
+    provider_config: crate::user_config::ModelConfig,
     context: Option<Event>,
 ) {
     tracing::info!("Inside process_llm_request");
@@ -530,7 +531,7 @@ pub async fn process_llm_request(
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
-    provider: &ProviderConfig,
+    provider: &ModelConfig,
     context: Option<Event>,
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
@@ -613,8 +614,8 @@ async fn prepare_and_run_llm_call(
     let (supports_tools_opt, require_tools) = {
         let cfg = state.config.read().await;
         (
-            cfg.provider_registry.model_supports_tools(&provider.model),
-            cfg.provider_registry.require_tool_support,
+            cfg.model_registry.model_supports_tools(&provider.model),
+            cfg.model_registry.require_tool_support,
         )
     };
 
@@ -704,7 +705,7 @@ or disable enforcement with ':provider tools-only off'.",
         });
         let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&request_plan).unwrap_or_default());
         // Also print a terse, sharable line for quick triage
-        println!(
+        tracing::info!(
             "[E2E] model={} tools={} msgs={} cap={:?}/req_tools={}",
             provider.model,
             if tools.is_empty() { "off" } else { "on" },

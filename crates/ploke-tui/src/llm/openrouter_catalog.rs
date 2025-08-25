@@ -4,7 +4,7 @@
 //! Dataflow:
 //! - At startup and on `/model refresh`, we call `fetch_models` to pull the
 //!   OpenRouter `/models` list and cache essential capability/pricing data in
-//!   `ProviderRegistry.capabilities`.
+//!   `ModelRegistry.capabilities`.
 //! - The UI surfaces this cache via `model info` and uses it for validation/routing hints.
 //!
 //! This module intentionally fetches only the minimal subset of fields we need to

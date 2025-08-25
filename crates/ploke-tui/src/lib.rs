@@ -5,7 +5,7 @@
 //! - Config load: `try_main` reads config (toml/env), merges curated defaults, refreshes
 //!   OpenRouter capabilities, then resolves API keys and spins up subsystems.
 //! - Commands: UI routes parsed commands to `StateCommand` via channels; model/provider
-//!   commands update `ProviderRegistry` and emit `SystemEvent::ModelSwitched`.
+//!   commands update `ModelRegistry` and emit `SystemEvent::ModelSwitched`.
 //! - Persistence: config can be saved/loaded atomically with optional key redaction.
 //!
 //! Subsystems started in `try_main`:
@@ -52,7 +52,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, UserConfig, default_model};
+use user_config::{OPENROUTER_URL, ModelConfig, ProviderType, UserConfig, default_model};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};

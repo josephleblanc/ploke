@@ -17,7 +17,7 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{OPENROUTER_URL, ProviderConfig, ProviderType};
+use crate::user_config::{OPENROUTER_URL, ModelConfig, ProviderType};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -36,6 +36,7 @@ use ratatui::widgets::Gauge;
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
+use view::components::model_browser::{render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow};
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
 struct TerminalModeGuard;
@@ -87,37 +88,6 @@ pub struct App {
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
-}
-
-#[derive(Debug)]
-struct ModelBrowserItem {
-    id: String,
-    name: Option<String>,
-    context_length: Option<u32>,
-    input_cost: Option<f64>,
-    output_cost: Option<f64>,
-    supports_tools: bool,
-    providers: Vec<ModelProviderRow>,
-    expanded: bool,
-}
-
-#[derive(Debug)]
-struct ModelProviderRow {
-    id: String,
-    context_length: Option<u32>,
-    input_cost: Option<f64>,
-    output_cost: Option<f64>,
-    supports_tools: bool,
-}
-
-#[derive(Debug)]
-struct ModelBrowserState {
-    visible: bool,
-    keyword: String,
-    items: Vec<ModelBrowserItem>,
-    selected: usize,
-    // Toggle for bottom-right help panel within the Model Browser overlay
-    help_visible: bool,
 }
 
 impl App {
@@ -520,147 +490,7 @@ impl App {
 
         // Render model browser overlay if visible
         if let Some(mb) = &self.model_browser {
-            let area = frame.area();
-            let width = area.width.saturating_mul(8) / 10;
-            let height = area.height.saturating_mul(8) / 10;
-            let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
-            let y = area
-                .y
-                .saturating_add(area.height.saturating_sub(height) / 2);
-            let rect = ratatui::layout::Rect::new(x, y, width.max(40), height.max(10));
-
-            // Clear the underlying content in the overlay area to avoid "bleed-through"
-            frame.render_widget(ratatui::widgets::Clear, rect);
-
-            // Split overlay into body + footer (help)
-            let footer_height = if mb.help_visible { 6 } else { 1 };
-            let layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
-                .split(rect);
-            let body_area = layout[0];
-            let footer_area = layout[1];
-
-            // Consistent overlay style (foreground/background)
-            // Choose a high-contrast, uniform scheme that doesn't depend on background UI
-            let overlay_style = Style::new().fg(Color::LightBlue);
-
-            // Build list content (styled)
-            let mut lines: Vec<Line> = Vec::new();
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "Model Browser — {} results for \"{}\"",
-                    mb.items.len(),
-                    mb.keyword
-                ),
-                overlay_style,
-            )));
-            lines.push(Line::from(Span::styled(
-                "Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, ? to toggle help, q/Esc to close.",
-                overlay_style,
-            )));
-            lines.push(Line::from(Span::raw("")));
-
-            // Loading indicator when opened before results arrive
-            if mb.items.is_empty() {
-                lines.push(Line::from(Span::styled("Loading models…", overlay_style)));
-            }
-
-            // Selected row highlighting
-            let selected_style = Style::new().fg(Color::Black).bg(Color::LightCyan);
-            let detail_style = Style::new().fg(Color::Blue).dim();
-
-            for (i, it) in mb.items.iter().enumerate() {
-                let title = if let Some(name) = &it.name {
-                    if name.is_empty() {
-                        it.id.clone()
-                    } else {
-                        format!("{} — {}", it.id, name)
-                    }
-                } else {
-                    it.id.clone()
-                };
-
-                let mut line = Line::from(vec![
-                    Span::styled(
-                        if i == mb.selected { ">" } else { " " },
-                        if i == mb.selected {
-                            selected_style
-                        } else {
-                            overlay_style
-                        },
-                    ),
-                    Span::raw(" "),
-                    Span::styled(
-                        title,
-                        if i == mb.selected {
-                            selected_style
-                        } else {
-                            overlay_style
-                        },
-                    ),
-                ]);
-                // Ensure entire line style is applied (for background fill)
-                line.style = if i == mb.selected {
-                    selected_style
-                } else {
-                    overlay_style
-                };
-                lines.push(line);
-
-                if it.expanded {
-                    // Indented details for readability while navigating (preserve spaces; do not trim)
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "    context_length: {}",
-                            it.context_length
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "-".to_string())
-                        ),
-                        detail_style,
-                    )));
-                    lines.push(Line::from(Span::styled(
-                        format!("    supports_tools: {}", it.supports_tools),
-                        detail_style,
-                    )));
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "    pricing: in={} out={}",
-                            it.input_cost
-                                .map(|v| format!("{:.4}", v))
-                                .unwrap_or_else(|| "-".to_string()),
-                            it.output_cost
-                                .map(|v| format!("{:.4}", v))
-                                .unwrap_or_else(|| "-".to_string())
-                        ),
-                        detail_style,
-                    )));
-
-                    // Provider breakdown
-                    if !it.providers.is_empty() {
-                        lines.push(Line::from(Span::styled("    providers:", detail_style)));
-                        for p in &it.providers {
-                            lines.push(Line::from(Span::styled(
-                                format!(
-                                    "      - {}  tools={}  ctx={}  pricing: in={} out={}",
-                                    p.id,
-                                    p.supports_tools,
-                                    p.context_length
-                                        .map(|v| v.to_string())
-                                        .unwrap_or_else(|| "-".to_string()),
-                                    p.input_cost
-                                        .map(|v| format!("{:.4}", v))
-                                        .unwrap_or_else(|| "-".to_string()),
-                                    p.output_cost
-                                        .map(|v| format!("{:.4}", v))
-                                        .unwrap_or_else(|| "-".to_string())
-                                ),
-                                detail_style,
-                            )));
-                        }
-                    }
-                }
-            }
+            let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
 
             let widget = Paragraph::new(lines)
                 .style(overlay_style)
@@ -1209,12 +1039,12 @@ impl App {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let mut cfg = state.config.write().await;
-                let reg = &mut cfg.provider_registry;
+                let reg = &mut cfg.model_registry;
 
                 let exists = reg.providers.iter().any(|p| p.id == model_id);
                 if !exists {
                     // Promote discovered model into registry
-                    reg.providers.push(ProviderConfig {
+                    reg.providers.push(ModelConfig {
                         id: model_id.to_string(),
                         api_key: String::new(),
                         provider_slug: None,
@@ -1225,6 +1055,7 @@ impl App {
                         provider_type: ProviderType::OpenRouter,
                         llm_params: Some(crate::llm::LLMParameters {
                             model: model_id.to_string(),
+                            // AI: Maybe we should add a field here to require models with tools?
                             ..Default::default()
                         }),
                     });
@@ -1233,7 +1064,7 @@ impl App {
                 }
 
                 // Switch active provider
-                reg.active_provider = model_id.to_string();
+                reg.active_model_config = model_id.to_string();
             });
         });
 
@@ -1271,7 +1102,7 @@ impl App {
 
         let mut lines = vec!["Available models:".to_string()];
 
-        for pc in &cfg.provider_registry.providers {
+        for pc in &cfg.model_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
             lines.push(format!("  {:<28}  {}", pc.id, display));
         }
