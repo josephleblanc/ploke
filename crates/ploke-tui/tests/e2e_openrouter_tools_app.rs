@@ -62,7 +62,7 @@ use uuid::Uuid;
 // We don't yet drive the in-app event loops, but this simulates runtime config.
 
 /// Cap for live test token budget
-const LLM_TOKEN_BUDGET: usize = 512;
+const LLM_TOKEN_BUDGET: usize = 4096;
 
 #[allow(dead_code)]
 struct ToolRoundtripOutcome {
@@ -368,7 +368,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     // Build the App
     let command_style = config.command_style;
-    let _app = App::new(command_style, state, cmd_tx.clone(), &event_bus, default_model());
+    let _app = App::new(command_style, Arc::clone(&state), cmd_tx.clone(), &event_bus, default_model());
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
@@ -399,7 +399,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(10); // slightly lower default to keep this test snappy
 
-    let tools = tool_defs();
+    // let tools = tool_defs();
     let mut outcomes: Vec<ToolRoundtripOutcome> = Vec::new();
 
     let mut processed = 0usize;
@@ -462,7 +462,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 model_id.clone(),
                 ModelCapabilities {
                     supports_tools: true,
-                    context_length: Some(endpoint.context_length),
+                    context_length: Some(endpoint.context_length as u32),
                     input_cost_per_million: None,
                     output_cost_per_million: None,
                 },
