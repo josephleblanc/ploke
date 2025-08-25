@@ -79,7 +79,15 @@ pub struct TopProviderInfo {
 /// Provider-specific entry beneath a model in the catalog.
 #[derive(Deserialize, Debug, Clone)]
 pub struct ProviderEntry {
-    /// Provider identifier (e.g., "openrouter", "openai", or a specific upstream)
+    /// Provider identifier (varies by endpoint shape).
+    /// Endpoints may expose "id", "provider", "slug", or a human-readable "name".
+    #[serde(
+        default,
+        alias = "provider",
+        alias = "name",
+        alias = "slug",
+        alias = "provider_slug"
+    )]
     pub id: String,
     /// Context length for this provider if known
     #[serde(default)]
