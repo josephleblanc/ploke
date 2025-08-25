@@ -32,11 +32,9 @@ Reliability:
 #![cfg(test)]
 
 use lazy_static::lazy_static;
-use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 use ploke_db::{Database, bm25_index, create_index_primary};
 use ploke_embed::cancel_token::CancellationToken;
-use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexerTask};
-use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+use ploke_embed::indexer::IndexerTask;
 use ploke_error::Error;
 use ploke_rag::{RagConfig, RagService, RrfConfig, TokenBudget};
 use ploke_test_utils::workspace_root;
@@ -47,21 +45,15 @@ use ploke_tui::app_state::{
 use ploke_tui::chat_history::ChatHistory;
 use ploke_tui::llm::{self, llm_manager};
 use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
-use ploke_tui::test_harness::TEST_APP;
-use ploke_tui::tracing_setup::init_tracing;
-use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model};
+use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model, ModelCapabilities};
 use ploke_tui::{AppEvent, EventBus, EventBusCaps, EventPriority, app_state};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
-use std::path::Path;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -353,6 +345,12 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     // Command channel (not wired to a state_manager loop in tests)
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
+    // Best-effort capability refresh so tools are considered for models that advertise them.
+    {
+        let mut cfg = state.config.write().await;
+        let _ = cfg.provider_registry.refresh_from_openrouter().await;
+    }
+
     // Spawn state manager first
     tokio::spawn(state_manager(
         state.clone(),
@@ -370,7 +368,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
     // Build the App
     let command_style = config.command_style;
-    let app = App::new(command_style, state, cmd_tx.clone(), &event_bus, default_model());
+    let _app = App::new(command_style, state, cmd_tx.clone(), &event_bus, default_model());
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
@@ -453,8 +451,25 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         .await;
         let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
+            processed += 1;
             continue;
         };
+
+        // Force-enable tool support in the registry for the selected model so tools are included.
+        {
+            let mut cfg = state.config.write().await;
+            cfg.provider_registry.capabilities.insert(
+                model_id.clone(),
+                ModelCapabilities {
+                    supports_tools: true,
+                    context_length: Some(endpoint.context_length),
+                    input_cost_per_million: None,
+                    output_cost_per_million: None,
+                },
+            );
+            // Make sure active provider points to this model id
+            cfg.provider_registry.active_provider = model_id.clone();
+        }
 
         tracing::trace!(
             "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
@@ -492,7 +507,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         let new_msg_id = Uuid::new_v4();
         let system_instr = [PROMPT_HEADER, PROMPT_CODE].join("");
         let user_instr = String::from(
-            "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.",
+            "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.\n\nIf tools are available, you MUST call the `request_code_context` tool with {\"token_budget\": 256} and wait for the tool result before responding.",
         );
 
         // First send the Request (pending in LLM manager) ...
@@ -514,7 +529,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
         // Observe LLM and Tool events with a shorter window; break early on first tool signal
         let mut rx = event_bus.subscribe(EventPriority::Background);
-        let observe_until = std::time::Instant::now() + Duration::from_secs(3);
+        let observe_until = std::time::Instant::now() + Duration::from_secs(20);
         let mut saw_tool = false;
         while std::time::Instant::now() < observe_until {
             match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
@@ -540,10 +555,12 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                     }) => {
                         let excerpt: String = content.chars().take(200).collect();
                         println!("[E2E] tool_completed model={} call_id={} excerpt={}", model_id, call_id, excerpt);
+                        saw_tool = true;
                         break;
                     }
                     AppEvent::LlmTool(llm::ToolEvent::Failed { call_id, error, .. }) => {
                         println!("[E2E] tool_failed model={} call_id={} error={}", model_id, call_id, error);
+                        saw_tool = true;
                         break;
                     }
                     AppEvent::Llm(llm::Event::Response { content, model, .. }) => {
@@ -574,6 +591,11 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         });
 
         processed += 1;
+
+        // Stop early once we observe at least one tool call to keep run time reasonable.
+        if saw_tool {
+            break;
+        }
     }
 
     // Persist discovered tools-capable endpoints for diagnostics
@@ -598,6 +620,11 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     info!(
         "Summary: total_outcomes={} successes={} no_tool_calls={} http_404_first_leg={} http_429_any_leg={}",
         total, successes, no_tool_calls, first_404, any_429
+    );
+
+    assert!(
+        outcomes.iter().any(|o| o.tool_called),
+        "No tool calls were observed across evaluated models. Ensure OPENROUTER_API_KEY is set and at least one tools-capable endpoint is selected."
     );
 
     Ok(())

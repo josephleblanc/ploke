@@ -31,7 +31,7 @@ lazy_static! {
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
         // Initialize an in-memory database with schema; optionally restore a pre-loaded backup for realistic tests
-        let mut db = ploke_db::Database::init_with_schema().expect("init test db");
+        let db = ploke_db::Database::init_with_schema().expect("init test db");
 
         // Prefer env override; otherwise use the standard fixture backup path if it exists
         let backup_path = std::env::var("PLOKE_TEST_DB_BACKUP")
