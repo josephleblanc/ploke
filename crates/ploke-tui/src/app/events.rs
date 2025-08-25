@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::AppEvent;
 use super::system;
 use super::utils::display_file_info;
+use crate::app::view::components::model_browser::ModelProviderRow;
 
 /// Handle AppEvent routing in a lightweight way. This keeps the UI loop lean.
 pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
@@ -22,6 +23,54 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::ModelSearchResults { keyword, items } => {
             // Populate or update the Model Browser overlay with async results
             app.open_model_browser(keyword, items);
+        }
+        AppEvent::ModelEndpointsResults { model_id, providers } => {
+            if let Some(mb) = app.model_browser.as_mut() {
+                if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
+                    // Map ProviderEntry -> ModelProviderRow
+                    let rows = providers
+                        .into_iter()
+                        .map(|p| {
+                            let supports_tools = p
+                                .supported_parameters
+                                .as_ref()
+                                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                                .unwrap_or_else(|| {
+                                    p.capabilities
+                                        .as_ref()
+                                        .and_then(|c| c.tools)
+                                        .unwrap_or(false)
+                                });
+                            ModelProviderRow {
+                                id: p.id,
+                                context_length: p.context_length,
+                                input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
+                                output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                                supports_tools,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    item.providers = rows;
+                    item.loading_providers = false;
+
+                    // If user pressed 's' while loading, auto-select best provider now
+                    if item.pending_select {
+                        let provider_choice = item
+                            .providers
+                            .iter()
+                            .find(|p| p.supports_tools)
+                            .or_else(|| item.providers.first())
+                            .map(|p| p.id.clone());
+
+                        if let Some(pid) = provider_choice {
+                            // Apply selection and close browser
+                            app.apply_model_provider_selection(&item.id, Some(&pid));
+                            app.model_browser = None;
+                        }
+                        item.pending_select = false;
+                    }
+                }
+            }
         }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);

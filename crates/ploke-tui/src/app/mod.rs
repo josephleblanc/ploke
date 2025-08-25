@@ -16,6 +16,7 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
+use crate::emit_app_event;
 use crate::llm::openrouter_catalog::ModelEntry;
 use crate::user_config::{OPENROUTER_URL, ModelConfig, ProviderType};
 use app_state::{AppState, StateCommand};
@@ -584,21 +585,44 @@ impl App {
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if let Some(item) = mb.items.get_mut(mb.selected) {
                             item.expanded = !item.expanded;
+                            // On expand, if providers not yet loaded, request endpoints
+                            if item.expanded && item.providers.is_empty() && !item.loading_providers {
+                                item.loading_providers = true;
+                                let model_id = item.id.clone();
+                                tokio::spawn(async move {
+                                    crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                });
+                            }
                         }
                     }
                     KeyCode::Char('s') => {
-                        // Choose a provider that supports tools if available, otherwise first provider
-                        if let Some(item) = mb.items.get(mb.selected) {
-                            let provider_choice = item
-                                .providers
-                                .iter()
-                                .find(|p| p.supports_tools)
-                                .or_else(|| item.providers.first())
-                                .map(|p| p.id.clone());
-                            if let Some(pid) = provider_choice {
-                                chosen_id = Some(format!("{}::{}", item.id, pid));
+                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                            if item.providers.is_empty() {
+                                // Fetch endpoints first, then auto-select when results arrive
+                                if !item.loading_providers {
+                                    item.loading_providers = true;
+                                    item.pending_select = true;
+                                    let model_id = item.id.clone();
+                                    tokio::spawn(async move {
+                                        crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                    });
+                                } else {
+                                    // Already loading; just mark pending select
+                                    item.pending_select = true;
+                                }
                             } else {
-                                chosen_id = Some(item.id.clone());
+                                // Choose a provider that supports tools if available, otherwise first provider
+                                let provider_choice = item
+                                    .providers
+                                    .iter()
+                                    .find(|p| p.supports_tools)
+                                    .or_else(|| item.providers.first())
+                                    .map(|p| p.id.clone());
+                                if let Some(pid) = provider_choice {
+                                    chosen_id = Some(format!("{}::{}", item.id, pid));
+                                } else {
+                                    chosen_id = Some(item.id.clone());
+                                }
                             }
                         }
                     }
@@ -1014,6 +1038,8 @@ impl App {
                     supports_tools: model_supports_tools,
                     providers: provider_rows,
                     expanded: false,
+                    loading_providers: false,
+                    pending_select: false,
                 }
             })
             .collect::<Vec<_>>();

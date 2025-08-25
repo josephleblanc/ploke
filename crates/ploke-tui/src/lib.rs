@@ -362,6 +362,13 @@ pub enum AppEvent {
         keyword: String,
         items: Vec<crate::llm::openrouter_catalog::ModelEntry>,
     },
+    ModelEndpointsRequest {
+        model_id: String,
+    },
+    ModelEndpointsResults {
+        model_id: String,
+        providers: Vec<crate::llm::openrouter_catalog::ProviderEntry>,
+    },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
@@ -404,6 +411,8 @@ impl AppEvent {
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
             AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
+            AppEvent::ModelEndpointsRequest { .. } => EventPriority::Background,
+            AppEvent::ModelEndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,

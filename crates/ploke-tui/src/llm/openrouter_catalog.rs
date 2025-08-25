@@ -161,3 +161,33 @@ pub async fn fetch_models(
     let parsed: ModelsResponse = serde_json::from_str(&body)?;
     Ok(parsed.data)
 }
+
+/// OpenRouter `/models/:author/:slug/endpoints` for provider-level details.
+#[derive(Deserialize, Debug)]
+struct EndpointsResponse {
+    data: Vec<ProviderEntry>,
+}
+
+/// Fetch provider endpoints for a specific model (author/slug).
+pub async fn fetch_model_endpoints(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model_id: &str,
+) -> color_eyre::Result<Vec<ProviderEntry>> {
+    let url = format!(
+        "{}/models/{}/endpoints",
+        base_url.trim_end_matches('/'),
+        model_id
+    );
+    let resp = client
+        .get(url)
+        .bearer_auth(api_key)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let body = resp.text().await?;
+    let parsed: EndpointsResponse = serde_json::from_str(&body)?;
+    Ok(parsed.data)
+}

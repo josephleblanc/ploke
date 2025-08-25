@@ -37,6 +37,9 @@ pub struct ModelBrowserItem {
     pub supports_tools: bool,
     pub providers: Vec<ModelProviderRow>,
     pub expanded: bool,
+    // Runtime flags for async provider loading and deferred selection
+    pub loading_providers: bool,
+    pub pending_select: bool,
 }
 
 #[derive(Debug)]
@@ -167,18 +170,22 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
                 format!(
                     "    pricing: in={} out={}",
                     it.input_cost
-                        .map(|v| format!("{:.4}", v))
+                        .map(|v| format!("{:.6}", v))
                         .unwrap_or_else(|| "-".to_string()),
                     it.output_cost
-                        .map(|v| format!("{:.4}", v))
+                        .map(|v| format!("{:.6}", v))
                         .unwrap_or_else(|| "-".to_string())
                 ),
                 detail_style,
             )));
 
-            // Provider breakdown
-            if !it.providers.is_empty() {
-                lines.push(Line::from(Span::styled("    providers:", detail_style)));
+            // Provider breakdown (with loading/empty states)
+            lines.push(Line::from(Span::styled("    providers:", detail_style)));
+            if it.loading_providers {
+                lines.push(Line::from(Span::styled("      (loading…)", detail_style)));
+            } else if it.providers.is_empty() {
+                lines.push(Line::from(Span::styled("      (none)", detail_style)));
+            } else {
                 for p in &it.providers {
                     lines.push(Line::from(Span::styled(
                         format!(
@@ -189,10 +196,10 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
                                 .map(|v| v.to_string())
                                 .unwrap_or_else(|| "-".to_string()),
                             p.input_cost
-                                .map(|v| format!("{:.4}", v))
+                                .map(|v| format!("{:.6}", v))
                                 .unwrap_or_else(|| "-".to_string()),
                             p.output_cost
-                                .map(|v| format!("{:.4}", v))
+                                .map(|v| format!("{:.6}", v))
                                 .unwrap_or_else(|| "-".to_string())
                         ),
                         detail_style,

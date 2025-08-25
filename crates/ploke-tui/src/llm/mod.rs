@@ -416,6 +416,47 @@ pub async fn llm_manager(
                     .await;
                 });
             }
+            AppEvent::ModelEndpointsRequest { model_id } => {
+                let state = Arc::clone(&state);
+                let event_bus = Arc::clone(&event_bus);
+                let client = client.clone();
+                tokio::spawn(async move {
+                    // Resolve an OpenRouter API key
+                    let api_key = {
+                        let cfg = state.config.read().await;
+                        cfg.model_registry
+                            .providers
+                            .iter()
+                            .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                            .map(|p| p.resolve_api_key())
+                            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                            .unwrap_or_default()
+                    };
+                    if api_key.is_empty() {
+                        tracing::warn!(
+                            "No OpenRouter API key available; cannot fetch endpoints for {}",
+                            model_id
+                        );
+                        return;
+                    }
+
+                    match crate::llm::openrouter_catalog::fetch_model_endpoints(
+                        &client,
+                        crate::user_config::OPENROUTER_URL,
+                        &api_key,
+                        &model_id,
+                    )
+                    .await
+                    {
+                        Ok(providers) => {
+                            event_bus.send(AppEvent::ModelEndpointsResults { model_id, providers });
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
+                        }
+                    }
+                });
+            }
             _ => {}
         }
     }
