@@ -36,7 +36,7 @@ use ploke_db::{Database, bm25_index, create_index_primary};
 use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_error::Error;
-use ploke_rag::{RagConfig, RagService, RrfConfig, TokenBudget};
+use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::workspace_root;
 use ploke_tui::app::App;
 use ploke_tui::app_state::{
@@ -60,9 +60,6 @@ use uuid::Uuid;
 
 // Ensure a realistic App initialization occurs (settings/env seeded).
 // We don't yet drive the in-app event loops, but this simulates runtime config.
-
-/// Cap for live test token budget
-const LLM_TOKEN_BUDGET: usize = 4096;
 
 #[allow(dead_code)]
 struct ToolRoundtripOutcome {
@@ -122,41 +119,6 @@ fn default_headers() -> HeaderMap {
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
 fn endpoint_price_hint(ep: &ploke_tui::llm::provider_endpoints::ModelEndpoint) -> f64 {
     ep.pricing.prompt_or_default() + ep.pricing.completion_or_default()
-}
-
-/// Simple retry helper for POSTing to OpenRouter, with basic 429 backoff.
-async fn post_with_retries(
-    client: &Client,
-    url: &str,
-    api_key: &str,
-    body: &Value,
-    attempts: u8,
-) -> Result<reqwest::Response, reqwest::Error> {
-    let attempts = attempts.max(1);
-    for i in 0..attempts {
-        let resp = client
-            .post(url)
-            .bearer_auth(api_key)
-            .json(body)
-            .send()
-            .await;
-        match resp {
-            Ok(r) => {
-                if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && i + 1 < attempts {
-                    tokio::time::sleep(Duration::from_millis(250 * (i as u64 + 1))).await;
-                    continue;
-                }
-                return Ok(r);
-            }
-            Err(e) => {
-                if i + 1 == attempts {
-                    return Err(e);
-                }
-                tokio::time::sleep(Duration::from_millis(250 * (i as u64 + 1))).await;
-            }
-        }
-    }
-    unreachable!("post_with_retries exhausted attempts unexpectedly")
 }
 
 /// Pick the cheapest tools-capable endpoint for a model (by prompt+completion price).
@@ -252,16 +214,6 @@ async fn choose_tools_endpoint_for_model(
     Some((author, slug, chosen, slug_hint))
 }
 
-/// Build the three real tool definitions we expose to models.
-fn tool_defs() -> Vec<Value> {
-    let request_code_context =
-        serde_json::to_value(ploke_tui::llm::request_code_context_tool_def())
-            .expect("Error with code context tool translation to json");
-
-    // Context-only focus: only expose the request_code_context tool in this E2E
-    vec![request_code_context]
-}
-
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     // Dedicated diagnostics directory (env-driven by LLM layer)
@@ -325,7 +277,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     let rag = rag.expect("rag service not created correctly");
     rag.bm25_rebuild().await?;
 
-    let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+    let (rag_event_tx, _rag_event_rx) = mpsc::channel(10);
     // Shared app state
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
@@ -467,8 +419,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                     output_cost_per_million: None,
                 },
             );
-            // Make sure active provider points to this model id
-            cfg.provider_registry.active_provider = model_id.clone();
         }
 
         tracing::trace!(
@@ -536,8 +486,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                 Ok(Ok(ev)) => match ev {
                     AppEvent::Llm(llm::Event::ToolCall {
                         name,
-                        arguments,
-                        call_id,
                         vendor,
                         ..
                     }) => {
