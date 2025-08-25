@@ -72,6 +72,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 }
             }
         }
+        AppEvent::ModelEndpointsRequest { .. } => {
+            // Request event: handled by llm_manager; UI waits for ModelEndpointsResults.
+        }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
         }
