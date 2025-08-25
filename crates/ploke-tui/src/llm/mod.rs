@@ -437,6 +437,11 @@ pub async fn llm_manager(
                             "No OpenRouter API key available; cannot fetch endpoints for {}",
                             model_id
                         );
+                        // Unblock the UI: return an empty provider list so the overlay stops loading.
+                        event_bus.send(AppEvent::ModelEndpointsResults {
+                            model_id,
+                            providers: Vec::new(),
+                        });
                         return;
                     }
 
@@ -453,6 +458,11 @@ pub async fn llm_manager(
                         }
                         Err(e) => {
                             tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
+                            // Unblock the UI even on error with an empty provider list.
+                            event_bus.send(AppEvent::ModelEndpointsResults {
+                                model_id,
+                                providers: Vec::new(),
+                            });
                         }
                     }
                 });
