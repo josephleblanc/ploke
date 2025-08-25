@@ -31,7 +31,7 @@ use ploke_tui::llm::{
 use ploke_tui::tracing_setup::init_tracing;
 use ploke_tui::user_config::OPENROUTER_URL;
 
-const LLM_TOKEN_BUDGET: usize = 512;
+const LLM_TOKEN_BUDGET: usize = 4096;
 
 #[allow(dead_code)]
 struct ContextToolResponse {

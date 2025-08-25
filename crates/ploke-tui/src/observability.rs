@@ -247,7 +247,7 @@ async fn persist_tool_requested(
     let args_json = serde_json::to_string(&params.arguments).unwrap_or_else(|_| "null".to_string());
     let (model, provider_slug) = {
         let cfg = state.config.read().await;
-        if let Some(p) = cfg.provider_registry.get_active_provider() {
+        if let Some(p) = cfg.model_registry.get_active_model_config() {
             (p.model.clone(), p.provider_slug.clone())
         } else {
             ("".to_string(), None)

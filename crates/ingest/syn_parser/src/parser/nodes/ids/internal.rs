@@ -520,29 +520,6 @@ macro_rules! define_category_enum {
     };
 }
 
-/// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
-///
-/// # Usage
-/// ```ignore
-/// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
-/// impl_typed_node_id_get!(StructNodeId, get_struct);
-/// ```
-// macro_rules! impl_typed_node_id_get {
-//     ($IdType:ty, $GetterMethod:ident) => {
-//         // Implement the private sealing trait first
-//         impl private_traits::Sealed for $IdType {}
-//         // Implement the getter trait
-//         impl TypedNodeIdGet for $IdType {
-//             #[inline]
-//             fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
-//                 graph
-//                     .$GetterMethod(*self)
-//                     .map(|node| node as &dyn GraphNode)
-//             }
-//         }
-//     };
-// }
-
 // ----- Internal Macro for Typed IDs -----
 
 /// Macro to define a strictly encapsulated newtype wrapper around NodeId.

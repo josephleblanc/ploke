@@ -8,7 +8,7 @@
 //!   commands. Avoids blocking the UI thread.
 //!
 //! Critical interactions:
-//! - ProviderRegistry updates (load_api_keys, refresh_from_openrouter, strictness).
+//! - ModelRegistry updates (load_api_keys, refresh_from_openrouter, strictness).
 //! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
@@ -17,7 +17,7 @@ use super::parser::Command;
 use crate::app::App;
 use crate::llm::openrouter_catalog::ModelEntry;
 use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing};
-use crate::user_config::{OPENROUTER_URL, ProviderRegistryStrictness, ProviderType, UserConfig};
+use crate::user_config::{OPENROUTER_URL, ModelRegistryStrictness, ProviderType, UserConfig};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use reqwest::Client;
@@ -86,7 +86,7 @@ pub fn execute(app: &mut App, command: Command) {
             tokio::spawn(async move {
                 {
                     let mut cfg = state.config.write().await;
-                    cfg.provider_registry.load_api_keys();
+                    cfg.model_registry.load_api_keys();
                     let _ = cmd_tx
                         .send(StateCommand::AddMessageImmediate {
                             msg: "Reloaded API keys from environment.".to_string(),
@@ -95,7 +95,7 @@ pub fn execute(app: &mut App, command: Command) {
                         })
                         .await;
                     if remote {
-                        match cfg.provider_registry.refresh_from_openrouter().await {
+                        match cfg.model_registry.refresh_from_openrouter().await {
                             Ok(_) => {
                                 let _ = cmd_tx
                                     .send(StateCommand::AddMessageImmediate {
@@ -230,7 +230,7 @@ pub fn execute(app: &mut App, command: Command) {
             tokio::spawn(async move {
                 {
                     let mut cfg = state.config.write().await;
-                    cfg.provider_registry.strictness = mode.clone();
+                    cfg.model_registry.strictness = mode.clone();
                 }
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
@@ -247,7 +247,7 @@ pub fn execute(app: &mut App, command: Command) {
             tokio::spawn(async move {
                 {
                     let mut cfg = state.config.write().await;
-                    cfg.provider_registry.require_tool_support = enabled;
+                    cfg.model_registry.require_tool_support = enabled;
                 }
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
@@ -321,10 +321,10 @@ fn show_model_info_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        let reg = &cfg.provider_registry;
-        let active_id = reg.active_provider.clone();
+        let reg = &cfg.model_registry;
+        let active_id = reg.active_model_config.clone();
 
-        if let Some(p) = reg.get_active_provider() {
+        if let Some(p) = reg.get_active_model_config() {
             let params = p.llm_params.clone().unwrap_or_default();
             let caps = reg.capabilities.get(&p.model);
 
@@ -511,14 +511,14 @@ fn list_models_async(app: &App) {
     tokio::spawn(async move {
         let cfg = state.config.read().await;
 
-        let active = cfg.provider_registry.active_provider.clone();
-        let caps_count = cfg.provider_registry.capabilities.len();
+        let active = cfg.model_registry.active_model_config.clone();
+        let caps_count = cfg.model_registry.capabilities.len();
         let mut lines = vec![format!(
             "Available models (cached capabilities: {}):",
             caps_count
         )];
 
-        for pc in &cfg.provider_registry.providers {
+        for pc in &cfg.model_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
             let marker = if pc.id == active { "*" } else { " " };
             lines.push(format!("{} {:<28}  {}", marker, pc.id, display));
@@ -577,7 +577,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         let (api_key, base_url) = {
             let cfg = state.config.read().await;
             let key = cfg
-                .provider_registry
+                .model_registry
                 .providers
                 .iter()
                 .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
@@ -746,7 +746,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let (api_key, base_url) = {
             let cfg = state.config.read().await;
             let key = cfg
-                .provider_registry
+                .model_registry
                 .providers
                 .iter()
                 .find(|p| {

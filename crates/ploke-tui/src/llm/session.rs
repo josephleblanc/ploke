@@ -23,7 +23,7 @@ use crate::EventBus;
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
 pub struct RequestSession<'a> {
     client: &'a Client,
-    provider: &'a crate::user_config::ProviderConfig,
+    provider: &'a crate::user_config::ModelConfig,
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
     messages: Vec<RequestMessage<'a>>,
@@ -36,7 +36,7 @@ pub struct RequestSession<'a> {
 impl<'a> RequestSession<'a> {
     pub fn new(
         client: &'a Client,
-        provider: &'a crate::user_config::ProviderConfig,
+        provider: &'a crate::user_config::ModelConfig,
         event_bus: Arc<EventBus>,
         parent_id: Uuid,
         messages: Vec<RequestMessage<'a>>,
@@ -76,6 +76,7 @@ impl<'a> RequestSession<'a> {
                 cap_messages_by_tokens(&self.messages, budget_tokens)
             };
 
+            let require_parameters = true;
             let request_payload = build_openai_request(
                 self.provider,
                 effective_messages,
@@ -86,6 +87,7 @@ impl<'a> RequestSession<'a> {
                     None
                 },
                 use_tools,
+                require_parameters
             );
 
             // Brief, structured dispatch log for efficient triage
@@ -143,10 +145,11 @@ impl<'a> RequestSession<'a> {
 
                     // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
                     if self.fallback_on_404 && !tools_fallback_attempted {
-                        self.messages.push(RequestMessage::new_system(format!(
+                        let msg = format!(
                             "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
                             guidance
-                        )));
+                        );
+                        self.messages.push(RequestMessage::new_system(msg));
                         tools_fallback_attempted = true;
                         use_tools = false;
                         continue;
@@ -320,11 +323,12 @@ impl<'a> RequestSession<'a> {
     }
 }
 pub fn build_openai_request<'a>(
-    provider: &'a crate::user_config::ProviderConfig,
+    provider: &'a crate::user_config::ModelConfig,
     messages: Vec<super::RequestMessage<'a>>,
     params: &super::LLMParameters,
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
+    require_parameters: bool
 ) -> super::OpenAiRequest<'a> {
     tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_openai_request");
     // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
@@ -351,6 +355,7 @@ pub fn build_openai_request<'a>(
                 } else {
                     Some(super::ProviderPreferences {
                         order: vec![s.to_string()],
+                        require_parameters,
                         ..Default::default()
                     })
                 }
@@ -560,7 +565,7 @@ mod tests {
     fn test_build_request_regular_chat_snapshot() {
         init_test_logging("regular");
         // Arrange: provider and parameters for qwen model without tools
-        let provider = crate::user_config::ProviderConfig {
+        let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
             provider_slug: Some("openrouter".to_string()),
@@ -604,7 +609,7 @@ mod tests {
         ];
 
         // Act: build request without tools
-        let payload = super::build_openai_request(&provider, messages, &params, None, false);
+        let payload = super::build_openai_request(&provider, messages, &params, None, false, false);
         let json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Snapshot: expected payload (stable field order)
@@ -632,7 +637,7 @@ mod tests {
     fn test_build_request_tool_call_snapshot() {
         init_test_logging("tool-call");
         // Arrange: provider and parameters for qwen model with tools
-        let provider = crate::user_config::ProviderConfig {
+        let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
             provider_slug: Some("openrouter".to_string()),
@@ -692,7 +697,7 @@ mod tests {
 
         // Act: build request with tools and auto tool_choice
         let payload =
-            super::build_openai_request(&provider, messages, &params, Some(vec![tool]), true);
+            super::build_openai_request(&provider, messages, &params, Some(vec![tool]), true, true);
         let json = serde_json::to_string_pretty(&payload).unwrap();
 
         // Snapshot: expected payload (stable field order)

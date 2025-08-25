@@ -5,7 +5,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::{CommandStyle, EmbeddingConfig, ProviderRegistry, UserConfig};
+use crate::user_config::{CommandStyle, EmbeddingConfig, ModelRegistry, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -129,7 +129,7 @@ impl Default for EditingConfig {
 #[derive(Debug, Default, Clone)]
 pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
-    pub provider_registry: ProviderRegistry,
+    pub model_registry: ModelRegistry,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub embedding: EmbeddingConfig,
@@ -140,7 +140,7 @@ impl From<UserConfig> for RuntimeConfig {
         let registry = uc.registry;
         // Choose LLM params from active provider or default
         let llm_params = registry
-            .get_active_provider()
+            .get_active_model_config()
             .and_then(|p| p.llm_params.clone())
             .unwrap_or_default();
 
@@ -153,7 +153,7 @@ impl From<UserConfig> for RuntimeConfig {
 
         RuntimeConfig {
             llm_params,
-            provider_registry: registry,
+            model_registry: registry,
             editing,
             command_style: uc.command_style,
             embedding: uc.embedding,
@@ -170,7 +170,7 @@ impl RuntimeConfig {
         };
 
         UserConfig {
-            registry: self.provider_registry.clone(),
+            registry: self.model_registry.clone(),
             command_style: self.command_style,
             embedding: self.embedding.clone(),
             editing,

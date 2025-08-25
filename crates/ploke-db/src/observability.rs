@@ -939,13 +939,11 @@ impl ObservabilityStore for Database {
             });
 
         let status = to_string(&row[*hid.get("status").unwrap()])?;
-        let decided_at_ms = row[*hid.get("decided_at_ms").unwrap()]
-            .get_int()
-            .map(|v| v as i64);
-        let applied_at_ms = row[*hid.get("applied_at_ms").unwrap()]
-            .get_int()
-            .map(|v| v as i64);
-        let commit_hash = row[*hid.get("commit_hash").unwrap()]
+        let decided_at_ms: Option<i64> = row[*hid.get("decided_at_ms").unwrap()]
+            .get_int();
+        let applied_at_ms: Option<i64> = row[*hid.get("applied_at_ms").unwrap()]
+            .get_int();
+        let commit_hash: Option<String> = row[*hid.get("commit_hash").unwrap()]
             .get_str()
             .map(|s| s.to_string());
 

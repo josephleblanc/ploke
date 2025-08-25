@@ -45,6 +45,7 @@ use ploke_tui::app_state::{
 use ploke_tui::chat_history::ChatHistory;
 use ploke_tui::llm::{self, llm_manager};
 use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
+use ploke_tui::tracing_setup::init_tracing;
 use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model, ModelCapabilities};
 use ploke_tui::{AppEvent, EventBus, EventBusCaps, EventPriority, app_state};
 use reqwest::Client;
@@ -216,6 +217,7 @@ async fn choose_tools_endpoint_for_model(
 
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
+    let _guard = init_tracing();
     // Dedicated diagnostics directory (env-driven by LLM layer)
     let out_dir = std::path::PathBuf::from("target/test-output/openrouter_e2e");
     fs::create_dir_all(&out_dir).ok();
@@ -300,7 +302,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
     // Best-effort capability refresh so tools are considered for models that advertise them.
     {
         let mut cfg = state.config.write().await;
-        let _ = cfg.provider_registry.refresh_from_openrouter().await;
+        let _ = cfg.model_registry.refresh_from_openrouter().await;
     }
 
     // Spawn state manager first
@@ -410,7 +412,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         // Force-enable tool support in the registry for the selected model so tools are included.
         {
             let mut cfg = state.config.write().await;
-            cfg.provider_registry.capabilities.insert(
+            cfg.model_registry.capabilities.insert(
                 model_id.clone(),
                 ModelCapabilities {
                     supports_tools: true,

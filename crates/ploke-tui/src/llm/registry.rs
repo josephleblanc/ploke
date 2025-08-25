@@ -2,14 +2,14 @@
 //! Curated catalog of sensible default OpenRouter model configurations.
 //!
 //! Dataflow:
-//! - Loaded once into `DEFAULT_MODELS` and merged into `ProviderRegistry` via
-//!   `ProviderRegistry::with_defaults`, allowing users to override or disable
+//! - Loaded once into `DEFAULT_MODELS` and merged into `ModelRegistry` via
+//!   `ModelRegistry::with_defaults`, allowing users to override or disable
 //!   entries declaratively in `config.toml`.
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
-use crate::user_config::{ProviderConfig, ProviderType};
+use crate::user_config::{ModelConfig, ProviderType};
 
 /// Curated “starter pack” of popular OpenRouter models.
 ///
@@ -18,7 +18,7 @@ use crate::user_config::{ProviderConfig, ProviderType};
 /// will *overwrite* the corresponding default, so power-users can tweak or
 /// disable individual models without touching code.
 #[doc = "Default provider configurations keyed by short id (alias)."]
-pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| {
+pub static DEFAULT_MODELS: Lazy<HashMap<String, ModelConfig>> = Lazy::new(|| {
     let mut m = HashMap::new();
 
     insert_openrouter(&mut m, "gpt-4o", "openai/gpt-4o", None);
@@ -42,6 +42,12 @@ pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| 
         "deepseek/deepseek-chat-v3-0324:free",
         None,
     );
+    insert_openrouter(&mut m, "deepseek-chat-v3.1", "deepseek/deepseek-chat-v3.1", None);
+    insert_openrouter(&mut m, "glm-4.5", "z-ai/glm-4.5", None);
+    insert_openrouter(&mut m, "qwen3-coder", "qwen/qwen3-coder-480b-a35b-07-25", None);
+    insert_openrouter(&mut m, "qwen3-thinking", "qwen/qwen3-235b-a22b-thinking-2507", None);
+    insert_openrouter(&mut m, "qwen3", "qwen/qwen3-235b-a22b-07-25", None);
+    insert_openrouter(&mut m, "gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite", None);
     insert_openrouter(
         &mut m,
         "deepseek-r1-0528:free",
@@ -64,14 +70,14 @@ pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| 
 #[inline]
 #[doc = "Insert a standard OpenRouter provider configuration into the defaults map."]
 fn insert_openrouter(
-    map: &mut HashMap<String, ProviderConfig>,
+    map: &mut HashMap<String, ModelConfig>,
     id: &str,
     model: &str,
     temperature: Option<f32>,
 ) {
     map.insert(
         id.to_string(),
-        ProviderConfig {
+        ModelConfig {
             id: id.to_string(),
             api_key: String::new(), // will be filled from env or user config
             provider_slug: None,

@@ -7,9 +7,12 @@
 //! - The executor consumes these variants and dispatches `StateCommand`s,
 //!   keeping the UI thread non-blocking.
 
+// TODO: Add defaults 
+// - `/model providers` to use currently selected model by default
+// - `/model providers <model_id>` should also work for aliases
 use crate::app::App;
 use crate::app_state::core::PreviewMode;
-use crate::user_config::{CommandStyle, ProviderRegistryStrictness};
+use crate::user_config::{CommandStyle, ModelRegistryStrictness};
 use uuid::Uuid;
 
 /// Parsed command variants handled by the executor.
@@ -33,7 +36,7 @@ pub enum Command {
     ModelSearch(String),
     ModelSearchHelp,
     ModelProviders(String),
-    ProviderStrictness(ProviderRegistryStrictness),
+    ProviderStrictness(ModelRegistryStrictness),
     ProviderToolsOnly(bool),
     ProviderSelect {
         model_id: String,
@@ -128,12 +131,12 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 .to_lowercase();
             let strictness = match mode.as_str() {
                 "openrouter-only" | "openrouter_only" | "openrouteronly" => {
-                    ProviderRegistryStrictness::OpenRouterOnly
+                    ModelRegistryStrictness::OpenRouterOnly
                 }
                 "allow-custom" | "allow_custom" | "allowcustom" => {
-                    ProviderRegistryStrictness::AllowCustom
+                    ModelRegistryStrictness::AllowCustom
                 }
-                "allow-any" | "allow_any" | "allowany" => ProviderRegistryStrictness::AllowAny,
+                "allow-any" | "allow_any" | "allowany" => ModelRegistryStrictness::AllowAny,
                 _ => return Command::Raw(trimmed.to_string()),
             };
             Command::ProviderStrictness(strictness)

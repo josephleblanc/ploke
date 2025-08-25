@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use ploke_tui::user_config::{
-    ProviderConfig, ProviderRegistry, ProviderRegistryStrictness, ProviderType, UserConfig,
+    ModelConfig, ModelRegistry, ModelRegistryStrictness, ProviderType, UserConfig,
 };
 
 fn temp_path(name: &str) -> PathBuf {
@@ -10,10 +10,10 @@ fn temp_path(name: &str) -> PathBuf {
     dir.into_path().join(name)
 }
 
-fn sample_registry() -> ProviderRegistry {
-    ProviderRegistry {
+fn sample_registry() -> ModelRegistry {
+    ModelRegistry {
         providers: vec![
-            ProviderConfig {
+            ModelConfig {
                 id: "openrouter-default".to_string(),
                 api_key: "SECRET_OR".to_string(),
                 api_key_env: None,
@@ -24,7 +24,7 @@ fn sample_registry() -> ProviderRegistry {
                 provider_type: ProviderType::OpenRouter,
                 llm_params: None,
             },
-            ProviderConfig {
+            ModelConfig {
                 id: "custom-local".to_string(),
                 api_key: "SECRET_CUSTOM".to_string(),
                 api_key_env: None,
@@ -36,10 +36,10 @@ fn sample_registry() -> ProviderRegistry {
                 llm_params: None,
             },
         ],
-        active_provider: "openrouter-default".to_string(),
+        active_model_config: "openrouter-default".to_string(),
         aliases: std::collections::HashMap::new(),
         capabilities: std::collections::HashMap::new(),
-        strictness: ProviderRegistryStrictness::AllowCustom,
+        strictness: ModelRegistryStrictness::AllowCustom,
         require_tool_support: true,
     }
 }
@@ -101,17 +101,17 @@ fn save_load_preserves_keys_when_opted_in() {
 fn strictness_enforced_on_switch() {
     let mut reg = sample_registry();
 
-    reg.strictness = ProviderRegistryStrictness::OpenRouterOnly;
+    reg.strictness = ModelRegistryStrictness::OpenRouterOnly;
     assert!(!reg.set_active("custom-local"), "custom should be rejected");
     assert!(
         reg.set_active("openrouter-default"),
         "openrouter is allowed"
     );
-    assert_eq!(reg.active_provider, "openrouter-default");
+    assert_eq!(reg.active_model_config, "openrouter-default");
 
-    reg.strictness = ProviderRegistryStrictness::AllowCustom;
+    reg.strictness = ModelRegistryStrictness::AllowCustom;
     assert!(reg.set_active("custom-local"), "custom allowed now");
-    assert_eq!(reg.active_provider, "custom-local");
+    assert_eq!(reg.active_model_config, "custom-local");
 }
 
 #[test]
@@ -123,8 +123,8 @@ fn alias_lookup_and_switching() {
         .insert("local".to_string(), "custom-local".to_string());
 
     assert!(reg.set_active("gpt"));
-    assert_eq!(reg.active_provider, "openrouter-default");
+    assert_eq!(reg.active_model_config, "openrouter-default");
 
     assert!(reg.set_active("local"));
-    assert_eq!(reg.active_provider, "custom-local");
+    assert_eq!(reg.active_model_config, "custom-local");
 }

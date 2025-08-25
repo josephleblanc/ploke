@@ -11,6 +11,8 @@ Add a file-explorer side-panel.
 
 Add a default file name for instructions for the LLM, similar to the AGENT.md for some editors.
 
+- Create a way to drop the current database, or switch to a different database/crate for analysis
+
 ## Possibly complex
 - Allow LLM to modify the AST for restructuring and reorganization.
 
@@ -24,6 +26,10 @@ functionality of enabling database queries.
 
 If we had this feature, it might have helped to avoid the error linked below:
 [See Potential Insights from E-DESIGN-DRIFT (Violating Core Design)] "Section 4 System/Tooling Factors"
+
+## Visual Representation of Vector Embeddings
+Open questions:
+- dimensionality reduction
 
 ## Cracked Smol Model
 

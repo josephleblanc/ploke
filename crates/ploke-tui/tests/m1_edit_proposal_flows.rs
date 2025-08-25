@@ -51,7 +51,7 @@ async fn make_min_state() -> Arc<AppState> {
     Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig {
-            provider_registry: cfg.registry.clone(),
+            model_registry: cfg.registry.clone(),
             ..Default::default()
         }),
         system: SystemState::default(),

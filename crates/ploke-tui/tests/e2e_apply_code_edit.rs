@@ -12,7 +12,7 @@ use ploke_tui::{
     llm::{self, LLMParameters, ToolVendor},
     system::SystemEvent,
     tracing_setup::init_tracing,
-    user_config::{ProviderConfig, ProviderRegistry, ProviderType, default_model},
+    user_config::{ModelConfig, ModelRegistry, ProviderType, default_model},
 };
 use quote::ToTokens;
 use tokio::sync::{RwLock, mpsc};
@@ -52,10 +52,10 @@ async fn e2e_apply_code_edit_real_llm() {
     let TrackingHash(hash_uuid) = file_hash;
     let expected_file_hash = hash_uuid.to_string();
 
-    // Build ProviderRegistry to use an OpenRouter model that supports tools.
+    // Build ModelRegistry to use an OpenRouter model that supports tools.
     // Using a distinct provider id to avoid colliding with defaults.
     let provider_id = "e2e-openrouter";
-    let provider = ProviderConfig {
+    let provider = ModelConfig {
         id: provider_id.to_string(),
         api_key,
         provider_slug: None,
@@ -69,9 +69,9 @@ async fn e2e_apply_code_edit_real_llm() {
             ..Default::default()
         }),
     };
-    let registry = ProviderRegistry {
+    let registry = ModelRegistry {
         providers: vec![provider],
-        active_provider: provider_id.to_string(),
+        active_model_config: provider_id.to_string(),
         aliases: std::collections::HashMap::new(),
         ..Default::default()
     };
@@ -95,7 +95,7 @@ async fn e2e_apply_code_edit_real_llm() {
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig {
-            provider_registry: registry.clone(),
+            model_registry: registry.clone(),
             ..Default::default()
         }),
         system: SystemState::default(),

@@ -3,9 +3,9 @@
 //!
 //! Dataflow:
 //! - `UserConfig` is loaded at startup (toml/env), then merged with curated defaults.
-//! - `ProviderRegistry` manages providers, aliases, strictness, capabilities cache,
+//! - `ModelRegistry` manages providers, aliases, strictness, capabilities cache,
 //!   and API key resolution from env or config.
-//! - Commands (`/model *`, `/provider strictness`) mutate `ProviderRegistry` at runtime,
+//! - Commands (`/model *`, `/provider strictness`) mutate `ModelRegistry` at runtime,
 //!   while save/load provide persistence with optional secret redaction.
 
 // NOTE: This todo list applies to both this file and to the `ploke-tui/llm/mod.rs` file
@@ -42,8 +42,8 @@
 // 5 Environment: Should API keys be per-model or shared across providers?
 //   - Answer: Shared across providers.
 //
-// The current `ProviderConfig` in user_config.rs seems designed for a single provider. Should we
-// evolve this into a `Vec<ProviderConfig>` with a way to select the active one?
+// The current `ModelConfig` in user_config.rs seems designed for a single provider. Should we
+// evolve this into a `Vec<ModelConfig>` with a way to select the active one?
 //
 // More information on future development is in `ploke-tui/docs/model_configs.md`
 
@@ -70,7 +70,7 @@ pub enum CommandStyle {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct UserConfig {
     #[serde(default)]
-    pub registry: ProviderRegistry,
+    pub registry: ModelRegistry,
     #[serde(default)]
     pub command_style: CommandStyle,
     #[serde(default)]
@@ -214,23 +214,23 @@ fn default_agent_min_confidence() -> f32 {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 /// Registry of configured providers with active selection, aliases,
 /// cached capabilities, and selection policy (strictness).
-pub struct ProviderRegistry {
-    pub providers: Vec<ProviderConfig>,
-    #[serde(default = "default_active_provider")]
-    pub active_provider: String,
+pub struct ModelRegistry {
+    pub providers: Vec<ModelConfig>,
+    #[serde(default = "default_active_model_config")]
+    pub active_model_config: String,
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, String>,
     #[serde(skip)]
     pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
     #[serde(default = "default_strictness")]
-    pub strictness: ProviderRegistryStrictness,
+    pub strictness: ModelRegistryStrictness,
     #[serde(default)]
     pub require_tool_support: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 /// Concrete provider configuration (one model endpoint).
-pub struct ProviderConfig {
+pub struct ModelConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
     /// The API key for this specific provider
@@ -270,7 +270,7 @@ pub enum ProviderType {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 /// Policy for allowed providers when switching the active provider.
-pub enum ProviderRegistryStrictness {
+pub enum ModelRegistryStrictness {
     /// Only allow selecting OpenRouter providers
     OpenRouterOnly,
     /// Allow OpenRouter and Custom providers (default)
@@ -280,11 +280,11 @@ pub enum ProviderRegistryStrictness {
     AllowAny,
 }
 
-pub fn default_strictness() -> ProviderRegistryStrictness {
-    ProviderRegistryStrictness::AllowCustom
+pub fn default_strictness() -> ModelRegistryStrictness {
+    ModelRegistryStrictness::AllowCustom
 }
 
-impl ProviderConfig {
+impl ModelConfig {
     /// Resolve the actual API key to use, considering env vars and defaults
     pub fn resolve_api_key(&self) -> String {
         // 1. Check provider-specific env var if specified
@@ -337,14 +337,14 @@ pub struct ModelCapabilities {
     pub output_cost_per_million: Option<f64>,
 }
 
-impl ProviderRegistry {
+impl ModelRegistry {
     /// Returns the currently active provider configuration.
-    pub fn get_active_provider(&self) -> Option<&ProviderConfig> {
-        self.providers.iter().find(|p| p.id == self.active_provider)
+    pub fn get_active_model_config(&self) -> Option<&ModelConfig> {
+        self.providers.iter().find(|p| p.id == self.active_model_config)
     }
 
     /// Returns a provider either by id or by alias.
-    pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
+    pub fn get_model_config_by_alias(&self, alias: &str) -> Option<&ModelConfig> {
         if let Some(provider_id) = self.aliases.get(alias) {
             self.providers.iter().find(|p| p.id == *provider_id)
         } else {
@@ -377,11 +377,11 @@ impl ProviderRegistry {
     /// # Examples
     ///
     /// ```ignore
-    /// # use ploke_tui::user_config::{ProviderRegistry, ProviderConfig, ProviderType};
+    /// # use ploke_tui::user_config::{ModelRegistry, ModelConfig, ProviderType};
     /// # use std::collections::HashMap;
-    /// let mut registry = ProviderRegistry {
+    /// let mut registry = ModelRegistry {
     ///     providers: vec![
-    ///         ProviderConfig {
+    ///         ModelConfig {
     ///             id: "gpt4".into(),
     ///             api_key: "key".into(),
     ///             base_url: "https://openrouter.ai/api/v1".into(),
@@ -389,7 +389,7 @@ impl ProviderRegistry {
     ///             display_name: Some("GPT-4".into()),
     ///             provider_type: ProviderType::OpenRouter,
     ///         },
-    ///         ProviderConfig {
+    ///         ModelConfig {
     ///             id: "claude".into(),
     ///             api_key: "key".into(),
     ///             base_url: "https://openrouter.ai/api/v1".into(),
@@ -398,16 +398,16 @@ impl ProviderRegistry {
     ///             provider_type: ProviderType::OpenRouter,
     ///         },
     ///     ],
-    ///     active_provider: "gpt4".into(),
+    ///     active_model_config: "gpt4".into(),
     ///     aliases: HashMap::from([("gpt".into(), "gpt4".into())]),
     /// };
     ///
     /// assert!(registry.set_active("claude"));
-    /// assert_eq!(registry.active_provider, "claude");
+    /// assert_eq!(registry.active_model_config, "claude");
     ///
     /// // Switch via alias
     /// assert!(registry.set_active("gpt"));
-    /// assert_eq!(registry.active_provider, "gpt4");
+    /// assert_eq!(registry.active_model_config, "gpt4");
     ///
     /// // Unknown id fails
     /// assert!(!registry.set_active("unknown"));
@@ -428,16 +428,16 @@ impl ProviderRegistry {
 
         // Enforce strictness policy
         let allowed = match self.strictness {
-            ProviderRegistryStrictness::OpenRouterOnly => {
+            ModelRegistryStrictness::OpenRouterOnly => {
                 matches!(provider.provider_type, ProviderType::OpenRouter)
             }
-            ProviderRegistryStrictness::AllowCustom => {
+            ModelRegistryStrictness::AllowCustom => {
                 matches!(
                     provider.provider_type,
                     ProviderType::OpenRouter | ProviderType::Custom
                 )
             }
-            ProviderRegistryStrictness::AllowAny => true,
+            ModelRegistryStrictness::AllowAny => true,
         };
 
         if !allowed {
@@ -451,10 +451,10 @@ impl ProviderRegistry {
 
         tracing::info!(
             "Changing provider from {} to {}",
-            self.active_provider,
+            self.active_model_config,
             provider_id
         );
-        self.active_provider = provider_id.to_string();
+        self.active_model_config = provider_id.to_string();
         true
     }
 
@@ -556,7 +556,7 @@ impl ProviderRegistry {
     }
 }
 
-pub fn default_active_provider() -> String {
+pub fn default_active_model_config() -> String {
     "kimi-k2".to_string()
 }
 
@@ -577,10 +577,10 @@ pub fn default_model() -> String {
 }
 
 // Add a default implementation for when the config file is missing
-impl Default for ProviderRegistry {
+impl Default for ModelRegistry {
     fn default() -> Self {
         let mut registry = Self {
-            providers: vec![ProviderConfig {
+            providers: vec![ModelConfig {
                 id: default_model_id(),
                 api_key: String::new(),
                 provider_slug: None,
@@ -593,7 +593,7 @@ impl Default for ProviderRegistry {
                 }),
                 api_key_env: Some("OPENROUTER_API_KEY".to_string()),
             }],
-            active_provider: default_active_provider(),
+            active_model_config: default_active_model_config(),
             aliases: std::collections::HashMap::new(),
             capabilities: std::collections::HashMap::new(),
             strictness: default_strictness(),

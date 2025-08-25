@@ -261,7 +261,7 @@ pub async fn state_manager(
             } => {
                 {
                     let mut cfg = state.config.write().await;
-                    let reg = &mut cfg.provider_registry;
+                    let reg = &mut cfg.model_registry;
 
                     if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
                         p.model = model_id.clone();
@@ -270,7 +270,7 @@ pub async fn state_manager(
                         p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
                         p.provider_slug = Some(provider_id.clone());
                     } else {
-                        reg.providers.push(crate::user_config::ProviderConfig {
+                        reg.providers.push(crate::user_config::ModelConfig {
                             id: model_id.clone(),
                             api_key: String::new(),
                             api_key_env: Some("OPENROUTER_API_KEY".to_string()),
@@ -287,7 +287,7 @@ pub async fn state_manager(
                     }
                     // Ensure keys are resolved and activate this provider/model
                     reg.load_api_keys();
-                    reg.active_provider = model_id.clone();
+                    reg.active_model_config = model_id.clone();
                 }
 
                 // Inform the user and update the UI via events
