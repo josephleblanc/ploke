@@ -168,6 +168,12 @@ struct EndpointsResponse {
     data: Vec<ProviderEntry>,
 }
 
+/// Some catalog IDs include a variant suffix (e.g., ":free") that is not accepted by the
+/// `/models/:author/:slug/endpoints` path. Strip any suffix after ':'.
+fn canonicalize_model_id_for_endpoints(model_id: &str) -> String {
+    model_id.split(':').next().unwrap_or(model_id).to_string()
+}
+
 /// Fetch provider endpoints for a specific model (author/slug).
 pub async fn fetch_model_endpoints(
     client: &reqwest::Client,
@@ -175,14 +181,18 @@ pub async fn fetch_model_endpoints(
     api_key: &str,
     model_id: &str,
 ) -> color_eyre::Result<Vec<ProviderEntry>> {
+    let model_path = canonicalize_model_id_for_endpoints(model_id);
     let url = format!(
         "{}/models/{}/endpoints",
         base_url.trim_end_matches('/'),
-        model_id
+        model_path
     );
     let resp = client
         .get(url)
         .bearer_auth(api_key)
+        .header("Accept", "application/json")
+        .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+        .header("X-Title", "Ploke TUI")
         .send()
         .await?
         .error_for_status()?;
@@ -190,4 +200,80 @@ pub async fn fetch_model_endpoints(
     let body = resp.text().await?;
     let parsed: EndpointsResponse = serde_json::from_str(&body)?;
     Ok(parsed.data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_pricing_deser_from_strings() {
+        let body = r#"{
+            "data": [
+                {
+                    "id": "openai",
+                    "context_length": 128000,
+                    "pricing": { "prompt": "0.000001", "completion": "0.000002" },
+                    "supported_parameters": ["tools"],
+                    "capabilities": { "tools": true }
+                }
+            ]
+        }"#;
+        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
+        assert_eq!(parsed.data.len(), 1);
+        let p = &parsed.data[0];
+        assert_eq!(p.id, "openai");
+        let pr = p.pricing.as_ref().expect("pricing exists");
+        assert!((pr.input.unwrap() - 0.000001).abs() < 1e-12);
+        assert!((pr.output.unwrap() - 0.000002).abs() < 1e-12);
+        assert_eq!(p.supported_parameters.as_ref().unwrap()[0], "tools");
+        assert_eq!(p.capabilities.as_ref().unwrap().tools, Some(true));
+    }
+
+    #[test]
+    fn test_pricing_deser_from_numbers() {
+        let body = r#"{
+            "data": [
+                {
+                    "id": "novita",
+                    "context_length": 64000,
+                    "pricing": { "input": 0.000003, "output": 0.000004 }
+                }
+            ]
+        }"#;
+        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
+        let p = &parsed.data[0];
+        let pr = p.pricing.as_ref().unwrap();
+        assert!((pr.input.unwrap() - 0.000003).abs() < 1e-12);
+        assert!((pr.output.unwrap() - 0.000004).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_alias_id_from_name() {
+        // Some endpoints respond with "name" (human-readable) instead of "id"/"provider"
+        let body = r#"{
+            "data": [
+                {
+                    "name": "OpenAI",
+                    "context_length": 128000,
+                    "pricing": { "prompt": "0.000001", "completion": "0.000002" }
+                }
+            ]
+        }"#;
+        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
+        assert_eq!(parsed.data[0].id, "OpenAI");
+    }
+
+    #[test]
+    fn test_canonicalize_model_id_for_endpoints() {
+        assert_eq!(
+            canonicalize_model_id_for_endpoints("deepseek/deepseek-r1-0528-qwen3-8b:free"),
+            "deepseek/deepseek-r1-0528-qwen3-8b"
+        );
+        assert_eq!(
+            canonicalize_model_id_for_endpoints("qwen/qwen-2.5-72b-instruct"),
+            "qwen/qwen-2.5-72b-instruct"
+        );
+    }
 }
