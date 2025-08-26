@@ -18,33 +18,84 @@ pub async fn index_workspace(
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
         let mut write_guard = state.system.write().await;
-        let crate_focus = match std::env::current_dir() {
-            Ok(current_dir) => {
-                let mut pwd = current_dir;
-                pwd.push(&workspace);
-                pwd
-            }
-            Err(e) => {
-                tracing::error!("Error resolving current dir: {e}");
-                return;
+        tracing::info!("Processing workspace path: {}", workspace);
+        
+        let crate_focus = if std::path::Path::new(&workspace).is_absolute() {
+            // If workspace is already an absolute path, use it directly
+            tracing::info!("Using absolute path: {}", workspace);
+            std::path::PathBuf::from(&workspace)
+        } else {
+            // If workspace is relative, append to current directory
+            match std::env::current_dir() {
+                Ok(current_dir) => {
+                    tracing::info!("Resolving relative path '{}' from current dir: {}", 
+                                  workspace, current_dir.display());
+                    let mut pwd = current_dir;
+                    pwd.push(&workspace);
+                    tracing::info!("Resolved to: {}", pwd.display());
+                    pwd
+                }
+                Err(e) => {
+                    tracing::error!("Error resolving current dir: {e}");
+                    return;
+                }
             }
         };
-        tracing::debug!("Setting crate_focus to {}", crate_focus.display());
+        
+        // Verify the directory exists
+        if !crate_focus.exists() {
+            tracing::error!("Target directory does not exist: {}", crate_focus.display());
+            add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Error: Directory does not exist: {}", crate_focus.display()),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+        
+        if !crate_focus.is_dir() {
+            tracing::error!("Target path is not a directory: {}", crate_focus.display());
+            add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                format!("Error: Path is not a directory: {}", crate_focus.display()),
+                crate::chat_history::MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+        
+        tracing::info!("Setting crate_focus to {}", crate_focus.display());
         write_guard.crate_focus = Some(crate_focus.clone());
         crate_focus
     };
 
     if needs_parse {
+        tracing::info!("Starting parse of workspace: {}", target_dir.display());
         match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
             Ok(_) => tracing::info!(
                 "Parse of target workspace {} successful",
                 &target_dir.display()
             ),
             Err(e) => {
-                tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e);
+                tracing::error!("Failed to parse directory {}: {}", target_dir.display(), e);
+                add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    format!("Error parsing workspace: {}", e),
+                    crate::chat_history::MessageKind::SysInfo,
+                )
+                .await;
                 return;
             }
         }
+    } else {
+        tracing::info!("Skipping parse (needs_parse=false) for workspace: {}", target_dir.display());
     }
 
     add_msg_immediate(

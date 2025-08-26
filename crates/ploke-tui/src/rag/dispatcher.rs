@@ -41,11 +41,24 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         arguments: arguments.clone(),
         call_id: call_id.clone(),
     };
+    tracing::info!("Dispatching tool: {}", name);
     match name.as_str() {
-        "apply_code_edit" => apply_code_edit_tool(tool_call_params).await,
+        "apply_code_edit" => {
+            tracing::info!("Calling apply_code_edit_tool");
+            apply_code_edit_tool(tool_call_params).await;
+            tracing::info!("apply_code_edit_tool completed");
+        },
         // New: get_file_metadata tool for fetching current file hash and basic metadata
-        "get_file_metadata" => get_file_metadata_tool(tool_call_params).await,
-        "request_code_context" => handle_request_context(tool_call_params).await,
+        "get_file_metadata" => {
+            tracing::info!("Calling get_file_metadata_tool");
+            get_file_metadata_tool(tool_call_params).await;
+            tracing::info!("get_file_metadata_tool completed");
+        },
+        "request_code_context" => {
+            tracing::info!("Calling handle_request_context");
+            handle_request_context(tool_call_params).await;
+            tracing::info!("handle_request_context completed");
+        },
         _ => {
             tracing::warn!("Unsupported tool call: {}", name);
             let err = format!("Unsupported tool: {}", name);
@@ -53,4 +66,5 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
             return;
         }
     }
+    tracing::info!("Tool dispatch completed for: {}", name);
 }

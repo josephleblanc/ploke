@@ -22,51 +22,94 @@
   human-written. We believe this is important.
 </details>
 
-### When can I use it!?
-~~1-2 weeks: Early testing build ready (aiming for July 12th, 2025)~~
+## Installation
 
-You can use it now!
+### Prerequisites
 
-#### Quickstart
+- Rust (latest stable version)
+- An OpenRouter API key (get one at [OpenRouter](https://openrouter.ai/))
 
-Go ahead and clone the repo, and you can run it with the following commands:
+### Building from Source
+
 ```bash
 git clone https://github.com/josephleblanc/ploke
 cd ploke
-cargo run
+cargo build --release
 ```
 
-This will open the terminal user interface. To use it to chat with LLMs, you'll
-just need an Openrouter API key in your environment under OPENROUTER_API_KEY
-(support for other endpoints coming soon), for example before using `cargo run`, enter
-```
+## Getting Started
+
+### 1. Set up your API key
+
+Before running ploke, you need to set your OpenRouter API key as an environment variable:
+
+```bash
 export OPENROUTER_API_KEY="your_key_here"
 ```
 
-##### ❗ WARNING ❗
-Under development, this may crash if it tries to parse a crate with an error, or in certain [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md) or unknown limitations.
+### 2. Run ploke
 
-Currently, you can demo the project after using `cargo run` using following command within the terminal user interface. Note that we use vim-like bindings by default right now, so you can enter "Insert Mode" by pressing `i`, then type
-
-```
-/index start <absolute path to target crate>
-```
-
-If you would like to try a quick example using our `fixture_tracking_hash`, you can enter:
-
-```
-/index start /path/to/ploke/tests/fixture_crates/fixture_tracking_hash
+```bash
+cargo run --release
+# Or use the built binary:
+./target/release/ploke-tui
 ```
 
-Then the indexer will run, and you can chat with the LLM, and our RAG will find code to include as context in the background.
+### 3. Index your Rust project
+
+Once inside the terminal user interface:
+
+1. Press `i` to enter Insert Mode (vim-like bindings)
+2. Type the index command with the path to your Rust project:
 
 ```
-/index start /path/to/ploke/tests/fixture_crates/fixture_nodes
+/index start <path-to-your-rust-crate>
 ```
 
-For a larger example that takes a little longer (1-2 minutes) to process into vector embeddings, but with more examples of code items to search in the graph, you can use another fixture crate that has examples of all the different types of nodes included within our parsing capabilities:
+**Important:** The indexing process uses local embeddings (via sentence-transformers), which:
+- **Does NOT cost any API credits** 
+- Takes time to process (1-2 minutes for medium-sized projects)
+- Creates a vector database of your code for semantic search
 
-command, and `ploke` will process a fixture. Once this is complete, you can ask questions in the LLM chat and our RAG semantic search will work to provide the LLM with context automatically in the background.
+### 4. Chat with the LLM
+
+After indexing completes, you can start asking questions about your code. The RAG system will automatically provide relevant context to the LLM.
+
+## Quick Examples
+
+### Try with test fixtures
+
+To quickly test ploke without your own project, try our fixture crates:
+
+**Small example (fast indexing):**
+```
+/index start tests/fixture_crates/fixture_tracking_hash
+```
+
+**Comprehensive example (1-2 minutes to index):**
+```
+/index start tests/fixture_crates/fixture_nodes
+```
+
+This larger fixture includes examples of all supported Rust node types.
+
+## Features
+
+- **Local Embeddings**: Uses sentence-transformers locally, no API costs for indexing
+- **Code Graph**: Builds a comprehensive graph of your Rust code structure
+- **RAG-Powered**: Automatically retrieves relevant code context for LLM queries
+- **Terminal UI**: Clean interface with vim-like keybindings
+
+## Known Limitations
+
+⚠️ **Under active development** - You may encounter crashes with certain code patterns. See [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md) for details.
+
+## Upcoming Features
+
+- [ ] Support for custom embedding models (including local Qwen3)
+- [ ] Additional LLM provider support beyond OpenRouter
+- [ ] Faster indexing options
+- [ ] Project-wide refactoring capabilities
 
 ## 🚧 Under Construction 🚧
 

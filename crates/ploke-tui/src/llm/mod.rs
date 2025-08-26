@@ -1236,7 +1236,7 @@ impl Default for LLMParameters {
             response_format: Default::default(),
             safety_settings: Default::default(),
             system_prompt: None,
-            tool_max_retries: Some(2),
+            tool_max_retries: Some(5),
             tool_token_limit: Some(2048),
             history_char_budget: Some(12000),
             tool_timeout_secs: Some(30),

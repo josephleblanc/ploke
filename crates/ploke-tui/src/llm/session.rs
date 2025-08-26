@@ -222,6 +222,7 @@ impl<'a> RequestSession<'a> {
                     // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
                     let mut specs: Vec<tool_call::ToolCallSpec> = Vec::new();
                     let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
+                    let mut tool_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_message)
 
                     for call in tool_calls {
                         match call {
@@ -263,6 +264,11 @@ impl<'a> RequestSession<'a> {
 
                     // Execute supported tool calls concurrently and append in stable order by call_id
                     if !specs.is_empty() {
+                        tracing::info!("Executing {} tool calls", specs.len());
+                        for spec in &specs {
+                            tracing::info!("Tool call: {} with args: {:?}", spec.name, spec.arguments);
+                        }
+                        
                         let outcomes = tool_call::execute_tool_calls(
                             &self.event_bus,
                             self.parent_id,
@@ -270,16 +276,23 @@ impl<'a> RequestSession<'a> {
                             self.params.tool_timeout_secs.unwrap_or(30),
                         )
                         .await;
+                        
+                        tracing::info!("Tool calls executed, processing {} outcomes", outcomes.len());
+                        
                         for (spec, result) in outcomes {
                             match result {
                                 Ok(content) => {
+                                    tracing::info!("Tool call '{}' succeeded with content length: {}", 
+                                                  spec.name, content.len());
                                     self.messages
                                         .push(RequestMessage::new_tool(content, spec.call_id));
                                 }
                                 Err(err) => {
+                                    tracing::error!("Tool call '{}' failed: {}", spec.name, err);
                                     let sys_msg =
                                         format!("Tool call '{}' failed: {}.", spec.name, err);
                                     self.messages.push(RequestMessage::new_system(sys_msg));
+                                    tool_errors.push((spec.call_id.clone(), err.clone()));
                                     self.messages.push(RequestMessage::new_tool(
                                         json!({"ok": false, "error": err}).to_string(),
                                         spec.call_id,
@@ -290,15 +303,21 @@ impl<'a> RequestSession<'a> {
                     }
 
                     // Handle unsupported/other formats as immediate failures
-                    for (call_id, err_json) in other_errors {
+                    for (call_id, err_json) in &other_errors {
                         self.messages.push(RequestMessage::new_system(
                             "Unsupported tool call format".to_string(),
                         ));
                         self.messages
-                            .push(RequestMessage::new_tool(err_json, call_id));
+                            .push(RequestMessage::new_tool(err_json.clone(), call_id.clone()));
                     }
 
                     if self.attempts > max_retries {
+                        tracing::error!(
+                            "Tool call retries exhausted after {} attempts. Tool errors: {:?}, Other errors: {:?}",
+                            self.attempts,
+                            &tool_errors,
+                            &other_errors
+                        );
                         return Err(LlmError::Unknown(format!(
                             "Tool call retries exhausted after {} attempt(s)",
                             self.attempts
@@ -394,6 +413,7 @@ pub async fn await_tool_result(
                     content,
                     ..
                 })) if rid == request_id && cid == call_id => {
+                    tracing::info!("Received ToolEvent::Completed for request_id={}, call_id={}", rid, cid);
                     break Ok(content);
                 }
                 Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -402,6 +422,7 @@ pub async fn await_tool_result(
                     content,
                     ..
                 })) if rid == request_id && cid == call_id => {
+                    tracing::info!("Received SystemEvent::ToolCallCompleted for request_id={}, call_id={}", rid, cid);
                     break Ok(content);
                 }
                 Ok(AppEvent::LlmTool(ToolEvent::Failed {
@@ -410,6 +431,7 @@ pub async fn await_tool_result(
                     error,
                     ..
                 })) if rid == request_id && cid == call_id => {
+                    tracing::error!("Received ToolEvent::Failed for request_id={}, call_id={}: {}", rid, cid, error);
                     break Err(error);
                 }
                 Ok(AppEvent::System(SystemEvent::ToolCallFailed {
@@ -418,12 +440,28 @@ pub async fn await_tool_result(
                     error,
                     ..
                 })) if rid == request_id && cid == call_id => {
+                    tracing::error!("Received SystemEvent::ToolCallFailed for request_id={}, call_id={}: {}", rid, cid, error);
                     break Err(error);
                 }
-                Ok(_) => {
-                    // unrelated event; keep waiting
+                Ok(event) => {
+                    // Log what events we're seeing but ignoring
+                    match &event {
+                        AppEvent::System(SystemEvent::ToolCallCompleted { request_id: rid, call_id: cid, .. }) => {
+                            tracing::debug!("Ignoring ToolCallCompleted for different request: rid={}, cid={} (waiting for rid={}, cid={})", 
+                                          rid, cid, request_id, call_id);
+                        }
+                        AppEvent::System(SystemEvent::ToolCallFailed { request_id: rid, call_id: cid, .. }) => {
+                            tracing::debug!("Ignoring ToolCallFailed for different request: rid={}, cid={} (waiting for rid={}, cid={})", 
+                                          rid, cid, request_id, call_id);
+                        }
+                        _ => {
+                            // Only log non-tool events at trace level to reduce noise
+                            tracing::trace!("Ignoring unrelated event while waiting for tool result");
+                        }
+                    }
                 }
                 Err(e) => {
+                    tracing::error!("Event channel error while waiting for tool result: {}", e);
                     break Err(format!("Event channel error: {}", e));
                 }
             }
