@@ -134,7 +134,20 @@ pub async fn try_main() -> color_eyre::Result<()> {
     config.registry.load_api_keys();
     tracing::debug!("Registry after merge: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
+    tracing::info!("Initializing database with schema...");
     let new_db = ploke_db::Database::init_with_schema()?;
+    tracing::info!("Database initialized successfully");
+    
+    // Create HNSW indexes for all primary node types
+    tracing::info!("Creating HNSW indexes for primary node types...");
+    match ploke_db::create_index_primary(&new_db) {
+        Ok(()) => tracing::info!("HNSW indexes created successfully"),
+        Err(e) => {
+            tracing::error!("Failed to create HNSW indexes: {}. RAG search may be limited.", e);
+            tracing::warn!("Continuing without HNSW indexes - semantic search will fallback to BM25");
+        }
+    }
+    
     let db_handle = Arc::new(new_db);
 
     // Initial parse is now optional - user can run indexing on demand

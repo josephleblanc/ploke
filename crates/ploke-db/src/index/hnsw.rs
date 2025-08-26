@@ -492,9 +492,18 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
 }
 
 pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
+    tracing::info!("Creating HNSW indexes for all primary node types");
     for ty in NodeType::primary_nodes() {
-        create_index(db, ty)?;
+        tracing::info!("Creating HNSW index for node type: {:?}", ty);
+        match create_index(db, ty) {
+            Ok(()) => tracing::info!("Successfully created HNSW index for {:?}", ty),
+            Err(e) => {
+                tracing::error!("Failed to create HNSW index for {:?}: {}", ty, e);
+                return Err(e);
+            }
+        }
     }
+    tracing::info!("All HNSW indexes created successfully");
     Ok(())
 }
 

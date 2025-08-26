@@ -81,7 +81,11 @@ pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
                 }
             };
 
-            let _ = event_bus
+            tracing::info!(
+                "Sending ToolCallCompleted: request_id={}, parent_id={}, call_id={}",
+                request_id, parent_id, call_id
+            );
+            let send_result = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id,
@@ -89,6 +93,11 @@ pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
                     call_id: call_id.clone(),
                     content,
                 }));
+            if let Err(e) = send_result {
+                tracing::error!("Failed to send ToolCallCompleted: {:?}", e);
+            } else {
+                tracing::info!("Successfully sent ToolCallCompleted");
+            }
         }
         Err(e) => {
             let err = format!("Failed to read file '{}': {}", path.display(), e);
