@@ -41,26 +41,40 @@ pub struct ModelEndpoint {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SupportedParameters {
-    // AI: fill out this enum so it can be a good typed version of these supported values AI!
-    // possible values for supported parameters
-    //
-    //"max_tokens",
-    // "top_k",
-    // "frequency_penalty",
-    // "seed",
-    // "tool_choice",
-    // "repetition_penalty",
-    // "logit_bias",
-    // "logprobs",
-    // "structured_outputs",
-    // "presence_penalty",
-    // "min_p",
-    // "top_p",
-    // "stop",
-    // "top_logprobs",
-    // "response_format",
-    // "temperature",
-    // "tools",
+    #[serde(rename = "max_tokens")]
+    MaxTokens,
+    #[serde(rename = "top_k")]
+    TopK,
+    #[serde(rename = "frequency_penalty")]
+    FrequencyPenalty,
+    #[serde(rename = "seed")]
+    Seed,
+    #[serde(rename = "tool_choice")]
+    ToolChoice,
+    #[serde(rename = "repetition_penalty")]
+    RepetitionPenalty,
+    #[serde(rename = "logit_bias")]
+    LogitBias,
+    #[serde(rename = "logprobs")]
+    Logprobs,
+    #[serde(rename = "structured_outputs")]
+    StructuredOutputs,
+    #[serde(rename = "presence_penalty")]
+    PresencePenalty,
+    #[serde(rename = "min_p")]
+    MinP,
+    #[serde(rename = "top_p")]
+    TopP,
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "top_logprobs")]
+    TopLogprobs,
+    #[serde(rename = "response_format")]
+    ResponseFormat,
+    #[serde(rename = "temperature")]
+    Temperature,
+    #[serde(rename = "tools")]
+    Tools,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
