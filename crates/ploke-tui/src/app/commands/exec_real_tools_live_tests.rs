@@ -20,7 +20,7 @@ use ploke_db::Database;
 use ploke_error::Error;
 
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::ModelEndpointsResponse;
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
 
@@ -154,8 +154,7 @@ async fn choose_tools_endpoint_for_model(
         .filter(|ep| {
             ep.supported_parameters
                 .iter()
-                // Update to use new enum-based approach AI!
-                .any(|p| p.eq_ignore_ascii_case("tools"))
+                .any(|p| matches!(p, SupportedParameters::Tools))
         })
         .collect();
 
