@@ -61,7 +61,7 @@
 //! let ctx = rag.get_context(
 //!     "module visibility rules",
 //!     12,
-//!     budget,
+//!     &budget,
 //!     RetrievalStrategy::Hybrid { rrf: Default::default(), mmr: None },
 //! ).await?;
 //! # Ok(()) }

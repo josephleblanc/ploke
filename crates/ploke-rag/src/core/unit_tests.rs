@@ -104,6 +104,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
@@ -131,6 +132,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_rebuild() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -148,6 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -185,6 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -212,6 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_fallback() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
@@ -240,6 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_structs() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -266,6 +272,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_enums() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -292,6 +299,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_traits() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -340,6 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_unions() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -366,6 +375,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_macros() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -392,6 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_type_aliases() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -418,6 +429,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_constants() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -444,6 +456,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_statics() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -470,6 +483,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -497,6 +511,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_complex_enum() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -534,6 +549,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_function_definitions() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES

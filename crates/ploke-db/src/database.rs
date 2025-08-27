@@ -1445,7 +1445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Needs to use new callback method"]
+    // #[ignore = "Needs to use new callback method"]
     async fn test_update_embeddings_batch() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture

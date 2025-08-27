@@ -40,6 +40,9 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Need to add more feedback
     * [ ] Refactor `FileManager` or `AppEvent` to handle response with update
           on file save state completion.
+* [ ] Introduce a reusable trait for scrollable overlays/panes (dynamic placement left/right/top/bottom, adjustable coverage like splits, with consistent scroll state management); adopt in Model Browser and new Context/Approvals overlays.
+* [ ] Add input autocomplete for commands and keywords; show suggestions inline.
+* [ ] In Slash/Command mode, detect known commands pre-submit and change input box color (visual affordance).
 
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.

@@ -277,12 +277,13 @@ pub async fn llm_manager(
                 },
             ) => {
                 tracing::info!(
-                    "Received LLM request for parent_id: {}
-                new_msg_id: {}
-                ",
+                    "Received LLM request for parent_id: {}\nnew_msg_id: {}",
                     parent_id,
                     new_msg_id
                 );
+
+                // Reverted: only queue the request; pairing happens when
+                // PromptConstructed arrives for the same parent_id.
                 pending_requests.push(request);
             }
             AppEvent::Llm(context @ Event::PromptConstructed { parent_id, .. }) => {
