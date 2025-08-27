@@ -38,6 +38,7 @@ use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
 use view::components::model_browser::{render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow};
+use view::components::approvals::{render_approvals_overlay, ApprovalsState};
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
 struct TerminalModeGuard;
@@ -86,6 +87,8 @@ pub struct App {
     show_context_preview: bool,
     // Modal overlay for interactive model discovery/selection
     model_browser: Option<ModelBrowserState>,
+    // Modal overlay for approvals list
+    approvals: Option<ApprovalsState>,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
@@ -120,6 +123,7 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             model_browser: None,
+            approvals: None,
             input_history: Vec::new(),
             input_history_pos: None,
         }
@@ -526,8 +530,85 @@ impl App {
             }
         }
 
+        // Render approvals overlay if visible (on top)
+        if let Some(approvals) = &self.approvals {
+            // Centered overlay
+            let w = frame.area().width.saturating_mul(8) / 10;
+            let h = frame.area().height.saturating_mul(8) / 10;
+            let x = frame.area().x + (frame.area().width.saturating_sub(w)) / 2;
+            let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
+            let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
+            let _ = render_approvals_overlay(frame, overlay_area, &self.state, approvals);
+        }
+
         // Cursor position is handled by InputView.
     }
+
+    fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        if self.approvals.is_none() { return false; }
+        let mut close = false;
+        let mut approve = false;
+        let mut deny = false;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => { close = true; }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(st) = &mut self.approvals { st.select_prev(); }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(st) = &mut self.approvals {
+                    let len = futures::executor::block_on(self.state.proposals.read()).len();
+                    st.select_next(len);
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('y') => { approve = true; }
+            KeyCode::Char('n') | KeyCode::Char('d') => { deny = true; }
+            KeyCode::Char('o') => {
+                // Open-in-editor for the first file of selected proposal
+                let guard = futures::executor::block_on(self.state.proposals.read());
+                let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+                ids.sort();
+                if let Some(st) = &self.approvals {
+                    if let Some(id) = ids.get(st.selected) {
+                        if let Some(p) = guard.get(id) {
+                            if let Some(path) = p.files.first() {
+                                let cfg = futures::executor::block_on(self.state.config.read());
+                                if let Some(cmd) = cfg.ploke_editor.clone().or_else(|| std::env::var("PLOKE_EDITOR").ok()) {
+                                    let path_str = path.display().to_string();
+                                    tokio::spawn(async move {
+                                        let _ = std::process::Command::new(cmd).arg(path_str).spawn();
+                                    });
+                                } else {
+                                    self.send_cmd(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            _ => {}
+        }
+        if close { self.approvals = None; return true; }
+        if approve || deny {
+            let guard = futures::executor::block_on(self.state.proposals.read());
+            let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+            ids.sort();
+            if let Some(st) = &self.approvals {
+                if let Some(id) = ids.get(st.selected) {
+                    if approve {
+                        self.send_cmd(StateCommand::ApproveEdits { request_id: *id });
+                    } else {
+                        self.send_cmd(StateCommand::DenyEdits { request_id: *id });
+                    }
+                }
+            }
+            return true;
+        }
+        true
+    }
+
+    
 
     fn create_branch(&mut self) {
         // let new_branch = self.chat_history.
@@ -557,6 +638,10 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        // Intercept approvals overlay keys
+        if self.approvals.is_some() {
+            if self.handle_overlay_key(key) { return; }
+        }
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
             let mut chosen_id: Option<String> = None;
@@ -646,6 +731,16 @@ impl App {
             return;
         }
 
+        // Global action mapping (including OpenApprovals)
+        if let Some(action) = to_action(self.mode, key, self.command_style) {
+            use Action::*;
+            if let OpenApprovals = action {
+                if self.approvals.is_some() { self.approvals = None; } else { self.approvals = Some(ApprovalsState::default()); }
+                self.needs_redraw = true;
+                return;
+            }
+        }
+
         // Insert mode input history navigation
         if self.mode == Mode::Insert {
             use KeyCode::*;
@@ -710,6 +805,14 @@ impl App {
         use crate::chat_history::NavigationDirection::{Next, Previous};
 
         match action {
+            Action::OpenApprovals => {
+                if self.approvals.is_some() {
+                    self.approvals = None;
+                } else {
+                    self.approvals = Some(ApprovalsState::default());
+                }
+                return;
+            }
             Action::Quit => {
                 self.quit();
             }

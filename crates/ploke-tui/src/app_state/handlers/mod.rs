@@ -4,4 +4,5 @@ pub mod embedding;
 pub mod indexing;
 pub mod model;
 pub mod session;
+pub mod proposals;
 use crate::*;

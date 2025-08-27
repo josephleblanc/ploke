@@ -106,6 +106,21 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                 MessageKind::SysInfo,
             )
             .await;
+
+            // Persist proposals (best-effort)
+            crate::app_state::handlers::proposals::save_proposals(state).await;
+
+            // Post-apply: trigger a rescan to refresh indexes
+            let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+            tokio::spawn({
+                let state = Arc::clone(state);
+                let event_bus = Arc::clone(event_bus);
+                async move {
+                    crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+                    // We don't need scan_rx result here; fire-and-forget.
+                    let _ = scan_rx;
+                }
+            });
         }
         Err(e) => {
             proposal.status = EditProposalStatus::Failed(e.to_string());
@@ -137,6 +152,7 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
             add_msg_imm(msg).await;
+            crate::app_state::handlers::proposals::save_proposals(state).await;
         }
     }
 }
@@ -191,6 +207,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
 
             let msg = format!("Denied edits for request_id {}", request_id);
             add_msg_imm(msg).await;
+            crate::app_state::handlers::proposals::save_proposals(state).await;
         }
         EditProposalStatus::Denied => {
             let msg = format!("Edits already denied for request_id {}", request_id);

@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
 
 use crate::TrackingHash;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingData {
     pub id: Uuid,
     pub name: String,
@@ -17,7 +18,7 @@ pub struct EmbeddingData {
 }
 
 // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileData {
     /// Uuid is of the owner file-level module
     pub id: Uuid,
@@ -26,7 +27,7 @@ pub struct FileData {
     pub file_path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangedFileData {
     /// Uuid is of the owner file-level module
     pub id: Uuid,
@@ -55,7 +56,7 @@ impl ChangedFileData {
 }
 
 /// Placeholder structures to be replaced by shared types in ploke-core.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteSnippetData {
     pub id: uuid::Uuid,
     pub name: String,
@@ -67,7 +68,7 @@ pub struct WriteSnippetData {
     pub namespace: uuid::Uuid,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteResult {
     pub new_file_hash: TrackingHash,
 }

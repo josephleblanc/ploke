@@ -360,6 +360,8 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
             },
         );
     }
+    // Persist proposals (best-effort)
+    crate::app_state::handlers::proposals::save_proposals(state).await;
 
     // Emit SysInfo summary with how to approve/deny
     let summary = format!(

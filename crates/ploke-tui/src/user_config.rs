@@ -77,6 +77,8 @@ pub struct UserConfig {
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub editing: EditingConfig,
+    #[serde(default)]
+    pub ploke_editor: Option<String>,
 }
 
 impl UserConfig {

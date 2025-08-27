@@ -200,6 +200,9 @@ pub async fn try_main() -> color_eyre::Result<()> {
         budget: TokenBudget::default(),
     });
 
+    // Load persisted proposals (best-effort) before starting subsystems
+    crate::app_state::handlers::proposals::load_proposals(&state).await;
+
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 

@@ -1,4 +1,5 @@
 use ploke_core::TrackingHash;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,14 +103,14 @@ impl std::ops::Deref for IndexingState {
 }
 
 // Editing configuration for M1 safe-editing pipeline
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum PreviewMode {
     #[default]
     CodeBlock,
     Diff,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditingConfig {
     pub preview_mode: PreviewMode,
     pub auto_confirm_edits: bool,
@@ -126,13 +127,14 @@ impl Default for EditingConfig {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
     pub model_registry: ModelRegistry,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub embedding: EmbeddingConfig,
+    pub ploke_editor: Option<String>,
 }
 
 impl From<UserConfig> for RuntimeConfig {
@@ -157,6 +159,7 @@ impl From<UserConfig> for RuntimeConfig {
             editing,
             command_style: uc.command_style,
             embedding: uc.embedding,
+            ploke_editor: uc.ploke_editor,
         }
     }
 }
@@ -174,11 +177,12 @@ impl RuntimeConfig {
             command_style: self.command_style,
             embedding: self.embedding.clone(),
             editing,
+            ploke_editor: self.ploke_editor.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EditProposalStatus {
     Pending,
     Approved,
@@ -187,20 +191,20 @@ pub enum EditProposalStatus {
     Failed(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeforeAfter {
     pub file_path: PathBuf,
     pub before: String,
     pub after: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DiffPreview {
     CodeBlocks { per_file: Vec<BeforeAfter> },
     UnifiedDiff { text: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditProposal {
     pub request_id: Uuid,
     pub parent_id: Uuid,
