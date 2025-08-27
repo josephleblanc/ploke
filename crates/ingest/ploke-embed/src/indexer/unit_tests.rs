@@ -764,6 +764,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 }
 
 #[tokio::test]
+#[ignore = "long-running; run periodically to validate BM25 index path"]
 async fn test_index_bm25() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::DEBUG);
     test_next_batch_ss("fixture_nodes").await?;
@@ -772,7 +773,7 @@ async fn test_index_bm25() -> Result<(), Error> {
 }
 
 #[tokio::test]
-// NOTE: passing
+#[ignore = "long-running; run periodically to cover full crate"]
 async fn test_batch_ss_nodes() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_nodes").await

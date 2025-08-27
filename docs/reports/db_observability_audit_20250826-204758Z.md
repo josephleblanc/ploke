@@ -33,4 +33,34 @@ Recommended Additions
 Notes
 - Preserve idempotency and NOW snapshots consistent with existing functions; avoid duplicate lifecycle rows.
 - Keep JSON fields for flexible payloads (e.g., retrieval item arrays) but add key columns (parent_id, path, request_id) for efficient queries.
+Primary Nodes and Schema Context (from ploke-transform)
+- Primary node schemas (crates/ingest/ploke-transform/src/schema/primary_nodes.rs):
+  - FunctionNodeSchema, ConstNodeSchema, EnumNodeSchema, ImplNodeSchema, ImportNodeSchema,
+    MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
+    TypeAliasNodeSchema, UnionNodeSchema.
+- Associated nodes (assoc_nodes.rs): MethodNodeSchema.
+- Types (schema/types.rs): NamedType, ReferenceType, SliceType, ArrayType, Tuple types.
+- Edges (schema/edges.rs): Syntactic relations and derived semantic relations (Contains, Defines, Uses).
+
+Schema Proposal (Observability + Conversation/Agent Layers)
+- New relations (illustrative Cozo-like names):
+  - conversation_turn(id, parent_id, kind, content, created_at)
+  - tool_call_requested(request_id, call_id, parent_id, vendor, tool_name, args_sha256, arguments_json, started_at, model, provider_slug)
+  - tool_call_done(request_id, call_id, ended_at, latency_ms, outcome_json, error_kind, error_msg, status)
+  - retrieval_event(parent_id, query, strategy, top_k, budget_json, items_json)  // items: [{path, score, span, node_id?}]
+  - proposal(request_id, parent_id, created_at, preview_meta_json)
+  - proposal_file(request_id, path, expected_hash, start_byte, end_byte)
+  - apply_result(request_id, path, old_hash, new_hash, status, error)
+  - turn_usage(turn_id, prompt_tokens, completion_tokens, total_tokens, cost_usd)
+  - request_context(parent_id, model, provider_slug, tools_on, history_budget, tool_budget)
+
+Bridging Edges
+- Link observability/conversation to code graph (primary nodes):
+  - affects(request_id, node_id) — a proposal/apply_result edge to primary node ids; optionally by file path + span.
+  - references(parent_id, node_id) — retrieval_event items to primary nodes when resolution exists.
+  - mentions(turn_id, node_id) — when conversation content references a canon path resolved to node id.
+
+Rationale
+- These edges connect user prompts and agent actions to specific code items (primary nodes), enabling queries to analyze how inputs and agent steps shaped the code base over time.
+- request_context + usage/cost allow cost/performance analytics per session/turn.
 

@@ -1,0 +1,158 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+.....i...........................
+test result: ok. 32 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.12s
+
+
+running 18 tests
+iiiiii..ii........
+test result: ok. 10 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 2 tests
+ii
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 42 tests
+iii................iiii.......i...........
+test result: ok. 34 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+ii..
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 36 tests
+i.................i.................
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 7.68s
+
+
+running 23 tests
+.......................
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 28 tests
+............................
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.23s
+
+
+running 39 tests
+i.i....................................
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 12.98s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+ii
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 3 tests
+...
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+..
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+..
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+....
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+approve_applies_edits_and_updates_status --- FAILED
+deny_marks_denied_and_does_not_change_file --- FAILED
+stage_proposal_creates_pending_entry_and_preview --- FAILED
+
+failures:
+
+---- approve_applies_edits_and_updates_status stdout ----
+
+thread 'approve_applies_edits_and_updates_status' panicked at crates/ploke-tui/tests/m1_edit_proposal_flows.rs:173:5:
+file did not contain applied replacement: fn demo() { let x = 1; }
+
+
+---- deny_marks_denied_and_does_not_change_file stdout ----
+
+thread 'deny_marks_denied_and_does_not_change_file' panicked at crates/ploke-tui/tests/m1_edit_proposal_flows.rs:234:40:
+proposal not found
+
+---- stage_proposal_creates_pending_entry_and_preview stdout ----
+
+thread 'stage_proposal_creates_pending_entry_and_preview' panicked at crates/ploke-tui/tests/m1_edit_proposal_flows.rs:116:41:
+proposal not found
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    approve_applies_edits_and_updates_status
+    deny_marks_denied_and_does_not_change_file
+    stage_proposal_creates_pending_entry_and_preview
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

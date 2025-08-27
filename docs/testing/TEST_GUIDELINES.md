@@ -14,6 +14,17 @@ Env Gating Patterns
 - Live LLM tests (OpenRouter): require OPENROUTER_API_KEY and PLOKE_LIVE_MODELS=1; choose low‑cost models/providers.
 - Expensive integration (git/MCP): require PLOKE_E2E_MCP=1.
 
+External Tests (Human Verified)
+- All properties relied on for agent behavior must have corresponding external/integration tests (gated by env). These tests must be observed as passing by a human reviewer before progressing beyond stopping points in AGENTIC_SYSTEM_PLAN. Examples:
+  - OpenRouter tool round‑trip (request_code_context, get_file_metadata/apply_code_edit) on known tool‑capable endpoints.
+  - Git branch apply/revert on a temp repo (local‑only) using the chosen Rust git crate.
+  - Full crate rescan after edit apply verifying DB integrity (counts, index availability) within expected bounds.
+
+Advanced Methodologies
+- Property‑based tests: use proptest/quickcheck for invariants (token trimming never exceeds budget; stable dedup preserves order; diff builder idempotence).
+- Fuzzing: use cargo‑fuzz to target parsers/serializers (OpenRouter request/response types) and cozo query assembly helpers.
+- Snapshot testing: ratatui buffers and compact JSON indices (session trace); assert semantic properties rather than exact strings when feasible.
+
 Ratatui/CLI Testing
 - Separate rendering from state (pure functions returning layout data); snapshot widget output via ratatui::buffer::Buffer into a string and assert patterns.
 - Use golden files or insta‑style snapshots sparingly; prefer semantic assertions (presence/ordering of key lines/labels).
@@ -41,8 +52,46 @@ Plan Stopping Points (must‑pass gates)
 - End of Phase 3: post‑apply re‑scan/update; retrieval_event persistence; hybrid search regression tests.
 - A PR cannot merge without green tests at current phase; benchmarks recorded at least once per phase.
 
+Additional Phase Stopping Points
+- Phase 1
+  - Edit staging: staging tool produces proposal in state with preview; lookup by request_id works.
+  - Approvals overlay: scroll behavior snapshot tested; actions wired to state changes.
+  - Git local ops: branch create/commit/revert succeeds on temp repo; diff is rendered.
+  - OpenRouter request types: serde round‑trip coverage for all outbound/inbound types.
+- Phase 2
+  - Planner step selection deterministic under seeds; retries bounded; state machine covered.
+  - Editor canonical resolution test: DB span resolution correct for fixtures.
+  - Critic gates: simulated lint/format/test results drive accept/deny paths.
+- Phase 3
+  - Rescan: DB counts stable after apply; index rebuild available; retrieval_event persisted with items and scores.
+  - Session Trace: compact index generated with per‑request entries; overlay renders navigable timeline.
+
+UI + Ratatui Tests and Benchmarks
+- Tests: snapshot buffers for overlays (Approvals, Context Items, Model Browser); scrolling interactions; input mode indicators; error/status banners.
+- Benchmarks: measure draw() latency per frame for the main event loop; target ≥60 fps (≈16.7 ms/frame) baseline; aspire to 120 fps (≈8.3 ms/frame). Track:
+  - Event loop end‑to‑end time under synthetic loads.
+  - Overlay render time (diff/codeblock) for N files.
+  - Input latency from keypress to displayed character.
+  - Scroll performance (lines/sec) over large histories.
+  - Model browser search/populate latency.
+
 Production‑Readiness Notes
 - Keep all external tests gated; document required envs at test top.
 - Add cost tracking tests with cheap models; skip by default.
 - Prefer deterministic in‑memory DB where possible; otherwise prebuilt fixtures.
 
+Using `fixture_nodes` + Backup DB (Pattern)
+- Prefer realistic tests against the well-known `fixture_nodes` crate:
+  - Path: `tests/fixture_crates/fixture_nodes`
+  - If a test mutates files, restore from `tests/fixture_crates/fixture_nodes_copy` on teardown or panic to keep runs hermetic.
+- Use the backed-up, parsed and embedded database to validate canonical edits without live indexing costs:
+  - Path: `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
+  - This DB is heavily validated in `syn_parser` (fields and NodeId v5 UUID regeneration), making it a strong ground truth.
+  - Load/import this DB in tests to verify spans, hashes, and canonical resolution prior to and after edits.
+- Apply this pattern in integration tests for approvals overlay, apply/deny flows, and post-apply rescans. Record evidence logs alongside other test outputs.
+
+Editor Command Testing
+- Editor command resolution precedence: config override (optional) → `$PLOKE_EDITOR` → None (no-op with SysInfo guidance).
+- Testing approach:
+  - Unit test command construction and precedence; do not spawn by default.
+  - Attempt up to three strategies to verify spawn (e.g., mockable command runner, `echo`-style harmless command, or dev-only helper). If unsuccessful after three attempts, abandon the attempt, add a report with findings, and annotate tests with any added dependencies or special handling.

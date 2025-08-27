@@ -43,6 +43,10 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Introduce a reusable trait for scrollable overlays/panes (dynamic placement left/right/top/bottom, adjustable coverage like splits, with consistent scroll state management); adopt in Model Browser and new Context/Approvals overlays.
 * [ ] Add input autocomplete for commands and keywords; show suggestions inline.
 * [ ] In Slash/Command mode, detect known commands pre-submit and change input box color (visual affordance).
+* [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
+
+## OpenRouter Types
+* [ ] Consolidate OpenRouter types into a single module with strong typing (serde derives), remove ad‑hoc conversions; add micro validation layer.
 
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.

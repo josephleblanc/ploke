@@ -1,0 +1,16 @@
+Running m1_edit_proposal_flows integration tests at 20250827-041922Z
+
+running 3 tests
+test stage_proposal_creates_pending_entry_and_preview ... FAILED
+test deny_marks_denied_and_does_not_change_file ... FAILED
+test approve_applies_edits_and_updates_status ... FAILED
+
+failures:
+
+failures:
+    approve_applies_edits_and_updates_status
+    deny_marks_denied_and_does_not_change_file
+    stage_proposal_creates_pending_entry_and_preview
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

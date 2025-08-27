@@ -22,7 +22,10 @@ use crate::{
 
 use super::{
     editing::approve_edits,
-    utils::{ALLOWED_RELATIONS, Action, ApplyCodeEditArgs, ToolCallParams, calc_top_k_for_budget},
+    utils::{
+        calc_top_k_for_budget, ApplyCodeEditRequest, Edit, LegacyApplyDirect, NodeKind, ALLOWED_RELATIONS,
+        ToolCallParams,
+    },
     *,
 };
 
@@ -123,18 +126,36 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         }
     }
 
-    // Parse args (new, concise schema)
-    let raw_args = arguments.clone();
-    let args: ApplyCodeEditArgs = match serde_json::from_value(raw_args.clone()) {
+    // Parse args (strongly typed). Prefer tagged enum request; fall back to legacy direct splice mapping.
+    let typed_req: ApplyCodeEditRequest = match serde_json::from_value(arguments.clone()) {
         Ok(v) => v,
-        Err(e) => {
-            let err = format!("Invalid apply_code_edit payload: {}", e);
-            tool_call_params.tool_call_failed(err);
-            return;
+        Err(_) => {
+            match serde_json::from_value::<LegacyApplyDirect>(arguments.clone()) {
+                Ok(legacy) => ApplyCodeEditRequest {
+                    confidence: legacy.confidence,
+                    edits: legacy
+                        .edits
+                        .into_iter()
+                        .map(|le| Edit::Splice {
+                            file_path: le.file_path,
+                            expected_file_hash: le.expected_file_hash,
+                            start_byte: le.start_byte as u32,
+                            end_byte: le.end_byte as u32,
+                            replacement: le.replacement,
+                            namespace: le.namespace.unwrap_or(PROJECT_NAMESPACE_UUID),
+                        })
+                        .collect(),
+                },
+                Err(e2) => {
+                    let err = format!("Invalid apply_code_edit payload: {}", e2);
+                    tool_call_params.tool_call_failed(err);
+                    return;
+                }
+            }
         }
     };
 
-    if args.edits.is_empty() {
+    if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
         chat::add_msg_immediate(
             state,
@@ -150,213 +171,50 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
     // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
     let crate_root = { state.system.read().await.crate_focus.clone() };
     let editing_cfg = { state.config.read().await.editing.clone() };
-    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(args.edits.len());
+    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
 
-    for (i, e) in args.edits.iter().enumerate() {
-        // Only code_edit supported for now
-        match e.action {
-            Action::CodeEdit => {}
-        }
-
-        // If the edit references a canonical node, resolve via DB as before.
-        // If `canon` is empty, allow a direct-file edit shape (file_path + expected_file_hash + start_byte + end_byte + replacement).
-        if e.canon.trim().is_empty() {
-            // Attempt to read the corresponding raw edit JSON to access alternate key names (e.g., "file_path", "replacement").
-            let raw_edit_opt = raw_args
-                .get("edits")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.get(i));
-
-            let raw_edit = match raw_edit_opt {
-                Some(r) => r,
-                None => {
-                    tool_call_params
-                        .tool_call_failed("Internal error: missing raw edit".to_string());
-                    return;
-                }
-            };
-
-            let file_path_str = raw_edit
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .or_else(|| raw_edit.get("file").and_then(|v| v.as_str()));
-            let file_path_str = match file_path_str {
-                Some(s) => s,
-                None => {
-                    tool_call_params.tool_call_failed("Missing 'file_path' in edit".to_string());
-                    return;
-                }
-            };
-
-            // Compute absolute path (best-effort; prefer crate_root, else absolute or CWD)
-            let p = PathBuf::from(file_path_str);
-            let abs_path = if p.is_absolute() {
-                p
-            } else if let Some(root) = crate_root.as_ref() {
-                root.join(p)
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(p)
-            };
-
-            // Parse expected_file_hash (string UUID) -> TrackingHash
-            let expected_hash_str = raw_edit.get("expected_file_hash").and_then(|v| v.as_str());
-            let expected_file_hash = match expected_hash_str {
-                Some(s) => match uuid::Uuid::parse_str(s) {
-                    Ok(u) => ploke_core::TrackingHash(u),
-                    Err(_) => {
-                        let err = format!("Invalid expected_file_hash UUID: {}", s);
-                        tool_call_params.tool_call_failed(err);
-                        return;
-                    }
-                },
-                None => {
-                    tool_call_params
-                        .tool_call_failed("Missing expected_file_hash in edit".to_string());
-                    return;
-                }
-            };
-
-            let start_byte = raw_edit
-                .get("start_byte")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(0usize);
-            let end_byte = raw_edit
-                .get("end_byte")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(start_byte);
-
-            let replacement = raw_edit
-                .get("replacement")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| Some(e.code.clone()))
-                .unwrap_or_default();
-
-            let namespace = raw_edit
-                .get("namespace")
-                .and_then(|v| v.as_str())
-                .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                .unwrap_or(PROJECT_NAMESPACE_UUID);
-
-            let ws = WriteSnippetData {
-                id: uuid::Uuid::new_v4(),
-                name: abs_path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| abs_path.display().to_string()),
-                file_path: abs_path.clone(),
-                expected_file_hash,
-                start_byte,
-                end_byte,
-                replacement,
-                namespace,
-            };
-            files_set.insert(abs_path.clone());
-            edits.push(ws);
-            continue;
-        }
-
-        // --- Canonical node resolution path (unchanged) ---
-
-        // Validate relation string (prototype allow-list)
-        if !ALLOWED_RELATIONS.contains(&e.node_type.as_str()) {
-            let err = format!("Unsupported node_type: {}", e.node_type);
-            tool_call_params.tool_call_failed(err);
-            return;
-        }
-
-        // Compute absolute path (best-effort; prefer crate_root, else absolute or CWD)
-        let abs_path = {
-            let p = PathBuf::from(&e.file);
-            if p.is_absolute() {
-                p
-            } else if let Some(root) = crate_root.as_ref() {
-                root.join(&e.file)
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(&e.file)
+    for e in typed_req.edits.iter() {
+        match e {
+            Edit::Splice { file_path, expected_file_hash, start_byte, end_byte, replacement, namespace } => {
+                let p = PathBuf::from(file_path);
+                let abs_path = if p.is_absolute() { p } else if let Some(root) = crate_root.as_ref() { root.join(p) } else { std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p) };
+                let ws = WriteSnippetData {
+                    id: uuid::Uuid::new_v4(),
+                    name: abs_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| abs_path.display().to_string()),
+                    file_path: abs_path.clone(),
+                    expected_file_hash: *expected_file_hash,
+                    start_byte: *start_byte as usize,
+                    end_byte: *end_byte as usize,
+                    replacement: replacement.clone(),
+                    namespace: *namespace,
+                };
+                files_set.insert(abs_path.clone());
+                edits.push(ws);
             }
-        };
-
-        // Canonical path parsing: "module::submodule::Item" -> (["crate","module","submodule"], "Item")
-        let canon = e.canon.trim();
-        if canon.is_empty() {
-            tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string());
-            return;
-        }
-        let (mods_slice, item_name) = match canon.rfind("::") {
-            Some(idx) => (&canon[..idx], &canon[idx + 2..]),
-            None => ("", canon),
-        };
-        if item_name.is_empty() {
-            tool_call_params.tool_call_failed("Invalid 'canon': missing item name".to_string());
-            return;
-        }
-        // Build module path as &str slices without allocating new Strings
-        let mut mod_path: Vec<&str> = Vec::new();
-        mod_path.push("crate");
-        if !mods_slice.is_empty() {
-            mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
-        }
-
-        // Use typed DB helper to resolve canonical node in file (NOW snapshot)
-        let rel = &e.node_type;
-        let mod_path_owned: Vec<String> = mod_path.iter().map(|s| s.to_string()).collect();
-        let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(
-            &state.db,
-            rel,
-            &abs_path,
-            &mod_path_owned,
-            item_name,
-        ) {
-            Ok(v) => v,
-            Err(e) => {
-                let err = format!("DB resolve failed: {}", e);
-                tool_call_params.tool_call_failed(err);
-                return;
+            Edit::Canonical { file, canon, node_type, code } => {
+                let rel = node_type.as_relation();
+                if !ALLOWED_RELATIONS.contains(&rel) {
+                    let err = format!("Unsupported node_type: {}", rel);
+                    tool_call_params.tool_call_failed(err);
+                    return;
+                }
+                let abs_path = { let p = PathBuf::from(file); if p.is_absolute() { p } else if let Some(root) = crate_root.as_ref() { root.join(file) } else { std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(file) } };
+                let canon_trim = canon.trim();
+                if canon_trim.is_empty() { tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string()); return; }
+                let (mods_slice, item_name) = match canon_trim.rfind("::") { Some(idx) => (&canon_trim[..idx], &canon_trim[idx + 2..]), None => ("", canon_trim), };
+                if item_name.is_empty() { tool_call_params.tool_call_failed("Invalid 'canon': missing item name".to_string()); return; }
+                let mut mod_path: Vec<&str> = vec!["crate"]; if !mods_slice.is_empty() { mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty())); }
+                let mod_path_owned: Vec<String> = mod_path.iter().map(|s| s.to_string()).collect();
+                let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(&state.db, rel, &abs_path, &mod_path_owned, item_name) { Ok(v) => v, Err(e) => { let err = format!("DB resolve failed: {}", e); tool_call_params.tool_call_failed(err); return; } };
+                if nodes.is_empty() { let err = format!("No matching node found for canon={} in file={}", canon, abs_path.display()); tool_call_params.tool_call_failed(err); return; }
+                if nodes.len() > 1 { let err = format!("Ambiguous node resolution ({} candidates) for canon={} in file={}", nodes.len(), canon, abs_path.display()); tool_call_params.tool_call_failed(err); return; }
+                let ed = nodes.remove(0);
+                let ws = WriteSnippetData { id: uuid::Uuid::new_v4(), name: canon.clone(), file_path: ed.file_path.clone(), expected_file_hash: ed.file_tracking_hash, start_byte: ed.start_byte, end_byte: ed.end_byte, replacement: code.clone(), namespace: ed.namespace };
+                files_set.insert(ed.file_path.clone());
+                edits.push(ws);
             }
-        };
-
-        if nodes.is_empty() {
-            let err = format!(
-                "No matching node found for canon={} in file={}",
-                e.canon,
-                abs_path.display()
-            );
-            tool_call_params.tool_call_failed(err.to_string());
-            return;
         }
-        if nodes.len() > 1 {
-            // Ambiguity: require model to be more specific (could add 'kind' if needed)
-            let err = format!(
-                "Ambiguous node resolution ({} candidates) for canon={} in file={}",
-                nodes.len(),
-                e.canon,
-                abs_path.display()
-            );
-            tool_call_params.tool_call_failed(err.to_string());
-            return;
-        }
-
-        let ed = nodes.remove(0);
-        let ws = WriteSnippetData {
-            id: uuid::Uuid::new_v4(),
-            name: e.canon.clone(),
-            file_path: ed.file_path.clone(),
-            expected_file_hash: ed.file_tracking_hash,
-            start_byte: ed.start_byte,
-            end_byte: ed.end_byte,
-            replacement: e.code.clone(),
-            namespace: ed.namespace,
-        };
-        files_set.insert(ed.file_path.clone());
-        edits.push(ws);
     }
 
     // Build preview (reuse minimal version from prior implementation)

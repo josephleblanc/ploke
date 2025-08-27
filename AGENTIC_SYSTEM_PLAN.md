@@ -1,9 +1,19 @@
 Ploke Agentic System: Evaluation, Alternatives, and Roadmap
 
+If you are an agent seeing this for the first time, ensure you also read:
+- `docs/plans/agentic-system-plan/README_NEXT_ASSISTANT.md`
+
 Summary
 - Primary goal: Help developers be better at what they do.
 - Secondary goal: Build an agentic, multi‑agent framework that can edit the codebase safely and effectively in service of the primary goal.
 - Outcome: This document surveys the current TUI + tool‑calling workflow, identifies strengths and gaps, defines success criteria, explores alternatives, and proposes a phased plan to reach a robust agentic system. It also lists concrete files/components to extend or modify.
+
+Type Safety Policy (Non‑negotiable)
+- All OpenRouter‑touching code and tool interfaces must use strongly typed structs/enums with Serialize/Deserialize.
+- Numeric fields must be numeric (`u32` for token counts, `f64` for costs). Avoid stringly typed fields and ad‑hoc maps.
+- Prefer tagged unions/enums to represent alternative shapes (e.g., code‑edit modes) so invalid states are unrepresentable.
+- Untagged/lenient parsing is permitted only as a migration bridge with explicit TODO to remove; log deprecation warnings and fail fast on ambiguity.
+- See AGENTS.md for the standing workflow and principles.
 
 Current Workflow Survey
 - Crates
@@ -252,6 +262,14 @@ Next Steps (minimal slice)
 3) Add provider allowlist configuration and surface it in the model browser; show a “tools‑capable” badge.
 4) Add a minimal Agent Orchestrator that can “plan” request_code_context → (optional) get_file_metadata → apply_code_edit (staged) → prompt user to approve.
 
+Tool Schema Direction (Code Edit)
+- Define a strongly typed, tagged enum for code edits:
+  - `Edit::Canonical { file: PathBuf, canon: CanonPath, node_type: NodeKind, code: String }`
+  - `Edit::Splice { file_path: PathBuf, expected_file_hash: FileHash, start_byte: u32, end_byte: u32, replacement: String, namespace: Uuid }`
+- Wrap in `ApplyCodeEditRequest { edits: Vec<Edit>, confidence: Option<f32> }`.
+- Maintain exact typed output for results: `ApplyCodeEditResult { ok: bool, staged: u32, applied: u32, files: Vec<String>, preview_mode: String, auto_confirmed: bool }`.
+- Migration note: support legacy “direct splice” JSON shape via `#[serde(untagged)]` enum variant only during transition, with warnings and tests.
+
 Clarifications And Answers
 - Tracing and TUI UX:
   - Logging uses a rolling file appender at `logs/ploke.log` (`ploke-tui/src/tracing_setup.rs`). Console logging is disabled by default, so logs do not interfere with the ratatui UI. Diagnostics and per‑request artifacts are also written under `target/test-output/openrouter_e2e` by the LLM session.
@@ -284,6 +302,8 @@ Observability: Status And DB Audit
   - docs/testing/TEST_GUIDELINES.md — testing strategy, gating, ratatui snapshot guidance, benchmarks, and phase stopping points.
   - docs/reports/production_readiness_notes_20250826-204758Z.md — suggestions to improve security, performance, and reliability.
   - docs/reports/agents_git_best_practices_20250826-204758Z.md — best practices for agent + Git integration and recommended approach.
+- docs/reports/design_reflections_20250826-204758Z.md — stylistic/architectural reflections to guide consistent future work.
+- docs/reports/code_edit_tool_schema_assessment_YYYYMMDD-HHMMSSZ.md — assessment of code edit tool fields, DB helpers, and typed API recommendations.
 
 - Editing Loop Details and UX:
   - Today: LLM proposes → tool stages proposal with diff/codeblock preview → user can approve/deny (auto‑approve available) → writes applied atomically.

@@ -341,7 +341,8 @@ mod tests {
         assert!(trunc1);
         assert!(tk.count(&t1) <= 3);
         let (t2, trunc2) = trim_text_to_tokens(text, 10, &tk);
-        assert!(trunc2);
+        // For a budget larger than approx tokenized length (~7), truncation should be false.
+        assert!(!trunc2);
         assert!(tk.count(&t2) <= 10);
     }
 

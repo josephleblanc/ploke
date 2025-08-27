@@ -1,33 +1,97 @@
 use super::*;
+use ploke_core::PROJECT_NAMESPACE_UUID;
 
 pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
     let top_k = (token_budget / 200) as usize;
     top_k.clamp(5, 20)
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct ApplyCodeEditArgs {
-    pub(super) edits: Vec<EditInput>,
+// Strongly-typed request for apply_code_edit
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ApplyCodeEditRequest {
+    pub edits: Vec<Edit>,
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum Edit {
+    Canonical {
+        file: String,
+        canon: String,
+        node_type: NodeKind,
+        code: String,
+    },
+    Splice {
+        file_path: String,
+        expected_file_hash: ploke_core::TrackingHash,
+        start_byte: u32,
+        end_byte: u32,
+        replacement: String,
+        #[serde(default = "default_namespace")]
+        namespace: uuid::Uuid,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum Action {
-    CodeEdit,
-    // Create, // not supported yet
+pub enum NodeKind {
+    Function,
+    Const,
+    Enum,
+    Impl,
+    Import,
+    Macro,
+    Module,
+    Static,
+    Struct,
+    Trait,
+    TypeAlias,
+    Union,
+}
+
+impl NodeKind {
+    pub fn as_relation(&self) -> &'static str {
+        match self {
+            NodeKind::Function => "function",
+            NodeKind::Const => "const",
+            NodeKind::Enum => "enum",
+            NodeKind::Impl => "impl",
+            NodeKind::Import => "import",
+            NodeKind::Macro => "macro",
+            NodeKind::Module => "module",
+            NodeKind::Static => "static",
+            NodeKind::Struct => "struct",
+            NodeKind::Trait => "trait",
+            NodeKind::TypeAlias => "type_alias",
+            NodeKind::Union => "union",
+        }
+    }
+}
+
+fn default_namespace() -> uuid::Uuid { PROJECT_NAMESPACE_UUID }
+
+// Temporary migration shim to accept legacy direct splice payloads without the tagged enum.
+// This is used to map tests and older callers into the typed Edit::Splice variant.
+#[derive(Debug, Deserialize)]
+pub struct LegacyApplyDirect {
+    pub edits: Vec<LegacySpliceInput>,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    #[serde(default)]
+    pub namespace: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct EditInput {
-    pub(super) action: Action,
-    /// File path relative to the project root (or absolute). Example: "example_crate/src/main.rs"
-    pub(super) file: String,
-    /// Canonical path of the target item without leading 'crate'. Example: "module_one::foo::Bar"
-    pub(super) canon: String,
-    /// Relation name for the node type. Example: "function", "struct", ...
-    pub(super) node_type: String,
-    /// Full rewritten item text (attributes/docs included if applicable)
-    pub(super) code: String,
+pub struct LegacySpliceInput {
+    pub file_path: String,
+    pub expected_file_hash: ploke_core::TrackingHash,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub replacement: String,
+    #[serde(default)]
+    pub namespace: Option<uuid::Uuid>,
 }
 
 pub(super) const ALLOWED_RELATIONS: &[&str] = &[
