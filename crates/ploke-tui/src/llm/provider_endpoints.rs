@@ -39,6 +39,30 @@ pub struct ModelEndpoint {
     pub supported_parameters: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum SupportedParameters {
+    // AI: fill out this enum so it can be a good typed version of these supported values AI!
+    // possible values for supported parameters
+    //
+    //"max_tokens",
+    // "top_k",
+    // "frequency_penalty",
+    // "seed",
+    // "tool_choice",
+    // "repetition_penalty",
+    // "logit_bias",
+    // "logprobs",
+    // "structured_outputs",
+    // "presence_penalty",
+    // "min_p",
+    // "top_p",
+    // "stop",
+    // "top_logprobs",
+    // "response_format",
+    // "temperature",
+    // "tools",
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Architecture {
     pub input_modalities: Vec<InputModality>,
