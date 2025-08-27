@@ -154,6 +154,7 @@ async fn choose_tools_endpoint_for_model(
         .filter(|ep| {
             ep.supported_parameters
                 .iter()
+                // Update to use new enum-based approach AI!
                 .any(|p| p.eq_ignore_ascii_case("tools"))
         })
         .collect();
@@ -528,6 +529,10 @@ async fn run_tool_roundtrip(
 /// - It performs local tool execution; tool schemas are aligned with our LLM plumbing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_real_tools_roundtrip_smoke() {
+    if std::env::var("PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
@@ -552,12 +557,10 @@ async fn openrouter_real_tools_roundtrip_smoke() {
     info!("models/user returned {} entries", models.len());
 
     // Cap iteration for safety (can be increased locally)
-    let mut processed = 0usize;
-    for m in models {
+    for (processed, m) in models.into_iter().enumerate() {
         if processed >= 5 {
             break;
         }
-        processed += 1;
 
         let model_id = m.id;
         info!("model: {}", model_id);
