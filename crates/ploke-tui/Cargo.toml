@@ -20,6 +20,7 @@ similar = "2"
 # concurrency
 tokio = { workspace = true } # "full" for simplicity, you can narrow down later
 tokio-utils = "0.1"
+tokio-stream = "0.1"
 flume = { workspace = true }
 num_cpus = "1.0"
 nonzero_ext = "0.3"
@@ -80,12 +81,13 @@ ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.4"
 wiremock = "0.5.14"
 tokio-test = "0.4"
-test-context = "0.1"
+test-context = "0.4"
 fake = "4.3.0"
 cozo = { workspace = true }
 rand = "0.9"
-insta = "1.39.0"
-criterion = "0.5"
+insta = { version = "1.39.0", features = ["redactions"] }
+regex = "1"
+criterion = "0.7"
 quote = { workspace = true }
 syn = { workspace = true }
 

@@ -80,3 +80,4 @@ query/
 # temporary
 docs/active/AGENT_FORUM.md
 docs/dependency_details/cozo/notes/vectors.md
+.env

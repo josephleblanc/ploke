@@ -9,7 +9,7 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         event_bus,
         request_id,
         parent_id,
-        vendor,
+ 
         name,
         arguments,
         call_id,
@@ -18,7 +18,7 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         request_id = %request_id,
         parent_id = %parent_id,
         call_id = %call_id,
-        vendor = ?vendor,
+ 
         name = %name,
         "handle_tool_call_requested"
     );
@@ -36,7 +36,7 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         event_bus,
         request_id,
         parent_id,
-        vendor,
+ 
         name: name.clone(),
         arguments: arguments.clone(),
         call_id: call_id.clone(),

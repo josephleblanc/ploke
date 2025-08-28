@@ -27,7 +27,7 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
         request_id,
         call_id: call_id.clone(),
         parent_id,
-        vendor: "openai".into(),
+ 
         tool_name: "dummy".into(),
         args_sha256,
         arguments_json: Some(args_json),
@@ -35,8 +35,8 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
             at: Utc::now().timestamp_millis(),
             is_valid: true,
         },
-        model: todo!(),
-        provider_slug: todo!(),
+        model: "gpt-4o".into(),
+        provider_slug: Some("openai".into()),
     };
     db.record_tool_call_requested(req)
         .expect("requested upsert should succeed");
@@ -94,7 +94,7 @@ async fn tool_call_terminal_status_is_immutable() {
         request_id,
         call_id: call_id.clone(),
         parent_id,
-        vendor: "openai".into(),
+ 
         tool_name: "dummy".into(),
         args_sha256: "sha256:deadbeef".into(),
         arguments_json: Some("{}".into()),
@@ -102,8 +102,8 @@ async fn tool_call_terminal_status_is_immutable() {
             at: Utc::now().timestamp_millis(),
             is_valid: true,
         },
-        model: todo!(),
-        provider_slug: todo!(),
+        model: "gpt-4o".into(),
+        provider_slug: Some("openai".into()),
     };
     db.record_tool_call_requested(req)
         .expect("requested upsert should succeed");

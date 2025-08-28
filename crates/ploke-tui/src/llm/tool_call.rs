@@ -7,14 +7,13 @@ use uuid::Uuid;
 use crate::llm::ToolEvent;
 use crate::{AppEvent, EventBus};
 
-use super::{ToolVendor, session::await_tool_result};
+use super::session::await_tool_result;
 
 #[derive(Clone, Debug)]
 pub struct ToolCallSpec {
     pub name: String,
     pub arguments: Value,
     pub call_id: String,
-    pub vendor: ToolVendor,
 }
 
 /// Dispatch a single tool call via the EventBus and await its correlated result.
@@ -40,7 +39,6 @@ pub async fn dispatch_and_wait(
     event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
         request_id,
         parent_id,
-        vendor: spec.vendor.clone(),
         name: spec.name.clone(),
         arguments: spec.arguments.clone(),
         call_id: spec.call_id.clone(),

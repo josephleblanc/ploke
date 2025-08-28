@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 struct ToolRequestPersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    vendor: crate::llm::ToolVendor,
     tool_name: String,
     arguments: Value,
     call_id: String,
@@ -93,12 +92,10 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             name,
             arguments,
             call_id,
-            vendor,
         }) => {
             let params = ToolRequestPersistParams {
                 request_id,
                 parent_id,
-                vendor,
                 tool_name: name,
                 arguments,
                 call_id,
@@ -154,7 +151,6 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
         AppEvent::System(SystemEvent::ToolCallRequested {
             request_id,
             parent_id,
-            vendor,
             name,
             arguments,
             call_id,
@@ -162,7 +158,6 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             let params = ToolRequestPersistParams {
                 request_id,
                 parent_id,
-                vendor,
                 tool_name: name,
                 arguments,
                 call_id,
@@ -257,7 +252,6 @@ async fn persist_tool_requested(
         request_id: params.request_id,
         call_id: params.call_id.clone(),
         parent_id: params.parent_id,
-        vendor: vendor_str(&params.vendor).to_string(),
         model,
         provider_slug,
         tool_name: params.tool_name.clone(),
@@ -323,13 +317,6 @@ fn kind_str(k: MessageKind) -> &'static str {
         MessageKind::System => "system",
         MessageKind::SysInfo => "sysinfo",
         MessageKind::Tool => "tool",
-    }
-}
-
-fn vendor_str(v: &crate::llm::ToolVendor) -> &'static str {
-    match v {
-        crate::llm::ToolVendor::OpenAI => "openai",
-        crate::llm::ToolVendor::Other => "other",
     }
 }
 

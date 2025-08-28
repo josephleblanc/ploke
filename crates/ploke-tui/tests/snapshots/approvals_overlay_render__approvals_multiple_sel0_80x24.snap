@@ -1,0 +1,28 @@
+---
+source: crates/ploke-tui/tests/approvals_overlay_render.rs
+expression: red1
+---
+┌ Approvals ───────────────────────────────────────────────────────────────────┐
+│┌ Pending Proposals ──────────┐┌ Details ────────────────────────────────────┐│
+││aaaaaaaa  Pending  files:1   ││request_id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeee││
+││bbbbbbbb  Pending  files:1   ││status: Pending  files:1                     ││
+││                             ││Unified Diff:                                ││
+││                             ││one                                          ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+││                             ││                                             ││
+│└─────────────────────────────┘└─────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘

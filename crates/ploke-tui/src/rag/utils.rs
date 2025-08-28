@@ -1,5 +1,6 @@
 use super::*;
 use ploke_core::PROJECT_NAMESPACE_UUID;
+use ploke_db::NodeType;
 
 pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
     let top_k = (token_budget / 200) as usize;
@@ -20,7 +21,7 @@ pub enum Edit {
     Canonical {
         file: String,
         canon: String,
-        node_type: NodeKind,
+        node_type: NodeType,
         code: String,
     },
     Splice {
@@ -94,28 +95,12 @@ pub struct LegacySpliceInput {
     pub namespace: Option<uuid::Uuid>,
 }
 
-pub(super) const ALLOWED_RELATIONS: &[&str] = &[
-    "function",
-    "const",
-    "enum",
-    "impl",
-    "import",
-    "macro",
-    "module",
-    "static",
-    "struct",
-    "trait",
-    "type_alias",
-    "union",
-];
-
 #[derive(Clone, Debug)]
 pub struct ToolCallParams<'a> {
     pub state: &'a Arc<AppState>,
     pub event_bus: &'a Arc<EventBus>,
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub vendor: llm::ToolVendor,
     pub name: String,
     pub arguments: serde_json::Value,
     pub call_id: String,

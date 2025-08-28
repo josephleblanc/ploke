@@ -16,47 +16,25 @@ use std::sync::Arc;
 use super::tool_call;
 use super::{
     GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage, ToolDefinition,
-    ToolVendor, cap_messages_by_chars, cap_messages_by_tokens,
+    cap_messages_by_chars, cap_messages_by_tokens,
 };
 use crate::EventBus;
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
 pub struct RequestSession<'a> {
-    client: &'a Client,
-    provider: &'a crate::user_config::ModelConfig,
-    event_bus: Arc<EventBus>,
-    parent_id: Uuid,
-    messages: Vec<RequestMessage<'a>>,
-    tools: Vec<ToolDefinition>,
-    params: LLMParameters,
-    fallback_on_404: bool,
-    attempts: u32,
+    pub client: &'a Client,
+    pub provider: &'a crate::user_config::ModelConfig,
+    pub event_bus: Arc<EventBus>,
+    pub parent_id: Uuid,
+    pub messages: Vec<RequestMessage>,
+    pub tools: Vec<ToolDefinition>,
+    pub params: LLMParameters,
+    pub fallback_on_404: bool,
+    pub attempts: u32,
 }
 
+#[allow(clippy::needless_lifetimes, reason = "Getting warning but removing lifetimes makes error.")]
 impl<'a> RequestSession<'a> {
-    pub fn new(
-        client: &'a Client,
-        provider: &'a crate::user_config::ModelConfig,
-        event_bus: Arc<EventBus>,
-        parent_id: Uuid,
-        messages: Vec<RequestMessage<'a>>,
-        tools: Vec<ToolDefinition>,
-        params: LLMParameters,
-        fallback_on_404: bool,
-    ) -> Self {
-        Self {
-            client,
-            provider,
-            event_bus,
-            parent_id,
-            messages,
-            tools,
-            params,
-            fallback_on_404,
-            attempts: 0,
-        }
-    }
-
     /// Execute the request loop until completion or error.
     pub async fn run(mut self) -> Result<String, LlmError> {
         let span = tracing::info_span!("request_session_run", model = %self.provider.model);
@@ -240,7 +218,6 @@ impl<'a> RequestSession<'a> {
                                     name: oc.function.name.clone(),
                                     arguments,
                                     call_id: oc.id.clone(),
-                                    vendor: ToolVendor::OpenAI,
                                 });
                             }
                             GenericToolCall::Other(v) => {
@@ -253,7 +230,7 @@ impl<'a> RequestSession<'a> {
                                 let err_json = json!({
                                     "ok": false,
                                     "error": "Unsupported tool call format",
-                                    "vendor": "other"
+ 
                                 })
                                 .to_string();
                                 other_errors.push((call_id, err_json));
@@ -274,15 +251,14 @@ impl<'a> RequestSession<'a> {
                             match result {
                                 Ok(content) => {
                                     self.messages
-                                        .push(RequestMessage::new_tool(content, spec.call_id));
+                                        .push(RequestMessage::new_system(content));
                                 }
                                 Err(err) => {
                                     let sys_msg =
                                         format!("Tool call '{}' failed: {}.", spec.name, err);
                                     self.messages.push(RequestMessage::new_system(sys_msg));
-                                    self.messages.push(RequestMessage::new_tool(
+                                    self.messages.push(RequestMessage::new_system(
                                         json!({"ok": false, "error": err}).to_string(),
-                                        spec.call_id,
                                     ));
                                 }
                             }
@@ -295,7 +271,7 @@ impl<'a> RequestSession<'a> {
                             "Unsupported tool call format".to_string(),
                         ));
                         self.messages
-                            .push(RequestMessage::new_tool(err_json, call_id));
+                            .push(RequestMessage::new_system(err_json));
                     }
 
                     if self.attempts > max_retries {
@@ -324,7 +300,7 @@ impl<'a> RequestSession<'a> {
 }
 pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ModelConfig,
-    messages: Vec<super::RequestMessage<'a>>,
+    messages: Vec<RequestMessage>,
     params: &super::LLMParameters,
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
@@ -444,6 +420,7 @@ mod tests {
 
     use tokio::time::sleep;
 
+    use crate::llm::Role;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
@@ -597,12 +574,12 @@ mod tests {
 
         let messages = vec![
             super::RequestMessage {
-                role: "system",
+                role: Role::System,
                 content: "You are helpful.".to_string(),
                 tool_call_id: None,
             },
             super::RequestMessage {
-                role: "user",
+                role: Role::User,
                 content: "Hello!".to_string(),
                 tool_call_id: None,
             },
@@ -669,12 +646,12 @@ mod tests {
 
         let messages = vec![
             super::RequestMessage {
-                role: "system",
+                role: Role::System,
                 content: "You can call tools.".to_string(),
                 tool_call_id: None,
             },
             super::RequestMessage {
-                role: "user",
+                role: Role::User,
                 content: "Please fetch context.".to_string(),
                 tool_call_id: None,
             },

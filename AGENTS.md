@@ -26,10 +26,18 @@ Engineering Principles
   - Stage edits with verified file hashes; apply atomically via the IoManager; never write on hash mismatch.
   - Keep destructive operations behind explicit approvals.
 - Evidence-based changes:
-  - Run targeted and full test suites; record outputs under `docs/plans/agent-system-plan/testing/`.
+  - Run targeted and full test suites; prefer brief inline summaries (pass/fail/ignored counts and notable failures). Avoid writing run outputs to docs by default.
+  - When deeper artifacts are required (e.g., live API diagnostics), keep them under `logs/` or `target/test-output/` and do not commit them unless explicitly requested.
   - Update design/reflection docs when making notable trade-offs.
+  - Live gates discipline: When a live gate is ON (e.g., OpenRouter tests), do not report tests as green unless the live path was actually exercised and key properties were verified (tool_calls observed, proposal staged, approval → Applied, file delta). A “skip” must be treated as “not validated” and must not be counted as pass under live gates.
+  - Evidence for readiness: For any claim of phase readiness, include verifiable proof in your summary (pass/fail counts, properties satisfied) and reference artifact paths generated under `target/test-output/...`. If evidence is missing, explicitly state that readiness is not established.
 
 Operational Notes
 - Plans, logs, and reports live in `docs/plans/agentic-system-plan/` and `docs/reports/`.
 - Reference key docs from plan files so future agents easily discover prior work.
 
+Rust Doc Comments (non-negotiable formatting)
+- Use `//!` only for a single, file-top inner doc block documenting the crate or module.
+- Use `///` for item-level docs (functions, structs, fields, tests) and inline explanations.
+- Do not place `//!` after imports or mix multiple `//!` blocks in a file; prefer one contiguous block at the very top.
+- Integration test files are crate roots; if documenting the whole test crate, put a single `//!` block at the very top. Otherwise, prefer `///` on specific items.

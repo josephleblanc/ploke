@@ -279,7 +279,6 @@ impl std::fmt::Display for UiError {
 pub mod system {
     use std::{borrow::Cow, sync::Arc};
 
-    use crate::llm::ToolVendor;
     use ploke_db::TypedEmbedData;
     use serde_json::Value;
     use uuid::Uuid;
@@ -300,7 +299,6 @@ pub mod system {
         ToolCallRequested {
             request_id: Uuid,
             parent_id: Uuid,
-            vendor: ToolVendor,
             name: String,
             arguments: Value,
             call_id: String,
@@ -356,6 +354,8 @@ pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::Event),
     LlmTool(llm::ToolEvent),
+    // External signal to request a clean UI shutdown
+    Quit,
     // TODO:
     // File(file::Event),
     // Rag(rag::Event),
@@ -404,6 +404,7 @@ impl AppEvent {
                     EventPriority::Realtime
                 }
             },
+            AppEvent::Quit => EventPriority::Realtime,
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,

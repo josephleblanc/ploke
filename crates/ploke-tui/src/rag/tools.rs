@@ -9,6 +9,7 @@ use ploke_core::rag_types::{
     ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
 };
 use ploke_core::{PROJECT_NAMESPACE_UUID, WriteSnippetData};
+use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
@@ -23,8 +24,8 @@ use crate::{
 use super::{
     editing::approve_edits,
     utils::{
-        calc_top_k_for_budget, ApplyCodeEditRequest, Edit, LegacyApplyDirect, NodeKind, ALLOWED_RELATIONS,
-        ToolCallParams,
+        ApplyCodeEditRequest, Edit, LegacyApplyDirect, NodeKind, ToolCallParams,
+        calc_top_k_for_budget,
     },
     *,
 };
@@ -35,7 +36,6 @@ pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         event_bus,
         request_id,
         parent_id,
-        vendor,
         name,
         arguments,
         call_id,
@@ -106,7 +106,6 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         event_bus,
         request_id,
         parent_id,
-        vendor,
         name,
         arguments,
         call_id,
@@ -129,30 +128,28 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
     // Parse args (strongly typed). Prefer tagged enum request; fall back to legacy direct splice mapping.
     let typed_req: ApplyCodeEditRequest = match serde_json::from_value(arguments.clone()) {
         Ok(v) => v,
-        Err(_) => {
-            match serde_json::from_value::<LegacyApplyDirect>(arguments.clone()) {
-                Ok(legacy) => ApplyCodeEditRequest {
-                    confidence: legacy.confidence,
-                    edits: legacy
-                        .edits
-                        .into_iter()
-                        .map(|le| Edit::Splice {
-                            file_path: le.file_path,
-                            expected_file_hash: le.expected_file_hash,
-                            start_byte: le.start_byte as u32,
-                            end_byte: le.end_byte as u32,
-                            replacement: le.replacement,
-                            namespace: le.namespace.unwrap_or(PROJECT_NAMESPACE_UUID),
-                        })
-                        .collect(),
-                },
-                Err(e2) => {
-                    let err = format!("Invalid apply_code_edit payload: {}", e2);
-                    tool_call_params.tool_call_failed(err);
-                    return;
-                }
+        Err(_) => match serde_json::from_value::<LegacyApplyDirect>(arguments.clone()) {
+            Ok(legacy) => ApplyCodeEditRequest {
+                confidence: legacy.confidence,
+                edits: legacy
+                    .edits
+                    .into_iter()
+                    .map(|le| Edit::Splice {
+                        file_path: le.file_path,
+                        expected_file_hash: le.expected_file_hash,
+                        start_byte: le.start_byte as u32,
+                        end_byte: le.end_byte as u32,
+                        replacement: le.replacement,
+                        namespace: le.namespace.unwrap_or(PROJECT_NAMESPACE_UUID),
+                    })
+                    .collect(),
+            },
+            Err(e2) => {
+                let err = format!("Invalid apply_code_edit payload: {}", e2);
+                tool_call_params.tool_call_failed(err);
+                return;
             }
-        }
+        },
     };
 
     if typed_req.edits.is_empty() {
@@ -176,12 +173,30 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
 
     for e in typed_req.edits.iter() {
         match e {
-            Edit::Splice { file_path, expected_file_hash, start_byte, end_byte, replacement, namespace } => {
+            Edit::Splice {
+                file_path,
+                expected_file_hash,
+                start_byte,
+                end_byte,
+                replacement,
+                namespace,
+            } => {
                 let p = PathBuf::from(file_path);
-                let abs_path = if p.is_absolute() { p } else if let Some(root) = crate_root.as_ref() { root.join(p) } else { std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p) };
+                let abs_path = if p.is_absolute() {
+                    p
+                } else if let Some(root) = crate_root.as_ref() {
+                    root.join(p)
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(p)
+                };
                 let ws = WriteSnippetData {
                     id: uuid::Uuid::new_v4(),
-                    name: abs_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| abs_path.display().to_string()),
+                    name: abs_path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| abs_path.display().to_string()),
                     file_path: abs_path.clone(),
                     expected_file_hash: *expected_file_hash,
                     start_byte: *start_byte as usize,
@@ -192,25 +207,92 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
                 files_set.insert(abs_path.clone());
                 edits.push(ws);
             }
-            Edit::Canonical { file, canon, node_type, code } => {
-                let rel = node_type.as_relation();
-                if !ALLOWED_RELATIONS.contains(&rel) {
-                    let err = format!("Unsupported node_type: {}", rel);
+            Edit::Canonical {
+                file,
+                canon,
+                node_type,
+                code,
+            } => {
+                if !NodeType::primary_nodes().contains(node_type) {
+                    let err = format!("Unsupported node_type: {}", node_type.relation_str());
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
-                let abs_path = { let p = PathBuf::from(file); if p.is_absolute() { p } else if let Some(root) = crate_root.as_ref() { root.join(file) } else { std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(file) } };
+                let abs_path = {
+                    let p = PathBuf::from(file);
+                    if p.is_absolute() {
+                        p
+                    } else if let Some(root) = crate_root.as_ref() {
+                        root.join(file)
+                    } else {
+                        std::env::current_dir()
+                            .unwrap_or_else(|_| PathBuf::from("."))
+                            .join(file)
+                    }
+                };
                 let canon_trim = canon.trim();
-                if canon_trim.is_empty() { tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string()); return; }
-                let (mods_slice, item_name) = match canon_trim.rfind("::") { Some(idx) => (&canon_trim[..idx], &canon_trim[idx + 2..]), None => ("", canon_trim), };
-                if item_name.is_empty() { tool_call_params.tool_call_failed("Invalid 'canon': missing item name".to_string()); return; }
-                let mut mod_path: Vec<&str> = vec!["crate"]; if !mods_slice.is_empty() { mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty())); }
+                if canon_trim.is_empty() {
+                    tool_call_params.tool_call_failed("Invalid 'canon': empty".to_string());
+                    return;
+                }
+                let (mods_slice, item_name) = match canon_trim.rfind("::") {
+                    Some(idx) => (&canon_trim[..idx], &canon_trim[idx + 2..]),
+                    None => ("", canon_trim),
+                };
+                if item_name.is_empty() {
+                    tool_call_params
+                        .tool_call_failed("Invalid 'canon': missing item name".to_string());
+                    return;
+                }
+                let mut mod_path: Vec<&str> = vec!["crate"];
+                if !mods_slice.is_empty() {
+                    mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
+                }
                 let mod_path_owned: Vec<String> = mod_path.iter().map(|s| s.to_string()).collect();
-                let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(&state.db, rel, &abs_path, &mod_path_owned, item_name) { Ok(v) => v, Err(e) => { let err = format!("DB resolve failed: {}", e); tool_call_params.tool_call_failed(err); return; } };
-                if nodes.is_empty() { let err = format!("No matching node found for canon={} in file={}", canon, abs_path.display()); tool_call_params.tool_call_failed(err); return; }
-                if nodes.len() > 1 { let err = format!("Ambiguous node resolution ({} candidates) for canon={} in file={}", nodes.len(), canon, abs_path.display()); tool_call_params.tool_call_failed(err); return; }
+                let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(
+                    &state.db,
+                    node_type.relation_str(),
+                    &abs_path,
+                    &mod_path_owned,
+                    item_name,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err = format!("DB resolve failed: {}", e);
+                        tool_call_params.tool_call_failed(err);
+                        return;
+                    }
+                };
+                if nodes.is_empty() {
+                    let err = format!(
+                        "No matching node found for canon={} in file={}",
+                        canon,
+                        abs_path.display()
+                    );
+                    tool_call_params.tool_call_failed(err);
+                    return;
+                }
+                if nodes.len() > 1 {
+                    let err = format!(
+                        "Ambiguous node resolution ({} candidates) for canon={} in file={}",
+                        nodes.len(),
+                        canon,
+                        abs_path.display()
+                    );
+                    tool_call_params.tool_call_failed(err);
+                    return;
+                }
                 let ed = nodes.remove(0);
-                let ws = WriteSnippetData { id: uuid::Uuid::new_v4(), name: canon.clone(), file_path: ed.file_path.clone(), expected_file_hash: ed.file_tracking_hash, start_byte: ed.start_byte, end_byte: ed.end_byte, replacement: code.clone(), namespace: ed.namespace };
+                let ws = WriteSnippetData {
+                    id: uuid::Uuid::new_v4(),
+                    name: canon.clone(),
+                    file_path: ed.file_path.clone(),
+                    expected_file_hash: ed.file_tracking_hash,
+                    start_byte: ed.start_byte,
+                    end_byte: ed.end_byte,
+                    replacement: code.clone(),
+                    namespace: ed.namespace,
+                };
                 files_set.insert(ed.file_path.clone());
                 edits.push(ws);
             }
@@ -432,7 +514,6 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
         event_bus,
         request_id,
         parent_id,
-        vendor: _,
         name: _,
         arguments,
         call_id,

@@ -11,7 +11,7 @@ fn tool_call_requested_idempotent() {
         request_id,
         call_id: "call-1".to_string(),
         parent_id,
-        vendor: "openai".to_string(),
+ 
         tool_name: "test_tool".to_string(),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),
@@ -53,7 +53,7 @@ fn tool_call_done_idempotent_and_transition_rules() {
         request_id,
         call_id: call_id.clone(),
         parent_id,
-        vendor: "openai".to_string(),
+ 
         tool_name: "test_tool".to_string(),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),

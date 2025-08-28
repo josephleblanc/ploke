@@ -3,20 +3,22 @@ use crate::{app_state::handlers::chat, chat_history::MessageKind, llm::ToolEvent
 use super::*;
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
-    let mut reg = state.proposals.write().await;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
     };
+    let reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
         let msg = format!(
             "No staged edit proposal found for request_id {}",
             request_id
         );
+        drop(reg);
         add_msg_imm(msg).await;
         return;
     };
+    drop(reg);
 
-    // Idempotency checks
+    // Idempotency checks (without holding lock)
     match proposal.status {
         EditProposalStatus::Pending => { /* ok */ }
         EditProposalStatus::Applied => {
@@ -31,11 +33,9 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
         }
         EditProposalStatus::Approved => {
             tracing::debug!("Edit proposal appoved, beginning edit");
-            // Treat as attempting to apply again
         }
         EditProposalStatus::Failed(_) => {
             tracing::debug!("Edit proposal failed, attempting edit again");
-            // Allow re-apply attempt
         }
     }
 
@@ -72,17 +72,11 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
 
             // Update state: mark applied
             proposal.status = EditProposalStatus::Applied;
+            let parent_id_val = proposal.parent_id;
+            let call_id_val = proposal.call_id.clone();
+            let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
-
-            // Bridge: mark tool call completed
-            let parent_id_val = reg
-                .get(&request_id)
-                .map(|p| p.parent_id)
-                .unwrap_or_default();
-            let call_id_val = reg
-                .get(&request_id)
-                .map(|p| p.call_id.clone())
-                .unwrap_or_default();
+            drop(reg);
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -121,19 +115,23 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                     let _ = scan_rx;
                 }
             });
+            // Surface a brief SysInfo so users see that a rescan has been scheduled
+            chat::add_msg_immediate(
+                state,
+                event_bus,
+                Uuid::new_v4(),
+                "Scheduled rescan of workspace after applying edits".to_string(),
+                MessageKind::SysInfo,
+            )
+            .await;
         }
         Err(e) => {
             proposal.status = EditProposalStatus::Failed(e.to_string());
+            let parent_id_val = proposal.parent_id;
+            let call_id_val = proposal.call_id.clone();
+            let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
-
-            let parent_id_val = reg
-                .get(&request_id)
-                .map(|p| p.parent_id)
-                .unwrap_or_default();
-            let call_id_val = reg
-                .get(&request_id)
-                .map(|p| p.call_id.clone())
-                .unwrap_or_default();
+            drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let _ = event_bus
                 .realtime_tx
@@ -159,36 +157,33 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
 
 pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
-    let mut reg = state.proposals.write().await;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
     };
-
+    let reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
         let msg = format!(
             "No staged edit proposal found for request_id {}",
             request_id
         );
+        drop(reg);
         add_msg_imm(msg).await;
         return;
     };
+    drop(reg);
 
     match proposal.status {
         EditProposalStatus::Pending
         | EditProposalStatus::Approved
         | EditProposalStatus::Failed(_) => {
             proposal.status = EditProposalStatus::Denied;
+            let parent_id_val = proposal.parent_id;
+            let call_id_val = proposal.call_id.clone();
+            let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
+            drop(reg);
 
             // Bridge: mark tool call failed with denial
-            let parent_id_val = reg
-                .get(&request_id)
-                .map(|p| p.parent_id)
-                .unwrap_or_default();
-            let call_id_val = reg
-                .get(&request_id)
-                .map(|p| p.call_id.clone())
-                .unwrap_or_default();
             let err_msg = "Edit proposal denied by user".to_string();
             let _ = event_bus
                 .realtime_tx

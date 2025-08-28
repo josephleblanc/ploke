@@ -23,7 +23,7 @@ use tokio::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use ploke_tui::llm::provider_endpoints::ModelEndpointsResponse;
+use ploke_tui::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
 use ploke_tui::llm::{
     apply_code_edit_tool_def, get_file_metadata_tool_def, openrouter_catalog,
     request_code_context_tool_def,
@@ -168,7 +168,7 @@ async fn choose_tools_endpoint_for_model(
         .filter(|ep| {
             ep.supported_parameters
                 .iter()
-                .any(|p| p.eq_ignore_ascii_case("tools"))
+                .any(|p| matches!(p, SupportedParameters::Tools))
         })
         .collect();
 
@@ -539,6 +539,10 @@ async fn run_tool_roundtrip(
 // #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[tokio::test]
 async fn openrouter_live_tools_roundtrip() -> Result<(), Error> {
+    if std::env::var("PLOKE_RUN_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_LIVE_TESTS!=1");
+        return Ok(());
+    }
     let _guard = init_tracing();
 
     // ----- setup start -----

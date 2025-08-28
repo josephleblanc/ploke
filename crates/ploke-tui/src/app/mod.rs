@@ -1,5 +1,6 @@
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
+pub mod editor;
 pub mod events;
 pub mod input;
 pub mod message_item;
@@ -38,22 +39,34 @@ use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
 use view::components::model_browser::{render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow};
+use crate::app::editor::{resolve_editor_command, build_editor_args};
 use view::components::approvals::{render_approvals_overlay, ApprovalsState};
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
-struct TerminalModeGuard;
+struct TerminalModeGuard {
+    enabled: bool,
+}
 
 impl Drop for TerminalModeGuard {
     fn drop(&mut self) {
-        // Best-effort disable; ignore errors to avoid panicking in Drop
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            DisableBracketedPaste,
-            DisableFocusChange,
-            DisableMouseCapture,
-        );
+        if self.enabled {
+            // Best-effort disable; ignore errors to avoid panicking in Drop
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                DisableBracketedPaste,
+                DisableFocusChange,
+                DisableMouseCapture,
+            );
+        }
         // ratatui::restore is called by the outer try_main panic hook as an extra safety net
     }
+}
+
+/// Options controlling how the TUI run loop configures the terminal.
+/// In tests, prefer `setup_terminal_modes: false` to avoid taking over the host terminal.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunOptions {
+    pub setup_terminal_modes: bool,
 }
 
 #[derive(Debug)]
@@ -136,23 +149,39 @@ impl App {
         }
     }
 
-    /// Run the application's main loop.
-    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    /// Run the application's main loop with a generic backend and input stream.
+    /// Use `run` for the default production path; use this for tests with `TestBackend`.
+    pub async fn run_with<B, S>(
+        mut self,
+        mut terminal: ratatui::Terminal<B>,
+        mut input: S,
+        opts: RunOptions,
+    ) -> Result<()>
+    where
+        B: ratatui::backend::Backend,
+        S: futures::Stream<Item = std::result::Result<crossterm::event::Event, std::io::Error>> + Unpin,
+    {
+        use futures::StreamExt;
         self.running = true;
-        let mut crossterm_events = crossterm::event::EventStream::new();
-        if let Err(e) = execute!(
-            std::io::stdout(),
-            EnableBracketedPaste,
-            EnableFocusChange,
-            EnableMouseCapture
-        ) {
-            tracing::warn!("Failed to enable terminal modes: {}", e);
+        if opts.setup_terminal_modes {
+            if let Err(e) = execute!(
+                std::io::stdout(),
+                EnableBracketedPaste,
+                EnableFocusChange,
+                EnableMouseCapture
+            ) {
+                tracing::warn!("Failed to enable terminal modes: {}", e);
+            }
         }
         // RAII guard to ensure terminal modes are disabled on unwind
-        let _terminal_mode_guard = TerminalModeGuard;
+        let _terminal_mode_guard = TerminalModeGuard { enabled: opts.setup_terminal_modes };
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
+
+        // If the provided input stream ends (e.g., tests using an empty stream),
+        // stop polling it to avoid starving event handling.
+        let mut input_done = false;
 
         // let mut frame_counter = 0;
         while self.running {
@@ -181,14 +210,15 @@ impl App {
             // Prioritize Ui responsiveness
             biased;
 
-            // User input
-            maybe_event = crossterm_events.next().fuse() => {
-                if let Some(Ok(event)) = maybe_event {
-                    match event {
-                        Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
-                        Event::FocusGained => {},
-                        Event::FocusLost => {},
-                        Event::Mouse(mouse_event) => {
+            // User input (only while input stream is active)
+            maybe_event = input.next().fuse(), if !input_done => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        match event {
+                            Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
+                            Event::FocusGained => {},
+                            Event::FocusLost => {},
+                            Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
                                     self.conversation.scroll_lines_up(3);
@@ -282,10 +312,13 @@ impl App {
                                 }
                                 _ => {}
                             }
-                        },
-                        Event::Paste(_) => {},
-                        Event::Resize(_, _) => { self.needs_redraw = true; },
+                            },
+                            Event::Paste(_) => {},
+                            Event::Resize(_, _) => { self.needs_redraw = true; },
+                        }
                     }
+                    // Stream ended or error: stop polling input to avoid busy-loop
+                    _ => { input_done = true; }
                 }
             }
 
@@ -298,15 +331,17 @@ impl App {
             }
         }
 
-        if let Err(e) = execute!(
-            std::io::stdout(),
-            DisableBracketedPaste,
-            DisableFocusChange,
-            DisableMouseCapture
-        ) {
-            tracing::warn!("Failed to disable terminal modes: {}", e);
-        }
+        // Terminal modes are disabled by TerminalModeGuard when enabled
         Ok(())
+    }
+
+    /// Run the application's main loop with the default terminal backend and real input events.
+    pub async fn run(self, terminal: DefaultTerminal) -> Result<()> {
+        use futures::StreamExt;
+        let crossterm_events = crossterm::event::EventStream::new();
+        self
+            .run_with(terminal, crossterm_events, RunOptions { setup_terminal_modes: true })
+            .await
     }
 
     /// Renders the user interface.
@@ -552,38 +587,36 @@ impl App {
         let mut deny = false;
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => { close = true; }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(st) = &mut self.approvals { st.select_prev(); }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(st) = &mut self.approvals {
-                    let len = futures::executor::block_on(self.state.proposals.read()).len();
-                    st.select_next(len);
-                }
-            }
+            KeyCode::Up | KeyCode::Char('k') => { if let Some(st) = &mut self.approvals { st.select_prev(); } }
+            KeyCode::Down | KeyCode::Char('j') => { if let Some(st) = &mut self.approvals { st.select_next(); } }
             KeyCode::Enter | KeyCode::Char('y') => { approve = true; }
             KeyCode::Char('n') | KeyCode::Char('d') => { deny = true; }
             KeyCode::Char('o') => {
                 // Open-in-editor for the first file of selected proposal
-                let guard = futures::executor::block_on(self.state.proposals.read());
-                let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-                ids.sort();
                 if let Some(st) = &self.approvals {
-                    if let Some(id) = ids.get(st.selected) {
-                        if let Some(p) = guard.get(id) {
-                            if let Some(path) = p.files.first() {
-                                let cfg = futures::executor::block_on(self.state.config.read());
-                                if let Some(cmd) = cfg.ploke_editor.clone().or_else(|| std::env::var("PLOKE_EDITOR").ok()) {
-                                    let path_str = path.display().to_string();
-                                    tokio::spawn(async move {
-                                        let _ = std::process::Command::new(cmd).arg(path_str).spawn();
-                                    });
-                                } else {
-                                    self.send_cmd(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
+                    let sel_index = st.selected;
+                    let state = Arc::clone(&self.state);
+                    let cmd_tx = self.cmd_tx.clone();
+                    tokio::spawn(async move {
+                        let guard = state.proposals.read().await;
+                        let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+                        ids.sort();
+                        if let Some(id) = ids.get(sel_index) {
+                            if let Some(p) = guard.get(id) {
+                                if let Some(path) = p.files.first() {
+                                    let cfg = state.config.read().await;
+                                    let editor = resolve_editor_command(&cfg);
+                                    drop(cfg);
+                                    if let Some(cmd) = editor {
+                                        let args = build_editor_args(path, None);
+                                        let _ = std::process::Command::new(cmd).args(args).spawn();
+                                    } else {
+                                        let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
+                                    }
                                 }
                             }
                         }
-                    }
+                    });
                 }
                 return true;
             }
@@ -591,17 +624,22 @@ impl App {
         }
         if close { self.approvals = None; return true; }
         if approve || deny {
-            let guard = futures::executor::block_on(self.state.proposals.read());
-            let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-            ids.sort();
             if let Some(st) = &self.approvals {
-                if let Some(id) = ids.get(st.selected) {
-                    if approve {
-                        self.send_cmd(StateCommand::ApproveEdits { request_id: *id });
-                    } else {
-                        self.send_cmd(StateCommand::DenyEdits { request_id: *id });
+                let sel_index = st.selected;
+                let state = Arc::clone(&self.state);
+                let cmd_tx = self.cmd_tx.clone();
+                tokio::spawn(async move {
+                    let guard = state.proposals.read().await;
+                    let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+                    ids.sort();
+                    if let Some(id) = ids.get(sel_index) {
+                        let _ = if approve {
+                            cmd_tx.try_send(StateCommand::ApproveEdits { request_id: *id })
+                        } else {
+                            cmd_tx.try_send(StateCommand::DenyEdits { request_id: *id })
+                        };
                     }
-                }
+                });
             }
             return true;
         }
@@ -639,9 +677,7 @@ impl App {
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
         // Intercept approvals overlay keys
-        if self.approvals.is_some() {
-            if self.handle_overlay_key(key) { return; }
-        }
+        if self.approvals.is_some() && self.handle_overlay_key(key) { return; }
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
             let mut chosen_id: Option<String> = None;
@@ -811,7 +847,6 @@ impl App {
                 } else {
                     self.approvals = Some(ApprovalsState::default());
                 }
-                return;
             }
             Action::Quit => {
                 self.quit();
@@ -1270,5 +1305,26 @@ impl App {
 
     pub fn set_selected_model(&mut self, model_id: String) {
         self.active_model_id = model_id;
+    }
+
+    // Test-only helpers to exercise overlay and key handling without exposing internals publicly
+    /// Open the approvals overlay (intended for tests and scripted UI flows)
+    pub fn approvals_open(&mut self) {
+        self.approvals = Some(ApprovalsState::default());
+    }
+
+    /// Close the approvals overlay (intended for tests and scripted UI flows)
+    pub fn approvals_close(&mut self) {
+        self.approvals = None;
+    }
+
+    /// Inject a KeyEvent into the App input handler (intended for tests)
+    pub fn push_test_key(&mut self, key: KeyEvent) {
+        self.on_key_event(key);
+    }
+
+    // Test-only accessor to shared AppState for integration tests via test_harness
+    pub(crate) fn test_get_state(&self) -> Arc<AppState> {
+        Arc::clone(&self.state)
     }
 }

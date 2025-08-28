@@ -34,7 +34,6 @@ pub struct ToolCallReq {
     pub request_id: uuid::Uuid,
     pub call_id: String,
     pub parent_id: uuid::Uuid,
-    pub vendor: String,
     pub model: String,
     pub provider_slug: Option<String>,
     pub tool_name: String,
@@ -160,7 +159,7 @@ impl Database {
     at: Validity
     =>
     parent_id: Uuid,
-    vendor: String,
+ 
     model: String?,
     provider_slug: String?,
     tool_name: String,
@@ -339,7 +338,6 @@ impl ObservabilityStore for Database {
             if existing_req.request_id == req.request_id
                 && existing_req.call_id == req.call_id
                 && existing_req.parent_id == req.parent_id
-                && existing_req.vendor == req.vendor
                 && existing_req.tool_name == req.tool_name
                 && existing_req.args_sha256 == req.args_sha256
                 && existing_req.arguments_json == req.arguments_json
@@ -368,7 +366,6 @@ impl ObservabilityStore for Database {
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req.vendor.into()));
         params.insert("model".into(), DataValue::Str(req.model.into()));
         params.insert(
             "provider_slug".into(),
@@ -384,12 +381,12 @@ impl ObservabilityStore for Database {
         // Upsert requested state
         let script = r#"
 {
-    ?[request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
+ 
         request_id = $request_id,
         call_id = $call_id,
         at = 'ASSERT',
         parent_id = $parent_id,
-        vendor = $vendor,
+ 
         model = $model,
         provider_slug = $provider_slug,
         tool_name = $tool_name,
@@ -401,7 +398,7 @@ impl ObservabilityStore for Database {
         outcome_json = null,
         error_kind = null,
         error_msg = null
-    :put tool_call { request_id, call_id, at => parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
+ 
 }
 "#;
 
@@ -458,7 +455,6 @@ impl ObservabilityStore for Database {
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req_meta.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req_meta.vendor.into()));
         params.insert("model".into(), DataValue::Str(req_meta.model.into()));
         params.insert(
             "provider_slug".into(),
@@ -514,12 +510,11 @@ impl ObservabilityStore for Database {
 
         let script = r#"
 {
-    ?[request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
+ 
         at = 'ASSERT',
         request_id = $request_id,
         call_id = $call_id,
         parent_id = $parent_id,
-        vendor = $vendor,
         model = $model,
         provider_slug = $provider_slug,
         tool_name = $tool_name,
@@ -531,7 +526,7 @@ impl ObservabilityStore for Database {
         outcome_json = $outcome_json,
         error_kind = $error_kind,
         error_msg = $error_msg
-    :put tool_call { request_id, call_id, at => parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
+ 
 }
 "#;
 
@@ -556,9 +551,9 @@ impl ObservabilityStore for Database {
 
         // Use dump_json to return JSON strings to the client
         let script = r#"
-?[request_id, call_id, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+ 
     *tool_call{
-        request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg
+ 
         @ 'NOW'
     },
     request_id = $request_id,
@@ -589,7 +584,7 @@ impl ObservabilityStore for Database {
             request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
             call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
             parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
-            vendor: to_string(&row[*hid.get("vendor").unwrap()])?,
+ 
             model: to_string(&row[*hid.get("model").unwrap()])?,
             provider_slug: row[*hid.get("provider_slug").unwrap()]
                 .get_str()
@@ -655,9 +650,9 @@ impl ObservabilityStore for Database {
         params.insert("limit".into(), DataValue::from(limit as i64));
 
         let script = r#"
-?[request_id, call_id, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+ 
     *tool_call{
-        request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg
+ 
         @ 'NOW'
     },
     parent_id = $parent_id,
@@ -687,7 +682,7 @@ impl ObservabilityStore for Database {
                 request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
                 call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
                 parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
-                vendor: to_string(&row[*hid.get("vendor").unwrap()])?,
+ 
                 model: to_string(&row[*hid.get("model").unwrap()])?,
                 provider_slug: row[*hid.get("provider_slug").unwrap()]
                     .get_str()

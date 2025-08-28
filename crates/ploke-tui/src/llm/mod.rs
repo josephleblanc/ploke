@@ -9,7 +9,7 @@ use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{sync::Arc, time::Duration, fs, path::PathBuf, env};
+use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
@@ -31,7 +31,7 @@ use super::*;
 #[derive(Serialize, Debug)]
 pub struct OpenAiRequest<'a> {
     model: &'a str,
-    messages: Vec<RequestMessage<'a>>,
+    messages: Vec<RequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,7 +62,7 @@ pub struct ProviderPreferences {
 impl<'a> OpenAiRequest<'a> {
     pub fn new(
         model: &'a str,
-        messages: Vec<RequestMessage<'a>>,
+        messages: Vec<RequestMessage>,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
         top_p: Option<f32>,
@@ -104,27 +104,38 @@ pub fn get_file_metadata_tool_def() -> ToolDefinition {
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct RequestMessage<'a> {
-    pub role: &'a str,
+pub struct RequestMessage {
+    pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
 
-impl RequestMessage<'_> {
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    User,
+    Assistant,
+    System,
+}
+
+impl RequestMessage {
     pub fn new_system(content: String) -> Self {
         Self {
-            role: "system",
+            role: Role::System,
             content,
             tool_call_id: None,
         }
     }
+}
 
-    pub fn new_tool(content: String, tool_call_id: String) -> Self {
-        Self {
-            role: "tool",
-            content,
-            tool_call_id: Some(tool_call_id),
+impl From<MessageKind> for Role {
+    fn from(value: MessageKind) -> Self {
+        match value {
+            MessageKind::User => Role::User,
+            MessageKind::Assistant => Role::Assistant,
+            MessageKind::System => Role::Assistant,
+            _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
         }
     }
 }
@@ -239,7 +250,7 @@ pub(super) struct ResponseMessage {
 #[serde(untagged)]
 pub(super) enum GenericToolCall {
     OpenAi(OpenAiToolCall),
-    Other(Value), // Placeholder for other vendor formats
+    Other(Value)
 }
 
 #[derive(Deserialize, Debug)]
@@ -349,7 +360,6 @@ pub async fn llm_manager(
                 parent_id,
                 name,
                 arguments,
-                vendor,
                 call_id,
             }) => {
                 let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
@@ -357,7 +367,6 @@ pub async fn llm_manager(
                     request_id = %request_id,
                     parent_id = %parent_id,
                     call_id = %call_id,
-                    vendor = ?vendor,
                     tool = %name,
                     "Dispatching ToolEvent::Requested (unified path)"
                 );
@@ -370,17 +379,18 @@ pub async fn llm_manager(
                         "request_id": request_id,
                         "parent_id": parent_id,
                         "call_id": call_id,
-                        "vendor": format!("{:?}", vendor),
                         "name": name,
                         "arguments": arguments
                     });
-                    let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&rec).unwrap_or_default());
+                    let _ = fs::write(
+                        dir.join(fname),
+                        serde_json::to_string_pretty(&rec).unwrap_or_default(),
+                    );
                 }
 
                 event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
                     request_id,
                     parent_id,
-                    vendor,
                     name,
                     arguments,
                     call_id,
@@ -389,7 +399,6 @@ pub async fn llm_manager(
             AppEvent::LlmTool(ToolEvent::Requested {
                 request_id,
                 parent_id,
-                vendor,
                 name,
                 arguments,
                 call_id,
@@ -398,7 +407,6 @@ pub async fn llm_manager(
                     request_id = %request_id,
                     parent_id = %parent_id,
                     call_id = %call_id,
-                    vendor = ?vendor,
                     tool = %name,
                     "Dispatching ToolEvent::Requested in LLM manager"
                 );
@@ -410,7 +418,6 @@ pub async fn llm_manager(
                         event_bus: &event_bus,
                         request_id,
                         parent_id,
-                        vendor,
                         name,
                         arguments,
                         call_id,
@@ -429,7 +436,12 @@ pub async fn llm_manager(
                         cfg.model_registry
                             .providers
                             .iter()
-                            .find(|p| matches!(p.provider_type, crate::user_config::ProviderType::OpenRouter))
+                            .find(|p| {
+                                matches!(
+                                    p.provider_type,
+                                    crate::user_config::ProviderType::OpenRouter
+                                )
+                            })
                             .map(|p| p.resolve_api_key())
                             .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                             .unwrap_or_default()
@@ -456,7 +468,10 @@ pub async fn llm_manager(
                     .await
                     {
                         Ok(providers) => {
-                            event_bus.send(AppEvent::ModelEndpointsResults { model_id, providers });
+                            event_bus.send(AppEvent::ModelEndpointsResults {
+                                model_id,
+                                providers,
+                            });
                         }
                         Err(e) => {
                             tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
@@ -476,7 +491,11 @@ pub async fn llm_manager(
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
-#[instrument(skip(state, client, provider_config))]
+#[instrument(skip_all,
+    fields(
+        model = %provider_config.model
+    )
+)]
 pub async fn process_llm_request(
     request: Event,
     state: Arc<AppState>,
@@ -486,7 +505,6 @@ pub async fn process_llm_request(
     provider_config: crate::user_config::ModelConfig,
     context: Option<Event>,
 ) {
-    tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         Event::Request {
             parent_id,
@@ -498,7 +516,6 @@ pub async fn process_llm_request(
             return;
         } // Not a request, do nothing
     };
-    tracing::info!("Inside process_llm_request");
 
     // This part remains the same: create a placeholder message first.
     let (responder_tx, responder_rx) = oneshot::channel();
@@ -530,6 +547,16 @@ pub async fn process_llm_request(
         parent_id,
     )
     .await;
+
+    // Build concise per-request outcome summary before consuming `result`
+    let summary = match &result {
+        Ok(_) => "Request summary: success".to_string(),
+        Err(LlmError::Api { status: 404, .. }) => {
+            "Request summary: error 404 (endpoint/tool support?)".to_string()
+        }
+        Err(LlmError::Api { status: 429, .. }) => "Request summary: rate limited (429)".to_string(),
+        Err(e) => format!("Request summary: error ({})", e),
+    };
 
     let update_cmd = match result {
         Ok(content) => {
@@ -578,6 +605,14 @@ pub async fn process_llm_request(
     if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
+
+    let _ = cmd_tx
+        .send(StateCommand::AddMessageImmediate {
+            msg: summary,
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        })
+        .await;
 }
 
 #[instrument(skip(provider, state, client))]
@@ -624,13 +659,7 @@ async fn prepare_and_run_llm_call(
         prompt
             .into_iter()
             .map(|(k, c)| RequestMessage {
-                role: match k {
-                    MessageKind::User => "user",
-                    MessageKind::Assistant => "assistant",
-                    MessageKind::System => "system",
-                    MessageKind::Tool => "tool",
-                    MessageKind::SysInfo => "system",
-                },
+                role: k.into(),
                 content: c,
                 tool_call_id: None,
             })
@@ -640,13 +669,7 @@ async fn prepare_and_run_llm_call(
             .iter()
             .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
             .map(|msg| RequestMessage {
-                role: match msg.kind {
-                    MessageKind::User => "user",
-                    MessageKind::Assistant => "assistant",
-                    MessageKind::System => "system",
-                    MessageKind::Tool => "tool",
-                    MessageKind::SysInfo => "system",
-                },
+                role: msg.kind.into(),
                 content: msg.content.clone(),
                 tool_call_id: None,
             })
@@ -701,7 +724,10 @@ async fn prepare_and_run_llm_call(
                     "require_tools_policy": require_tools
                 }
             });
-            let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&record).unwrap_or_default());
+            let _ = fs::write(
+                dir.join(fname),
+                serde_json::to_string_pretty(&record).unwrap_or_default(),
+            );
         }
 
         return Err(LlmError::Api {
@@ -756,29 +782,36 @@ or disable enforcement with ':provider tools-only off'.",
             "messages": messages,
             "tools": tools
         });
-        let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&request_plan).unwrap_or_default());
+        let _ = fs::write(
+            dir.join(fname),
+            serde_json::to_string_pretty(&request_plan).unwrap_or_default(),
+        );
         // Also print a terse, sharable line for quick triage
         tracing::info!(
             "[E2E] model={} tools={} msgs={} cap={:?}/req_tools={}",
             provider.model,
             if tools.is_empty() { "off" } else { "on" },
-            request_plan["messages"].as_array().map(|a| a.len()).unwrap_or(0),
+            request_plan["messages"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0),
             supports_tools_opt,
             require_tools
         );
     }
 
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
-    let session = session::RequestSession::new(
+    let session = session::RequestSession {
         client,
         provider,
-        Arc::clone(event_bus),
+        event_bus: Arc::clone(event_bus),
         parent_id,
         messages,
         tools,
-        params.clone(),
-        !require_tools,
-    );
+        params: params.clone(),
+        fallback_on_404: todo!(),
+        attempts: 3,
+    };
 
     let result = session.run().await;
 
@@ -795,7 +828,10 @@ or disable enforcement with ':provider tools-only off'.",
                     "phase": "response",
                     "error": e.to_string()
                 });
-                let _ = fs::write(dir.join(fname), serde_json::to_string_pretty(&rec).unwrap_or_default());
+                let _ = fs::write(
+                    dir.join(fname),
+                    serde_json::to_string_pretty(&rec).unwrap_or_default(),
+                );
             }
         }
     }
@@ -803,10 +839,10 @@ or disable enforcement with ':provider tools-only off'.",
     result
 }
 
-pub(super) fn cap_messages_by_chars<'a>(
-    messages: &'a [RequestMessage<'a>],
+pub(super) fn cap_messages_by_chars(
+    messages: &[RequestMessage],
     budget: usize,
-) -> Vec<RequestMessage<'a>> {
+) -> Vec<RequestMessage> {
     // Walk from the tail so we keep the most recent context, then reverse to restore order
     let mut used = 0usize;
     let mut kept: Vec<&RequestMessage> = Vec::new();
@@ -823,10 +859,10 @@ pub(super) fn cap_messages_by_chars<'a>(
     kept.into_iter().cloned().collect()
 }
 
-pub(super) fn cap_messages_by_tokens<'a>(
-    messages: &'a [RequestMessage<'a>],
+pub(super) fn cap_messages_by_tokens(
+    messages: &[RequestMessage],
     token_budget: usize,
-) -> Vec<RequestMessage<'a>> {
+) -> Vec<RequestMessage> {
     // Use shared TokenCounter to approximate tokens deterministically
     let tokenizer = ApproxCharTokenizer;
     let mut used = 0usize;
@@ -854,7 +890,10 @@ fn diag_dir() -> Option<PathBuf> {
 }
 fn now_ts() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 // Example tool-call handler (stub)
@@ -880,7 +919,6 @@ pub enum ToolEvent {
         name: String,
         arguments: Value,
         call_id: String,
-        vendor: ToolVendor,
     },
     Completed {
         request_id: Uuid,
@@ -947,7 +985,6 @@ pub enum Event {
         name: String,
         arguments: Value,
         call_id: Option<String>,
-        vendor: ToolVendor,
     },
 
     /// Prompt constructed to be sent to the LLM
@@ -955,12 +992,6 @@ pub enum Event {
         prompt: Vec<(MessageKind, String)>,
         parent_id: Uuid,
     },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ToolVendor {
-    OpenAI,
-    Other,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]

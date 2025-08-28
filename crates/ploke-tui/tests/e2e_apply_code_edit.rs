@@ -9,7 +9,7 @@ use ploke_tui::{
         core::{AppState, ChatState, ConfigState, SystemState},
     },
     event_bus::EventBusCaps,
-    llm::{self, LLMParameters, ToolVendor},
+    llm::{self, LLMParameters},
     system::SystemEvent,
     tracing_setup::init_tracing,
     user_config::{ModelConfig, ModelRegistry, ProviderType, default_model},
@@ -183,7 +183,7 @@ async fn e2e_apply_code_edit_real_llm() {
     event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
         request_id,
         parent_id,
-        vendor: ToolVendor::OpenAI,
+ 
         name: "apply_code_edit".to_string(),
         arguments: args.clone(),
         call_id,

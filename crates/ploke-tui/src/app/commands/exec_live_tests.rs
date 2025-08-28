@@ -2,15 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument, warn, Level};
 
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::ModelEndpointsResponse;
-use crate::tracing_setup::init_tracing;
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
+use crate::tracing_setup::{init_tracing, init_tracing_tests};
 use crate::user_config::OPENROUTER_URL;
 
 // Leverage the in-crate test harness (Arc<Mutex<App>>) for constructing a realistic App.
@@ -70,7 +70,7 @@ async fn choose_tools_model(
                             parsed.data.endpoints.iter().any(|ep| {
                                 ep.supported_parameters
                                     .iter()
-                                    .any(|p| p.eq_ignore_ascii_case("tools"))
+                                    .any(|p| matches!(p, SupportedParameters::Tools))
                             })
                         } else {
                             false
@@ -150,6 +150,11 @@ async fn choose_tools_model(
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_model_tools_support_check() {
+    // Additional hard gating to avoid accidental network/costly runs.
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
@@ -199,7 +204,7 @@ async fn openrouter_model_tools_support_check() {
                         .filter(|ep| {
                             ep.supported_parameters
                                 .iter()
-                                .any(|p| p.eq_ignore_ascii_case("tools"))
+                                .any(|p| matches!(p, SupportedParameters::Tools))
                         })
                         .count();
                     info!(
@@ -210,7 +215,7 @@ async fn openrouter_model_tools_support_check() {
                         let supports_tools = ep
                             .supported_parameters
                             .iter()
-                            .any(|p| p.eq_ignore_ascii_case("tools"));
+                            .any(|p| matches!(p, SupportedParameters::Tools));
                         info!(
                             "  - provider='{}' slug_hint='{}' supports_tools={} context_length={}",
                             ep.name,
@@ -236,6 +241,10 @@ async fn openrouter_model_tools_support_check() {
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_tools_forced_choice_diagnostics() {
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
@@ -372,7 +381,11 @@ async fn harness_smoke_app_constructs() {
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_endpoints_live_smoke() {
-    let _guard = init_tracing();
+    let _g = init_tracing_tests(Level::ERROR);
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
@@ -467,7 +480,11 @@ async fn openrouter_endpoints_live_smoke() {
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_tools_success_matrix() {
-    let _guard = init_tracing();
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
+    let _guard = init_tracing_tests(Level::INFO);
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
@@ -514,7 +531,7 @@ async fn openrouter_tools_success_matrix() {
                         .filter(|ep| {
                             ep.supported_parameters
                                 .iter()
-                                .any(|p| p.eq_ignore_ascii_case("tools"))
+                                .any(|p| matches!(p, SupportedParameters::Tools))
                         })
                         .count();
                     endpoints_tools_count = Some(cnt);
@@ -889,6 +906,10 @@ Hints:
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_provider_preference_experiment() {
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
@@ -979,6 +1000,10 @@ async fn openrouter_provider_preference_experiment() {
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_tools_smoke() {
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {
@@ -1066,6 +1091,10 @@ async fn openrouter_tools_smoke() {
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_tools_model_touchpoints() {
+    if std::env::var("PLOKE_RUN_EXEC_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
     let Some((api_key, base_url)) = openrouter_env() else {

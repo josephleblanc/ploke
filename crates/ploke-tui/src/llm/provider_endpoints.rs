@@ -36,10 +36,10 @@ pub struct ModelEndpoint {
     #[serde(default)]
     pub per_request_limits: std::collections::HashMap<String, serde_json::Value>,
     #[serde(default)]
-    pub supported_parameters: Vec<String>,
+    pub supported_parameters: Vec<SupportedParameters>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum SupportedParameters {
     #[serde(rename = "max_tokens")]
     MaxTokens,
@@ -56,7 +56,7 @@ pub enum SupportedParameters {
     #[serde(rename = "logit_bias")]
     LogitBias,
     #[serde(rename = "logprobs")]
-    Logprobs,
+    LogProbs,
     #[serde(rename = "structured_outputs")]
     StructuredOutputs,
     #[serde(rename = "presence_penalty")]

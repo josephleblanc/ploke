@@ -18,10 +18,7 @@ pub struct ApprovalsState {
 }
 
 impl ApprovalsState {
-    pub fn select_next(&mut self, max: usize) {
-        if max == 0 { return; }
-        self.selected = (self.selected + 1).min(max - 1);
-    }
+    pub fn select_next(&mut self) { self.selected = self.selected.saturating_add(1); }
     pub fn select_prev(&mut self) {
         self.selected = self.selected.saturating_sub(1);
     }
@@ -127,4 +124,3 @@ pub fn render_approvals_overlay(
 
     selected_id
 }
-

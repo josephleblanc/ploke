@@ -17,6 +17,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
     app.conversation.on_event(&app_event);
     app.input_view.on_event(&app_event);
     match app_event {
+        AppEvent::Quit => {
+            app.quit();
+        }
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }

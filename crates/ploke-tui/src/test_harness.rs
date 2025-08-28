@@ -121,3 +121,11 @@ lazy_static! {
 pub fn app() -> &'static Arc<Mutex<App>> {
     &TEST_APP
 }
+
+/// Accessor for the shared AppState used by TEST_APP.
+/// This provides a clone of the Arc<AppState> so integration tests can stage
+/// proposals or inspect state efficiently without recreating the app.
+pub async fn get_state() -> Arc<AppState> {
+    let app = TEST_APP.lock().await;
+    app.test_get_state()
+}

@@ -24,6 +24,7 @@ use ploke_tui::{
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 fn make_temp_file_with(content: &str) -> tempfile::TempDir {
@@ -98,21 +99,21 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(ToolCallParams {
+    timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: &state,
         event_bus: &event_bus,
         request_id,
         parent_id,
-        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+ 
         name: "apply_code_edit".to_string(),
         arguments: args,
         call_id,
-    })
-    .await;
+    }))
+    .await
+    .expect("stage_proposal timed out");
 
     // Verify proposal exists and is Pending with a preview
     let reg = state.proposals.read().await;
-    // BUG: Failing here
     let proposal = reg.get(&request_id).expect("proposal not found");
     match &proposal.status {
         EditProposalStatus::Pending => {}
@@ -154,22 +155,24 @@ async fn approve_applies_edits_and_updates_status() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(ToolCallParams {
+    timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: &state,
         event_bus: &event_bus,
         request_id,
         parent_id,
-        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+ 
         name: "apply_code_edit".to_string(),
         arguments: args,
         call_id,
-    })
-    .await;
+    }))
+    .await
+    .expect("apply_code_edit staging timed out");
 
-    approve_edits(&state, &event_bus, request_id).await;
+    timeout(Duration::from_secs(30), approve_edits(&state, &event_bus, request_id))
+        .await
+        .expect("approve_edits timed out");
 
     let updated = std::fs::read_to_string(&file_path).unwrap();
-    // BUG: Failing here
     assert!(
         updated.contains("demo_ok"),
         "file did not contain applied replacement: {updated}"
@@ -211,19 +214,22 @@ async fn deny_marks_denied_and_does_not_change_file() {
     let parent_id = Uuid::new_v4();
     let call_id = Uuid::new_v4().to_string();
 
-    handle_tool_call_requested(ToolCallParams {
+    timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: &state,
         event_bus: &event_bus,
         request_id,
         parent_id,
-        vendor: ploke_tui::llm::ToolVendor::OpenAI,
+ 
         name: "apply_code_edit".to_string(),
         arguments: args,
         call_id,
-    })
-    .await;
+    }))
+    .await
+    .expect("apply_code_edit staging timed out");
 
-    deny_edits(&state, &event_bus, request_id).await;
+    timeout(Duration::from_secs(30), deny_edits(&state, &event_bus, request_id))
+        .await
+        .expect("deny_edits timed out");
 
     // File unchanged
     let updated = std::fs::read_to_string(&file_path).unwrap();

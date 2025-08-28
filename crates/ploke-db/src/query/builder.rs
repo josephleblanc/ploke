@@ -18,6 +18,7 @@ use ploke_transform::schema::types::{
     NamedTypeSchema, NeverTypeSchema, ParenTypeSchema, RawPointerTypeSchema, ReferenceTypeSchema,
     SliceTypeSchema, TraitObjectTypeSchema, TupleTypeSchema, UnknownTypeSchema,
 };
+use serde::{Deserialize, Serialize};
 use tracing;
 
 use crate::{DbError, QueryResult};
@@ -48,7 +49,8 @@ pub struct RhsRelation {
     pub node_type_index: i8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NodeType {
     Function,
     Struct,
@@ -137,6 +139,9 @@ impl NodeType {
             // Impl,
             Macro, Module, Static, Struct, Trait, TypeAlias, Union,
         ]
+    }
+    pub fn is_primary(type_name: &str) -> bool {
+        Self::primary_nodes().iter().any(|pn| pn.relation_str() == type_name)
     }
     pub fn embeddable_nodes() -> String {
         let star: &'static str = " *";

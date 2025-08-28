@@ -722,6 +722,10 @@ mod test {
 
     #[tokio::test]
     async fn test_update_embed() -> color_eyre::Result<()> {
+        if std::env::var("PLOKE_RUN_UPDATE_EMBED").ok().as_deref() != Some("1") {
+            eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
+            return Ok(());
+        }
         // init_test_tracing(Level::DEBUG);
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";

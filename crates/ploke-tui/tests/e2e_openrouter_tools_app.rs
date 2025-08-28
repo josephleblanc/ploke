@@ -31,32 +31,25 @@ Reliability:
 
 #![cfg(test)]
 
+mod harness;
+
+use harness::AppHarness;
 use lazy_static::lazy_static;
-use ploke_db::{Database, bm25_index, create_index_primary};
-use ploke_embed::cancel_token::CancellationToken;
-use ploke_embed::indexer::IndexerTask;
 use ploke_error::Error;
-use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::workspace_root;
-use ploke_tui::app::App;
-use ploke_tui::app_state::{
-    AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager,
-};
-use ploke_tui::chat_history::ChatHistory;
-use ploke_tui::llm::{self, llm_manager};
+use ploke_tui::app_state::StateCommand;
+use ploke_tui::llm::provider_endpoints::SupportedParameters;
+use ploke_tui::llm;
 use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
-use ploke_tui::tracing_setup::init_tracing;
-use ploke_tui::user_config::{OPENROUTER_URL, UserConfig, default_model, ModelCapabilities};
-use ploke_tui::{AppEvent, EventBus, EventBusCaps, EventPriority, app_state};
+use ploke_tui::tracing_setup::init_tracing_tests;
+use ploke_tui::user_config::{OPENROUTER_URL, ModelCapabilities};
+use ploke_tui::{AppEvent, EventPriority};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::Duration;
-use tracing::{info, warn};
+use tracing::{info, warn, Level};
 use uuid::Uuid;
 
 // Ensure a realistic App initialization occurs (settings/env seeded).
@@ -73,22 +66,7 @@ struct ToolRoundtripOutcome {
     pub body_excerpt_first: String,
 }
 
-lazy_static! {
-    /// Shared DB restored from a backup of `fixture_nodes` (if present), with primary index created.
-    pub static ref TEST_DB_NODES: Result<Arc<Database>, ploke_error::Error> = {
-        let db = Database::init_with_schema()?;
-        let mut backup = workspace_root();
-        backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        if backup.exists() {
-            let prior_rels_vec = db.relations_vec()?;
-            db.import_from_backup(&backup, &prior_rels_vec)
-                .map_err(ploke_db::DbError::from)
-                .map_err(ploke_error::Error::from)?;
-        }
-        create_index_primary(&db)?;
-        Ok(Arc::new(db))
-    };
-}
+// DB fixture now lives in tests/harness.rs (TEST_DB_NODES)
 
 lazy_static! {
     static ref TOOL_ENDPOINT_CANDIDATES: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> =
@@ -97,10 +75,17 @@ lazy_static! {
 
 /// Read OPENROUTER_API_KEY and base URL from environment.
 fn openrouter_env() -> Option<(String, String)> {
-    let key = std::env::var("OPENROUTER_API_KEY").ok()?;
-    if key.trim().is_empty() {
-        return None;
-    }
+    // Try current process env first; if missing, load from .env as a fallback
+    let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
+    let key = match key_opt {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            let _ = dotenvy::dotenv();
+            let k = std::env::var("OPENROUTER_API_KEY").ok()?;
+            if k.trim().is_empty() { return None; }
+            k
+        }
+    };
     Some((key, OPENROUTER_URL.to_string()))
 }
 
@@ -163,11 +148,11 @@ async fn choose_tools_endpoint_for_model(
         .filter(|ep| {
             ep.supported_parameters
                 .iter()
-                .any(|p| p.eq_ignore_ascii_case("tools"))
+                .any(|p| matches!(p, SupportedParameters::Tools))
                 && ep
                     .supported_parameters
                     .iter()
-                    .any(|p| p.eq_ignore_ascii_case("tool_choice"))
+                    .any(|p| matches!(p, SupportedParameters::ToolChoice))
         })
         .inspect(|cand| tracing::trace!("candidate: {:#?}", cand))
         .collect();
@@ -217,112 +202,22 @@ async fn choose_tools_endpoint_for_model(
 
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
-    let _guard = init_tracing();
+    let _tracing_guard = init_tracing_tests(Level::INFO);
+    if std::env::var("PLOKE_RUN_LIVE_TESTS").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: PLOKE_RUN_LIVE_TESTS!=1");
+        return Ok(());
+    }
     // Dedicated diagnostics directory (env-driven by LLM layer)
     let out_dir = std::path::PathBuf::from("target/test-output/openrouter_e2e");
     fs::create_dir_all(&out_dir).ok();
     println!("[E2E] Diagnostics directory: {}", out_dir.display());
-    // Build a realistic App instance without spawning UI/event loops.
-    // Keep this synchronous for ergonomic use in tests.
-    let mut config = UserConfig::default();
-    // Merge curated defaults with user overrides (none in tests by default)
-    config.registry = config.registry.with_defaults();
-    // Apply any API keys from env for more realistic behavior if present
-    config.registry.load_api_keys();
-
-    // Convert to runtime configuration
-    let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
-
-    let db_handle = TEST_DB_NODES
-        .as_ref()
-        .expect("TEST_DB_NODES must initialize");
-
-    // IO manager
-    let io_handle = ploke_io::IoManagerHandle::new();
-
-    // Event bus for the app
-    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-
-    // Embedder (from config)
-    let processor = config
-        .load_embedding_processor()
-        .expect("load embedding processor");
-    let proc_arc = Arc::new(processor);
-
-    // BM25 service (used by indexer/RAG)
-    let bm25_cmd =
-        bm25_index::bm25_service::start(Arc::clone(db_handle), 0.0).expect("start bm25 service");
-
-    // Indexer task
-    let indexer_task = IndexerTask::new(
-        db_handle.clone(),
-        io_handle.clone(),
-        Arc::clone(&proc_arc),
-        CancellationToken::new().0,
-        8,
-    )
-    .with_bm25_tx(bm25_cmd);
-    let indexer_task = Arc::new(indexer_task);
-
-    // RAG service (optional)
-    let rag = match RagService::new_full(
-        db_handle.clone(),
-        Arc::clone(&proc_arc),
-        io_handle.clone(),
-        RagConfig::default(),
-    ) {
-        Ok(svc) => Some(Arc::new(svc)),
-        Err(_e) => None,
-    };
-
-    // Rebuild BM25 for consistent test behavior
-    let rag = rag.expect("rag service not created correctly");
-    rag.bm25_rebuild().await?;
-
-    let (rag_event_tx, _rag_event_rx) = mpsc::channel(10);
-    // Shared app state
-    let state = Arc::new(AppState {
-        chat: ChatState::new(ChatHistory::new()),
-        config: ConfigState::new(runtime_cfg),
-        system: SystemState::default(),
-        indexing_state: RwLock::new(None),
-        indexer_task: Some(Arc::clone(&indexer_task)),
-        indexing_control: Arc::new(Mutex::new(None)),
-        db: db_handle.clone(),
-        embedder: Arc::clone(&proc_arc),
-        io_handle: io_handle.clone(),
-        proposals: RwLock::new(std::collections::HashMap::new()),
-        rag: Some(Arc::clone(&rag)),
-        budget: TokenBudget::default(),
-    });
-
-    // Command channel (not wired to a state_manager loop in tests)
-    let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
-
+    // Spawn headless App and subsystems via test harness
+    let h = AppHarness::spawn().await;
     // Best-effort capability refresh so tools are considered for models that advertise them.
     {
-        let mut cfg = state.config.write().await;
+        let mut cfg = h.state.config.write().await;
         let _ = cfg.model_registry.refresh_from_openrouter().await;
     }
-
-    // Spawn state manager first
-    tokio::spawn(state_manager(
-        state.clone(),
-        cmd_rx,
-        event_bus.clone(),
-        rag_event_tx,
-    ));
-
-    tokio::spawn(llm_manager(
-        event_bus.subscribe(EventPriority::Background),
-        state.clone(),
-        cmd_tx.clone(), // Clone for each subsystem
-        event_bus.clone(),
-    ));
-
-    // Build the App
-    let command_style = config.command_style;
-    let _app = App::new(command_style, Arc::clone(&state), cmd_tx.clone(), &event_bus, default_model());
 
     let Some((api_key, base_url)) = openrouter_env() else {
         eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
@@ -387,10 +282,10 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         Err(_) => Default::default(),
     };
 
-    for m in models {
-        if processed >= max_models {
-            break;
-        }
+    for m in models.into_iter().take(max_models) {
+        // if processed >= max_models {
+        //     break;
+        // }
 
         let model_id = m.id;
         info!("model: {}", model_id);
@@ -411,7 +306,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
         // Force-enable tool support in the registry for the selected model so tools are included.
         {
-            let mut cfg = state.config.write().await;
+            let mut cfg = h.state.config.write().await;
             cfg.model_registry.capabilities.insert(
                 model_id.clone(),
                 ModelCapabilities {
@@ -443,7 +338,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
 
         // Configure the active provider/model for this loop iteration
         if let Some(provider_slug_hint) = provider_slug_hint.clone() {
-            let _ = cmd_tx
+            let _ = h.cmd_tx
                 .send(StateCommand::SelectModelProvider {
                     model_id: model_id.clone(),
                     provider_id: provider_slug_hint.clone(),
@@ -453,63 +348,47 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Construct a synthetic user request + context to drive the full lifecycle
-        let parent_id = Uuid::new_v4();
+        // Submit a realistic user request to drive the full lifecycle
         let request_id = Uuid::new_v4();
-        let new_msg_id = Uuid::new_v4();
         let system_instr = [PROMPT_HEADER, PROMPT_CODE].join("");
         let user_instr = String::from(
-            "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.\n\nIf tools are available, you MUST call the `request_code_context` tool with {\"token_budget\": 256} and wait for the tool result before responding.",
-        );
+"Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.
 
-        // First send the Request (pending in LLM manager) ...
-        event_bus.send(AppEvent::Llm(llm::Event::Request {
-            request_id,
-            parent_id,
-            new_msg_id,
-            prompt: user_instr.clone(),
-            parameters: Default::default(),
-        }));
-        // ... then send the PromptConstructed to trigger processing
-        event_bus.send(AppEvent::Llm(llm::Event::PromptConstructed {
-            parent_id,
-            prompt: vec![
-                (ploke_tui::chat_history::MessageKind::System, system_instr),
-                (ploke_tui::chat_history::MessageKind::User, user_instr),
-            ],
-        }));
+If tools are available, you MUST call the `request_code_context` tool with {\"token_budget\": 256} and wait for the tool result before responding.",
+        );
+        let parent_id = h.add_user_msg(user_instr.clone()).await;
 
         // Observe LLM and Tool events with a shorter window; break early on first tool signal
-        let mut rx = event_bus.subscribe(EventPriority::Background);
-        let observe_until = std::time::Instant::now() + Duration::from_secs(20);
+        let mut bg_rx = h.event_bus.subscribe(EventPriority::Background);
+        let mut rt_rx = h.event_bus.subscribe(EventPriority::Realtime);
+        let observe_until = std::time::Instant::now() + Duration::from_secs(10);
         let mut saw_tool = false;
         while std::time::Instant::now() < observe_until {
-            match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
-                Ok(Ok(ev)) => match ev {
-                    AppEvent::Llm(llm::Event::ToolCall {
-                        name,
-                        vendor,
-                        ..
-                    }) => {
-                        println!("[E2E] tool_call model={} name={} vendor={:?}", model_id, name, vendor);
-                        saw_tool = true;
-                        break;
-                    }
+            let next_bg = tokio::time::timeout(Duration::from_millis(1000), bg_rx.recv());
+            let next_rt = tokio::time::timeout(Duration::from_millis(1000), rt_rx.recv());
+            tokio::select! {
+                Ok(Ok(ev)) = next_rt => match ev {
                     AppEvent::LlmTool(llm::ToolEvent::Requested { name, call_id, .. }) => {
                         println!("[E2E] tool_requested model={} name={} call_id={}", model_id, name, call_id);
-                        saw_tool = true;
-                        break;
+                        saw_tool = true; break;
                     }
-                    AppEvent::LlmTool(llm::ToolEvent::Completed {
-                        call_id, content, ..
-                    }) => {
+                    AppEvent::LlmTool(llm::ToolEvent::Completed { call_id, content, .. }) => {
                         let excerpt: String = content.chars().take(200).collect();
                         println!("[E2E] tool_completed model={} call_id={} excerpt={}", model_id, call_id, excerpt);
-                        saw_tool = true;
-                        break;
+                        saw_tool = true; break;
                     }
                     AppEvent::LlmTool(llm::ToolEvent::Failed { call_id, error, .. }) => {
                         println!("[E2E] tool_failed model={} call_id={} error={}", model_id, call_id, error);
+                        saw_tool = true; break;
+                    }
+                    _ => {}
+                },
+                Ok(Ok(ev)) = next_bg => match ev {
+                    AppEvent::Llm(llm::Event::ToolCall {
+                        name,
+                        ..
+                    }) => {
+ 
                         saw_tool = true;
                         break;
                     }
@@ -519,7 +398,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
                     }
                     _ => {}
                 },
-                _ => {}
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }
         }
 
@@ -576,6 +455,9 @@ async fn e2e_openrouter_tools_with_app_and_db() -> Result<(), Error> {
         outcomes.iter().any(|o| o.tool_called),
         "No tool calls were observed across evaluated models. Ensure OPENROUTER_API_KEY is set and at least one tools-capable endpoint is selected."
     );
+
+    // Request a clean shutdown of the UI loop
+    h.shutdown().await;
 
     Ok(())
 }

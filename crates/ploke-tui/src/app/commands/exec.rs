@@ -16,8 +16,8 @@ use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing};
-use crate::user_config::{OPENROUTER_URL, ModelRegistryStrictness, ProviderType, UserConfig};
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing, SupportedParameters};
+use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, ProviderType, UserConfig};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use reqwest::Client;
@@ -31,30 +31,6 @@ use uuid::Uuid;
 const DATA_DIR: &str = "crates/ploke-tui/data";
 const TEST_QUERY_FILE: &str = "queries.json";
 const TEST_QUERY_RESULTS: &str = "results.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelEndpoint {
-    #[serde(default)]
-    provider_name: String,
-    #[serde(default)]
-    context_length: Option<u64>,
-    #[serde(default)]
-    supported_parameters: Vec<String>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    max_completion_tokens: Option<u64>,
-    #[serde(default)]
-    max_prompt_tokens: Option<u64>,
-    #[serde(default)]
-    pricing: Pricing,
-    #[serde(default)]
-    quantization: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    uptime_last_30m: f32,
-}
 
 /// Execute a parsed command. Falls back to legacy handler for commands
 /// not yet migrated to structured parsing.
@@ -672,7 +648,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                             let supports_tools = ep
                                 .supported_parameters
                                 .iter()
-                                .any(|t| t.eq_ignore_ascii_case("tools"));
+                                .any(|p| matches!(p, SupportedParameters::Tools));
                             let slug = providers_map
                                 .get(&ep.name)
                                 .cloned()
@@ -1093,7 +1069,7 @@ mod typed_response_tests {
                     {
                         "provider_name": "Foo Provider",
                         "context_length": 8192,
-                        "supported_parameters": ["tools", "json_output"],
+                        "supported_parameters": ["tools", "structured_outputs"],
                         "name": "foo/bar",
                         "max_completion_tokens": 4096,
                         "max_prompt_tokens": 8192
@@ -1115,7 +1091,7 @@ mod typed_response_tests {
             parsed.data.endpoints[0]
                 .supported_parameters
                 .iter()
-                .any(|t| t.eq_ignore_ascii_case("tools"))
+                .any(|p| matches!(p, SupportedParameters::Tools))
         );
         assert_eq!(parsed.data.endpoints[1].name, "");
         assert!(parsed.data.endpoints[1].context_length == 0);
