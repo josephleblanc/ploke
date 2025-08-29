@@ -45,6 +45,7 @@ CARGO_TEST_OUTPUT.txt
 crates/ingest/syn_parser/tests/data
 crates/ingest/syn_parser/tests/fixtures
 crates/ingest/syn_parser/tests/integration
+crates/ploke-tui/test-logs/
 
 # deprecated data output files
 crates/ingest/syn_parser/code_graph.ron
