@@ -59,23 +59,27 @@ pub struct ModelEndpointsResponse {
     pub data: ModelEndpointsData,
 }
 
-// Add docs AI!
 impl ModelEndpointsResponse {
-    fn url() -> Url {
+    /// Returns the static URL for the OpenRouter models endpoint.
+    ///
+    /// This URL points to the official OpenRouter API endpoint that lists all available models.
+    pub fn url() -> Url {
         OPENROUTER_MODELS_URL.clone()
     }
 }
 
+/// Container for the list of model endpoints returned by the OpenRouter API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// Add docs AI!
 pub struct ModelEndpointsData {
+    /// List of available model endpoints from OpenRouter.
     #[serde(default)]
     pub endpoints: Vec<ModelEndpoint>,
 }
 
+/// Represents a single model endpoint from OpenRouter's API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// Add docs AI!
 pub struct ModelEndpoint {
+    /// Unique identifier for this model.
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -102,9 +106,9 @@ pub struct ModelEndpoint {
     pub supported_parameters: Vec<SupportedParameters>,
 }
 
+/// Parameters supported by OpenRouter models.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
-// Add docs AI!
 pub enum SupportedParameters {
     MaxTokens,
     TopK,
@@ -125,9 +129,10 @@ pub enum SupportedParameters {
     Tools,
 }
 
+/// Architecture details of a model, including input/output modalities and tokenizer info.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-// Add docs AI!
 pub struct Architecture {
+    /// Input modalities supported by this model (text, image, audio, video).
     pub input_modalities: Vec<InputModality>,
     #[serde(default)]
     pub output_modalities: Vec<OutputModality>,
@@ -137,9 +142,9 @@ pub struct Architecture {
     pub instruct_type: String,
 }
 
+/// Possible input modalities that a model can accept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-// Add docs AI!
 pub enum InputModality {
     Text,
     Image,
@@ -147,18 +152,19 @@ pub enum InputModality {
     Video,
 }
 
+/// Possible output modalities that a model can produce.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-// Add docs AI!
 pub enum OutputModality {
     Text,
     Image,
     Audio,
 }
 
+/// Provider-specific information about the model.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-// Add docs AI!
 pub struct TopProvider {
+    /// Whether this model is subject to content moderation.
     #[serde(default)]
     is_moderated: bool,
     #[serde(default)]
@@ -167,8 +173,8 @@ pub struct TopProvider {
     max_completion_tokens: u64,
 }
 
+/// Pricing information for using the model.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-// Add docs AI!
 pub struct Pricing {
     // Accept either numbers or strings from the API, but keep a numeric type internally.
     #[serde(
@@ -251,8 +257,7 @@ where
     serializer.serialize_str(&v.to_string())
 }
 
-// Add docs AI!
-// Lightweight getters so callers can compute price hints without poking at serde internals.
+/// Lightweight getters so callers can compute price hints without poking at serde internals.
 impl Pricing {
     pub fn prompt_or_default(&self) -> f64 {
         self.prompt
