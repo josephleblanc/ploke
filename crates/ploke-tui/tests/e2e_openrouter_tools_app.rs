@@ -292,7 +292,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
     let providers_response: ProvidersResponse = resp.json().await?;
     tracing::debug!("providers_map:\n{:#?}", providers_response);
     let count = providers_response.data.iter()
-        .inspect(|p| println!("{}", p.slug) )
+        .inspect(|p| println!("{:#?}", p) )
         .count();
     println!("count: {}", count);
 

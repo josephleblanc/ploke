@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use reqwest::Url;
 
 #[derive(Clone, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ProvidersResponse {
@@ -8,10 +9,10 @@ pub struct ProvidersResponse {
 #[derive(Clone, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Provider {
     pub name: ProviderName,
-    pub privacy_policy_url: Option<String>,
+    pub privacy_policy_url: Option<Url>,
     pub slug: Slug,
-    pub status_page_url: Option<String>,
-    pub terns_of_service_url: Option<String>,
+    pub status_page_url: Option<Url>,
+    pub terms_of_service_url: Option<Url>,
 }
 
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
@@ -98,6 +99,10 @@ impl Display for ProviderName {
 }
 
 impl ProviderName {
+    pub fn has_slug(self, other: Slug) -> bool {
+        self.to_slug() == other
+    }
+
     pub fn to_slug(self) -> Slug {
         match self {
             ProviderName::ZdotAI => Slug::z_ai,
@@ -250,6 +255,10 @@ impl Display for Slug {
 }
 
 impl Slug {
+    pub fn has_provider_name(self, other: ProviderName) -> bool {
+        self.to_provider_name() == other
+    }
+
     pub fn to_provider_name(self) -> ProviderName {
         match self {
             Slug::z_ai => ProviderName::ZdotAI,

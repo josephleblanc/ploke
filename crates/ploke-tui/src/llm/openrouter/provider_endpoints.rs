@@ -1,8 +1,57 @@
 use serde::{Deserialize, Serialize};
+use reqwest::Url;
+
+// Expected response shape, from the official openrouter docs:
+// {
+//   "data": [
+//     {
+//       "id": "string",
+//       "name": "string",
+//       "created": 1741818122,
+//       "description": "string",
+//       "architecture": {
+//         "input_modalities": [
+//           "text",
+//           "image"
+//         ],
+//         "output_modalities": [
+//           "text"
+//         ],
+//         "tokenizer": "GPT",
+//         "instruct_type": "string"
+//       },
+//       "top_provider": {
+//         "is_moderated": true,
+//         "context_length": 128000,
+//         "max_completion_tokens": 16384
+//       },
+//       "pricing": {
+//         "prompt": "0.0000007",
+//         "completion": "0.0000007",
+//         "image": "0",
+//         "request": "0",
+//         "web_search": "0",
+//         "internal_reasoning": "0",
+//         "input_cache_read": "0",
+//         "input_cache_write": "0"
+//       },
+//       "canonical_slug": "string",
+//       "context_length": 128000,
+//       "hugging_face_id": "string",
+//       "per_request_limits": {},
+//       "supported_parameters": [
+//         "string"
+//       ]
+//     }
+//   ]
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Typed response to deserialize the response from:
+/// https://openrouter.ai/api/v1/models
 pub struct ModelEndpointsResponse {
     pub data: ModelEndpointsData,
+    // I would like to add a 
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
