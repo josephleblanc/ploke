@@ -59,6 +59,12 @@ pub struct ModelEndpointsResponse {
     pub data: ModelEndpointsData,
 }
 
+impl ModelEndpointsResponse {
+    fn url() -> Url {
+        // AI!
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEndpointsData {
     #[serde(default)]
