@@ -59,6 +59,7 @@ pub struct ModelEndpointsResponse {
     pub data: ModelEndpointsData,
 }
 
+// Add docs AI!
 impl ModelEndpointsResponse {
     fn url() -> Url {
         OPENROUTER_MODELS_URL.clone()
@@ -66,12 +67,14 @@ impl ModelEndpointsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Add docs AI!
 pub struct ModelEndpointsData {
     #[serde(default)]
     pub endpoints: Vec<ModelEndpoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Add docs AI!
 pub struct ModelEndpoint {
     #[serde(default)]
     pub id: String,
@@ -101,6 +104,7 @@ pub struct ModelEndpoint {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+// Add docs AI!
 pub enum SupportedParameters {
     MaxTokens,
     TopK,
@@ -122,6 +126,7 @@ pub enum SupportedParameters {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Add docs AI!
 pub struct Architecture {
     pub input_modalities: Vec<InputModality>,
     #[serde(default)]
@@ -134,6 +139,7 @@ pub struct Architecture {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// Add docs AI!
 pub enum InputModality {
     Text,
     Image,
@@ -143,6 +149,7 @@ pub enum InputModality {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// Add docs AI!
 pub enum OutputModality {
     Text,
     Image,
@@ -150,6 +157,7 @@ pub enum OutputModality {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Add docs AI!
 pub struct TopProvider {
     #[serde(default)]
     is_moderated: bool,
@@ -160,6 +168,7 @@ pub struct TopProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// Add docs AI!
 pub struct Pricing {
     // Accept either numbers or strings from the API, but keep a numeric type internally.
     #[serde(
@@ -242,6 +251,7 @@ where
     serializer.serialize_str(&v.to_string())
 }
 
+// Add docs AI!
 // Lightweight getters so callers can compute price hints without poking at serde internals.
 impl Pricing {
     pub fn prompt_or_default(&self) -> f64 {
