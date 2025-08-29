@@ -1,0 +1,558 @@
+  2025-08-29T02:30:45.291558Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparam[0m: ":create param { function_id: Uuid, type_id: Uuid, at: Validity => is_mutable: Bool, is_self: Bool, name: String?, param_index: Int }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:7 on ThreadId(2)
+
+  2025-08-29T02:30:45.292580Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.292645Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mattribute[0m: ":create attribute { owner_id: Uuid, at: Validity => name: String, index: Int, args: [String], value: String? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:55 on ThreadId(2)
+
+  2025-08-29T02:30:45.293070Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.293118Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mvariant[0m: ":create variant { id: Uuid, owner_id: Uuid, at: Validity => name: String, index: Int, discriminant: String?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:21 on ThreadId(2)
+
+  2025-08-29T02:30:45.293418Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.293465Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfield[0m: ":create field { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String?, index: Int, vis_kind: String, vis_path: [String]?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:40 on ThreadId(2)
+
+  2025-08-29T02:30:45.293777Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.293826Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_type[0m: ":create generic_type { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid], default: Uuid? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T02:30:45.294110Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.294156Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_const[0m: ":create generic_const { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String, param_index: Int, kind: String }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:92 on ThreadId(2)
+
+  2025-08-29T02:30:45.294414Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.294457Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_lifetime[0m: ":create generic_lifetime { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:82 on ThreadId(2)
+
+  2025-08-29T02:30:45.294738Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.294785Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mconst[0m: ":create const { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:31 on ThreadId(2)
+
+  2025-08-29T02:30:45.295174Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.295224Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158menum[0m: ":create enum { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, variants: [Uuid], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:51 on ThreadId(2)
+
+  2025-08-29T02:30:45.295566Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.295614Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction[0m: ":create function { id: Uuid, at: Validity => name: String, docstring: String?, vis_kind: String, vis_path: [String]?, span: [Int; 2], tracking_hash: Uuid, cfgs: [String], return_type_id: Uuid?, body: String?, module_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:13 on ThreadId(2)
+
+  2025-08-29T02:30:45.296026Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.296078Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl[0m: ":create impl { id: Uuid, at: Validity => self_type: Uuid, span: [Int; 2], trait_type: Uuid?, methods: [Uuid]?, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T02:30:45.296412Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.296461Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimport[0m: ":create import { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String?, vis_path: [String]?, cfgs: [String], source_path: [String], visible_name: String, original_name: String?, is_glob: Bool, is_self_import: Bool, import_kind: String, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:88 on ThreadId(2)
+
+  2025-08-29T02:30:45.296828Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.296875Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro[0m: ":create macro { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], kind: String, proc_kind: String?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:108 on ThreadId(2)
+
+  2025-08-29T02:30:45.297221Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.297267Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmodule[0m: ":create module { id: Uuid, at: Validity => name: String, path: [String], vis_kind: String, vis_path: [String]?, docstring: String?, span: [Int; 2], tracking_hash: Uuid, module_kind: String, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:133 on ThreadId(2)
+
+  2025-08-29T02:30:45.297609Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.297664Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstatic[0m: ":create static { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, is_mutable: Bool, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:151 on ThreadId(2)
+
+  2025-08-29T02:30:45.298001Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.298046Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstruct[0m: ":create struct { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:171 on ThreadId(2)
+
+  2025-08-29T02:30:45.298366Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.298412Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait[0m: ":create trait { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, methods: [Uuid]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:189 on ThreadId(2)
+
+  2025-08-29T02:30:45.298748Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.298793Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtype_alias[0m: ":create type_alias { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, ty_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:206 on ThreadId(2)
+
+  2025-08-29T02:30:45.299118Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.299162Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munion[0m: ":create union { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:224 on ThreadId(2)
+
+  2025-08-29T02:30:45.299481Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.299525Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfile_mod[0m: ":create file_mod { owner_id: Uuid, at: Validity => file_path: String, file_docs: String?, items: [Uuid], namespace: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/subnode_variants.rs:8 on ThreadId(2)
+
+  2025-08-29T02:30:45.299781Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.299826Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmethod[0m: ":create method { id: Uuid, owner_id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/assoc_nodes.rs:10 on ThreadId(2)
+
+  2025-08-29T02:30:45.300168Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.300446Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnamed_type[0m: ":create named_type { type_id: Uuid, at: Validity => path: [String], is_fully_qualified: Bool }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:26 on ThreadId(2)
+
+  2025-08-29T02:30:45.300475Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.300730Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mreference_type[0m: ":create reference_type { type_id: Uuid, at: Validity => lifetime: String?, is_mutable: Bool, references_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:33 on ThreadId(2)
+
+  2025-08-29T02:30:45.300760Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.300997Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mslice_type[0m: ":create slice_type { type_id: Uuid, at: Validity => element_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:42 on ThreadId(2)
+
+  2025-08-29T02:30:45.301026Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.301266Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158marray_type[0m: ":create array_type { type_id: Uuid, at: Validity => element_type: Uuid, size: Int? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:48 on ThreadId(2)
+
+  2025-08-29T02:30:45.301295Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.301542Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtuple_type[0m: ":create tuple_type { type_id: Uuid, at: Validity => element_types: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:58 on ThreadId(2)
+
+  2025-08-29T02:30:45.301571Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.301832Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction_type[0m: ":create function_type { type_id: Uuid, at: Validity => is_unsafe: Bool, is_extern: Bool, abi: String? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:64 on ThreadId(2)
+
+  2025-08-29T02:30:45.301861Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.302095Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnever_type[0m: ":create never_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:72 on ThreadId(2)
+
+  2025-08-29T02:30:45.302123Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.302350Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158minferred_type[0m: ":create inferred_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:77 on ThreadId(2)
+
+  2025-08-29T02:30:45.302379Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.302619Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mraw_pointer_type[0m: ":create raw_pointer_type { type_id: Uuid, at: Validity => is_mutable: Bool, points_to: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:83 on ThreadId(2)
+
+  2025-08-29T02:30:45.302653Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.302917Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait_object_type[0m: ":create trait_object_type { type_id: Uuid, at: Validity => dyn_token: Bool, trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:90 on ThreadId(2)
+
+  2025-08-29T02:30:45.302947Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.303194Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl_trait_type[0m: ":create impl_trait_type { type_id: Uuid, at: Validity => trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:97 on ThreadId(2)
+
+  2025-08-29T02:30:45.303223Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.303457Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparen_type[0m: ":create paren_type { type_id: Uuid, at: Validity => inner_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:103 on ThreadId(2)
+
+  2025-08-29T02:30:45.303486Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.303731Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro_type[0m: ":create macro_type { type_id: Uuid, at: Validity => name: String, tokens: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:110 on ThreadId(2)
+
+  2025-08-29T02:30:45.303760Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.304002Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munknown_type[0m: ":create unknown_type { type_id: Uuid, at: Validity => type_str: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:119 on ThreadId(2)
+
+  2025-08-29T02:30:45.304031Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.304050Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158msyntax_edge[0m: ":create syntax_edge { source_id: Uuid, target_id: Uuid, at: Validity => relation_kind: String, source_kind: String, target_kind: String }"
+    at crates/ingest/ploke-transform/src/schema/edges.rs:18 on ThreadId(2)
+
+  2025-08-29T02:30:45.304295Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.304335Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mcrate_context[0m: ":create crate_context { id: Uuid, at: Validity => name: String, version: String, namespace: Uuid, root_path: String, files: [String] }"
+    at crates/ingest/ploke-transform/src/schema/crate_node.rs:7 on ThreadId(2)
+
+  2025-08-29T02:30:45.304598Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.304641Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mbm25_doc_meta[0m: ":create bm25_doc_meta { id: Uuid, at: Validity => tracking_hash: Uuid, tokenizer_version: String, token_length: Int }"
+    at crates/ingest/ploke-transform/src/schema/meta.rs:11 on ThreadId(2)
+
+  2025-08-29T02:30:45.304877Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:30:45.425780Z TRACE mio::poll: registering event source with poller: token=Token(1), interests=READABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(22)
+
+  2025-08-29T02:30:45.425894Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.425960Z  INFO ploke_tui::event_bus: close, time.busy: 64.1µs, time.idle: 15.0µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.425987Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.425996Z  INFO ploke_tui::event_bus: close, time.busy: 8.01µs, time.idle: 2.04µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.426014Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.426027Z  INFO ploke_tui::event_bus: close, time.busy: 12.3µs, time.idle: 1.97µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:30:45.432637Z  INFO ploke_tui::llm: Received LLM request for parent_id: fde2412a-ef2f-4ab5-9a35-ff31b01bd2c7
+new_msg_id: 94f84eaa-3712-4355-a598-08de39ab591c
+    at crates/ploke-tui/src/llm/mod.rs:385 on ThreadId(3)
+
+  2025-08-29T02:30:45.432666Z  INFO ploke_tui::llm: Received context for parent_id: fde2412a-ef2f-4ab5-9a35-ff31b01bd2c7
+    at crates/ploke-tui/src/llm/mod.rs:396 on ThreadId(3)
+
+  2025-08-29T02:30:45.432794Z  INFO ploke_tui::llm: pending_requests found match for req_parent: fde2412a-ef2f-4ab5-9a35-ff31b01bd2c7
+    at crates/ploke-tui/src/llm/mod.rs:419 on ThreadId(3)
+
+  2025-08-29T02:30:45.432806Z  INFO ploke_tui::llm: ready_contexts found match for req_parent: fde2412a-ef2f-4ab5-9a35-ff31b01bd2c7
+    at crates/ploke-tui/src/llm/mod.rs:424 on ThreadId(3)
+
+  2025-08-29T02:30:45.432826Z  INFO ploke_tui::llm: removing id from pending_requests
+    at crates/ploke-tui/src/llm/mod.rs:442 on ThreadId(3)
+
+  2025-08-29T02:30:45.432930Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 10.7µs, time.idle: 3.39µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:31 on ThreadId(3)
+    in ploke_tui::app_state::dispatcher::processing with cmd: CreateAssistantMessage
+
+  2025-08-29T02:30:45.433014Z  INFO ploke_tui::llm: close, time.busy: 69.5µs, time.idle: 68.5µs
+    at crates/ploke-tui/src/llm/mod.rs:595 on ThreadId(3)
+    in ploke_tui::llm::process_llm_request with model: openai/gpt-4o-mini
+
+  2025-08-29T02:37:28.518238Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparam[0m: ":create param { function_id: Uuid, type_id: Uuid, at: Validity => is_mutable: Bool, is_self: Bool, name: String?, param_index: Int }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:7 on ThreadId(2)
+
+  2025-08-29T02:37:28.523301Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.523366Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mattribute[0m: ":create attribute { owner_id: Uuid, at: Validity => name: String, index: Int, args: [String], value: String? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:55 on ThreadId(2)
+
+  2025-08-29T02:37:28.523760Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.523860Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mvariant[0m: ":create variant { id: Uuid, owner_id: Uuid, at: Validity => name: String, index: Int, discriminant: String?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:21 on ThreadId(2)
+
+  2025-08-29T02:37:28.524182Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.524237Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfield[0m: ":create field { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String?, index: Int, vis_kind: String, vis_path: [String]?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:40 on ThreadId(2)
+
+  2025-08-29T02:37:28.524556Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.524606Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_type[0m: ":create generic_type { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid], default: Uuid? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T02:37:28.524917Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.524966Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_const[0m: ":create generic_const { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String, param_index: Int, kind: String }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:92 on ThreadId(2)
+
+  2025-08-29T02:37:28.525249Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.525297Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_lifetime[0m: ":create generic_lifetime { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:82 on ThreadId(2)
+
+  2025-08-29T02:37:28.525589Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.525769Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mconst[0m: ":create const { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:31 on ThreadId(2)
+
+  2025-08-29T02:37:28.526417Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.526471Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158menum[0m: ":create enum { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, variants: [Uuid], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:51 on ThreadId(2)
+
+  2025-08-29T02:37:28.526842Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.526896Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction[0m: ":create function { id: Uuid, at: Validity => name: String, docstring: String?, vis_kind: String, vis_path: [String]?, span: [Int; 2], tracking_hash: Uuid, cfgs: [String], return_type_id: Uuid?, body: String?, module_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:13 on ThreadId(2)
+
+  2025-08-29T02:37:28.527267Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.527317Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl[0m: ":create impl { id: Uuid, at: Validity => self_type: Uuid, span: [Int; 2], trait_type: Uuid?, methods: [Uuid]?, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T02:37:28.527657Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.527727Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimport[0m: ":create import { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String?, vis_path: [String]?, cfgs: [String], source_path: [String], visible_name: String, original_name: String?, is_glob: Bool, is_self_import: Bool, import_kind: String, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:88 on ThreadId(2)
+
+  2025-08-29T02:37:28.528109Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.528162Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro[0m: ":create macro { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], kind: String, proc_kind: String?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:108 on ThreadId(2)
+
+  2025-08-29T02:37:28.528519Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.528619Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmodule[0m: ":create module { id: Uuid, at: Validity => name: String, path: [String], vis_kind: String, vis_path: [String]?, docstring: String?, span: [Int; 2], tracking_hash: Uuid, module_kind: String, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:133 on ThreadId(2)
+
+  2025-08-29T02:37:28.528988Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.529042Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstatic[0m: ":create static { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, is_mutable: Bool, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:151 on ThreadId(2)
+
+  2025-08-29T02:37:28.529405Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.529455Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstruct[0m: ":create struct { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:171 on ThreadId(2)
+
+  2025-08-29T02:37:28.529806Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.529858Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait[0m: ":create trait { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, methods: [Uuid]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:189 on ThreadId(2)
+
+  2025-08-29T02:37:28.530207Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.530259Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtype_alias[0m: ":create type_alias { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, ty_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:206 on ThreadId(2)
+
+  2025-08-29T02:37:28.530602Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.530657Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munion[0m: ":create union { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:224 on ThreadId(2)
+
+  2025-08-29T02:37:28.530994Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.531045Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfile_mod[0m: ":create file_mod { owner_id: Uuid, at: Validity => file_path: String, file_docs: String?, items: [Uuid], namespace: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/subnode_variants.rs:8 on ThreadId(2)
+
+  2025-08-29T02:37:28.531316Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.531371Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmethod[0m: ":create method { id: Uuid, owner_id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/assoc_nodes.rs:10 on ThreadId(2)
+
+  2025-08-29T02:37:28.531737Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.532041Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnamed_type[0m: ":create named_type { type_id: Uuid, at: Validity => path: [String], is_fully_qualified: Bool }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:26 on ThreadId(2)
+
+  2025-08-29T02:37:28.532072Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.532346Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mreference_type[0m: ":create reference_type { type_id: Uuid, at: Validity => lifetime: String?, is_mutable: Bool, references_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:33 on ThreadId(2)
+
+  2025-08-29T02:37:28.532377Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.532667Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mslice_type[0m: ":create slice_type { type_id: Uuid, at: Validity => element_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:42 on ThreadId(2)
+
+  2025-08-29T02:37:28.532702Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.533033Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158marray_type[0m: ":create array_type { type_id: Uuid, at: Validity => element_type: Uuid, size: Int? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:48 on ThreadId(2)
+
+  2025-08-29T02:37:28.533065Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.533334Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtuple_type[0m: ":create tuple_type { type_id: Uuid, at: Validity => element_types: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:58 on ThreadId(2)
+
+  2025-08-29T02:37:28.533365Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.533638Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction_type[0m: ":create function_type { type_id: Uuid, at: Validity => is_unsafe: Bool, is_extern: Bool, abi: String? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:64 on ThreadId(2)
+
+  2025-08-29T02:37:28.533669Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.533924Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnever_type[0m: ":create never_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:72 on ThreadId(2)
+
+  2025-08-29T02:37:28.533955Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.534203Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158minferred_type[0m: ":create inferred_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:77 on ThreadId(2)
+
+  2025-08-29T02:37:28.534234Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.534496Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mraw_pointer_type[0m: ":create raw_pointer_type { type_id: Uuid, at: Validity => is_mutable: Bool, points_to: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:83 on ThreadId(2)
+
+  2025-08-29T02:37:28.534526Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.534816Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait_object_type[0m: ":create trait_object_type { type_id: Uuid, at: Validity => dyn_token: Bool, trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:90 on ThreadId(2)
+
+  2025-08-29T02:37:28.534847Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.535121Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl_trait_type[0m: ":create impl_trait_type { type_id: Uuid, at: Validity => trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:97 on ThreadId(2)
+
+  2025-08-29T02:37:28.535152Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.535408Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparen_type[0m: ":create paren_type { type_id: Uuid, at: Validity => inner_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:103 on ThreadId(2)
+
+  2025-08-29T02:37:28.535439Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.535705Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro_type[0m: ":create macro_type { type_id: Uuid, at: Validity => name: String, tokens: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:110 on ThreadId(2)
+
+  2025-08-29T02:37:28.535736Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.535992Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munknown_type[0m: ":create unknown_type { type_id: Uuid, at: Validity => type_str: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:119 on ThreadId(2)
+
+  2025-08-29T02:37:28.536022Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.536063Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158msyntax_edge[0m: ":create syntax_edge { source_id: Uuid, target_id: Uuid, at: Validity => relation_kind: String, source_kind: String, target_kind: String }"
+    at crates/ingest/ploke-transform/src/schema/edges.rs:18 on ThreadId(2)
+
+  2025-08-29T02:37:28.536334Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.536380Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mcrate_context[0m: ":create crate_context { id: Uuid, at: Validity => name: String, version: String, namespace: Uuid, root_path: String, files: [String] }"
+    at crates/ingest/ploke-transform/src/schema/crate_node.rs:7 on ThreadId(2)
+
+  2025-08-29T02:37:28.536665Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.536709Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mbm25_doc_meta[0m: ":create bm25_doc_meta { id: Uuid, at: Validity => tracking_hash: Uuid, tokenizer_version: String, token_length: Int }"
+    at crates/ingest/ploke-transform/src/schema/meta.rs:11 on ThreadId(2)
+
+  2025-08-29T02:37:28.536965Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T02:37:28.609007Z TRACE mio::poll: registering event source with poller: token=Token(1), interests=READABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(22)
+
+  2025-08-29T02:37:28.609992Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.610223Z  INFO ploke_tui::event_bus: close, time.busy: 346µs, time.idle: 25.3µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.610275Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.610293Z  INFO ploke_tui::event_bus: close, time.busy: 16.9µs, time.idle: 4.87µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.610324Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.610339Z  INFO ploke_tui::event_bus: close, time.busy: 14.3µs, time.idle: 3.82µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-08-29T02:37:28.616852Z  INFO ploke_tui::llm: Received LLM request for parent_id: d0c3dcb7-1f92-479e-86d7-1b26484ea41a
+new_msg_id: 0ceaeb87-b9f3-4738-9f14-c12d67119c36
+    at crates/ploke-tui/src/llm/mod.rs:385 on ThreadId(3)
+
+  2025-08-29T02:37:28.616893Z  INFO ploke_tui::llm: Received context for parent_id: d0c3dcb7-1f92-479e-86d7-1b26484ea41a
+    at crates/ploke-tui/src/llm/mod.rs:396 on ThreadId(3)
+
+  2025-08-29T02:37:28.617032Z  INFO ploke_tui::llm: pending_requests found match for req_parent: d0c3dcb7-1f92-479e-86d7-1b26484ea41a
+    at crates/ploke-tui/src/llm/mod.rs:419 on ThreadId(3)
+
+  2025-08-29T02:37:28.617042Z  INFO ploke_tui::llm: ready_contexts found match for req_parent: d0c3dcb7-1f92-479e-86d7-1b26484ea41a
+    at crates/ploke-tui/src/llm/mod.rs:424 on ThreadId(3)
+
+  2025-08-29T02:37:28.617059Z  INFO ploke_tui::llm: removing id from pending_requests
+    at crates/ploke-tui/src/llm/mod.rs:442 on ThreadId(3)
+
+  2025-08-29T02:37:28.617274Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 118µs, time.idle: 3.93µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:31 on ThreadId(3)
+    in ploke_tui::app_state::dispatcher::processing with cmd: CreateAssistantMessage
+
+  2025-08-29T02:37:28.618687Z  INFO ploke_tui::llm: close, time.busy: 1.40ms, time.idle: 181µs
+    at crates/ploke-tui/src/llm/mod.rs:595 on ThreadId(3)
+    in ploke_tui::llm::process_llm_request with model: openai/gpt-4o-mini
+

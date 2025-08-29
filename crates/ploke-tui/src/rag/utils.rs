@@ -118,4 +118,12 @@ impl<'a> ToolCallParams<'a> {
                 error,
             }));
     }
+    pub(super) fn tool_call_err(&self, error: String) -> SystemEvent {
+        SystemEvent::ToolCallFailed {
+            request_id: self.request_id,
+            parent_id: self.parent_id,
+            call_id: self.call_id.clone(),
+            error,
+        }
+    }
 }

@@ -10,7 +10,7 @@ use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -80,7 +80,7 @@ pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedEmbedData {
     pub v: Vec<EmbeddingData>,
     pub ty: NodeType,

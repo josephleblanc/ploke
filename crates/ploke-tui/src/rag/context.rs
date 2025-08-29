@@ -1,10 +1,14 @@
-use std::{ops::ControlFlow, path::PathBuf};
+use std::{
+    ops::{ControlFlow, Deref},
+    path::PathBuf,
+};
 
 use ploke_core::rag_types::AssembledContext;
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
 use crate::{
+    RETRIEVAL_STRATEGY, TOP_K,
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
@@ -19,7 +23,6 @@ You are a highly skilled software engineer, specializing in the Rust programming
 You will be asked to provide some assistance in collaborating with the user.
 "#;
 
-// TODO: Review the prompt, I think the LLM fucked it up.
 pub static PROMPT_CODE: &str = r#"
 Tool-aware code collaboration instructions
 
@@ -100,9 +103,6 @@ pub async fn process_with_rag(
     new_msg_id: Uuid,
     completion_rx: oneshot::Receiver<()>,
 ) {
-    if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
-        return;
-    }
     let add_msg = |msg: &str| {
         chat::add_msg_immediate(
             state,
@@ -112,6 +112,11 @@ pub async fn process_with_rag(
             MessageKind::SysInfo,
         )
     };
+    if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
+        let msg = "ScanForChange did not complete successfully";
+        add_msg(msg).await;
+        return;
+    }
     if let Some(rag) = &state.rag {
         let guard = state.chat.read().await;
 
@@ -133,11 +138,8 @@ pub async fn process_with_rag(
         let messages: Vec<Message> = guard.clone_current_path_conv();
         let budget = &state.budget;
         // TODO: Add this to the program config
-        let top_k = 15;
-        let retrieval_strategy = RetrievalStrategy::Hybrid {
-            rrf: RrfConfig::default(),
-            mmr: None,
-        };
+        let top_k = TOP_K;
+        let retrieval_strategy = RETRIEVAL_STRATEGY.deref();
         let rag_ctx = match rag
             .get_context(&user_msg, top_k, budget, retrieval_strategy)
             .await
@@ -151,7 +153,11 @@ pub async fn process_with_rag(
         };
         let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
 
+        // TODO: Change this to LlmEvent and expand event_bus event types
         event_bus.send(AppEvent::Llm(augmented_prompt));
+    } else {
+        let msg = "No RAG configured";
+        add_msg(msg).await;
     }
 }
 
@@ -189,44 +195,48 @@ fn construct_context_from_rag(
     }
 }
 
-pub async fn assemble_context(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    req_id: Uuid,
-    user_query: String,
-    top_k: usize,
-    budget: &ploke_rag::TokenBudget,
-    strategy: ploke_rag::RetrievalStrategy,
-) {
-    let add_msg = |msg: &str| {
-        chat::add_msg_immediate(
-            state,
-            event_bus,
-            Uuid::new_v4(),
-            msg.to_string(),
-            MessageKind::SysInfo,
-        )
-    };
-
-    if let Some(rag) = &state.rag {
-        match rag.get_context(&user_query, top_k, budget, strategy).await {
-            Ok(_ctx) => {
-                let msg = format!(
-                    "Assembled context successfully (req_id: {}, top_k: {})",
-                    req_id, top_k
-                );
-                add_msg(&msg).await;
-            }
-            Err(e) => {
-                let msg = format!("Assemble context (req_id: {}) failed: {}", req_id, e);
-                add_msg(&msg).await;
-            }
-        }
-    } else {
-        let msg = format!(
-            "RAG service unavailable; cannot assemble context (req_id: {})",
-            req_id
-        );
-        add_msg(&msg).await;
-    }
-}
+// NOTE: I think this is no longer being used. Commenting out to look for errors if
+// absent, delete later.
+// - 2025-08-28
+//
+// pub async fn assemble_context(
+//     state: &Arc<AppState>,
+//     event_bus: &Arc<EventBus>,
+//     req_id: Uuid,
+//     user_query: String,
+//     top_k: usize,
+//     budget: &ploke_rag::TokenBudget,
+//     strategy: &ploke_rag::RetrievalStrategy,
+// ) {
+//     let add_msg = |msg: &str| {
+//         chat::add_msg_immediate(
+//             state,
+//             event_bus,
+//             Uuid::new_v4(),
+//             msg.to_string(),
+//             MessageKind::SysInfo,
+//         )
+//     };
+//
+//     if let Some(rag) = &state.rag {
+//         match rag.get_context(&user_query, top_k, budget, strategy).await {
+//             Ok(_ctx) => {
+//                 let msg = format!(
+//                     "Assembled context successfully (req_id: {}, top_k: {})",
+//                     req_id, top_k
+//                 );
+//                 add_msg(&msg).await;
+//             }
+//             Err(e) => {
+//                 let msg = format!("Assemble context (req_id: {}) failed: {}", req_id, e);
+//                 add_msg(&msg).await;
+//             }
+//         }
+//     } else {
+//         let msg = format!(
+//             "RAG service unavailable; cannot assemble context (req_id: {})",
+//             req_id
+//         );
+//         add_msg(&msg).await;
+//     }
+// }

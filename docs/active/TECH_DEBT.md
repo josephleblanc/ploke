@@ -25,7 +25,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add tests for TrackingHash
     * [ ] Remove Remove `?` from the database transforms for `TrackingHash`
  * [ ] Consider adding an ID to `SyntacticRelation`s
- * [x] Implement a `Database` type to wrap the cozo database, probably in `ploke-core`
+ * [x] Implement a `Database` type to wrap the cozo database
   - NOTE: This is in `ploke-db`
  * [ ] `CrateContext` Only added some of the fields, could possibly also add better file processing or a list of the Uuids of the modules/primary node types here.
 
@@ -53,6 +53,10 @@ This is a list of known fixes that I will want to make but are not terribly urge
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
 
 ## Tests
+- [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`
+
+## async
+- [ ] Look for opportunities to let things run in the background without `.await`, and then `join` them together. 
 
 ### Test Database
 * [ ] Tests for loading database from config file

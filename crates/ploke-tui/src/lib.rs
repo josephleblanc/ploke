@@ -26,8 +26,11 @@ pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
 pub mod rag;
+pub mod tools;
 
 pub mod test_utils;
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 pub use test_utils::mock;
 
 pub mod test_harness;
@@ -46,7 +49,7 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
-use ploke_rag::TokenBudget;
+use ploke_rag::{RrfConfig, TokenBudget};
 use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -75,6 +78,26 @@ use uuid::Uuid;
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
 static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
+
+pub const TOP_K: usize = 15;
+lazy_static! {
+    static ref RETRIEVAL_STRATEGY: ploke_rag::RetrievalStrategy = ploke_rag::RetrievalStrategy::Hybrid {
+        rrf: RrfConfig::default(),
+        mmr: None,
+    };
+}
+
+/// The number of tool retries to allow if model fails to call tool correctly.
+// TODO: Add this to user config
+pub const TOOL_RETRIES: u32 = 2;
+
+/// The default number of tokens per LLM request.
+// TODO: Add this to user config
+pub const TOKEN_LIMIT: u32 = 2048;
+
+/// The default number of seconds for timeout on LLM request loop.
+// TODO: Add this to user config
+pub const LLM_TIMEOUT_SECS: u64 = 45;
 
 /// Set the global event bus for error handling
 pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
@@ -263,7 +286,7 @@ pub mod ui {
     }
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum UiError {
     ExampleError,
 }
@@ -280,12 +303,13 @@ pub mod system {
     use std::{borrow::Cow, sync::Arc};
 
     use ploke_db::TypedEmbedData;
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use uuid::Uuid;
 
     use crate::UiError;
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, Serialize, Deserialize)]
     pub enum SystemEvent {
         SaveRequested(Vec<u8>), // Serialized content
         HistorySaved {
@@ -330,6 +354,7 @@ pub mod system {
         },
         LoadDb {
             crate_name: String,
+            #[serde(skip)]
             file_dir: Option<Arc<std::path::PathBuf>>,
             is_success: bool,
             error: Option<&'static str>,

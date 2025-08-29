@@ -30,6 +30,84 @@ use super::{
     *,
 };
 
+pub trait ToolInput<T>
+where
+    T: Send + Sync + Clone + Serialize + for<'a> Deserialize<'a>,
+{
+    fn request_id(&self) -> Uuid;
+    fn parent_id(&self) -> Uuid;
+    fn arguments(self) -> T;
+    fn arguments_ref(&self) -> &T;
+}
+pub trait ToolOutput {}
+
+pub(crate) trait LlmTool<T, R, U>
+where
+    T: Send + Sync + Clone + Serialize + for<'sea> Deserialize<'sea> + ToolInput<U>,
+    R: Send + Sync + Clone + Serialize + Deserialize<'static> + ToolOutput,
+    U: Send + Sync + Clone + Serialize + for<'sec> Deserialize<'sec>,
+{
+    async fn call_tool(&self, tool_input: T) -> R;
+}
+
+#[derive(Clone, Debug)]
+pub struct GetContext {
+    pub state: Arc<AppState>,
+    pub event_bus: Arc<EventBus>,
+}
+
+impl ToolOutput for SystemEvent {}
+
+impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
+    async fn call_tool(&self, tool_input: GetContextInput) -> SystemEvent {
+        let tool_call_params = ToolCallParams {
+            state: &self.state,
+            event_bus: &self.event_bus,
+            request_id: tool_input.request_id,
+            parent_id: tool_input.parent_id,
+            name: "request_code_context".to_string(),
+            arguments: tool_input.arguments,
+            call_id: Uuid::new_v4().to_string(),
+        };
+        // let return_val = SystemEvent::ToolCallCompleted {
+        //     request_id: tool_input.request_id,
+        //     parent_id: tool_input.parent_id,
+        //     call_id: String::new(),
+        //     content: String::new(),
+        // };
+        handle_request_context(tool_call_params).await
+
+        // return_val
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GetContextInput {
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub call_id: Uuid,
+
+    pub arguments: serde_json::Value,
+}
+
+impl ToolInput<serde_json::Value> for GetContextInput {
+    fn request_id(&self) -> Uuid {
+        self.request_id
+    }
+
+    fn parent_id(&self) -> Uuid {
+        self.parent_id
+    }
+
+    fn arguments(self) -> serde_json::Value {
+        self.arguments
+    }
+
+    fn arguments_ref(&self) -> &serde_json::Value {
+        &self.arguments
+    }
+}
+
 pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
     let ToolCallParams {
         state,
@@ -508,7 +586,7 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
+pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) -> SystemEvent {
     let ToolCallParams {
         state,
         event_bus,
@@ -528,13 +606,11 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
         Ok(v) => v,
         Err(e) => {
             let msg = format!("Invalid request_code_context payload: {}", e);
-            tool_call_params.tool_call_failed(msg);
-            return;
+            return tool_call_params.tool_call_err(msg);
         }
     };
     if args.token_budget == 0 {
-        tool_call_params.tool_call_failed("Invalid or missing token_budget".to_string());
-        return;
+        return tool_call_params.tool_call_err("Invalid or missing token_budget".to_string());
     }
 
     // Determine query: prefer hint, otherwise last user message
@@ -550,8 +626,7 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
 
     if query.trim().is_empty() {
         let msg = "No query available (no hint provided and no recent user message)".to_string();
-        tool_call_params.tool_call_failed(msg);
-        return;
+        return tool_call_params.tool_call_err(msg);
     }
 
     let top_k = calc_top_k_for_budget(args.token_budget);
@@ -566,7 +641,7 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
                 &query,
                 top_k,
                 &budget,
-                RetrievalStrategy::Hybrid {
+                &RetrievalStrategy::Hybrid {
                     rrf: RrfConfig::default(),
                     mmr: None,
                 },
@@ -580,33 +655,28 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) {
                     top_k,
                     context,
                 };
-                let content = match serde_json::to_string(&result) {
-                    Ok(s) => s,
+                match serde_json::to_string(&result) {
+                    Ok(content) => SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: call_id.clone(),
+                        content,
+                    },
                     Err(e) => {
                         let msg = format!("Failed to serialize RequestCodeContextResult: {}", e);
-                        tool_call_params.tool_call_failed(msg);
-                        return;
+                        return tool_call_params.tool_call_err(msg);
                     }
-                };
-                let _ =
-                    event_bus
-                        .realtime_tx
-                        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            request_id,
-                            parent_id,
-                            call_id: call_id.clone(),
-                            content,
-                        }));
+                }
             }
             Err(e) => {
                 let msg = format!("RAG get_context failed: {}", e);
                 tracing::warn!("{}", msg);
-                tool_call_params.tool_call_failed(msg);
+                tool_call_params.tool_call_err(msg)
             }
         }
     } else {
         let msg = "RAG service unavailable".to_string();
         tracing::warn!("{}", msg);
-        tool_call_params.tool_call_failed(msg);
+        tool_call_params.tool_call_err(msg)
     }
 }

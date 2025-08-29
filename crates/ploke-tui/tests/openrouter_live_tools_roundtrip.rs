@@ -432,7 +432,7 @@ async fn run_tool_roundtrip(
                     hint,
                     5,
                     &token_budget,
-                    ploke_rag::RetrievalStrategy::Hybrid {
+                    &ploke_rag::RetrievalStrategy::Hybrid {
                         rrf: RrfConfig::default(),
                         mmr: None,
                     },

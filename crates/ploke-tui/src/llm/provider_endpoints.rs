@@ -40,40 +40,24 @@ pub struct ModelEndpoint {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum SupportedParameters {
-    #[serde(rename = "max_tokens")]
     MaxTokens,
-    #[serde(rename = "top_k")]
     TopK,
-    #[serde(rename = "frequency_penalty")]
     FrequencyPenalty,
-    #[serde(rename = "seed")]
     Seed,
-    #[serde(rename = "tool_choice")]
     ToolChoice,
-    #[serde(rename = "repetition_penalty")]
     RepetitionPenalty,
-    #[serde(rename = "logit_bias")]
     LogitBias,
-    #[serde(rename = "logprobs")]
-    LogProbs,
-    #[serde(rename = "structured_outputs")]
+    Logprobs,
     StructuredOutputs,
-    #[serde(rename = "presence_penalty")]
     PresencePenalty,
-    #[serde(rename = "min_p")]
     MinP,
-    #[serde(rename = "top_p")]
     TopP,
-    #[serde(rename = "stop")]
     Stop,
-    #[serde(rename = "top_logprobs")]
     TopLogprobs,
-    #[serde(rename = "response_format")]
     ResponseFormat,
-    #[serde(rename = "temperature")]
     Temperature,
-    #[serde(rename = "tools")]
     Tools,
 }
 
@@ -89,24 +73,19 @@ pub struct Architecture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InputModality {
-    #[serde(rename = "text")]
     Text,
-    #[serde(rename = "image")]
     Image,
-    #[serde(rename = "audio")]
     Audio,
-    #[serde(rename = "video")]
     Video,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputModality {
-    #[serde(rename = "text")]
     Text,
-    #[serde(rename = "image")]
     Image,
-    #[serde(rename = "audio")]
     Audio,
 }
 

@@ -211,6 +211,7 @@ impl Database {
 }
 
 impl ObservabilityStore for Database {
+    // TODO: Needs to be tested.
     fn upsert_conversation_turn(&self, turn: ConversationTurn) -> Result<(), DbError> {
         self.ensure_observability_schema()?;
 

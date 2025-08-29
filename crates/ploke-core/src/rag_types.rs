@@ -27,25 +27,20 @@ pub struct AssembledContext {
     pub stats: ContextStats,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextPartKind {
-    #[serde(rename = "code")]
     Code,
-    #[serde(rename = "doc")]
     Doc,
-    #[serde(rename = "signature")]
     Signature,
-    #[serde(rename = "metadata")]
     Metadata,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum Modality {
-    #[serde(rename = "dense")]
     Dense,
-    #[serde(rename = "sparse")]
     Sparse,
-    #[serde(rename = "hybrid_fused")]
     HybridFused,
 }
 

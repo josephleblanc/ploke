@@ -1,10 +1,11 @@
+use std::ops::ControlFlow;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::AppEvent;
-use crate::llm::ToolEvent;
+use crate::llm::{Choices, ToolEvent};
 use crate::system::SystemEvent;
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
@@ -33,7 +34,10 @@ pub struct RequestSession<'a> {
     pub attempts: u32,
 }
 
-#[allow(clippy::needless_lifetimes, reason = "Getting warning but removing lifetimes makes error.")]
+#[allow(
+    clippy::needless_lifetimes,
+    reason = "Getting warning but removing lifetimes makes error."
+)]
 impl<'a> RequestSession<'a> {
     /// Execute the request loop until completion or error.
     pub async fn run(mut self) -> Result<String, LlmError> {
@@ -50,7 +54,11 @@ impl<'a> RequestSession<'a> {
             let effective_messages = if let Some(budget_chars) = self.params.history_char_budget {
                 cap_messages_by_chars(&self.messages, budget_chars)
             } else {
-                let budget_tokens = self.params.max_tokens.map(|t| t as usize).unwrap_or(3000);
+                let budget_tokens = self
+                    .params
+                    .max_tokens
+                    .map(|t| t as usize)
+                    .unwrap_or(crate::TOKEN_LIMIT as usize);
                 cap_messages_by_tokens(&self.messages, budget_tokens)
             };
 
@@ -65,14 +73,16 @@ impl<'a> RequestSession<'a> {
                     None
                 },
                 use_tools,
-                require_parameters
+                require_parameters,
             );
 
             // Brief, structured dispatch log for efficient triage
             let tool_names: Vec<&str> = self.tools.iter().map(|t| t.function.name).collect();
+            let url = format!("{}/chat/completions", self.provider.base_url);
             tracing::info!(
                 model = %self.provider.model,
                 base_url = %self.provider.base_url,
+                full_url = %url,
                 provider_slug = ?self.provider.provider_slug,
                 use_tools = use_tools,
                 tools = %tool_names.join(","),
@@ -81,10 +91,10 @@ impl<'a> RequestSession<'a> {
 
             let response = self
                 .client
-                .post(format!("{}/chat/completions", self.provider.base_url))
+                .post(url)
                 .bearer_auth(self.provider.resolve_api_key())
                 .json(&request_payload)
-                .timeout(Duration::from_secs(45))
+                .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
                 .send()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
@@ -98,71 +108,18 @@ impl<'a> RequestSession<'a> {
 
                 // Deterministic enforcement for tool use: fail fast when endpoint lacks tool support.
                 // Example provider body: {"error":{"message":"No endpoints found that support tool use.", "code":404}}
-                if status == 404 && use_tools && error_text.to_lowercase().contains("support tool")
-                {
-                    tracing::warn!(
-                        model = %self.provider.model,
-                        provider_slug = ?self.provider.provider_slug,
-                        "tool_unsupported_endpoint: {}",
-                        error_text
-                    );
-
-                    let mut guidance = String::new();
-                    guidance.push_str("Selected endpoint appears to lack tool support.\n\n");
-                    guidance.push_str("Remediation steps:\n");
-                    guidance.push_str(&format!(
-                        "  1) List tool-capable endpoints for this model:\n     :model providers {}\n",
-                        self.provider.model
-                    ));
-                    guidance.push_str(&format!(
-                        "  2) Pin a specific provider endpoint (slug shown in step 1):\n     :provider pin {} <provider_slug>\n",
-                        self.provider.model
-                    ));
-                    guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
-                    guidance.push_str(&format!("Details: {}", error_text));
-
-                    // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
-                    if self.fallback_on_404 && !tools_fallback_attempted {
-                        let msg = format!(
-                            "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
-                            guidance
-                        );
-                        self.messages.push(RequestMessage::new_system(msg));
-                        tools_fallback_attempted = true;
-                        use_tools = false;
-                        continue;
-                    }
-
-                    return Err(LlmError::Api {
-                        status,
-                        message: guidance,
-                    });
-                }
-
-                tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
-
-                let user_friendly_msg = if status == 401 {
-                    format!(
-                        "Authentication failed. Please check your API key configuration.\n\nDetails {}",
-                        error_text
-                    )
-                } else if status == 429 {
-                    format!(
-                        "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
-                        error_text
-                    )
-                } else if status >= 500 {
-                    format!(
-                        "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
-                        error_text
-                    )
-                } else {
-                    format!("API error (status {}): {}", status, error_text)
+                let err_msg = match self.handle_404(
+                    &mut use_tools,
+                    &mut tools_fallback_attempted,
+                    status,
+                    error_text,
+                ) {
+                    Some(value) => value,
+                    None => continue,
                 };
-
                 return Err(LlmError::Api {
                     status,
-                    message: user_friendly_msg,
+                    message: err_msg,
                 });
             }
 
@@ -190,9 +147,13 @@ impl<'a> RequestSession<'a> {
             let response_body: super::OpenAiResponse = serde_json::from_str(&body)
                 .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
             tracing::trace!("raw body response to request: {:#?}", body);
+            panic!();
 
-            if let Some(choice) = response_body.choices.into_iter().next() {
-                let resp_msg = choice.message;
+            while let Some(choice) = response_body.choices.into_iter().next() {
+                match choice {
+                    Choices::NonStreamingChoice { finish_reason, native_finish_reason, message, error } => {
+
+                let resp_msg = message;
 
                 if let Some(tool_calls) = resp_msg.tool_calls {
                     self.attempts += 1;
@@ -202,40 +163,40 @@ impl<'a> RequestSession<'a> {
                     let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
 
                     for call in tool_calls {
-                        match call {
-                            GenericToolCall::OpenAi(oc) => {
-                                tracing::info!(
-                                    "OpenAI tool call received: id={}, type={}, fn={}, args={}",
-                                    oc.id,
-                                    oc.r#type,
-                                    oc.function.name,
-                                    oc.function.arguments
-                                );
-                                let arguments =
-                                    serde_json::from_str::<Value>(&oc.function.arguments)
-                                        .unwrap_or(json!({ "raw": oc.function.arguments }));
-                                specs.push(tool_call::ToolCallSpec {
-                                    name: oc.function.name.clone(),
-                                    arguments,
-                                    call_id: oc.id.clone(),
-                                });
-                            }
-                            GenericToolCall::Other(v) => {
-                                tracing::warn!("Received non-OpenAI tool call payload: {}", v);
-                                let call_id = v
-                                    .get("id")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("unknown")
-                                    .to_string();
-                                let err_json = json!({
-                                    "ok": false,
-                                    "error": "Unsupported tool call format",
- 
-                                })
-                                .to_string();
-                                other_errors.push((call_id, err_json));
-                            }
-                        }
+                        // match call {
+                        //     GenericToolCall::OpenAi(oc) => {
+                        //         tracing::info!(
+                        //             "OpenAI tool call received: id={}, type={}, fn={}, args={}",
+                        //             oc.id,
+                        //             oc.r#type,
+                        //             oc.function.name,
+                        //             oc.function.arguments
+                        //         );
+                        //         let arguments =
+                        //             serde_json::from_str::<Value>(&oc.function.arguments)
+                        //                 .unwrap_or(json!({ "raw": oc.function.arguments }));
+                        //         specs.push(tool_call::ToolCallSpec {
+                        //             name: oc.function.name.clone(),
+                        //             arguments,
+                        //             call_id: oc.id.clone(),
+                        //         });
+                        //     }
+                        //     GenericToolCall::Other(v) => {
+                        //         tracing::warn!("Received non-OpenAI tool call payload: {}", v);
+                        //         let call_id = v
+                        //             .get("id")
+                        //             .and_then(|x| x.as_str())
+                        //             .unwrap_or("unknown")
+                        //             .to_string();
+                        //         let err_json = json!({
+                        //             "ok": false,
+                        //             "error": "Unsupported tool call format",
+                        //
+                        //         })
+                        //         .to_string();
+                        //         other_errors.push((call_id, err_json));
+                        //     }
+                        // }
                     }
 
                     // Execute supported tool calls concurrently and append in stable order by call_id
@@ -250,8 +211,7 @@ impl<'a> RequestSession<'a> {
                         for (spec, result) in outcomes {
                             match result {
                                 Ok(content) => {
-                                    self.messages
-                                        .push(RequestMessage::new_system(content));
+                                    self.messages.push(RequestMessage::new_system(content));
                                 }
                                 Err(err) => {
                                     let sys_msg =
@@ -270,8 +230,7 @@ impl<'a> RequestSession<'a> {
                         self.messages.push(RequestMessage::new_system(
                             "Unsupported tool call format".to_string(),
                         ));
-                        self.messages
-                            .push(RequestMessage::new_system(err_json));
+                        self.messages.push(RequestMessage::new_system(err_json));
                     }
 
                     if self.attempts > max_retries {
@@ -290,13 +249,97 @@ impl<'a> RequestSession<'a> {
                     .content
                     .unwrap_or_else(|| "No content received from API.".to_string());
                 return Ok(content);
-            } else {
-                return Err(LlmError::Deserialization(
-                    "No choices in response".to_string(),
-                ));
+                    },
+                        Choices::NonChatChoice { finish_reason, text, error } => todo!(),
+                        Choices::StreamingChoice { finish_reason, native_finish_reason, delta, error } => todo!(),
+                    }
             }
+            return Err(LlmError::Deserialization(
+                "No choices in response".to_string(),
+            ));
         }
     }
+
+    fn handle_404(
+        &mut self,
+        use_tools: &mut bool,
+        tools_fallback_attempted: &mut bool,
+        status: u16,
+        error_text: String,
+    ) -> Option<String> {
+        let err_msg = if status == 404
+            && *use_tools
+            && error_text.to_lowercase().contains("support tool")
+        {
+            tracing::warn!(
+                model = %self.provider.model,
+                provider_slug = ?self.provider.provider_slug,
+                "tool_unsupported_endpoint: {}",
+                error_text
+            );
+
+            let mut guidance = String::new();
+            self.form_guidance_msg(&error_text, &mut guidance);
+
+            // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
+            if self.fallback_on_404 && !*tools_fallback_attempted {
+                let msg = format!(
+                    "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
+                    guidance
+                );
+                self.messages.push(RequestMessage::new_system(msg));
+                *tools_fallback_attempted = true;
+                *use_tools = false;
+                return None;
+            }
+
+            guidance
+        } else {
+            tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
+
+            let user_friendly_msg = construct_user_friendly_msg(status, error_text);
+
+            user_friendly_msg
+        };
+        Some(err_msg)
+    }
+
+    fn form_guidance_msg(&mut self, error_text: &String, guidance: &mut String) {
+        guidance.push_str("Selected endpoint appears to lack tool support.\n\n");
+        guidance.push_str("Remediation steps:\n");
+        guidance.push_str(&format!(
+            "  1) List tool-capable endpoints for this model:\n     :model providers {}\n",
+            self.provider.model
+        ));
+        guidance.push_str(&format!(
+            "  2) Pin a specific provider endpoint (slug shown in step 1):\n     :provider pin {} <provider_slug>\n",
+            self.provider.model
+        ));
+        guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
+        guidance.push_str(&format!("Details: {}", error_text));
+    }
+}
+
+fn construct_user_friendly_msg(status: u16, error_text: String) -> String {
+    let user_friendly_msg = if status == 401 {
+        format!(
+            "Authentication failed. Please check your API key configuration.\n\nDetails {}",
+            error_text
+        )
+    } else if status == 429 {
+        format!(
+            "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
+            error_text
+        )
+    } else if status >= 500 {
+        format!(
+            "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
+            error_text
+        )
+    } else {
+        format!("API error (status {}): {}", status, error_text)
+    };
+    user_friendly_msg
 }
 pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ModelConfig,
@@ -304,7 +347,7 @@ pub fn build_openai_request<'a>(
     params: &super::LLMParameters,
     tools: Option<Vec<super::ToolDefinition>>,
     use_tools: bool,
-    require_parameters: bool
+    require_parameters: bool,
 ) -> super::OpenAiRequest<'a> {
     tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_openai_request");
     // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
@@ -420,10 +463,10 @@ mod tests {
 
     use tokio::time::sleep;
 
-    use crate::llm::Role;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
+    use crate::llm::Role;
     use crate::llm::ToolFunctionDef;
     use crate::system::SystemEvent;
     use uuid::Uuid;

@@ -37,7 +37,7 @@ use harness::AppHarness;
 use lazy_static::lazy_static;
 use ploke_error::Error;
 use ploke_tui::app_state::StateCommand;
-use ploke_tui::llm::provider_endpoints::SupportedParameters;
+use ploke_tui::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsResponse, SupportedParameters};
 use ploke_tui::llm;
 use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
 use ploke_tui::tracing_setup::init_tracing_tests;
@@ -103,7 +103,7 @@ fn default_headers() -> HeaderMap {
 }
 
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
-fn endpoint_price_hint(ep: &ploke_tui::llm::provider_endpoints::ModelEndpoint) -> f64 {
+fn endpoint_price_hint(ep: &ModelEndpoint) -> f64 {
     ep.pricing.prompt_or_default() + ep.pricing.completion_or_default()
 }
 
@@ -118,7 +118,7 @@ async fn choose_tools_endpoint_for_model(
 ) -> Option<(
     String, /*author*/
     String, /*slug*/
-    ploke_tui::llm::provider_endpoints::ModelEndpoint,
+    ModelEndpoint,
     Option<String>, /*provider slug hint*/
 )> {
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -136,12 +136,12 @@ async fn choose_tools_endpoint_for_model(
         .await
         .and_then(|r| r.error_for_status())
         .ok()?
-        .json::<ploke_tui::llm::provider_endpoints::ModelEndpointsResponse>()
+        .json::<ModelEndpointsResponse>()
         .await
         .inspect(|resp| tracing::trace!("url: {url}\nResponse:\n{:#?}", resp))
         .ok()?;
 
-    let mut candidates: Vec<ploke_tui::llm::provider_endpoints::ModelEndpoint> = payload
+    let mut candidates: Vec<ModelEndpoint> = payload
         .data
         .endpoints
         .into_iter()

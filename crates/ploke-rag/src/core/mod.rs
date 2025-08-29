@@ -548,7 +548,7 @@ impl RagService {
         query: &str,
         top_k: usize,
         budget: &TokenBudget,
-        strategy: RetrievalStrategy,
+        strategy: &RetrievalStrategy,
     ) -> Result<AssembledContext, RagError> {
         // 1) Retrieve hits according to strategy
         let hits: Vec<(Uuid, f32)> = match strategy {

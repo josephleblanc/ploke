@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
+use crate::tools::FunctionMarker;
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -228,9 +229,94 @@ pub fn apply_code_edit_tool_def() -> ToolDefinition {
 
 #[derive(Deserialize, Debug)]
 pub(super) struct OpenAiResponse {
-    choices: Vec<Choice>,
     #[serde(default)]
+    id: Uuid,
+    #[serde(default)]
+    choices: Vec<Choices>,
+    #[serde(default)]
+    created: i64,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    object: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<TokenUsage>,
+}
+
+#[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
+pub(super) enum ResponseObject {
+    #[serde(rename = "chat.completion")]
+    ChatCompletion,
+    #[serde(rename = "chat.completion.chunk")]
+    ChatCompletionChunk,
+}
+
+#[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
+pub(super) struct ResponseUsage {
+    /** Including images and tools if any */
+    prompt_tokens: i64,
+    /** The tokens generated */
+    completion_tokens: i64,
+    /** Sum of the above two fields */
+    total_tokens: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub(super) enum Choices {
+    NonChatChoice {
+        finish_reason: Option<String>,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<ErrorResponse>,
+    },
+    NonStreamingChoice {
+        finish_reason: Option<String>,
+        native_finish_reason: Option<String>,
+        message: ResponseMessage,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<ErrorResponse>,
+    },
+    StreamingChoice {
+        finish_reason: Option<String>,
+        native_finish_reason: Option<String>,
+        delta: StreamingDelta,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<ErrorResponse>,
+    },
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialOrd, PartialEq, Debug)]
+pub(super) struct StreamingDelta {
+    // May be null or string
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // May or may not be present
+    role: Option<Role>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // May or may not be present
+    tool_calls: Option<Vec< ToolCall >>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub(super) struct ErrorResponse {
+    code: i64,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // Contains additional error information such as provider details, the raw error message, etc.
+    // Original is Record<string, unknown>
+    metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq)]
+pub(super) struct ToolCall {
+    id: String,
+    r#type: FunctionMarker,
+    // WARN: It is not clear from the API exactly what this is. I suspect it is an object with the
+    // tool call we requested from the LLM, so that it will have fields as defined by the tool call
+    // description we sent to the LLM, but its hard to say exactly.
+    function: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -238,22 +324,27 @@ pub(super) struct Choice {
     message: ResponseMessage,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
 pub(super) struct ResponseMessage {
+    // When tool_calls are present, role may be null/absent
+    role: Option<String>,
     // When tool_calls are present, content may be null/absent
+    #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
-    #[serde(default)]
-    tool_calls: Option<Vec<GenericToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub(super) enum GenericToolCall {
+    // NonStreamingChoice(Value),
+    // StreamingChoice(Value),
     OpenAi(OpenAiToolCall),
-    Other(Value)
+    Other(Value),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
 pub(super) struct OpenAiToolCall {
     pub id: String,
     #[serde(rename = "type")]
@@ -261,7 +352,7 @@ pub(super) struct OpenAiToolCall {
     pub function: OpenAiToolFunctionCall,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
 pub(super) struct OpenAiToolFunctionCall {
     pub name: String,
     pub arguments: String, // JSON string
@@ -278,6 +369,10 @@ pub async fn llm_manager(
     let mut pending_requests = Vec::new();
     let mut ready_contexts = std::collections::HashMap::new();
 
+    // Enters loop every time there is a new event.
+    //  - Currently only receives:
+    //      - AppEvent::Llm(Event::Request)
+    //      - AppEvent::Llm(Event::PromptConstructed)
     while let Ok(event) = event_rx.recv().await {
         match event {
             AppEvent::Llm(
@@ -293,8 +388,8 @@ pub async fn llm_manager(
                     new_msg_id
                 );
 
-                // Reverted: only queue the request; pairing happens when
-                // PromptConstructed arrives for the same parent_id.
+                // pairing happens when PromptConstructed arrives for the same parent_id.
+                // NOTE: May want to optimize by adding an array buffer for in-memory handling
                 pending_requests.push(request);
             }
             AppEvent::Llm(context @ Event::PromptConstructed { parent_id, .. }) => {
@@ -304,6 +399,7 @@ pub async fn llm_manager(
                 let guard = state.config.read().await;
                 let maybe_provider = guard.model_registry.get_active_model_config();
                 if maybe_provider.is_none() {
+                    // TODO: Trigger update of registered models here
                     tracing::warn!(
                         "Could not find active provider in registry, continuing event loop"
                     );
@@ -329,6 +425,11 @@ pub async fn llm_manager(
                                 "ready_contexts found match for req_parent: {}",
                                 req_parent
                             );
+                            // Note that using `retain` here removes only those messages which have
+                            // been sent to be processed. 
+                            //  - possible improvement might be to keep req if it is not correctly
+                            //      processed by `process_llm_request`?
+                            //  - may want to spawn with a timeout or something to prevent leaks(?)
                             tokio::spawn(process_llm_request(
                                 req.clone(),
                                 Arc::clone(&state),
@@ -512,7 +613,7 @@ pub async fn process_llm_request(
             ..
         } => parent_id,
         _ => {
-            tracing::info!("Not a Request, do nothing");
+            tracing::debug!("Not a Request, do nothing");
             return;
         } // Not a request, do nothing
     };
@@ -524,18 +625,32 @@ pub async fn process_llm_request(
         responder: responder_tx,
     };
 
-    if cmd_tx.send(create_cmd).await.is_err() {
-        log::error!("Failed to send CreateAssistantMessage command: channel closed.");
-        return;
-    }
+    // WARN: Trying out `.expect()` here
+    // because I *think* this represents and invalid state. There should never be a case in which
+    // the command cannot be created.
+    //  - May want to add a `shutdown` command or something, as it is possible that the shutdown
+    //  command in the main app could run while we are waiting for a returned value, blah blah
+    // if cmd_tx.send(create_cmd).await.is_err() {
+    //     log::error!("Failed to send CreateAssistantMessage command: channel closed.");
+    //     return;
+    // }
+    cmd_tx.send(create_cmd).await.expect(
+        "Invalid state: sending over closed channel from process_llm_request via StateCommand",
+    );
 
-    let assistant_message_id = match responder_rx.await {
-        Ok(id) => id,
-        Err(_) => {
-            log::error!("Failed to create assistant message: state_manager dropped responder.");
-            return;
-        }
-    };
+    // TODO: There must be a cleaner way to handle this than using the one-shot for a callback. Try
+    // to find a better way.
+    // WARN: Trying out `.expect()` here
+    let assistant_message_id = responder_rx.await.expect(
+        "Invalid state: Failed to create assistant message, state_manager dropped responder.",
+    );
+    // let assistant_message_id = match responder_rx.await {
+    //     Ok(id) => id,
+    //     Err(_) => {
+    //         log::error!("Failed to create assistant message: state_manager dropped responder.");
+    //         return;
+    //     }
+    // };
 
     // Prepare and execute the API call, then create the final update command.
     let result = prepare_and_run_llm_call(
@@ -543,7 +658,7 @@ pub async fn process_llm_request(
         &client,
         &provider_config,
         context,
-        &event_bus,
+        event_bus.clone(),
         parent_id,
     )
     .await;
@@ -615,13 +730,17 @@ pub async fn process_llm_request(
         .await;
 }
 
-#[instrument(skip(provider, state, client))]
+#[instrument(skip(provider, state, client),
+    fields(
+        provider_params = ?provider.llm_params
+    )
+)]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     provider: &ModelConfig,
     context: Option<Event>,
-    event_bus: &Arc<EventBus>,
+    event_bus: Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
     tracing::info!(model = %provider.model, has_context = %context.is_some(), "prepare_and_run_llm_call start");
@@ -634,22 +753,24 @@ async fn prepare_and_run_llm_call(
     } else {
         &path[..]
     };
-    tracing::info!("Inside prepare_and_run_llm_call");
 
     let mut messages: Vec<RequestMessage> = Vec::new();
 
     // Get parameters from provider
-    tracing::info!(
-        "Inside prepare_and_run_llm_call num2 {:#?}",
-        provider.llm_params
-    );
-    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
+    let params = match provider.llm_params.as_ref().cloned() {
+        Some(p) => p,
+        None => {
+            tracing::warn!("LLMParameters falling back to defaults.");
+            LLMParameters::default()
+        }
+    };
 
     // Defaults for tool handling
-    let max_retries: u32 = params.tool_max_retries.unwrap_or(2);
-    let token_limit: u32 = params.tool_token_limit.unwrap_or(2048);
+    let max_retries: u32 = params.tool_max_retries.unwrap_or(crate::TOOL_RETRIES);
+    let token_limit: u32 = params.tool_token_limit.unwrap_or(crate::TOKEN_LIMIT);
 
     // Prepend system prompt if provided
+    // NOTE: I don't think we are actually using this anywhere, and I'm not sure I like this here.
     if let Some(sys) = params.system_prompt.as_ref() {
         messages.push(RequestMessage::new_system(sys.clone()));
     }
@@ -682,11 +803,13 @@ async fn prepare_and_run_llm_call(
         "Sending conversation history message with content: {:#?}",
         messages
     );
-    log::info!("Sending request using model config: {:#?}", provider);
     // Release the lock before the network call
     drop(history_guard);
 
     // Decide tool usage based on registry capabilities and enforcement policy
+    // NOTE: Need to experiment more with this. Not sure if it is working correctly to distinguish
+    // models that support tools, and then to use the right kind of API call to OpenRouter to
+    // ensure the call is being routed to only those providers that support tool use.
     let (supports_tools_opt, require_tools) = {
         let cfg = state.config.read().await;
         (
@@ -696,7 +819,7 @@ async fn prepare_and_run_llm_call(
     };
 
     // Concise plan log: shows what we think about tool support and enforcement
-    tracing::info!(
+    tracing::debug!(
         model = %provider.model,
         base_url = %provider.base_url,
         provider_type = ?provider.provider_type,
@@ -706,29 +829,14 @@ async fn prepare_and_run_llm_call(
         "llm_request_plan"
     );
 
-    if require_tools && supports_tools_opt != Some(true) {
+    if require_tools && (supports_tools_opt != Some(true)) {
         // Persist a concise decision record explaining why the call is aborted
-        if let Some(dir) = diag_dir() {
-            let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
-            let record = json!({
-                "phase": "preflight",
-                "reason": "tools_required_but_model_not_marked_tool_capable",
-                "provider": {
-                    "model": provider.model,
-                    "base_url": provider.base_url,
-                    "provider_type": format!("{:?}", provider.provider_type),
-                    "provider_slug": provider.provider_slug
-                },
-                "capabilities": {
-                    "supports_tools_cache": supports_tools_opt,
-                    "require_tools_policy": require_tools
-                }
-            });
-            let _ = fs::write(
-                dir.join(fname),
-                serde_json::to_string_pretty(&record).unwrap_or_default(),
-            );
-        }
+        if let Some(fut) = log_tool_use(LogToolUseCtx {
+            provider,
+            parent_id,
+            supports_tools_opt,
+            require_tools,
+        }) {fut.await.ok();};
 
         return Err(LlmError::Api {
             status: 412,
@@ -753,86 +861,39 @@ or disable enforcement with ':provider tools-only off'.",
 
     // Summarize tools we will include for this request
     let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name).collect();
-    tracing::info!(
-        use_tools = %(!tools.is_empty()),
-        tools = %tool_names.join(","),
-        "llm_request_tools"
+    tracing::debug!(
+        "llm_request_tools:\n\tuse_tools: {}\n\ttool_names: {}",
+        !tools.is_empty(),
+        tool_names.join(","),
     );
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis.
-    if let Some(dir) = diag_dir() {
-        let fname = format!("{}-{}-request.json", now_ts(), parent_id);
-        let request_plan = json!({
-            "phase": "request_plan",
-            "provider": {
-                "model": provider.model,
-                "base_url": provider.base_url,
-                "provider_type": format!("{:?}", provider.provider_type),
-                "provider_slug": provider.provider_slug
-            },
-            "capabilities": {
-                "supports_tools_cache": supports_tools_opt,
-                "require_tools_policy": require_tools
-            },
-            "decision": {
-                "use_tools": !tools.is_empty(),
-                "tool_names": tool_names
-            },
-            "parameters": params,
-            "messages": messages,
-            "tools": tools
-        });
-        let _ = fs::write(
-            dir.join(fname),
-            serde_json::to_string_pretty(&request_plan).unwrap_or_default(),
-        );
-        // Also print a terse, sharable line for quick triage
-        tracing::info!(
-            "[E2E] model={} tools={} msgs={} cap={:?}/req_tools={}",
-            provider.model,
-            if tools.is_empty() { "off" } else { "on" },
-            request_plan["messages"]
-                .as_array()
-                .map(|a| a.len())
-                .unwrap_or(0),
-            supports_tools_opt,
-            require_tools
-        );
-    }
+    let log_fut = log_tool_use(LogToolUseCtx {
+        provider,
+        parent_id,
+        supports_tools_opt,
+        require_tools,
+    });
 
     // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
     let session = session::RequestSession {
         client,
         provider,
-        event_bus: Arc::clone(event_bus),
+        event_bus,
         parent_id,
         messages,
         tools,
-        params: params.clone(),
-        fallback_on_404: todo!(),
+        params,
+        fallback_on_404: false,
         attempts: 3,
     };
 
     let result = session.run().await;
 
     // Persist model output or error for later inspection
-    if let Some(dir) = diag_dir() {
-        match &result {
-            Ok(content) => {
-                let fname = format!("{}-{}-response.txt", now_ts(), parent_id);
-                let _ = fs::write(dir.join(fname), content.as_bytes());
-            }
-            Err(e) => {
-                let fname = format!("{}-{}-error.json", now_ts(), parent_id);
-                let rec = json!({
-                    "phase": "response",
-                    "error": e.to_string()
-                });
-                let _ = fs::write(
-                    dir.join(fname),
-                    serde_json::to_string_pretty(&rec).unwrap_or_default(),
-                );
-            }
+    if let Some(fut) = log_fut {
+        if fut.await.is_err() {
+            tracing::error!("Failed to write tool use logs.");
         }
     }
 
@@ -894,6 +955,80 @@ fn now_ts() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+struct LogToolUseCtx<'a> {
+    provider: &'a ModelConfig,
+    parent_id: Uuid,
+    supports_tools_opt: Option<bool>,
+    require_tools: bool,
+}
+
+fn log_tool_use<'a>(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
+    match diag_dir() {
+        Some(dir) => {
+            let LogToolUseCtx {
+                provider,
+                parent_id,
+                supports_tools_opt,
+                require_tools,
+            } = ctx;
+            let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
+            let record = json!({
+                    "phase": "preflight",
+                    "reason": "tools_required_but_model_not_marked_tool_capable",
+                    "provider": {
+                    "model": provider.model,
+                    "base_url": provider.base_url,
+                    "provider_type": format!("{:?}", provider.provider_type),
+                    "provider_slug": provider.provider_slug
+                },
+                "capabilities": {
+                    "supports_tools_cache": supports_tools_opt,
+                    "require_tools_policy": require_tools
+                }
+            });
+            Some(tokio::fs::write(
+                dir.join(fname),
+                serde_json::to_string_pretty(&record).unwrap_or_default(),
+            ))
+        }
+        None => None,
+    }
+}
+
+fn log_tool_reason<'a>(
+    ctx: LogToolUseCtx,
+) -> Option<impl Future<Output = tokio::io::Result<()>>> {
+    let LogToolUseCtx {
+        provider,
+        parent_id,
+        supports_tools_opt,
+        require_tools,
+    } = ctx;
+    if let Some(dir) = diag_dir() {
+        let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
+        let record = json!({
+            "phase": "preflight",
+            "reason": "tools_required_but_model_not_marked_tool_capable",
+            "provider": {
+                "model": provider.model,
+                "base_url": provider.base_url,
+                "provider_type": format!("{:?}", provider.provider_type),
+                "provider_slug": provider.provider_slug
+            },
+            "capabilities": {
+                "supports_tools_cache": supports_tools_opt,
+                "require_tools_policy": require_tools
+            }
+        });
+        Some(tokio::fs::write(
+            dir.join(fname),
+            serde_json::to_string_pretty(&record).unwrap_or_default(),
+        ))
+    } else {
+        None
+    }
 }
 
 // Example tool-call handler (stub)

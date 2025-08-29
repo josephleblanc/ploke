@@ -45,7 +45,7 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         "apply_code_edit" => apply_code_edit_tool(tool_call_params).await,
         // New: get_file_metadata tool for fetching current file hash and basic metadata
         "get_file_metadata" => get_file_metadata_tool(tool_call_params).await,
-        "request_code_context" => handle_request_context(tool_call_params).await,
+        // "request_code_context" => handle_request_context(tool_call_params).await,
         _ => {
             tracing::warn!("Unsupported tool call: {}", name);
             let err = format!("Unsupported tool: {}", name);

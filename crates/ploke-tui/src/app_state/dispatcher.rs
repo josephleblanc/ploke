@@ -237,18 +237,22 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            StateCommand::RagAssembleContext {
-                req_id,
-                user_query,
-                top_k,
-                budget,
-                strategy,
-            } => {
-                rag::context::assemble_context(
-                    &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
-                )
-                .await
-            }
+            // NOTE: I think this is no longer being used. Commenting out to look for errors if
+            // absent, delete later.
+            // - 2025-08-28
+            //
+            // StateCommand::RagAssembleContext {
+            //     req_id,
+            //     user_query,
+            //     top_k,
+            //     budget,
+            //     strategy,
+            // } => {
+            //     rag::context::assemble_context(
+            //         &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
+            //     )
+            //     .await
+            // }
             StateCommand::ApproveEdits { request_id } => {
                 rag::editing::approve_edits(&state, &event_bus, request_id).await;
             }
