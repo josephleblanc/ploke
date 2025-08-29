@@ -1,9 +1,0 @@
-  2025-08-29T04:04:17.963516Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
-    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
-
-  2025-08-29T04:05:13.386179Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
-    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
-
-  2025-08-29T04:05:28.652121Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
-    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
-

@@ -15,9 +15,9 @@
 use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
-use crate::llm::openrouter_catalog::ModelEntry;
+use crate::llm::openrouter_catalog::{self, ModelEntry};
 use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing, SupportedParameters};
-use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, ProviderType, UserConfig};
+use crate::user_config::{openrouter_url, ModelRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use reqwest::Client;
@@ -734,7 +734,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 .map(|p| p.resolve_api_key())
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .unwrap_or_default();
-            (key, OPENROUTER_URL.to_string())
+            (key, openrouter_url())
         };
 
         if api_key.is_empty() {
@@ -749,7 +749,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
         }
 
         let client = Client::new();
-        match crate::llm::openrouter_catalog::fetch_models(&client, &base_url, &api_key).await {
+        match openrouter_catalog::fetch_models(&client, base_url, &api_key).await {
             Ok(models) => {
                 let kw_lower = keyword_str.to_lowercase();
                 let mut filtered: Vec<ModelEntry> = models

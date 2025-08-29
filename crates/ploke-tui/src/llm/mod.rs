@@ -561,9 +561,9 @@ pub async fn llm_manager(
                         return;
                     }
 
-                    match crate::llm::openrouter_catalog::fetch_model_endpoints(
+                    match openrouter_catalog::fetch_model_endpoints(
                         &client,
-                        crate::user_config::OPENROUTER_URL,
+                        openrouter_url(),
                         &api_key,
                         &model_id,
                     )
@@ -1242,7 +1242,7 @@ impl From<LlmError> for ploke_error::Error {
     }
 }
 
-use crate::user_config::default_model;
+use crate::user_config::{default_model, openrouter_url};
 /// Parameters for controlling LLM generation behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMParameters {

@@ -21,17 +21,9 @@ use ploke_error::Error;
 
 use crate::llm::openrouter_catalog;
 use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
+use crate::test_harness::openrouter_env;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
-
-/// OPENROUTER_API_KEY + base URL
-fn openrouter_env() -> Option<(String, String)> {
-    let key = std::env::var("OPENROUTER_API_KEY").ok()?;
-    if key.trim().is_empty() {
-        return None;
-    }
-    Some((key, OPENROUTER_URL.to_string()))
-}
 
 /// Recommended headers for OpenRouter (improves routing/diagnostics)
 fn default_headers() -> HeaderMap {
@@ -534,10 +526,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
     }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -546,7 +535,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         .expect("client");
 
     // Fetch user-filtered models
-    let models = match openrouter_catalog::fetch_models(&client, &base_url, &api_key).await {
+    let models = match openrouter_catalog::fetch_models(&client, op.url.clone(), &op.key).await {
         Ok(m) => m,
         Err(e) => {
             warn!("Failed to fetch OpenRouter catalog: {}", e);
@@ -564,7 +553,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         let model_id = m.id;
         info!("model: {}", model_id);
 
-        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
+        let chosen = choose_tools_endpoint_for_model(&client, &op.url.to_string(), &op.key, &model_id).await;
         let Some((author, slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
             continue;
@@ -597,8 +586,8 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         ]) {
             run_tool_roundtrip(
                 &client,
-                &base_url,
-                &api_key,
+                &op.url.to_string(),
+                &op.key,
                 &model_id,
                 provider_slug_hint.as_deref(),
                 def,

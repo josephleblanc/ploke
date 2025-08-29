@@ -15,9 +15,9 @@ use serde_json::Value;
 
 #[derive(Deserialize, Debug)]
 /// OpenRouter `/models` response container.
-struct ModelsResponse {
+pub struct ModelsResponse {
     /// List of models with minimal fields needed by the TUI.
-    data: Vec<ModelEntry>,
+    pub data: Vec<ModelEntry>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -43,7 +43,6 @@ pub struct ModelEntry {
     /// OpenRouter model-level "supported_parameters" (e.g., includes "tools" when tool-calling is supported).
     #[serde(default)]
     pub supported_parameters: Option<Vec<String>>,
-
     /// Provider-specific entries under this model (pricing, tools, context).
     #[serde(default)]
     pub providers: Option<Vec<ProviderEntry>>,
@@ -68,8 +67,10 @@ pub struct ModelCapabilitiesRaw {
 }
 
 /// Provider info commonly exposed by OpenRouter for the "top_provider" field.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialOrd, PartialEq)]
 pub struct TopProviderInfo {
+    #[serde(default)]
+    pub is_moderated: Option<bool>,
     #[serde(default)]
     pub context_length: Option<u32>,
     #[serde(default)]
@@ -153,11 +154,11 @@ where
 /// for capability and pricing awareness.
 pub async fn fetch_models(
     client: &reqwest::Client,
-    base_url: &str,
+    base_url: reqwest::Url,
     api_key: &str,
 ) -> color_eyre::Result<Vec<ModelEntry>> {
     // Use user-filtered catalog as per product decision.
-    let url = format!("{}/models/user", base_url.trim_end_matches('/'));
+    let url = base_url.join("/models/user").expect("Malformed model/user url");
     let resp = client
         .get(url)
         .bearer_auth(api_key)
@@ -185,16 +186,15 @@ fn canonicalize_model_id_for_endpoints(model_id: &str) -> String {
 /// Fetch provider endpoints for a specific model (author/slug).
 pub async fn fetch_model_endpoints(
     client: &reqwest::Client,
-    base_url: &str,
+    base_url: reqwest::Url,
     api_key: &str,
     model_id: &str,
 ) -> color_eyre::Result<Vec<ProviderEntry>> {
     let model_path = canonicalize_model_id_for_endpoints(model_id);
-    let url = format!(
-        "{}/models/{}/endpoints",
-        base_url.trim_end_matches('/'),
-        model_path
-    );
+    let url = base_url.join("/models/user")
+        .and_then(|u| u.join(model_id))
+        .and_then(|u| u.join("endpoints"))
+        .expect("Malformed url");
     let resp = client
         .get(url)
         .bearer_auth(api_key)

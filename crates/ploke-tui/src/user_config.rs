@@ -47,18 +47,26 @@
 //
 // More information on future development is in `ploke-tui/docs/model_configs.md`
 
+use lazy_static::lazy_static;
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
     indexer::{CozoBackend, EmbeddingProcessor, EmbeddingSource},
     local::{DevicePreference, EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder},
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{self, RequestMessage};
+use crate::llm::{self, openrouter_catalog, RequestMessage};
 
-pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
+lazy_static! {
+    pub static ref OPENROUTER_URL: Url = 
+        Url::parse("https://openrouter.ai/api/v1/").expect("Invalid OpenRouter base URL");
+}
+
+pub fn openrouter_url() -> reqwest::Url {
+    OPENROUTER_URL.clone()
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
@@ -499,7 +507,7 @@ impl ModelRegistry {
 
         let client = Client::new();
         let models =
-            crate::llm::openrouter_catalog::fetch_models(&client, OPENROUTER_URL, &api_key).await?;
+           openrouter_catalog::fetch_models(&client, openrouter_url(), &api_key).await?;
 
         self.capabilities.clear();
         for m in models {

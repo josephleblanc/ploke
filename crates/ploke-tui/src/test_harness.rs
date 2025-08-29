@@ -5,14 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    AppEvent, EventBus, EventBusCaps, EventPriority,
-    app::App,
-    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager},
-    chat_history::ChatHistory,
-    file_man::FileManager,
-    llm::llm_manager,
-    observability, run_event_bus,
-    user_config::{UserConfig, default_model},
+    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, file_man::FileManager, llm::llm_manager, observability, run_event_bus, user_config::{default_model, openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
@@ -163,4 +156,42 @@ pub fn app() -> &'static Arc<Mutex<App>> {
 pub async fn get_state() -> Arc<AppState> {
     let app = TEST_APP.lock().await;
     app.test_get_state()
+}
+
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+pub fn default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let referer = HeaderName::from_static("http-referer");
+    let x_title = HeaderName::from_static("x-title");
+    headers.insert(
+        referer,
+        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+    );
+    headers.insert(x_title, HeaderValue::from_static("Ploke TUI E2E Tests"));
+    headers
+}
+
+pub struct OpenRouterEnv {
+    pub key: String,
+    pub url: reqwest::Url,
+}
+impl OpenRouterEnv {
+    pub fn new(key: String, url: reqwest::Url) -> Self {
+        Self { key, url }
+    }
+}
+
+pub fn openrouter_env() -> Option<OpenRouterEnv >{
+    // Try current process env first; if missing, load from .env as a fallback
+    let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
+    let key = match key_opt {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            let _ = dotenvy::dotenv();
+            let k = std::env::var("OPENROUTER_API_KEY").ok()?;
+            if k.trim().is_empty() { return None; }
+            k
+        }
+    };
+    Some(OpenRouterEnv::new(key, openrouter_url()))
 }

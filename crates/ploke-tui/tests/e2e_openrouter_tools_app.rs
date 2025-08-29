@@ -42,6 +42,7 @@ use ploke_tui::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsResponse, 
 use ploke_tui::llm;
 use ploke_tui::llm::providers::ProvidersResponse;
 use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
+use ploke_tui::test_harness::openrouter_env;
 use ploke_tui::tracing_setup::init_tracing_tests;
 use ploke_tui::user_config::{OPENROUTER_URL, ModelCapabilities};
 use ploke_tui::{AppEvent, EventPriority};
@@ -73,22 +74,6 @@ struct ToolRoundtripOutcome {
 lazy_static! {
     static ref TOOL_ENDPOINT_CANDIDATES: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> =
         std::sync::Mutex::new(std::collections::HashMap::new());
-}
-
-/// Read OPENROUTER_API_KEY and base URL from environment.
-fn openrouter_env() -> Option<(String, String)> {
-    // Try current process env first; if missing, load from .env as a fallback
-    let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
-    let key = match key_opt {
-        Some(k) if !k.trim().is_empty() => k,
-        _ => {
-            let _ = dotenvy::dotenv();
-            let k = std::env::var("OPENROUTER_API_KEY").ok()?;
-            if k.trim().is_empty() { return None; }
-            k
-        }
-    };
-    Some((key, OPENROUTER_URL.to_string()))
 }
 
 /// Recommended headers for OpenRouter (improves routing/diagnostics)
@@ -221,20 +206,17 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
         cfg.model_registry.refresh_from_openrouter().await?;
     }
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping E2E live test: OPENROUTER_API_KEY not set.");
-        return Ok(());
-    };
+    let op = openrouter_env().expect("Skipping E2E live test: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(45))
+        .timeout(Duration::from_secs(5))
         .default_headers(default_headers())
         .build()
         .expect("client");
 
     // Fetch catalog filtered by user allowances
     let models = match ploke_tui::llm::openrouter_catalog::fetch_models(
-        &client, &base_url, &api_key,
+        &client, op.url.clone(), &op.key,
     )
     .await
     {
@@ -284,8 +266,8 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
     //     Err(_) => Default::default(),
     // };
     let resp = client
-        .get(format!("{}/providers", base_url))
-        .bearer_auth(&api_key)
+        .get(format!("{}/providers", op.url))
+        .bearer_auth(&op.key)
         .send()
         .await
         .and_then(|r| r.error_for_status())?;

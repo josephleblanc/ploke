@@ -27,6 +27,7 @@ nonzero_ext = "0.3"
 
 # network
 reqwest = { version = "0.12", features = ["json"] }
+url = { version = "2.5.7", features = ["serde"] }
 governor = "0.10"
 
 # embeddings
@@ -41,7 +42,7 @@ serde_json = "1.0"
 # common
 ploke-core = { path = "../ploke-core" }
 sha2 = "0.10"
-tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+# tokio-tungstenite = { version = "0.27", features = ["native-tls"] }
 cozo = { workspace = true }
 
 # config
@@ -80,7 +81,6 @@ ploke-test-utils = { path = "../test-utils" }
 
 [dev-dependencies]
 tempfile = "3.4"
-wiremock = "0.5.14"
 tokio-test = "0.4"
 test-context = "0.4"
 fake = "4.3.0"
@@ -95,6 +95,7 @@ syn = { workspace = true }
 [features]
 default = ["custom_list"]
 custom_list = []
+live_api_tests = []
 
 [[bench]]
 name = "ui_measure"

@@ -14,16 +14,16 @@ use crate::tracing_setup::{init_tracing, init_tracing_tests};
 use crate::user_config::OPENROUTER_URL;
 
 // Leverage the in-crate test harness (Arc<Mutex<App>>) for constructing a realistic App.
-use crate::test_harness::app;
+use crate::test_harness::{app, openrouter_env};
 
-/// Helper to resolve API key and base URL for OpenRouter.
-fn openrouter_env() -> Option<(String, String)> {
-    let key = std::env::var("OPENROUTER_API_KEY").ok()?;
-    if key.trim().is_empty() {
-        return None;
-    }
-    Some((key, OPENROUTER_URL.to_string()))
-}
+///// Helper to resolve API key and base URL for OpenRouter.
+//fn openrouter_env() -> Option<(String, String)> {
+//    let key = std::env::var("OPENROUTER_API_KEY").ok()?;
+//    if key.trim().is_empty() {
+//        return None;
+//    }
+//    Some((key, OPENROUTER_URL.to_string()))
+//}
 
 /// Default OpenRouter-recommended headers for telemetry and routing.
 fn default_headers() -> HeaderMap {
@@ -46,7 +46,7 @@ fn default_headers() -> HeaderMap {
 /// 3) Fallback to "google/gemini-2.0-flash-001" if nothing else is found.
 async fn choose_tools_model(
     client: &Client,
-    base_url: &str,
+    base_url: reqwest::Url,
     api_key: &str,
     preferred: Option<&str>,
 ) -> String {
@@ -157,7 +157,7 @@ async fn openrouter_model_tools_support_check() {
     }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
+    let Some(op) = openrouter_env() else {
         eprintln!("Skipping: OPENROUTER_API_KEY not set.");
         return;
     };
@@ -180,10 +180,10 @@ async fn openrouter_model_tools_support_check() {
         .default_headers(default_headers())
         .build()
         .expect("client");
-    let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+    let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
     match client
         .get(&url)
-        .bearer_auth(&api_key)
+        .bearer_auth(&op.key)
         .send()
         .await
         .and_then(|r| r.error_for_status())
@@ -247,10 +247,7 @@ async fn openrouter_tools_forced_choice_diagnostics() {
     }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op_env = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -259,7 +256,7 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
+    let model_id = choose_tools_model(&client, op_env.url.clone(), &op_env.key, preferred.as_deref()).await;
 
     let payload = json!({
         "model": model_id,
@@ -285,11 +282,11 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
 
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!("{}/chat/completions", op_env.url);
     let start = Instant::now();
     match client
         .post(&url)
-        .bearer_auth(&api_key)
+        .bearer_auth(&op_env.key)
         .json(&payload)
         .send()
         .await
@@ -386,10 +383,7 @@ async fn openrouter_endpoints_live_smoke() {
         eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
         return;
     }
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let model_id = std::env::var("PLOKE_MODEL_ID")
         .unwrap_or_else(|_| "qwen/qwen-2.5-72b-instruct".to_string());
@@ -410,10 +404,10 @@ async fn openrouter_endpoints_live_smoke() {
         .expect("client");
 
     // Warm up: fetch providers list to build a name->slug map (logged only)
-    let providers_url = format!("{}/providers", base_url);
+    let providers_url = format!("{}/providers", op.url);
     let providers_resp = client
         .get(&providers_url)
-        .bearer_auth(&api_key)
+        .bearer_auth(&op.key)
         .send()
         .await;
 
@@ -429,10 +423,10 @@ async fn openrouter_endpoints_live_smoke() {
     }
 
     // Fetch endpoints for the model
-    let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+    let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
     let resp = client
         .get(&url)
-        .bearer_auth(&api_key)
+        .bearer_auth(&op.key)
         .send()
         .await
         .and_then(|r| r.error_for_status());
@@ -486,10 +480,7 @@ async fn openrouter_tools_success_matrix() {
     }
     let _guard = init_tracing_tests(Level::INFO);
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     // HTTP client used across this test
     let client = Client::builder()
@@ -500,7 +491,7 @@ async fn openrouter_tools_success_matrix() {
 
     // Choose a tools-capable model (prefer env override, else auto-detect from catalog).
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
+    let model_id = choose_tools_model(&client, op.url.clone(), &op.key, preferred.as_deref()).await;
 
     // Pre-check: does this model expose any endpoints that advertise "tools" support?
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -508,14 +499,14 @@ async fn openrouter_tools_success_matrix() {
     if parts.len() == 2 {
         let author = parts[0];
         let slug = parts[1];
-        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
+        let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
         let client_probe = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .expect("client");
         match client_probe
             .get(&url)
-            .bearer_auth(&api_key)
+            .bearer_auth(&op.key)
             .send()
             .await
             .and_then(|r| r.error_for_status())
@@ -688,11 +679,11 @@ async fn openrouter_tools_success_matrix() {
                         _ => {}
                     }
 
-                    let url = format!("{}/chat/completions", base_url);
+                    let url = format!("{}/chat/completions", op.url);
                     let start = Instant::now();
                     let send_res = client
                         .post(&url)
-                        .bearer_auth(&api_key)
+                        .bearer_auth(&op.key)
                         .json(&root)
                         .send()
                         .await;
@@ -910,10 +901,7 @@ async fn openrouter_provider_preference_experiment() {
         eprintln!("Skipping: PLOKE_RUN_EXEC_LIVE_TESTS!=1");
         return;
     }
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -950,10 +938,10 @@ async fn openrouter_provider_preference_experiment() {
     let c = mk_payload(Some(json!({"allow": ["openai"]})));
 
     for (label, payload) in [("A: omitted", a), ("B: order", b), ("C: allow", c)] {
-        let url = format!("{}/chat/completions", base_url);
+        let url = format!("{}/chat/completions", op.url);
         let res = client
             .post(&url)
-            .bearer_auth(&api_key)
+            .bearer_auth(&op.key)
             .json(&payload)
             .send()
             .await;
@@ -1006,10 +994,7 @@ async fn openrouter_tools_smoke() {
     }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -1044,10 +1029,10 @@ async fn openrouter_tools_smoke() {
         ]
     });
 
-    let url = format!("{}/chat/completions", base_url);
+    let url = format!("{}/chat/completions", op.url);
     let res = client
         .post(&url)
-        .bearer_auth(&api_key)
+        .bearer_auth(&op.key)
         .json(&payload)
         .send()
         .await;
@@ -1097,10 +1082,7 @@ async fn openrouter_tools_model_touchpoints() {
     }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     // Small set of models to probe. The first entry is either explicit override or autodetected tools-capable model.
     // The rest are popular/representative models for a quick cross-section.
@@ -1111,7 +1093,7 @@ async fn openrouter_tools_model_touchpoints() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let primary = choose_tools_model(&client, &base_url, &api_key, preferred.as_deref()).await;
+    let primary = choose_tools_model(&client, op.url.clone(), &op.key, preferred.as_deref()).await;
 
     let mut models: Vec<String> = vec![
         primary,
@@ -1169,11 +1151,11 @@ async fn openrouter_tools_model_touchpoints() {
             "max_tokens": 128
         });
 
-        let url = format!("{}/chat/completions", base_url);
+        let url = format!("{}/chat/completions", &op.url);
         let start = Instant::now();
         match client
             .post(&url)
-            .bearer_auth(&api_key)
+            .bearer_auth(&op.key)
             .json(&payload)
             .send()
             .await
