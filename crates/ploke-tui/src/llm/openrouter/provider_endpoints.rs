@@ -51,7 +51,10 @@ use reqwest::Url;
 /// https://openrouter.ai/api/v1/models
 pub struct ModelEndpointsResponse {
     pub data: ModelEndpointsData,
-    // I would like to add a 
+    // I would like to add a typed Url field here that is either a const or static ref (using
+    // lazy_static::lazy_static!) for the url this is a response from.
+    // It should not be serialized or deserialized with the rest of the struct.
+    // Implement this AI!
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
