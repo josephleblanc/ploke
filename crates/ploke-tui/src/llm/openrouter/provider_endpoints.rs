@@ -61,7 +61,7 @@ pub struct ModelEndpointsResponse {
 
 impl ModelEndpointsResponse {
     fn url() -> Url {
-        // AI!
+        OPENROUTER_MODELS_URL.clone()
     }
 }
 
