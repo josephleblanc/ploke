@@ -86,9 +86,6 @@ pub enum ProviderName {
 }
 use std::fmt::{self, Display};
 
-impl ProviderName {
-
-}
 
 impl Display for ProviderName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -97,6 +94,13 @@ impl Display for ProviderName {
             .expect("ProviderName should always serialize to JSON string");
         // Remove the surrounding quotes that JSON adds.
         f.write_str(&s[1..s.len() - 1])
+    }
+}
+
+impl ProviderName {
+    pub fn to_slug(self) {
+        // Implement this AI!
+        todo!()
     }
 }
 
@@ -183,3 +187,12 @@ impl Display for Slug {
         f.write_str(&s[1..s.len() - 1])
     }
 }
+
+impl Slug {
+    pub fn to_provider_name(self) {
+        // Implement this AI!
+        todo!()
+    }
+}
+
+
