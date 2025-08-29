@@ -1,8 +1,9 @@
-pub mod openrouter_catalog;
-pub mod provider_endpoints;
+pub mod openrouter;
 pub mod registry;
 mod session;
 mod tool_call;
+
+pub use openrouter::*;
 
 use ploke_rag::TokenCounter as _;
 use ploke_rag::context::ApproxCharTokenizer;
@@ -730,7 +731,7 @@ pub async fn process_llm_request(
         .await;
 }
 
-#[instrument(skip(provider, state, client),
+#[instrument(skip_all,
     fields(
         provider_params = ?provider.llm_params
     )

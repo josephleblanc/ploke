@@ -1,0 +1,1721 @@
+  2025-08-29T03:08:01.490413Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparam[0m: ":create param { function_id: Uuid, type_id: Uuid, at: Validity => is_mutable: Bool, is_self: Bool, name: String?, param_index: Int }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:7 on ThreadId(2)
+
+  2025-08-29T03:08:01.491520Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.491588Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mattribute[0m: ":create attribute { owner_id: Uuid, at: Validity => name: String, index: Int, args: [String], value: String? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:55 on ThreadId(2)
+
+  2025-08-29T03:08:01.491978Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.492032Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mvariant[0m: ":create variant { id: Uuid, owner_id: Uuid, at: Validity => name: String, index: Int, discriminant: String?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:21 on ThreadId(2)
+
+  2025-08-29T03:08:01.492337Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.492384Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfield[0m: ":create field { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String?, index: Int, vis_kind: String, vis_path: [String]?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:40 on ThreadId(2)
+
+  2025-08-29T03:08:01.492696Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.492743Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_type[0m: ":create generic_type { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid], default: Uuid? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T03:08:01.493030Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.493075Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_const[0m: ":create generic_const { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String, param_index: Int, kind: String }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:92 on ThreadId(2)
+
+  2025-08-29T03:08:01.493336Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.493381Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_lifetime[0m: ":create generic_lifetime { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:82 on ThreadId(2)
+
+  2025-08-29T03:08:01.493661Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.493714Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mconst[0m: ":create const { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:31 on ThreadId(2)
+
+  2025-08-29T03:08:01.494108Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.494157Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158menum[0m: ":create enum { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, variants: [Uuid], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:51 on ThreadId(2)
+
+  2025-08-29T03:08:01.494506Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.494555Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction[0m: ":create function { id: Uuid, at: Validity => name: String, docstring: String?, vis_kind: String, vis_path: [String]?, span: [Int; 2], tracking_hash: Uuid, cfgs: [String], return_type_id: Uuid?, body: String?, module_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:13 on ThreadId(2)
+
+  2025-08-29T03:08:01.494929Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.494978Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl[0m: ":create impl { id: Uuid, at: Validity => self_type: Uuid, span: [Int; 2], trait_type: Uuid?, methods: [Uuid]?, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T03:08:01.495299Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.495349Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimport[0m: ":create import { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String?, vis_path: [String]?, cfgs: [String], source_path: [String], visible_name: String, original_name: String?, is_glob: Bool, is_self_import: Bool, import_kind: String, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:88 on ThreadId(2)
+
+  2025-08-29T03:08:01.495748Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.495804Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro[0m: ":create macro { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], kind: String, proc_kind: String?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:108 on ThreadId(2)
+
+  2025-08-29T03:08:01.496186Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.496235Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmodule[0m: ":create module { id: Uuid, at: Validity => name: String, path: [String], vis_kind: String, vis_path: [String]?, docstring: String?, span: [Int; 2], tracking_hash: Uuid, module_kind: String, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:133 on ThreadId(2)
+
+  2025-08-29T03:08:01.496577Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.496631Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstatic[0m: ":create static { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, is_mutable: Bool, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:151 on ThreadId(2)
+
+  2025-08-29T03:08:01.496982Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.497032Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstruct[0m: ":create struct { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:171 on ThreadId(2)
+
+  2025-08-29T03:08:01.497367Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.497416Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait[0m: ":create trait { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, methods: [Uuid]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:189 on ThreadId(2)
+
+  2025-08-29T03:08:01.497805Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.497859Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtype_alias[0m: ":create type_alias { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, ty_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:206 on ThreadId(2)
+
+  2025-08-29T03:08:01.498226Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.498273Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munion[0m: ":create union { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:224 on ThreadId(2)
+
+  2025-08-29T03:08:01.498602Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.498655Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfile_mod[0m: ":create file_mod { owner_id: Uuid, at: Validity => file_path: String, file_docs: String?, items: [Uuid], namespace: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/subnode_variants.rs:8 on ThreadId(2)
+
+  2025-08-29T03:08:01.498914Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.498962Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmethod[0m: ":create method { id: Uuid, owner_id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/assoc_nodes.rs:10 on ThreadId(2)
+
+  2025-08-29T03:08:01.499309Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.499592Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnamed_type[0m: ":create named_type { type_id: Uuid, at: Validity => path: [String], is_fully_qualified: Bool }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:26 on ThreadId(2)
+
+  2025-08-29T03:08:01.499623Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.499884Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mreference_type[0m: ":create reference_type { type_id: Uuid, at: Validity => lifetime: String?, is_mutable: Bool, references_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:33 on ThreadId(2)
+
+  2025-08-29T03:08:01.499914Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.500155Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mslice_type[0m: ":create slice_type { type_id: Uuid, at: Validity => element_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:42 on ThreadId(2)
+
+  2025-08-29T03:08:01.500185Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.500430Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158marray_type[0m: ":create array_type { type_id: Uuid, at: Validity => element_type: Uuid, size: Int? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:48 on ThreadId(2)
+
+  2025-08-29T03:08:01.500459Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.500715Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtuple_type[0m: ":create tuple_type { type_id: Uuid, at: Validity => element_types: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:58 on ThreadId(2)
+
+  2025-08-29T03:08:01.500744Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.500997Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction_type[0m: ":create function_type { type_id: Uuid, at: Validity => is_unsafe: Bool, is_extern: Bool, abi: String? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:64 on ThreadId(2)
+
+  2025-08-29T03:08:01.501027Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.501263Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnever_type[0m: ":create never_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:72 on ThreadId(2)
+
+  2025-08-29T03:08:01.501293Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.501523Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158minferred_type[0m: ":create inferred_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:77 on ThreadId(2)
+
+  2025-08-29T03:08:01.501553Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.501810Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mraw_pointer_type[0m: ":create raw_pointer_type { type_id: Uuid, at: Validity => is_mutable: Bool, points_to: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:83 on ThreadId(2)
+
+  2025-08-29T03:08:01.501840Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.502108Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait_object_type[0m: ":create trait_object_type { type_id: Uuid, at: Validity => dyn_token: Bool, trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:90 on ThreadId(2)
+
+  2025-08-29T03:08:01.502138Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.502395Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl_trait_type[0m: ":create impl_trait_type { type_id: Uuid, at: Validity => trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:97 on ThreadId(2)
+
+  2025-08-29T03:08:01.502425Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.502674Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparen_type[0m: ":create paren_type { type_id: Uuid, at: Validity => inner_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:103 on ThreadId(2)
+
+  2025-08-29T03:08:01.502704Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.502957Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro_type[0m: ":create macro_type { type_id: Uuid, at: Validity => name: String, tokens: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:110 on ThreadId(2)
+
+  2025-08-29T03:08:01.502986Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.503227Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munknown_type[0m: ":create unknown_type { type_id: Uuid, at: Validity => type_str: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:119 on ThreadId(2)
+
+  2025-08-29T03:08:01.503257Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.503277Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158msyntax_edge[0m: ":create syntax_edge { source_id: Uuid, target_id: Uuid, at: Validity => relation_kind: String, source_kind: String, target_kind: String }"
+    at crates/ingest/ploke-transform/src/schema/edges.rs:18 on ThreadId(2)
+
+  2025-08-29T03:08:01.503528Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.503569Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mcrate_context[0m: ":create crate_context { id: Uuid, at: Validity => name: String, version: String, namespace: Uuid, root_path: String, files: [String] }"
+    at crates/ingest/ploke-transform/src/schema/crate_node.rs:7 on ThreadId(2)
+
+  2025-08-29T03:08:01.503842Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.503884Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mbm25_doc_meta[0m: ":create bm25_doc_meta { id: Uuid, at: Validity => tracking_hash: Uuid, tokenizer_version: String, token_length: Int }"
+    at crates/ingest/ploke-transform/src/schema/meta.rs:11 on ThreadId(2)
+
+  2025-08-29T03:08:01.504124Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:08:01.583830Z TRACE mio::poll: registering event source with poller: token=Token(1), interests=READABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(20)
+
+  2025-08-29T03:08:01.710598Z TRACE hyper_util::client::legacy::pool: checkout waiting for idle connection: ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:671 on ThreadId(2)
+
+  2025-08-29T03:08:01.710691Z DEBUG reqwest::connect: starting new connection: https://openrouter.ai/
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.15/src/connect.rs:625 on ThreadId(2)
+
+  2025-08-29T03:08:01.710724Z TRACE hyper_util::client::legacy::connect::http: Http::connect; scheme=Some("https"), host=Some("openrouter.ai"), port=None
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:383 on ThreadId(2)
+
+  2025-08-29T03:08:01.719315Z TRACE ploke_tui::app::message_item: close, time.busy: 21.5µs, time.idle: 5.21µs
+    at crates/ploke-tui/src/app/message_item.rs:24 on ThreadId(2)
+    in ploke_tui::app::message_item::calc_height with width: 73
+    in ploke_tui::app::message_item::measure_messages with conversation_width: 74, _selected_index: Some(0)
+
+  2025-08-29T03:08:01.719375Z TRACE ploke_tui::app::message_item: close, time.busy: 96.9µs, time.idle: 14.7µs
+    at crates/ploke-tui/src/app/message_item.rs:55 on ThreadId(2)
+    in ploke_tui::app::message_item::measure_messages with conversation_width: 74, _selected_index: Some(0)
+
+  2025-08-29T03:08:01.719438Z TRACE ploke_tui::app::message_item: close, time.busy: 35.8µs, time.idle: 6.20µs
+    at crates/ploke-tui/src/app/message_item.rs:77 on ThreadId(2)
+    in ploke_tui::app::message_item::render_messages with conversation_width: 74, conversation_area: Rect { x: 0, y: 1, width: 80, height: 16 }, offset_y: 0, selected_index: Some(0)
+
+  2025-08-29T03:08:01.719576Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:508 on ThreadId(2)
+
+  2025-08-29T03:08:01.746861Z DEBUG hyper_util::client::legacy::connect::dns: close, time.busy: 35.9ms, time.idle: 174µs
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/dns.rs:121 on ThreadId(21)
+    in hyper_util::client::legacy::connect::dns::resolve with host: openrouter.ai
+
+  2025-08-29T03:08:01.747016Z DEBUG hyper_util::client::legacy::connect::http: connecting to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:657 on ThreadId(2)
+
+  2025-08-29T03:08:01.747084Z TRACE mio::poll: registering event source with poller: token=Token(139852124327040), interests=READABLE | WRITABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(2)
+
+  2025-08-29T03:08:01.805509Z DEBUG hyper_util::client::legacy::connect::http: connected to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:660 on ThreadId(2)
+
+  2025-08-29T03:08:01.863365Z TRACE hyper_util::client::legacy::client: http1 handshake complete, spawning background dispatcher task
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/client.rs:592 on ThreadId(2)
+
+  2025-08-29T03:08:01.863539Z TRACE hyper_util::client::legacy::pool: checkout dropped for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:713 on ThreadId(2)
+
+  2025-08-29T03:08:02.269178Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:08:02.269266Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:08:02.282804Z TRACE hyper_util::client::legacy::pool: checkout waiting for idle connection: ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:671 on ThreadId(2)
+
+  2025-08-29T03:08:02.282855Z DEBUG reqwest::connect: starting new connection: https://openrouter.ai/
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.15/src/connect.rs:625 on ThreadId(2)
+
+  2025-08-29T03:08:02.282882Z TRACE hyper_util::client::legacy::connect::http: Http::connect; scheme=Some("https"), host=Some("openrouter.ai"), port=None
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:383 on ThreadId(2)
+
+  2025-08-29T03:08:02.283037Z TRACE mio::poll: deregistering event source from poller
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:702 on ThreadId(2)
+
+  2025-08-29T03:08:02.283595Z TRACE hyper_util::client::legacy::pool: pool closed, canceling idle interval
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:791 on ThreadId(2)
+
+  2025-08-29T03:08:02.323563Z DEBUG hyper_util::client::legacy::connect::dns: close, time.busy: 40.6ms, time.idle: 58.5µs
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/dns.rs:121 on ThreadId(21)
+    in hyper_util::client::legacy::connect::dns::resolve with host: openrouter.ai
+
+  2025-08-29T03:08:02.323706Z DEBUG hyper_util::client::legacy::connect::http: connecting to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:657 on ThreadId(2)
+
+  2025-08-29T03:08:02.323783Z TRACE mio::poll: registering event source with poller: token=Token(139852144687488), interests=READABLE | WRITABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(2)
+
+  2025-08-29T03:08:02.379760Z DEBUG hyper_util::client::legacy::connect::http: connected to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:660 on ThreadId(2)
+
+  2025-08-29T03:08:02.444355Z TRACE hyper_util::client::legacy::client: http1 handshake complete, spawning background dispatcher task
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/client.rs:592 on ThreadId(2)
+
+  2025-08-29T03:08:02.444542Z TRACE hyper_util::client::legacy::pool: checkout dropped for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:713 on ThreadId(2)
+
+  2025-08-29T03:08:02.936912Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:08:02.937032Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:08:02.943905Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:244 on ThreadId(2)
+
+  2025-08-29T03:08:02.944062Z TRACE hyper_util::client::legacy::pool: take? ("https", openrouter.ai): expiration = Some(90s)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:645 on ThreadId(2)
+
+  2025-08-29T03:08:02.944083Z DEBUG hyper_util::client::legacy::pool: reuse idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:270 on ThreadId(2)
+
+  2025-08-29T03:08:02.944207Z TRACE hyper_util::client::legacy::pool: idle interval checking for expired
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:808 on ThreadId(2)
+
+  2025-08-29T03:08:03.070022Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:08:03.070139Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:08:03.070782Z  INFO e2e_openrouter_tools_app: Full response infodump:
+Object {
+    "data": Array [
+        Object {
+            "name": String("Z.AI"),
+            "privacy_policy_url": Null,
+            "slug": String("z-ai"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("WandB"),
+            "privacy_policy_url": String("https://wandb.ai/site/privacy/"),
+            "slug": String("wandb"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Kluster"),
+            "privacy_policy_url": String("https://www.kluster.ai/privacy-policy"),
+            "slug": String("klusterai"),
+            "status_page_url": String("https://status.klusterai.dev/"),
+            "terms_of_service_url": String("https://www.kluster.ai/terms-of-use"),
+        },
+        Object {
+            "name": String("Together"),
+            "privacy_policy_url": String("https://www.together.ai/privacy"),
+            "slug": String("together"),
+            "status_page_url": String("https://status.together.ai/"),
+            "terms_of_service_url": String("https://www.together.ai/terms-of-service"),
+        },
+        Object {
+            "name": String("Cerebras"),
+            "privacy_policy_url": String("https://www.cerebras.ai/privacy-policy"),
+            "slug": String("cerebras"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.cerebras.ai/terms-of-service"),
+        },
+        Object {
+            "name": String("Venice"),
+            "privacy_policy_url": String("https://venice.ai/legal/privacy-policy"),
+            "slug": String("venice"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://venice.ai/legal/tos"),
+        },
+        Object {
+            "name": String("Morph"),
+            "privacy_policy_url": String("https://morphllm.com/privacy"),
+            "slug": String("morph"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Moonshot AI"),
+            "privacy_policy_url": String("https://platform.moonshot.ai/docs/agreement/userprivacy"),
+            "slug": String("moonshotai"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://platform.moonshot.ai/docs/agreement/modeluse"),
+        },
+        Object {
+            "name": String("OpenAI"),
+            "privacy_policy_url": String("https://openai.com/policies/privacy-policy/"),
+            "slug": String("openai"),
+            "status_page_url": String("https://status.openai.com/"),
+            "terms_of_service_url": String("https://openai.com/policies/row-terms-of-use/"),
+        },
+        Object {
+            "name": String("Stealth"),
+            "privacy_policy_url": Null,
+            "slug": String("stealth"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("SambaNova"),
+            "privacy_policy_url": String("https://sambanova.ai/privacy-policy"),
+            "slug": String("sambanova"),
+            "status_page_url": String("https://status.sambanova.ai/"),
+            "terms_of_service_url": String("https://sambanova.ai/terms-and-conditions"),
+        },
+        Object {
+            "name": String("AtlasCloud"),
+            "privacy_policy_url": String("https://www.atlascloud.ai/privacy"),
+            "slug": String("atlas-cloud"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Amazon Bedrock"),
+            "privacy_policy_url": String("https://aws.amazon.com/privacy"),
+            "slug": String("amazon-bedrock"),
+            "status_page_url": String("https://health.aws.amazon.com/health/status"),
+            "terms_of_service_url": String("https://aws.amazon.com/service-terms/"),
+        },
+        Object {
+            "name": String("Groq"),
+            "privacy_policy_url": String("https://groq.com/privacy-policy/"),
+            "slug": String("groq"),
+            "status_page_url": String("https://status.groq.com/"),
+            "terms_of_service_url": String("https://groq.com/terms-of-use/"),
+        },
+        Object {
+            "name": String("Featherless"),
+            "privacy_policy_url": String("https://featherless.ai/privacy"),
+            "slug": String("featherless"),
+            "status_page_url": String("https://featherless.ai/status"),
+            "terms_of_service_url": String("https://featherless.ai/terms"),
+        },
+        Object {
+            "name": String("NextBit"),
+            "privacy_policy_url": String("https://www.nextbit256.com/docs/privacy-policy"),
+            "slug": String("nextbit"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.nextbit256.com/docs/terms-of-service"),
+        },
+        Object {
+            "name": String("Atoma"),
+            "privacy_policy_url": Null,
+            "slug": String("atoma"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://atoma.network/terms_of_service"),
+        },
+        Object {
+            "name": String("AI21"),
+            "privacy_policy_url": String("https://www.ai21.com/privacy-policy/"),
+            "slug": String("ai21"),
+            "status_page_url": String("https://status.ai21.com/"),
+            "terms_of_service_url": String("https://www.ai21.com/terms-of-service/"),
+        },
+        Object {
+            "name": String("Minimax"),
+            "privacy_policy_url": String("https://www.minimax.io/platform/protocol/privacy-policy"),
+            "slug": String("minimax"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.minimax.io/platform/protocol/terms-of-service"),
+        },
+        Object {
+            "name": String("BaseTen"),
+            "privacy_policy_url": String("https://www.baseten.co/privacy-policy"),
+            "slug": String("baseten"),
+            "status_page_url": String("https://status.baseten.co/"),
+            "terms_of_service_url": String("https://www.baseten.co/terms-and-conditions"),
+        },
+        Object {
+            "name": String("Mistral"),
+            "privacy_policy_url": String("https://mistral.ai/terms/#privacy-policy"),
+            "slug": String("mistral"),
+            "status_page_url": String("https://status.mistral.ai/"),
+            "terms_of_service_url": String("https://mistral.ai/terms/#terms-of-use"),
+        },
+        Object {
+            "name": String("Anthropic"),
+            "privacy_policy_url": String("https://www.anthropic.com/legal/privacy"),
+            "slug": String("anthropic"),
+            "status_page_url": String("https://status.anthropic.com/"),
+            "terms_of_service_url": String("https://www.anthropic.com/legal/commercial-terms"),
+        },
+        Object {
+            "name": String("Lambda"),
+            "privacy_policy_url": String("https://lambda.ai/legal/privacy-policy"),
+            "slug": String("lambda"),
+            "status_page_url": String("https://status.lambdalabs.com/"),
+            "terms_of_service_url": String("https://lambda.ai/legal/terms-of-service"),
+        },
+        Object {
+            "name": String("Hyperbolic"),
+            "privacy_policy_url": String("https://hyperbolic.xyz/privacy"),
+            "slug": String("hyperbolic"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://hyperbolic.xyz/terms"),
+        },
+        Object {
+            "name": String("NCompass"),
+            "privacy_policy_url": String("https://ncompass.tech/privacy"),
+            "slug": String("ncompass"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://ncompass.tech/terms"),
+        },
+        Object {
+            "name": String("Azure"),
+            "privacy_policy_url": String("https://www.microsoft.com/en-us/privacy/privacystatement"),
+            "slug": String("azure"),
+            "status_page_url": String("https://status.azure.com/"),
+            "terms_of_service_url": String("https://www.microsoft.com/en-us/legal/terms-of-use?oneroute=true"),
+        },
+        Object {
+            "name": String("DeepSeek"),
+            "privacy_policy_url": String("https://chat.deepseek.com/downloads/DeepSeek%20Privacy%20Policy.html"),
+            "slug": String("deepseek"),
+            "status_page_url": String("https://status.deepseek.com/"),
+            "terms_of_service_url": String("https://chat.deepseek.com/downloads/DeepSeek%20Terms%20of%20Use.html"),
+        },
+        Object {
+            "name": String("Crusoe"),
+            "privacy_policy_url": String("https://legal.crusoe.ai/open-router#cloud-privacy-policy"),
+            "slug": String("crusoe"),
+            "status_page_url": String("https://status.crusoecloud.com/"),
+            "terms_of_service_url": String("https://legal.crusoe.ai/open-router#managed-inference-tos-open-router"),
+        },
+        Object {
+            "name": String("Cohere"),
+            "privacy_policy_url": String("https://cohere.com/privacy"),
+            "slug": String("cohere"),
+            "status_page_url": String("https://status.cohere.ai/"),
+            "terms_of_service_url": String("https://cohere.com/terms-of-use"),
+        },
+        Object {
+            "name": String("Google"),
+            "privacy_policy_url": String("https://cloud.google.com/terms/cloud-privacy-notice"),
+            "slug": String("google-vertex"),
+            "status_page_url": String("https://status.cloud.google.com/products/sdXM79fz1FS6ekNpu37K/history"),
+            "terms_of_service_url": String("https://cloud.google.com/terms/"),
+        },
+        Object {
+            "name": String("Mancer 2"),
+            "privacy_policy_url": String("https://mancer.tech/privacy"),
+            "slug": String("mancer"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://mancer.tech/terms"),
+        },
+        Object {
+            "name": String("Novita"),
+            "privacy_policy_url": String("https://novita.ai/legal/privacy-policy"),
+            "slug": String("novita"),
+            "status_page_url": String("https://status.novita.ai/"),
+            "terms_of_service_url": String("https://novita.ai/legal/terms-of-service"),
+        },
+        Object {
+            "name": String("Perplexity"),
+            "privacy_policy_url": String("https://www.perplexity.ai/hub/legal/privacy-policy"),
+            "slug": String("perplexity"),
+            "status_page_url": String("https://status.perplexity.ai/"),
+            "terms_of_service_url": String("https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service"),
+        },
+        Object {
+            "name": String("Avian"),
+            "privacy_policy_url": String("https://avian.io/privacy"),
+            "slug": String("avian"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://avian.io/terms"),
+        },
+        Object {
+            "name": String("SiliconFlow"),
+            "privacy_policy_url": Null,
+            "slug": String("siliconflow"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Switchpoint"),
+            "privacy_policy_url": Null,
+            "slug": String("switchpoint"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Inflection"),
+            "privacy_policy_url": String("https://inflection.ai/privacy-policy"),
+            "slug": String("inflection"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://developers.inflection.ai/tos"),
+        },
+        Object {
+            "name": String("Fireworks"),
+            "privacy_policy_url": String("https://fireworks.ai/privacy-policy"),
+            "slug": String("fireworks"),
+            "status_page_url": String("https://status.fireworks.ai/"),
+            "terms_of_service_url": String("https://fireworks.ai/terms-of-service"),
+        },
+        Object {
+            "name": String("xAI"),
+            "privacy_policy_url": String("https://x.ai/legal/privacy-policy"),
+            "slug": String("xai"),
+            "status_page_url": String("https://status.x.ai/"),
+            "terms_of_service_url": String("https://x.ai/legal/terms-of-service-enterprise"),
+        },
+        Object {
+            "name": String("Google AI Studio"),
+            "privacy_policy_url": String("https://cloud.google.com/terms/cloud-privacy-notice"),
+            "slug": String("google-ai-studio"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://cloud.google.com/terms/"),
+        },
+        Object {
+            "name": String("Infermatic"),
+            "privacy_policy_url": String("https://infermatic.ai/privacy-policy/"),
+            "slug": String("infermatic"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://infermatic.ai/terms-and-conditions/"),
+        },
+        Object {
+            "name": String("InferenceNet"),
+            "privacy_policy_url": String("https://inference.net/privacy-policy"),
+            "slug": String("inference-net"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://inference.net/terms-of-service"),
+        },
+        Object {
+            "name": String("Inception"),
+            "privacy_policy_url": String("https://www.inceptionlabs.ai/terms#privacy-policy"),
+            "slug": String("inception"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.inceptionlabs.ai/terms"),
+        },
+        Object {
+            "name": String("Nebius"),
+            "privacy_policy_url": String("https://docs.nebius.com/legal/studio/privacy/"),
+            "slug": String("nebius"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://docs.nebius.com/legal/studio/terms-of-use/"),
+        },
+        Object {
+            "name": String("Alibaba"),
+            "privacy_policy_url": String("https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-privacy-policy"),
+            "slug": String("alibaba"),
+            "status_page_url": String("https://status.alibabacloud.com/"),
+            "terms_of_service_url": String("https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service-v-3-8-0"),
+        },
+        Object {
+            "name": String("Friendli"),
+            "privacy_policy_url": String("https://friendli.ai/privacypolicy"),
+            "slug": String("friendli"),
+            "status_page_url": String("https://status.friendli.ai/"),
+            "terms_of_service_url": String("https://friendli.ai/terms-of-service"),
+        },
+        Object {
+            "name": String("Chutes"),
+            "privacy_policy_url": Null,
+            "slug": String("chutes"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://chutes.ai/tos"),
+        },
+        Object {
+            "name": String("Targon"),
+            "privacy_policy_url": String("https://targon.com/privacy"),
+            "slug": String("targon"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://targon.com/terms"),
+        },
+        Object {
+            "name": String("Ubicloud"),
+            "privacy_policy_url": String("https://www.ubicloud.com/docs/about/privacy-policy"),
+            "slug": String("ubicloud"),
+            "status_page_url": String("https://status.ubicloud.com/"),
+            "terms_of_service_url": String("https://www.ubicloud.com/docs/about/terms-of-service"),
+        },
+        Object {
+            "name": String("Cloudflare"),
+            "privacy_policy_url": String("https://developers.cloudflare.com/workers-ai/privacy"),
+            "slug": String("cloudflare"),
+            "status_page_url": String("https://www.cloudflarestatus.com/"),
+            "terms_of_service_url": String("https://www.cloudflare.com/service-specific-terms-developer-platform/#developer-platform-terms"),
+        },
+        Object {
+            "name": String("AionLabs"),
+            "privacy_policy_url": String("https://www.aionlabs.ai/privacy-policy/"),
+            "slug": String("aion-labs"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.aionlabs.ai/terms/"),
+        },
+        Object {
+            "name": String("Liquid"),
+            "privacy_policy_url": String("https://www.liquid.ai/privacy-policy"),
+            "slug": String("liquid"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.liquid.ai/terms-conditions"),
+        },
+        Object {
+            "name": String("DeepInfra"),
+            "privacy_policy_url": String("https://deepinfra.com/privacy"),
+            "slug": String("deepinfra"),
+            "status_page_url": String("https://status.deepinfra.com/"),
+            "terms_of_service_url": String("https://deepinfra.com/terms"),
+        },
+        Object {
+            "name": String("Nineteen"),
+            "privacy_policy_url": Null,
+            "slug": String("nineteen"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://nineteen.ai/tos"),
+        },
+        Object {
+            "name": String("Enfer"),
+            "privacy_policy_url": String("https://enfer.ai/privacy-policy"),
+            "slug": String("enfer"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://enfer.ai/privacy-policy"),
+        },
+        Object {
+            "name": String("OpenInference"),
+            "privacy_policy_url": String("https://www.openinference.xyz/terms"),
+            "slug": String("open-inference"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.openinference.xyz/terms"),
+        },
+        Object {
+            "name": String("CrofAI"),
+            "privacy_policy_url": String("https://ai.nahcrof.com/privacy"),
+            "slug": String("crofai"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+        Object {
+            "name": String("Phala"),
+            "privacy_policy_url": String("https://red-pill.ai/privacy"),
+            "slug": String("phala"),
+            "status_page_url": String("https://status.phala.network/"),
+            "terms_of_service_url": String("https://red-pill.ai/terms"),
+        },
+        Object {
+            "name": String("Meta"),
+            "privacy_policy_url": String("https://www.facebook.com/privacy/policy/"),
+            "slug": String("meta"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://llama.developer.meta.com/legal/terms-of-service"),
+        },
+        Object {
+            "name": String("Parasail"),
+            "privacy_policy_url": String("https://www.parasail.io/legal/privacy-policy"),
+            "slug": String("parasail"),
+            "status_page_url": Null,
+            "terms_of_service_url": String("https://www.parasail.io/legal/terms"),
+        },
+        Object {
+            "name": String("GMICloud"),
+            "privacy_policy_url": String("https://docs.gmicloud.ai/privacy"),
+            "slug": String("gmicloud"),
+            "status_page_url": Null,
+            "terms_of_service_url": Null,
+        },
+    ],
+}
+
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.012474Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparam[0m: ":create param { function_id: Uuid, type_id: Uuid, at: Validity => is_mutable: Bool, is_self: Bool, name: String?, param_index: Int }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:7 on ThreadId(2)
+
+  2025-08-29T03:26:47.013576Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.013645Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mattribute[0m: ":create attribute { owner_id: Uuid, at: Validity => name: String, index: Int, args: [String], value: String? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:55 on ThreadId(2)
+
+  2025-08-29T03:26:47.014032Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.014083Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mvariant[0m: ":create variant { id: Uuid, owner_id: Uuid, at: Validity => name: String, index: Int, discriminant: String?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:21 on ThreadId(2)
+
+  2025-08-29T03:26:47.014389Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.014438Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfield[0m: ":create field { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String?, index: Int, vis_kind: String, vis_path: [String]?, cfgs: [String]? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:40 on ThreadId(2)
+
+  2025-08-29T03:26:47.014758Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.014804Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_type[0m: ":create generic_type { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid], default: Uuid? }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T03:26:47.015094Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.015140Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_const[0m: ":create generic_const { id: Uuid, owner_id: Uuid, type_id: Uuid, at: Validity => name: String, param_index: Int, kind: String }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:92 on ThreadId(2)
+
+  2025-08-29T03:26:47.015404Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.015448Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mgeneric_lifetime[0m: ":create generic_lifetime { id: Uuid, owner_id: Uuid, at: Validity => name: String, param_index: Int, kind: String, bounds: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/secondary_nodes.rs:82 on ThreadId(2)
+
+  2025-08-29T03:26:47.015736Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.015787Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mconst[0m: ":create const { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:31 on ThreadId(2)
+
+  2025-08-29T03:26:47.016185Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.016234Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158menum[0m: ":create enum { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, variants: [Uuid], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:51 on ThreadId(2)
+
+  2025-08-29T03:26:47.016585Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.016641Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction[0m: ":create function { id: Uuid, at: Validity => name: String, docstring: String?, vis_kind: String, vis_path: [String]?, span: [Int; 2], tracking_hash: Uuid, cfgs: [String], return_type_id: Uuid?, body: String?, module_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:13 on ThreadId(2)
+
+  2025-08-29T03:26:47.017006Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.017055Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl[0m: ":create impl { id: Uuid, at: Validity => self_type: Uuid, span: [Int; 2], trait_type: Uuid?, methods: [Uuid]?, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:71 on ThreadId(2)
+
+  2025-08-29T03:26:47.017379Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.017428Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimport[0m: ":create import { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String?, vis_path: [String]?, cfgs: [String], source_path: [String], visible_name: String, original_name: String?, is_glob: Bool, is_self_import: Bool, import_kind: String, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:88 on ThreadId(2)
+
+  2025-08-29T03:26:47.017800Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.017849Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro[0m: ":create macro { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], kind: String, proc_kind: String?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:108 on ThreadId(2)
+
+  2025-08-29T03:26:47.018204Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.018254Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmodule[0m: ":create module { id: Uuid, at: Validity => name: String, path: [String], vis_kind: String, vis_path: [String]?, docstring: String?, span: [Int; 2], tracking_hash: Uuid, module_kind: String, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:133 on ThreadId(2)
+
+  2025-08-29T03:26:47.018601Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.018653Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstatic[0m: ":create static { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, ty_id: Uuid, is_mutable: Bool, value: String?, docstring: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:151 on ThreadId(2)
+
+  2025-08-29T03:26:47.019009Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.019056Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mstruct[0m: ":create struct { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:171 on ThreadId(2)
+
+  2025-08-29T03:26:47.019391Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.019438Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait[0m: ":create trait { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, methods: [Uuid]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:189 on ThreadId(2)
+
+  2025-08-29T03:26:47.019787Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.019834Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtype_alias[0m: ":create type_alias { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, ty_id: Uuid, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:206 on ThreadId(2)
+
+  2025-08-29T03:26:47.020178Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.020223Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munion[0m: ":create union { id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, tracking_hash: Uuid, cfgs: [String]?, embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/primary_nodes.rs:224 on ThreadId(2)
+
+  2025-08-29T03:26:47.020553Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.020597Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfile_mod[0m: ":create file_mod { owner_id: Uuid, at: Validity => file_path: String, file_docs: String?, items: [Uuid], namespace: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/subnode_variants.rs:8 on ThreadId(2)
+
+  2025-08-29T03:26:47.020863Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.020909Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmethod[0m: ":create method { id: Uuid, owner_id: Uuid, at: Validity => name: String, span: [Int; 2], vis_kind: String, vis_path: [String]?, docstring: String?, body: String?, tracking_hash: Uuid, cfgs: [String], embedding: <F32; 384>? }"
+    at crates/ingest/ploke-transform/src/schema/assoc_nodes.rs:10 on ThreadId(2)
+
+  2025-08-29T03:26:47.021259Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.021545Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnamed_type[0m: ":create named_type { type_id: Uuid, at: Validity => path: [String], is_fully_qualified: Bool }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:26 on ThreadId(2)
+
+  2025-08-29T03:26:47.021575Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.021843Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mreference_type[0m: ":create reference_type { type_id: Uuid, at: Validity => lifetime: String?, is_mutable: Bool, references_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:33 on ThreadId(2)
+
+  2025-08-29T03:26:47.021873Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.022120Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mslice_type[0m: ":create slice_type { type_id: Uuid, at: Validity => element_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:42 on ThreadId(2)
+
+  2025-08-29T03:26:47.022150Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.022402Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158marray_type[0m: ":create array_type { type_id: Uuid, at: Validity => element_type: Uuid, size: Int? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:48 on ThreadId(2)
+
+  2025-08-29T03:26:47.022432Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.022690Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtuple_type[0m: ":create tuple_type { type_id: Uuid, at: Validity => element_types: [Uuid] }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:58 on ThreadId(2)
+
+  2025-08-29T03:26:47.022720Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.022978Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mfunction_type[0m: ":create function_type { type_id: Uuid, at: Validity => is_unsafe: Bool, is_extern: Bool, abi: String? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:64 on ThreadId(2)
+
+  2025-08-29T03:26:47.023008Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.023248Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mnever_type[0m: ":create never_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:72 on ThreadId(2)
+
+  2025-08-29T03:26:47.023278Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.023511Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158minferred_type[0m: ":create inferred_type { type_id: Uuid, at: Validity =>  }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:77 on ThreadId(2)
+
+  2025-08-29T03:26:47.023541Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.023802Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mraw_pointer_type[0m: ":create raw_pointer_type { type_id: Uuid, at: Validity => is_mutable: Bool, points_to: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:83 on ThreadId(2)
+
+  2025-08-29T03:26:47.023832Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.024101Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mtrait_object_type[0m: ":create trait_object_type { type_id: Uuid, at: Validity => dyn_token: Bool, trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:90 on ThreadId(2)
+
+  2025-08-29T03:26:47.024132Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.024392Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mimpl_trait_type[0m: ":create impl_trait_type { type_id: Uuid, at: Validity => trait_bounds: [Uuid]? }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:97 on ThreadId(2)
+
+  2025-08-29T03:26:47.024422Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.024675Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mparen_type[0m: ":create paren_type { type_id: Uuid, at: Validity => inner_type: Uuid }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:103 on ThreadId(2)
+
+  2025-08-29T03:26:47.024705Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.024963Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mmacro_type[0m: ":create macro_type { type_id: Uuid, at: Validity => name: String, tokens: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:110 on ThreadId(2)
+
+  2025-08-29T03:26:47.024994Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.025238Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158munknown_type[0m: ":create unknown_type { type_id: Uuid, at: Validity => type_str: String }"
+    at crates/ingest/ploke-transform/src/schema/types.rs:119 on ThreadId(2)
+
+  2025-08-29T03:26:47.025268Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.025288Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158msyntax_edge[0m: ":create syntax_edge { source_id: Uuid, target_id: Uuid, at: Validity => relation_kind: String, source_kind: String, target_kind: String }"
+    at crates/ingest/ploke-transform/src/schema/edges.rs:18 on ThreadId(2)
+
+  2025-08-29T03:26:47.025541Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.025584Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mcrate_context[0m: ":create crate_context { id: Uuid, at: Validity => name: String, version: String, namespace: Uuid, root_path: String, files: [String] }"
+    at crates/ingest/ploke-transform/src/schema/crate_node.rs:7 on ThreadId(2)
+
+  2025-08-29T03:26:47.025861Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.025902Z TRACE db: [1;38;2;122;162;247mPrinting schema[0m [38;2;255;202;158mbm25_doc_meta[0m: ":create bm25_doc_meta { id: Uuid, at: Validity => tracking_hash: Uuid, tokenizer_version: String, token_length: Int }"
+    at crates/ingest/ploke-transform/src/schema/meta.rs:11 on ThreadId(2)
+
+  2025-08-29T03:26:47.026146Z TRACE db: [3;38;2;255;255;158m  Db return: [0m NamedRows { headers: ["status"], rows: [["OK"]], next: None }
+    at crates/ingest/ploke-transform/src/schema/mod.rs:266 on ThreadId(2)
+
+  2025-08-29T03:26:47.108180Z TRACE mio::poll: registering event source with poller: token=Token(1), interests=READABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(20)
+
+  2025-08-29T03:26:47.218605Z TRACE hyper_util::client::legacy::pool: checkout waiting for idle connection: ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:671 on ThreadId(2)
+
+  2025-08-29T03:26:47.218699Z DEBUG reqwest::connect: starting new connection: https://openrouter.ai/
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.15/src/connect.rs:625 on ThreadId(2)
+
+  2025-08-29T03:26:47.218728Z TRACE hyper_util::client::legacy::connect::http: Http::connect; scheme=Some("https"), host=Some("openrouter.ai"), port=None
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:383 on ThreadId(2)
+
+  2025-08-29T03:26:47.227778Z TRACE ploke_tui::app::message_item: close, time.busy: 23.2µs, time.idle: 5.03µs
+    at crates/ploke-tui/src/app/message_item.rs:24 on ThreadId(2)
+    in ploke_tui::app::message_item::calc_height with width: 73
+    in ploke_tui::app::message_item::measure_messages with conversation_width: 74, _selected_index: Some(0)
+
+  2025-08-29T03:26:47.227842Z TRACE ploke_tui::app::message_item: close, time.busy: 103µs, time.idle: 16.2µs
+    at crates/ploke-tui/src/app/message_item.rs:55 on ThreadId(2)
+    in ploke_tui::app::message_item::measure_messages with conversation_width: 74, _selected_index: Some(0)
+
+  2025-08-29T03:26:47.227901Z TRACE ploke_tui::app::message_item: close, time.busy: 35.5µs, time.idle: 4.88µs
+    at crates/ploke-tui/src/app/message_item.rs:77 on ThreadId(2)
+    in ploke_tui::app::message_item::render_messages with conversation_width: 74, conversation_area: Rect { x: 0, y: 1, width: 80, height: 16 }, offset_y: 0, selected_index: Some(0)
+
+  2025-08-29T03:26:47.228031Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:508 on ThreadId(2)
+
+  2025-08-29T03:26:47.261433Z DEBUG hyper_util::client::legacy::connect::dns: close, time.busy: 42.5ms, time.idle: 175µs
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/dns.rs:121 on ThreadId(21)
+    in hyper_util::client::legacy::connect::dns::resolve with host: openrouter.ai
+
+  2025-08-29T03:26:47.261634Z DEBUG hyper_util::client::legacy::connect::http: connecting to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:657 on ThreadId(2)
+
+  2025-08-29T03:26:47.261704Z TRACE mio::poll: registering event source with poller: token=Token(140285313484672), interests=READABLE | WRITABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(2)
+
+  2025-08-29T03:26:47.326647Z DEBUG hyper_util::client::legacy::connect::http: connected to 104.18.2.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:660 on ThreadId(2)
+
+  2025-08-29T03:26:47.402757Z TRACE hyper_util::client::legacy::client: http1 handshake complete, spawning background dispatcher task
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/client.rs:592 on ThreadId(2)
+
+  2025-08-29T03:26:47.402927Z TRACE hyper_util::client::legacy::pool: checkout dropped for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:713 on ThreadId(2)
+
+  2025-08-29T03:26:47.916728Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:26:47.916815Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:26:47.931545Z TRACE hyper_util::client::legacy::pool: checkout waiting for idle connection: ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:671 on ThreadId(2)
+
+  2025-08-29T03:26:47.931605Z DEBUG reqwest::connect: starting new connection: https://openrouter.ai/
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.15/src/connect.rs:625 on ThreadId(2)
+
+  2025-08-29T03:26:47.931641Z TRACE hyper_util::client::legacy::connect::http: Http::connect; scheme=Some("https"), host=Some("openrouter.ai"), port=None
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:383 on ThreadId(2)
+
+  2025-08-29T03:26:47.931802Z TRACE mio::poll: deregistering event source from poller
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:702 on ThreadId(2)
+
+  2025-08-29T03:26:47.932419Z TRACE hyper_util::client::legacy::pool: pool closed, canceling idle interval
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:791 on ThreadId(2)
+
+  2025-08-29T03:26:47.964787Z DEBUG hyper_util::client::legacy::connect::dns: close, time.busy: 33.0ms, time.idle: 86.8µs
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/dns.rs:121 on ThreadId(21)
+    in hyper_util::client::legacy::connect::dns::resolve with host: openrouter.ai
+
+  2025-08-29T03:26:47.964935Z DEBUG hyper_util::client::legacy::connect::http: connecting to 104.18.3.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:657 on ThreadId(2)
+
+  2025-08-29T03:26:47.965024Z TRACE mio::poll: registering event source with poller: token=Token(140285332459392), interests=READABLE | WRITABLE
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.0.3/src/poll.rs:571 on ThreadId(2)
+
+  2025-08-29T03:26:47.997689Z DEBUG hyper_util::client::legacy::connect::http: connected to 104.18.3.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:660 on ThreadId(2)
+
+  2025-08-29T03:26:48.045666Z TRACE hyper_util::client::legacy::client: http1 handshake complete, spawning background dispatcher task
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/client.rs:592 on ThreadId(2)
+
+  2025-08-29T03:26:48.045873Z TRACE hyper_util::client::legacy::pool: checkout dropped for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:713 on ThreadId(2)
+
+  2025-08-29T03:26:48.477944Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:26:48.478034Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:26:48.484843Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:245 on ThreadId(2)
+
+  2025-08-29T03:26:48.484999Z TRACE hyper_util::client::legacy::pool: take? ("https", openrouter.ai): expiration = Some(90s)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:645 on ThreadId(2)
+
+  2025-08-29T03:26:48.485024Z DEBUG hyper_util::client::legacy::pool: reuse idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:270 on ThreadId(2)
+
+  2025-08-29T03:26:48.485134Z TRACE hyper_util::client::legacy::pool: idle interval checking for expired
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:808 on ThreadId(2)
+
+  2025-08-29T03:26:48.610431Z TRACE hyper_util::client::legacy::pool: put; add idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:349 on ThreadId(2)
+
+  2025-08-29T03:26:48.610522Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-08-29T03:26:48.611052Z DEBUG e2e_openrouter_tools_app: providers_map:
+ProvidersResponse {
+    data: [
+        Provider {
+            name: "Z.AI",
+            privacy_policy_url: None,
+            slug: "z-ai",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "WandB",
+            privacy_policy_url: Some(
+                "https://wandb.ai/site/privacy/",
+            ),
+            slug: "wandb",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Kluster",
+            privacy_policy_url: Some(
+                "https://www.kluster.ai/privacy-policy",
+            ),
+            slug: "klusterai",
+            status_page_url: Some(
+                "https://status.klusterai.dev/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Together",
+            privacy_policy_url: Some(
+                "https://www.together.ai/privacy",
+            ),
+            slug: "together",
+            status_page_url: Some(
+                "https://status.together.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Cerebras",
+            privacy_policy_url: Some(
+                "https://www.cerebras.ai/privacy-policy",
+            ),
+            slug: "cerebras",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Venice",
+            privacy_policy_url: Some(
+                "https://venice.ai/legal/privacy-policy",
+            ),
+            slug: "venice",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Morph",
+            privacy_policy_url: Some(
+                "https://morphllm.com/privacy",
+            ),
+            slug: "morph",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Moonshot AI",
+            privacy_policy_url: Some(
+                "https://platform.moonshot.ai/docs/agreement/userprivacy",
+            ),
+            slug: "moonshotai",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "OpenAI",
+            privacy_policy_url: Some(
+                "https://openai.com/policies/privacy-policy/",
+            ),
+            slug: "openai",
+            status_page_url: Some(
+                "https://status.openai.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Stealth",
+            privacy_policy_url: None,
+            slug: "stealth",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "SambaNova",
+            privacy_policy_url: Some(
+                "https://sambanova.ai/privacy-policy",
+            ),
+            slug: "sambanova",
+            status_page_url: Some(
+                "https://status.sambanova.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "AtlasCloud",
+            privacy_policy_url: Some(
+                "https://www.atlascloud.ai/privacy",
+            ),
+            slug: "atlas-cloud",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Amazon Bedrock",
+            privacy_policy_url: Some(
+                "https://aws.amazon.com/privacy",
+            ),
+            slug: "amazon-bedrock",
+            status_page_url: Some(
+                "https://health.aws.amazon.com/health/status",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Groq",
+            privacy_policy_url: Some(
+                "https://groq.com/privacy-policy/",
+            ),
+            slug: "groq",
+            status_page_url: Some(
+                "https://status.groq.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Featherless",
+            privacy_policy_url: Some(
+                "https://featherless.ai/privacy",
+            ),
+            slug: "featherless",
+            status_page_url: Some(
+                "https://featherless.ai/status",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "NextBit",
+            privacy_policy_url: Some(
+                "https://www.nextbit256.com/docs/privacy-policy",
+            ),
+            slug: "nextbit",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Atoma",
+            privacy_policy_url: None,
+            slug: "atoma",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "AI21",
+            privacy_policy_url: Some(
+                "https://www.ai21.com/privacy-policy/",
+            ),
+            slug: "ai21",
+            status_page_url: Some(
+                "https://status.ai21.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Minimax",
+            privacy_policy_url: Some(
+                "https://www.minimax.io/platform/protocol/privacy-policy",
+            ),
+            slug: "minimax",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "BaseTen",
+            privacy_policy_url: Some(
+                "https://www.baseten.co/privacy-policy",
+            ),
+            slug: "baseten",
+            status_page_url: Some(
+                "https://status.baseten.co/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Mistral",
+            privacy_policy_url: Some(
+                "https://mistral.ai/terms/#privacy-policy",
+            ),
+            slug: "mistral",
+            status_page_url: Some(
+                "https://status.mistral.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Anthropic",
+            privacy_policy_url: Some(
+                "https://www.anthropic.com/legal/privacy",
+            ),
+            slug: "anthropic",
+            status_page_url: Some(
+                "https://status.anthropic.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Lambda",
+            privacy_policy_url: Some(
+                "https://lambda.ai/legal/privacy-policy",
+            ),
+            slug: "lambda",
+            status_page_url: Some(
+                "https://status.lambdalabs.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Hyperbolic",
+            privacy_policy_url: Some(
+                "https://hyperbolic.xyz/privacy",
+            ),
+            slug: "hyperbolic",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "NCompass",
+            privacy_policy_url: Some(
+                "https://ncompass.tech/privacy",
+            ),
+            slug: "ncompass",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Azure",
+            privacy_policy_url: Some(
+                "https://www.microsoft.com/en-us/privacy/privacystatement",
+            ),
+            slug: "azure",
+            status_page_url: Some(
+                "https://status.azure.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "DeepSeek",
+            privacy_policy_url: Some(
+                "https://chat.deepseek.com/downloads/DeepSeek%20Privacy%20Policy.html",
+            ),
+            slug: "deepseek",
+            status_page_url: Some(
+                "https://status.deepseek.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Crusoe",
+            privacy_policy_url: Some(
+                "https://legal.crusoe.ai/open-router#cloud-privacy-policy",
+            ),
+            slug: "crusoe",
+            status_page_url: Some(
+                "https://status.crusoecloud.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Cohere",
+            privacy_policy_url: Some(
+                "https://cohere.com/privacy",
+            ),
+            slug: "cohere",
+            status_page_url: Some(
+                "https://status.cohere.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Google",
+            privacy_policy_url: Some(
+                "https://cloud.google.com/terms/cloud-privacy-notice",
+            ),
+            slug: "google-vertex",
+            status_page_url: Some(
+                "https://status.cloud.google.com/products/sdXM79fz1FS6ekNpu37K/history",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Mancer 2",
+            privacy_policy_url: Some(
+                "https://mancer.tech/privacy",
+            ),
+            slug: "mancer",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Novita",
+            privacy_policy_url: Some(
+                "https://novita.ai/legal/privacy-policy",
+            ),
+            slug: "novita",
+            status_page_url: Some(
+                "https://status.novita.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Perplexity",
+            privacy_policy_url: Some(
+                "https://www.perplexity.ai/hub/legal/privacy-policy",
+            ),
+            slug: "perplexity",
+            status_page_url: Some(
+                "https://status.perplexity.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Avian",
+            privacy_policy_url: Some(
+                "https://avian.io/privacy",
+            ),
+            slug: "avian",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "SiliconFlow",
+            privacy_policy_url: None,
+            slug: "siliconflow",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Switchpoint",
+            privacy_policy_url: None,
+            slug: "switchpoint",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Inflection",
+            privacy_policy_url: Some(
+                "https://inflection.ai/privacy-policy",
+            ),
+            slug: "inflection",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Fireworks",
+            privacy_policy_url: Some(
+                "https://fireworks.ai/privacy-policy",
+            ),
+            slug: "fireworks",
+            status_page_url: Some(
+                "https://status.fireworks.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "xAI",
+            privacy_policy_url: Some(
+                "https://x.ai/legal/privacy-policy",
+            ),
+            slug: "xai",
+            status_page_url: Some(
+                "https://status.x.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Google AI Studio",
+            privacy_policy_url: Some(
+                "https://cloud.google.com/terms/cloud-privacy-notice",
+            ),
+            slug: "google-ai-studio",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Infermatic",
+            privacy_policy_url: Some(
+                "https://infermatic.ai/privacy-policy/",
+            ),
+            slug: "infermatic",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "InferenceNet",
+            privacy_policy_url: Some(
+                "https://inference.net/privacy-policy",
+            ),
+            slug: "inference-net",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Inception",
+            privacy_policy_url: Some(
+                "https://www.inceptionlabs.ai/terms#privacy-policy",
+            ),
+            slug: "inception",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Nebius",
+            privacy_policy_url: Some(
+                "https://docs.nebius.com/legal/studio/privacy/",
+            ),
+            slug: "nebius",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Alibaba",
+            privacy_policy_url: Some(
+                "https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-privacy-policy",
+            ),
+            slug: "alibaba",
+            status_page_url: Some(
+                "https://status.alibabacloud.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Friendli",
+            privacy_policy_url: Some(
+                "https://friendli.ai/privacypolicy",
+            ),
+            slug: "friendli",
+            status_page_url: Some(
+                "https://status.friendli.ai/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Chutes",
+            privacy_policy_url: None,
+            slug: "chutes",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Targon",
+            privacy_policy_url: Some(
+                "https://targon.com/privacy",
+            ),
+            slug: "targon",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Ubicloud",
+            privacy_policy_url: Some(
+                "https://www.ubicloud.com/docs/about/privacy-policy",
+            ),
+            slug: "ubicloud",
+            status_page_url: Some(
+                "https://status.ubicloud.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Cloudflare",
+            privacy_policy_url: Some(
+                "https://developers.cloudflare.com/workers-ai/privacy",
+            ),
+            slug: "cloudflare",
+            status_page_url: Some(
+                "https://www.cloudflarestatus.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "AionLabs",
+            privacy_policy_url: Some(
+                "https://www.aionlabs.ai/privacy-policy/",
+            ),
+            slug: "aion-labs",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Liquid",
+            privacy_policy_url: Some(
+                "https://www.liquid.ai/privacy-policy",
+            ),
+            slug: "liquid",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "DeepInfra",
+            privacy_policy_url: Some(
+                "https://deepinfra.com/privacy",
+            ),
+            slug: "deepinfra",
+            status_page_url: Some(
+                "https://status.deepinfra.com/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Nineteen",
+            privacy_policy_url: None,
+            slug: "nineteen",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Enfer",
+            privacy_policy_url: Some(
+                "https://enfer.ai/privacy-policy",
+            ),
+            slug: "enfer",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "OpenInference",
+            privacy_policy_url: Some(
+                "https://www.openinference.xyz/terms",
+            ),
+            slug: "open-inference",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "CrofAI",
+            privacy_policy_url: Some(
+                "https://ai.nahcrof.com/privacy",
+            ),
+            slug: "crofai",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Phala",
+            privacy_policy_url: Some(
+                "https://red-pill.ai/privacy",
+            ),
+            slug: "phala",
+            status_page_url: Some(
+                "https://status.phala.network/",
+            ),
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Meta",
+            privacy_policy_url: Some(
+                "https://www.facebook.com/privacy/policy/",
+            ),
+            slug: "meta",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "Parasail",
+            privacy_policy_url: Some(
+                "https://www.parasail.io/legal/privacy-policy",
+            ),
+            slug: "parasail",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+        Provider {
+            name: "GMICloud",
+            privacy_policy_url: Some(
+                "https://docs.gmicloud.ai/privacy",
+            ),
+            slug: "gmicloud",
+            status_page_url: None,
+            terns_of_service_url: None,
+        },
+    ],
+}
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:292 on ThreadId(2)
+
+  2025-08-29T03:33:49.303261Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
+
+  2025-08-29T03:40:18.954899Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
+
+  2025-08-29T03:42:18.177467Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
+
+  2025-08-29T03:49:17.469127Z  INFO e2e_openrouter_tools_app: models/user returned 323 entries
+    at crates/ploke-tui/tests/e2e_openrouter_tools_app.rs:246 on ThreadId(2)
+

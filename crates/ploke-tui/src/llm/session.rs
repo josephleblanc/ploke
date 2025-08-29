@@ -79,7 +79,7 @@ impl<'a> RequestSession<'a> {
             // Brief, structured dispatch log for efficient triage
             let tool_names: Vec<&str> = self.tools.iter().map(|t| t.function.name).collect();
             let url = format!("{}/chat/completions", self.provider.base_url);
-            tracing::info!(
+            tracing::debug!(
                 model = %self.provider.model,
                 base_url = %self.provider.base_url,
                 full_url = %url,
@@ -108,6 +108,7 @@ impl<'a> RequestSession<'a> {
 
                 // Deterministic enforcement for tool use: fail fast when endpoint lacks tool support.
                 // Example provider body: {"error":{"message":"No endpoints found that support tool use.", "code":404}}
+                tracing::debug!("raw error body: {}", error_text);
                 let err_msg = match self.handle_404(
                     &mut use_tools,
                     &mut tools_fallback_attempted,

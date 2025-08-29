@@ -5,10 +5,13 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    EventBus, EventBusCaps,
+    AppEvent, EventBus, EventBusCaps, EventPriority,
     app::App,
-    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState},
+    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager},
     chat_history::ChatHistory,
+    file_man::FileManager,
+    llm::llm_manager,
+    observability, run_event_bus,
     user_config::{UserConfig, default_model},
 };
 use ploke_db::{bm25_index, create_index_primary};
@@ -106,11 +109,43 @@ lazy_static! {
             budget: TokenBudget::default(),
         });
 
-        // Command channel (not wired to a state_manager loop in tests)
-        let (cmd_tx, _cmd_rx) = mpsc::channel::<StateCommand>(1024);
+        let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+        // Create command channel with backpressure
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+        let (cancellation_token, cancel_handle) = CancellationToken::new();
+        let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        let file_manager = FileManager::new(
+            io_handle.clone(),
+            event_bus.subscribe(EventPriority::Background),
+            event_bus.background_tx.clone(),
+            rag_event_tx.clone(),
+            event_bus.realtime_tx.clone(),
+        );
+
+        tokio::spawn(file_manager.run());
+
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            rag_event_tx,
+        ));
 
         // Build the App
+        // Spawn subsystems with backpressure-aware command sender
         let command_style = config.command_style;
+        tokio::spawn(llm_manager(
+            event_bus.subscribe(EventPriority::Background),
+            state.clone(),
+            cmd_tx.clone(), // Clone for each subsystem
+            event_bus.clone(),
+        ));
+        tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+        tokio::spawn(observability::run_observability(
+            event_bus.clone(),
+            state.clone(),
+        ));
         let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
 
         Arc::new(Mutex::new(app))
