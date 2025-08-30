@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::llm::providers::Author;
 use crate::utils::consts::OPENROUTER_BASE_STR;
 use crate::utils::consts::OPENROUTER_ENDPOINT_STR;
 use crate::utils::de::string_or_f64;
@@ -200,33 +199,62 @@ use std::{convert::TryFrom, str::FromStr};
 /// with OpenRouter's API
 // TODO: need to implement Deserialize on ProvEnd, likely a custom implementation so we can
 // deserialize the `canonical_slug` from the json files into `ProvEnd`.
+#[derive(Debug, Clone)]
 pub struct ProvEnd {
-    pub author: Author,
+    pub author: Arc<str>,
     pub model: Arc<str>,
 }
 
 impl ProvEnd {
-    async fn call_endpoint(&self) {
-        // TODO: Call the endpoint at the url following the pattern in the notes above.
-        // - as near zero-alloc as possible
-        // - zero-copy where possible, but prefer zero-alloc
-        // - defer handling error codes for now, need another function for that (not within this
-        // impl, perhaps a trait). See `llm/mod.rs` for some known errors form OpenRouter +
-        // providers
+    #[tracing::instrument(level = "debug", skip_all, fields(author = %self.author, model = %self.model))]
+    async fn call_endpoint(&self) -> color_eyre::Result<serde_json::Value> {
+        // Use test harness/env helper to obtain URL and API key (dotenv fallback allowed)
+        let op = crate::test_harness::openrouter_env()
+            .ok_or_else(|| color_eyre::eyre::eyre!("OPENROUTER_API_KEY not set"))?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .default_headers(crate::test_harness::default_headers())
+            .build()?;
+
+        let url = op
+            .url
+            .join(&format!("models/{}/{}/endpoints", self.author, self.model))
+            .map_err(|e| color_eyre::eyre::eyre!("Malformed URL: {}", e))?;
+
+        let resp = client
+            .get(url)
+            .bearer_auth(op.key)
+            .header("Accept", "application/json")
+            .send()
+            .await?
+            .error_for_status()?;
+        let v = resp.json::<serde_json::Value>().await?;
+        Ok(v)
     }
 
-    // AI: add tracing for sanity check using `instrument`
-    async fn persist_resp_raw(&self) -> color_eyre::Result<()>{
-        let mut json_outfile = workspace_root();
-        json_outfile.push(MODEL_ENDPOINT_RESP_DIR);
-        // TODO:
-        //  - deserialize to serde_json_value
-        //  - push author/model once known
-        //      - create new dir with name of `author`
-        //      - file should have name `model` + short timestamp and be .json
-        //  - use tracing to log saved filepath
-        //  - note: this will help us understand the response type from the API
-        todo!()
+    #[tracing::instrument(level = "debug", skip_all, fields(author = %self.author, model = %self.model))]
+    async fn persist_resp_raw(&self) -> color_eyre::Result<()> {
+        use std::fs;
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let root = ploke_test_utils::workspace_root();
+        let mut dir = root.clone();
+        dir.push(MODEL_ENDPOINT_RESP_DIR);
+        dir.push(self.author.to_string());
+        fs::create_dir_all(&dir)?;
+
+        // Timestamp suffix for filename
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let mut path = dir.clone();
+        path.push(format!("{}-{}.json", &self.model, ts));
+
+        let v = self.call_endpoint().await?;
+        let mut f = fs::File::create(&path)?;
+        let s = serde_json::to_string_pretty(&v)?;
+        f.write_all(s.as_bytes())?;
+        tracing::info!("saved endpoint response to {}", path.display());
+        Ok(())
     }
 
     // TODO: Think about what else we need to add. We are going to need at least one function here
@@ -242,12 +270,44 @@ impl ProvEnd {
 
 
 
+impl<'de> Deserialize<'de> for ProvEnd {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let mut parts = s.splitn(2, '/');
+        let author_str = parts
+            .next()
+            .ok_or_else(|| serde::de::Error::custom("missing author in canonical_slug"))?;
+        let model_str = parts
+            .next()
+            .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
+        Ok(ProvEnd { author: Arc::<str>::from(author_str), model: Arc::<str>::from(model_str) })
+    }
+}
+
+impl Serialize for ProvEnd {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize back to canonical slug form "author/model"
+        let s = format!("{}/{}", self.author, &self.model);
+        serializer.serialize_str(&s)
+    }
+}
+
+impl std::fmt::Display for ProvEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.author, &self.model)
+    }
+}
 #[derive(Debug)]
 pub enum ProvEndParseError {
     NoPathSegments,
     BadPrefix, // not /api/v1/models/...
     MissingAuthor,
-    InvalidAuthor(String),
     MissingModel,
     BadSuffix,        // not .../endpoints
     TrailingSegments, // extra segments beyond expected
@@ -255,15 +315,13 @@ pub enum ProvEndParseError {
 
 impl std::fmt::Display for ProvEndParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use ProvEndParseError::*;
         match self {
-            NoPathSegments => write!(f, "URL has no path segments"),
-            BadPrefix => write!(f, "expected path to start with /api/v1/models"),
-            MissingAuthor => write!(f, "missing author segment"),
-            InvalidAuthor(s) => write!(f, "invalid author segment: {}", s),
-            MissingModel => write!(f, "missing model segment"),
-            BadSuffix => write!(f, "expected path to end with /endpoints"),
-            TrailingSegments => write!(f, "unexpected trailing path segments"),
+            ProvEndParseError::NoPathSegments => write!(f, "URL has no path segments"),
+            ProvEndParseError::BadPrefix => write!(f, "expected path to start with /api/v1/models"),
+            ProvEndParseError::MissingAuthor => write!(f, "missing author segment"),
+            ProvEndParseError::MissingModel => write!(f, "missing model segment"),
+            ProvEndParseError::BadSuffix => write!(f, "expected path to end with /endpoints"),
+            ProvEndParseError::TrailingSegments => write!(f, "unexpected trailing path segments"),
         }
     }
 }
@@ -284,8 +342,7 @@ impl TryFrom<&Url> for ProvEnd {
 
         // {author}
         let author_str = segs.next().ok_or(ProvEndParseError::MissingAuthor)?;
-        let author = Author::from_str(author_str)
-            .map_err(|_| ProvEndParseError::InvalidAuthor(author_str.to_owned()))?;
+        let author: Arc<str> = Arc::<str>::from(author_str);
 
         // {model}
         let model_str: &str = segs.next().ok_or(ProvEndParseError::MissingModel)?;
@@ -313,13 +370,7 @@ impl TryFrom<&Url> for ProvEnd {
 /// Typed response to deserialize the response from:
 /// https://openrouter.ai/api/v1/endpoints
 pub struct ModelEndpointsResponse {
-    // TODO: Use this for now, then reconsider once we have the download from the call to
-    // `/endpoints` if this is just a duplicate of a similar struct in `openrouter_catalog` or if
-    // there is an actual reason for this to be different.
-    // - need to see response shape before making decision
-    pub data: Vec<ModelEndpoint>
-    // WARN: DO NOT DELETE!
-    // pub data: ModelEndpointsData,
+    pub data: ModelEndpointsData,
 }
 
 impl ModelEndpointsResponse {
@@ -335,12 +386,12 @@ impl ModelEndpointsResponse {
 // response from the call to the `/endpoints` or not. Need more information, leaving it here for
 // now.
 // DO NOT DELETE!
+// UPDATE: After examining project, it appears we are using this struct, but perhaps erroneously?
+// Hard to say. Very possibly this is causing serious errors we have encountered lately in API
+// calls within the App's tool calling loops that prompted us to start refactoring the API + Tool
+// system in the first place.
 ///// Container for the list of model endpoints returned by the OpenRouter API.
-//#[derive(Debug, Clone, Serialize, Deserialize)]
-//pub struct ModelEndpointsData {
-//    /// List of available model endpoints from OpenRouter.
-//    pub endpoints: Vec<ModelEndpoint>,
-//}
+
 
 /// Represents a single model endpoint from OpenRouter's API.
 ///
@@ -367,12 +418,12 @@ pub struct ModelEndpoint {
     pub top_provider: TopProvider,
     #[serde(default)]
     pub pricing: Pricing,
-    #[serde(default)]
     /// For example:
     /// - "canonical_slug": "qwen/qwen3-30b-a3b-thinking-2507",
     /// - "canonical_slug": "x-ai/grok-code-fast-1",
     /// - "canonical_slug": "nousresearch/hermes-4-70b",
-    pub canonical_slug: String,
+    #[serde(rename = "canonical_slug", default)]
+    pub canonical: Option<ProvEnd>,
     #[serde(default)]
     pub context_length: u64,
     #[serde(default)]
@@ -381,6 +432,12 @@ pub struct ModelEndpoint {
     pub per_request_limits: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub supported_parameters: Vec<SupportedParameters>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEndpointsData {
+    /// List of available model endpoints from OpenRouter.
+    pub endpoints: Vec<ModelEndpoint>,
 }
 
 pub(crate) trait SupportsTools {
@@ -529,44 +586,8 @@ pub struct TopProvider {
 }
 
 /// Pricing information for using the model.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Pricing {
-    // Accept either numbers or strings from the API, but keep a numeric type internally.
-    #[serde(deserialize_with = "string_or_f64")]
-    prompt: f64,
-    #[serde(deserialize_with = "string_or_f64")]
-    completion: f64,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    image: Option<f64>,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    request: Option<f64>,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    web_search: Option<f64>,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    internal_reasoning: Option<f64>,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    input_cache_read: Option<f64>,
-    #[serde(
-        deserialize_with = "string_or_f64_opt",
-        skip_serializing_if = "Option::is_none"
-    )]
-    input_cache_write: Option<f64>,
-}
+#[deprecated(note = "Use openrouter_catalog::ModelPricing; this alias will be removed after migration.")]
+pub type Pricing = crate::llm::openrouter::openrouter_catalog::ModelPricing;
 
 // --- serde helpers for flexible number-or-string fields ---
 
@@ -599,40 +620,64 @@ where
 }
 
 /// Lightweight getters so callers can compute price hints without poking at serde internals.
-impl Pricing {
-    pub fn prompt_or_default(&self) -> f64 {
-        self.prompt
-    }
-    pub fn completion_or_default(&self) -> f64 {
-        self.completion
-    }
-}
+
 
 #[cfg(test)]
 mod tests {
-    use reqwest::{Client, ClientBuilder};
+    use super::*;
 
     #[tokio::test]
     #[ignore = "todo"]
     async fn mock_test() -> color_eyre::Result<()> {
-        // test formation of URL + Client
-        todo!()
+        // placeholder
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_call_known_model() -> color_eyre::Result<()> {
-        let author = "qwen";
-        let model = "qwen3-30b-a3b-thinking-2507";
-        // test real call against endpoint w/ 200 response expected
-        // use Client/ClientBuilder
-        todo!()
+        let Some(_op) = crate::test_harness::openrouter_env() else {
+            eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
+            return Ok(());
+        };
+        let prov = ProvEnd { author: std::sync::Arc::<str>::from("qwen"), model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+        let v = prov.call_endpoint().await?;
+        assert!(v.get("data").is_some(), "live response missing data");
+        Ok(())
     }
 
-    // TODO: Add a test that will call a model and save the output to a file with `persist_resp_raw` defined in an env
-    // + gate behind cfg "live_api_tests"
-    
-    // TODO: Add a test that will load all items from workspace_root() + `REL_MODEL_ALL_DATA` and
-    // use serde_json to load them as a `ModelEndpointData`, then iterates over all of them to
-    // verify that we can parse a `ProvEnd` from them. 
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn test_persist_resp_raw_creates_file() -> color_eyre::Result<()> {
+        let Some(_op) = crate::test_harness::openrouter_env() else {
+            eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
+            return Ok(());
+        };
+        let prov = ProvEnd { author: std::sync::Arc::<str>::from("qwen"), model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+        prov.persist_resp_raw().await?;
+        let mut dir = ploke_test_utils::workspace_root();
+        dir.push(MODEL_ENDPOINT_RESP_DIR);
+        dir.push(prov.author.to_string());
+        assert!(dir.exists(), "output dir does not exist");
+        Ok(())
+    }
+
+    #[test]
+    fn prov_end_from_canonical_slug() {
+        #[derive(Deserialize)]
+        struct Wrapper { #[serde(rename = "canonical_slug")] canonical: ProvEnd }
+        let w: Wrapper = serde_json::from_str("{\"canonical_slug\":\"qwen/qwen3-30b-a3b-thinking-2507\"}").expect("parse provend");
+        assert_eq!(w.canonical.author.to_string(), "qwen");
+        assert_eq!(&*w.canonical.model, "qwen3-30b-a3b-thinking-2507");
+        let s = serde_json::to_string(&w.canonical).unwrap();
+        assert_eq!(s.trim_matches('"'), "qwen/qwen3-30b-a3b-thinking-2507");
+    }
+
+    #[test]
+    fn prov_end_try_from_url() {
+        let url = reqwest::Url::parse("https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b-thinking-2507/endpoints").unwrap();
+        let pe = ProvEnd::try_from(&url).expect("try_from url");
+        assert_eq!(pe.author.to_string(), "qwen");
+        assert_eq!(&*pe.model, "qwen3-30b-a3b-thinking-2507");
+    }
 }

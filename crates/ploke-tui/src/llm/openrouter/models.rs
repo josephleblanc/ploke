@@ -19,6 +19,7 @@ use super::openrouter_catalog::ModelsResponse;
     pub const REL_MODEL_ALL_DATA_RAW_EP: &str = "crates/ploke-tui/data/models/all_raw_ep.json";
     pub const REL_MODEL_ALL_DATA_STATS: &str = "crates/ploke-tui/data/models/all_raw_stats.txt";
 
+#[cfg(feature = "live_api_tests")]
 mod tests {
     use std::collections::HashMap;
     use std::fs;
@@ -193,7 +194,7 @@ mod tests {
     );
     generate_model_field_test!(
         flakey_supported_parameters,
-        |m: ModelEntry| { m.supported_parameters.map(move |v| v.join(",")) },
+        |m: ModelEntry| { m.supported_parameters.map(|v| v.iter().map(|sp| format!("{:?}", sp)).collect::<Vec<_>>().join(",")) },
         REL_MODEL_SUPPORTED_PARAMETERS_DATA
     );
 

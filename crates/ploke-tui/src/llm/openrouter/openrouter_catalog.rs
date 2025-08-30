@@ -63,19 +63,19 @@ pub struct ModelEntry {
 /// Pricing information for a model.
 /// USD per token
 pub struct ModelPricing {
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub audio: Option<f64>,
     // Price per token in USD for generated tokens
     // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
     #[serde(deserialize_with = "string_or_f64")]
     pub completion: f64,
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub image: Option<f64>,
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub input_cache_read: Option<f64>,
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub input_cache_write: Option<f64>,
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub internal_reasoning: Option<f64>,
     // Price per token in USD for system(?) prompt
     // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
@@ -83,11 +83,32 @@ pub struct ModelPricing {
     pub prompt: f64,
     // Price per token in USD for system(?) prompt
     // Most have this, 322/323 have it, so all but one
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub request: Option<f64>,
     // Again all but one have this
-    #[serde(deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub web_search: Option<f64>,
+}
+
+impl Default for ModelPricing {
+    fn default() -> Self {
+        Self {
+            audio: None,
+            completion: 0.0,
+            image: None,
+            input_cache_read: None,
+            input_cache_write: None,
+            internal_reasoning: None,
+            prompt: 0.0,
+            request: None,
+            web_search: None,
+        }
+    }
+}
+
+impl ModelPricing {
+    pub fn prompt_or_default(&self) -> f64 { self.prompt }
+    pub fn completion_or_default(&self) -> f64 { self.completion }
 }
 
 
