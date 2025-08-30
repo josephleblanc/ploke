@@ -1,0 +1,3530 @@
+{
+  "fields": {
+    "architecture": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": [
+          {
+            "count": 323,
+            "key": "input_modalities"
+          },
+          {
+            "count": 323,
+            "key": "instruct_type"
+          },
+          {
+            "count": 323,
+            "key": "modality"
+          },
+          {
+            "count": 323,
+            "key": "output_modalities"
+          },
+          {
+            "count": 323,
+            "key": "tokenizer"
+          }
+        ]
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 323,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": []
+      }
+    },
+    "architecture.input_modalities": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 462
+        },
+        "lengths": [
+          {
+            "count": 226,
+            "len": 1
+          },
+          {
+            "count": 63,
+            "len": 2
+          },
+          {
+            "count": 26,
+            "len": 3
+          },
+          {
+            "count": 8,
+            "len": 4
+          }
+        ],
+        "string_union_overflow": 0,
+        "string_union_top": [
+          {
+            "count": 323,
+            "value": "text"
+          },
+          {
+            "count": 96,
+            "value": "image"
+          },
+          {
+            "count": 34,
+            "value": "file"
+          },
+          {
+            "count": 9,
+            "value": "audio"
+          }
+        ]
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 323,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 462,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 323,
+            "value": "text"
+          },
+          {
+            "count": 96,
+            "value": "image"
+          },
+          {
+            "count": 34,
+            "value": "file"
+          },
+          {
+            "count": 9,
+            "value": "audio"
+          }
+        ]
+      }
+    },
+    "architecture.instruct_type": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 209,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 209,
+        "object": 0,
+        "string": 114,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 26,
+            "value": "deepseek-r1"
+          },
+          {
+            "count": 21,
+            "value": "llama3"
+          },
+          {
+            "count": 15,
+            "value": "chatml"
+          },
+          {
+            "count": 11,
+            "value": "qwen3"
+          },
+          {
+            "count": 10,
+            "value": "mistral"
+          },
+          {
+            "count": 9,
+            "value": "gemma"
+          },
+          {
+            "count": 6,
+            "value": "alpaca"
+          },
+          {
+            "count": 4,
+            "value": "none"
+          },
+          {
+            "count": 3,
+            "value": "phi3"
+          },
+          {
+            "count": 2,
+            "value": "airoboros"
+          },
+          {
+            "count": 2,
+            "value": "deepseek-v3.1"
+          },
+          {
+            "count": 2,
+            "value": "qwq"
+          },
+          {
+            "count": 2,
+            "value": "vicuna"
+          },
+          {
+            "count": 1,
+            "value": "code-llama"
+          }
+        ]
+      }
+    },
+    "architecture.modality": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 227,
+            "value": "text->text"
+          },
+          {
+            "count": 94,
+            "value": "text+image->text"
+          },
+          {
+            "count": 2,
+            "value": "text+image->text+image"
+          }
+        ]
+      }
+    },
+    "architecture.output_modalities": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 325
+        },
+        "lengths": [
+          {
+            "count": 321,
+            "len": 1
+          },
+          {
+            "count": 2,
+            "len": 2
+          }
+        ],
+        "string_union_overflow": 0,
+        "string_union_top": [
+          {
+            "count": 323,
+            "value": "text"
+          },
+          {
+            "count": 2,
+            "value": "image"
+          }
+        ]
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 323,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 325,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 323,
+            "value": "text"
+          },
+          {
+            "count": 2,
+            "value": "image"
+          }
+        ]
+      }
+    },
+    "architecture.tokenizer": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 81,
+            "value": "Other"
+          },
+          {
+            "count": 40,
+            "value": "Mistral"
+          },
+          {
+            "count": 38,
+            "value": "GPT"
+          },
+          {
+            "count": 37,
+            "value": "Llama3"
+          },
+          {
+            "count": 26,
+            "value": "Qwen"
+          },
+          {
+            "count": 24,
+            "value": "Gemini"
+          },
+          {
+            "count": 17,
+            "value": "DeepSeek"
+          },
+          {
+            "count": 17,
+            "value": "Qwen3"
+          },
+          {
+            "count": 11,
+            "value": "Claude"
+          },
+          {
+            "count": 9,
+            "value": "Grok"
+          },
+          {
+            "count": 8,
+            "value": "Cohere"
+          },
+          {
+            "count": 7,
+            "value": "Llama2"
+          },
+          {
+            "count": 4,
+            "value": "Llama4"
+          },
+          {
+            "count": 3,
+            "value": "Nova"
+          },
+          {
+            "count": 1,
+            "value": "Router"
+          }
+        ]
+      }
+    },
+    "canonical_slug": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 287,
+        "top": [
+          {
+            "count": 2,
+            "value": "deepseek/deepseek-chat-v3.1"
+          },
+          {
+            "count": 2,
+            "value": "google/gemini-2.5-flash-image-preview"
+          },
+          {
+            "count": 2,
+            "value": "openai/gpt-oss-120b"
+          },
+          {
+            "count": 2,
+            "value": "openai/gpt-oss-20b"
+          },
+          {
+            "count": 2,
+            "value": "qwen/qwen3-coder-480b-a35b-07-25"
+          },
+          {
+            "count": 2,
+            "value": "z-ai/glm-4.5-air"
+          },
+          {
+            "count": 1,
+            "value": "ai21/jamba-large-1.7"
+          },
+          {
+            "count": 1,
+            "value": "ai21/jamba-mini-1.7"
+          },
+          {
+            "count": 1,
+            "value": "anthropic/claude-4.1-opus-20250805"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ernie-4.5-21b-a3b"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ernie-4.5-vl-28b-a3b"
+          },
+          {
+            "count": 1,
+            "value": "bytedance/ui-tars-1.5-7b"
+          },
+          {
+            "count": 1,
+            "value": "deepseek/deepseek-v3.1-base"
+          },
+          {
+            "count": 1,
+            "value": "mistralai/codestral-2508"
+          },
+          {
+            "count": 1,
+            "value": "mistralai/mistral-medium-3.1"
+          },
+          {
+            "count": 1,
+            "value": "nousresearch/hermes-4-405b"
+          },
+          {
+            "count": 1,
+            "value": "nousresearch/hermes-4-70b"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-4o-audio-preview"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-2025-08-07"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-chat-2025-08-07"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-mini-2025-08-07"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-nano-2025-08-07"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-235b-a22b-thinking-2507"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-30b-a3b-instruct-2507"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-30b-a3b-thinking-2507"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-coder-30b-a3b-instruct"
+          },
+          {
+            "count": 1,
+            "value": "x-ai/grok-code-fast-1"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4-32b-0414"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4.5"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4.5v"
+          }
+        ]
+      }
+    },
+    "context_length": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 323,
+        "max": 2000000.0,
+        "min": 2824.0
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 323,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 20,
+        "top": [
+          {
+            "count": 60,
+            "value": "32768"
+          },
+          {
+            "count": 56,
+            "value": "131072"
+          },
+          {
+            "count": 44,
+            "value": "128000"
+          },
+          {
+            "count": 20,
+            "value": "200000"
+          },
+          {
+            "count": 17,
+            "value": "8192"
+          },
+          {
+            "count": 16,
+            "value": "163840"
+          },
+          {
+            "count": 12,
+            "value": "1048576"
+          },
+          {
+            "count": 10,
+            "value": "40960"
+          },
+          {
+            "count": 8,
+            "value": "262144"
+          },
+          {
+            "count": 7,
+            "value": "65536"
+          },
+          {
+            "count": 6,
+            "value": "4096"
+          },
+          {
+            "count": 5,
+            "value": "1000000"
+          },
+          {
+            "count": 5,
+            "value": "256000"
+          },
+          {
+            "count": 5,
+            "value": "96000"
+          },
+          {
+            "count": 4,
+            "value": "16384"
+          },
+          {
+            "count": 4,
+            "value": "32000"
+          },
+          {
+            "count": 3,
+            "value": "1047576"
+          },
+          {
+            "count": 3,
+            "value": "400000"
+          },
+          {
+            "count": 3,
+            "value": "64000"
+          },
+          {
+            "count": 2,
+            "value": "123000"
+          },
+          {
+            "count": 2,
+            "value": "131000"
+          },
+          {
+            "count": 2,
+            "value": "7500"
+          },
+          {
+            "count": 2,
+            "value": "81920"
+          },
+          {
+            "count": 1,
+            "value": "120000"
+          },
+          {
+            "count": 1,
+            "value": "12288"
+          },
+          {
+            "count": 1,
+            "value": "127000"
+          },
+          {
+            "count": 1,
+            "value": "127072"
+          },
+          {
+            "count": 1,
+            "value": "30000"
+          },
+          {
+            "count": 1,
+            "value": "40000"
+          },
+          {
+            "count": 1,
+            "value": "63000"
+          }
+        ]
+      }
+    },
+    "created": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 323,
+        "max": 1756399192.0,
+        "min": 1685232000.0
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 323,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 287,
+        "top": [
+          {
+            "count": 2,
+            "value": "1753230546"
+          },
+          {
+            "count": 2,
+            "value": "1753471258"
+          },
+          {
+            "count": 2,
+            "value": "1754414229"
+          },
+          {
+            "count": 2,
+            "value": "1754414231"
+          },
+          {
+            "count": 2,
+            "value": "1755779628"
+          },
+          {
+            "count": 2,
+            "value": "1756218977"
+          },
+          {
+            "count": 1,
+            "value": "1753205056"
+          },
+          {
+            "count": 1,
+            "value": "1753376617"
+          },
+          {
+            "count": 1,
+            "value": "1753449557"
+          },
+          {
+            "count": 1,
+            "value": "1753471347"
+          },
+          {
+            "count": 1,
+            "value": "1753806965"
+          },
+          {
+            "count": 1,
+            "value": "1753972379"
+          },
+          {
+            "count": 1,
+            "value": "1754079630"
+          },
+          {
+            "count": 1,
+            "value": "1754411591"
+          },
+          {
+            "count": 1,
+            "value": "1754587402"
+          },
+          {
+            "count": 1,
+            "value": "1754587407"
+          },
+          {
+            "count": 1,
+            "value": "1754587413"
+          },
+          {
+            "count": 1,
+            "value": "1754587837"
+          },
+          {
+            "count": 1,
+            "value": "1754669020"
+          },
+          {
+            "count": 1,
+            "value": "1754670601"
+          },
+          {
+            "count": 1,
+            "value": "1754922288"
+          },
+          {
+            "count": 1,
+            "value": "1755032836"
+          },
+          {
+            "count": 1,
+            "value": "1755034167"
+          },
+          {
+            "count": 1,
+            "value": "1755095639"
+          },
+          {
+            "count": 1,
+            "value": "1755233061"
+          },
+          {
+            "count": 1,
+            "value": "1755727017"
+          },
+          {
+            "count": 1,
+            "value": "1756235463"
+          },
+          {
+            "count": 1,
+            "value": "1756236182"
+          },
+          {
+            "count": 1,
+            "value": "1756238927"
+          },
+          {
+            "count": 1,
+            "value": "1756399192"
+          }
+        ]
+      }
+    },
+    "description": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 287,
+        "top": [
+          {
+            "count": 2,
+            "value": "DeepSeek-V3.1 is a large hybrid reasoning model (671B parameters, 37B active) that supports both thinking and non-thinking modes via prompt templates. It extends the DeepSeek-V3 base with a two-phase long-context training process, reaching up to 128K tokens, and uses FP8 microscaling for efficient inference. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)\n\nThe model improves tool use, code generation, and reasoning efficiency, achieving performance comparable to DeepSeek-R1 on difficult benchmarks while responding more quickly. It supports structured tool calling, code agents, and search agents, making it suitable for research, coding, and agentic workflows. \n\nIt succeeds the [DeepSeek V3-0324](/deepseek/deepseek-chat-v3-0324) model and performs well on a variety of tasks."
+          },
+          {
+            "count": 2,
+            "value": "GLM-4.5-Air is the lightweight variant of our latest flagship model family, also purpose-built for agent-centric applications. Like GLM-4.5, it adopts the Mixture-of-Experts (MoE) architecture but with a more compact parameter size. GLM-4.5-Air also supports hybrid inference modes, offering a \"thinking mode\" for advanced reasoning and tool use, and a \"non-thinking mode\" for real-time interaction. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)"
+          },
+          {
+            "count": 2,
+            "value": "Gemini 2.5 Flash Image Preview is a state of the art image generation model with contextual understanding. It is capable of image generation, edits, and multi-turn conversations."
+          },
+          {
+            "count": 2,
+            "value": "Qwen3-Coder-480B-A35B-Instruct is a Mixture-of-Experts (MoE) code generation model developed by the Qwen team. It is optimized for agentic coding tasks such as function calling, tool use, and long-context reasoning over repositories. The model features 480 billion total parameters, with 35 billion active per forward pass (8 out of 160 experts).\n\nPricing for the Alibaba endpoints varies by context length. Once a request is greater than 128k input tokens, the higher pricing is used."
+          },
+          {
+            "count": 2,
+            "value": "gpt-oss-120b is an open-weight, 117B-parameter Mixture-of-Experts (MoE) language model from OpenAI designed for high-reasoning, agentic, and general-purpose production use cases. It activates 5.1B parameters per forward pass and is optimized to run on a single H100 GPU with native MXFP4 quantization. The model supports configurable reasoning depth, full chain-of-thought access, and native tool use, including function calling, browsing, and structured output generation."
+          },
+          {
+            "count": 2,
+            "value": "gpt-oss-20b is an open-weight 21B parameter model released by OpenAI under the Apache 2.0 license. It uses a Mixture-of-Experts (MoE) architecture with 3.6B active parameters per forward pass, optimized for lower-latency inference and deployability on consumer or single-GPU hardware. The model is trained in OpenAI’s Harmony response format and supports reasoning level configuration, fine-tuning, and agentic capabilities including function calling, tool use, and structured outputs."
+          },
+          {
+            "count": 1,
+            "value": "A powerful multimodal Mixture-of-Experts chat model featuring 28B total parameters with 3B activated per token, delivering exceptional text and vision understanding through its innovative heterogeneous MoE structure with modality-isolated routing. Built with scaling-efficient infrastructure for high-throughput training and inference, the model leverages advanced post-training techniques including SFT, DPO, and UPO for optimized performance, while supporting an impressive 131K context length and RLVR alignment for superior cross-modal reasoning and generation capabilities."
+          },
+          {
+            "count": 1,
+            "value": "A sophisticated text-based Mixture-of-Experts (MoE) model featuring 21B total parameters with 3B activated per token, delivering exceptional multimodal understanding and generation through heterogeneous MoE structures and modality-isolated routing. Supporting an extensive 131K token context length, the model achieves efficient inference via multi-expert parallel collaboration and quantization, while advanced post-training techniques including SFT, DPO, and UPO ensure optimized performance across diverse applications with specialized routing and balancing losses for superior task handling."
+          },
+          {
+            "count": 1,
+            "value": "Claude Opus 4.1 is an updated version of Anthropic’s flagship model, offering improved performance in coding, reasoning, and agentic tasks. It achieves 74.5% on SWE-bench Verified and shows notable gains in multi-file code refactoring, debugging precision, and detail-oriented reasoning. The model supports extended thinking up to 64K tokens and is optimized for tasks involving research, data analysis, and tool-assisted reasoning."
+          },
+          {
+            "count": 1,
+            "value": "GLM 4 32B is a cost-effective foundation language model.\n\nIt can efficiently perform complex tasks and has significantly enhanced capabilities in tool use, online search, and code-related intelligent tasks.\n\nIt is made by the same lab behind the thudm models."
+          },
+          {
+            "count": 1,
+            "value": "GLM-4.5 is our latest flagship foundation model, purpose-built for agent-based applications. It leverages a Mixture-of-Experts (MoE) architecture and supports a context length of up to 128k tokens. GLM-4.5 delivers significantly enhanced capabilities in reasoning, code generation, and agent alignment. It supports a hybrid inference mode with two options, a \"thinking mode\" designed for complex reasoning and tool use, and a \"non-thinking mode\" optimized for instant responses. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)"
+          },
+          {
+            "count": 1,
+            "value": "GLM-4.5V is a vision-language foundation model for multimodal agent applications. Built on a Mixture-of-Experts (MoE) architecture with 106B parameters and 12B activated parameters, it achieves state-of-the-art results in video understanding, image Q&A, OCR, and document parsing, with strong gains in front-end web coding, grounding, and spatial reasoning. It offers a hybrid inference mode: a \"thinking mode\" for deep reasoning and a \"non-thinking mode\" for fast responses. Reasoning behavior can be toggled via the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)"
+          },
+          {
+            "count": 1,
+            "value": "GPT-5 Chat is designed for advanced, natural, multimodal, and context-aware conversations for enterprise applications."
+          },
+          {
+            "count": 1,
+            "value": "GPT-5 Mini is a compact version of GPT-5, designed to handle lighter-weight reasoning tasks. It provides the same instruction-following and safety-tuning benefits as GPT-5, but with reduced latency and cost. GPT-5 Mini is the successor to OpenAI's o4-mini model."
+          },
+          {
+            "count": 1,
+            "value": "GPT-5 is OpenAI’s most advanced model, offering major improvements in reasoning, code quality, and user experience. It is optimized for complex tasks that require step-by-step reasoning, instruction following, and accuracy in high-stakes use cases. It supports test-time routing features and advanced prompt understanding, including user-specified intent like \"think hard about this.\" Improvements include reductions in hallucination, sycophancy, and better performance in coding, writing, and health-related tasks."
+          },
+          {
+            "count": 1,
+            "value": "GPT-5-Nano is the smallest and fastest variant in the GPT-5 system, optimized for developer tools, rapid interactions, and ultra-low latency environments. While limited in reasoning depth compared to its larger counterparts, it retains key instruction-following and safety features. It is the successor to GPT-4.1-nano and offers a lightweight option for cost-sensitive or real-time applications."
+          },
+          {
+            "count": 1,
+            "value": "Grok Code Fast 1 is a speedy and economical reasoning model that excels at agentic coding. With reasoning traces visible in the response, developers can steer Grok Code for high-quality work flows."
+          },
+          {
+            "count": 1,
+            "value": "Hermes 4 70B is a hybrid reasoning model from Nous Research, built on Meta-Llama-3.1-70B. It introduces the same hybrid mode as the larger 405B release, allowing the model to either respond directly or generate explicit <think>...</think> reasoning traces before answering. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)\n\nThis 70B variant is trained with the expanded post-training corpus (~60B tokens) emphasizing verified reasoning data, leading to improvements in mathematics, coding, STEM, logic, and structured outputs while maintaining general assistant performance. It supports JSON mode, schema adherence, function calling, and tool use, and is designed for greater steerability with reduced refusal rates."
+          },
+          {
+            "count": 1,
+            "value": "Hermes 4 is a large-scale reasoning model built on Meta-Llama-3.1-405B and released by Nous Research. It introduces a hybrid reasoning mode, where the model can choose to deliberate internally with <think>...</think> traces or respond directly, offering flexibility between speed and depth. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)\n\nThe model is instruction-tuned with an expanded post-training corpus (~60B tokens) emphasizing reasoning traces, improving performance in math, code, STEM, and logical reasoning, while retaining broad assistant utility. It also supports structured outputs, including JSON mode, schema adherence, function calling, and tool use. Hermes 4 is trained for steerability, lower refusal rates, and alignment toward neutral, user-directed behavior."
+          },
+          {
+            "count": 1,
+            "value": "Jamba Large 1.7 is the latest model in the Jamba open family, offering improvements in grounding, instruction-following, and overall efficiency. Built on a hybrid SSM-Transformer architecture with a 256K context window, it delivers more accurate, contextually grounded responses and better steerability than previous versions."
+          },
+          {
+            "count": 1,
+            "value": "Jamba Mini 1.7 is a compact and efficient member of the Jamba open model family, incorporating key improvements in grounding and instruction-following while maintaining the benefits of the SSM-Transformer hybrid architecture and 256K context window. Despite its compact size, it delivers accurate, contextually grounded responses and improved steerability."
+          },
+          {
+            "count": 1,
+            "value": "Mistral Medium 3.1 is an updated version of Mistral Medium 3, which is a high-performance enterprise-grade language model designed to deliver frontier-level capabilities at significantly reduced operational cost. It balances state-of-the-art reasoning and multimodal performance with 8× lower cost compared to traditional large models, making it suitable for scalable deployments across professional and industrial use cases.\n\nThe model excels in domains such as coding, STEM reasoning, and enterprise adaptation. It supports hybrid, on-prem, and in-VPC deployments and is optimized for integration into custom workflows. Mistral Medium 3.1 offers competitive accuracy relative to larger models like Claude Sonnet 3.5/3.7, Llama 4 Maverick, and Command R+, while maintaining broad compatibility across cloud environments."
+          },
+          {
+            "count": 1,
+            "value": "Mistral's cutting-edge language model for coding released end of July 2025. Codestral specializes in low-latency, high-frequency tasks such as fill-in-the-middle (FIM), code correction and test generation.\n\n[Blog Post](https://mistral.ai/news/codestral-25-08)"
+          },
+          {
+            "count": 1,
+            "value": "Qwen3-235B-A22B-Thinking-2507 is a high-performance, open-weight Mixture-of-Experts (MoE) language model optimized for complex reasoning tasks. It activates 22B of its 235B parameters per forward pass and natively supports up to 262,144 tokens of context. This \"thinking-only\" variant enhances structured logical reasoning, mathematics, science, and long-form generation, showing strong benchmark performance across AIME, SuperGPQA, LiveCodeBench, and MMLU-Redux. It enforces a special reasoning mode (</think>) and is designed for high-token outputs (up to 81,920 tokens) in challenging domains.\n\nThe model is instruction-tuned and excels at step-by-step reasoning, tool use, agentic workflows, and multilingual tasks. This release represents the most capable open-source variant in the Qwen3-235B series, surpassing many closed models in structured reasoning use cases."
+          },
+          {
+            "count": 1,
+            "value": "Qwen3-30B-A3B-Instruct-2507 is a 30.5B-parameter mixture-of-experts language model from Qwen, with 3.3B active parameters per inference. It operates in non-thinking mode and is designed for high-quality instruction following, multilingual understanding, and agentic tool use. Post-trained on instruction data, it demonstrates competitive performance across reasoning (AIME, ZebraLogic), coding (MultiPL-E, LiveCodeBench), and alignment (IFEval, WritingBench) benchmarks. It outperforms its non-instruct variant on subjective and open-ended tasks while retaining strong factual and coding performance."
+          },
+          {
+            "count": 1,
+            "value": "Qwen3-30B-A3B-Thinking-2507 is a 30B parameter Mixture-of-Experts reasoning model optimized for complex tasks requiring extended multi-step thinking. The model is designed specifically for “thinking mode,” where internal reasoning traces are separated from final answers.\n\nCompared to earlier Qwen3-30B releases, this version improves performance across logical reasoning, mathematics, science, coding, and multilingual benchmarks. It also demonstrates stronger instruction following, tool use, and alignment with human preferences. With higher reasoning efficiency and extended output budgets, it is best suited for advanced research, competitive problem solving, and agentic applications requiring structured long-context reasoning."
+          },
+          {
+            "count": 1,
+            "value": "Qwen3-Coder-30B-A3B-Instruct is a 30.5B parameter Mixture-of-Experts (MoE) model with 128 experts (8 active per forward pass), designed for advanced code generation, repository-scale understanding, and agentic tool use. Built on the Qwen3 architecture, it supports a native context length of 256K tokens (extendable to 1M with Yarn) and performs strongly in tasks involving function calls, browser use, and structured code completion.\n\nThis model is optimized for instruction-following without “thinking mode”, and integrates well with OpenAI-compatible tool-use formats. "
+          },
+          {
+            "count": 1,
+            "value": "The gpt-4o-audio-preview model adds support for audio inputs as prompts. This enhancement allows the model to detect nuances within audio recordings and add depth to generated user experiences. Audio outputs are currently not supported. Audio tokens are priced at $40 per million input audio tokens."
+          },
+          {
+            "count": 1,
+            "value": "This is a base model, trained only for raw next-token prediction. Unlike instruct/chat models, it has not been fine-tuned to follow user instructions. Prompts need to be written more like training text or examples rather than simple requests (e.g., “Translate the following sentence…” instead of just “Translate this”).\n\nDeepSeek-V3.1 Base is a 671B parameter open Mixture-of-Experts (MoE) language model with 37B active parameters per forward pass and a context length of 128K tokens. Trained on 14.8T tokens using FP8 mixed precision, it achieves high training efficiency and stability, with strong performance across language, reasoning, math, and coding tasks. \n"
+          },
+          {
+            "count": 1,
+            "value": "UI-TARS-1.5 is a multimodal vision-language agent optimized for GUI-based environments, including desktop interfaces, web browsers, mobile systems, and games. Built by ByteDance, it builds upon the UI-TARS framework with reinforcement learning-based reasoning, enabling robust action planning and execution across virtual interfaces.\n\nThis model achieves state-of-the-art results on a range of interactive and grounding benchmarks, including OSworld, WebVoyager, AndroidWorld, and ScreenSpot. It also demonstrates perfect task completion across diverse Poki games and outperforms prior models in Minecraft agent tasks. UI-TARS-1.5 supports thought decomposition during inference and shows strong scaling across variants, with the 1.5 version notably exceeding the performance of earlier 72B and 7B checkpoints."
+          }
+        ]
+      }
+    },
+    "hugging_face_id": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 43,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 43,
+        "object": 0,
+        "string": 280,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 155,
+        "top": [
+          {
+            "count": 89,
+            "value": ""
+          },
+          {
+            "count": 2,
+            "value": "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+          },
+          {
+            "count": 2,
+            "value": "deepseek-ai/DeepSeek-V3.1"
+          },
+          {
+            "count": 2,
+            "value": "moonshotai/Kimi-K2-Instruct"
+          },
+          {
+            "count": 2,
+            "value": "openai/gpt-oss-120b"
+          },
+          {
+            "count": 2,
+            "value": "openai/gpt-oss-20b"
+          },
+          {
+            "count": 2,
+            "value": "tencent/Hunyuan-A13B-Instruct"
+          },
+          {
+            "count": 2,
+            "value": "zai-org/GLM-4.5-Air"
+          },
+          {
+            "count": 1,
+            "value": "ByteDance-Seed/UI-TARS-1.5-7B"
+          },
+          {
+            "count": 1,
+            "value": "NousResearch/Hermes-4-405B"
+          },
+          {
+            "count": 1,
+            "value": "NousResearch/Hermes-4-70B"
+          },
+          {
+            "count": 1,
+            "value": "Qwen/Qwen3-235B-A22B-Instruct-2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen/Qwen3-235B-A22B-Thinking-2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen/Qwen3-30B-A3B-Instruct-2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen/Qwen3-30B-A3B-Thinking-2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+          },
+          {
+            "count": 1,
+            "value": "THUDM/GLM-4.1V-9B-Thinking"
+          },
+          {
+            "count": 1,
+            "value": "ai21labs/AI21-Jamba-Large-1.7"
+          },
+          {
+            "count": 1,
+            "value": "ai21labs/AI21-Jamba-Mini-1.7"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ERNIE-4.5-21B-A3B-PT"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ERNIE-4.5-300B-A47B-PT"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ERNIE-4.5-VL-28B-A3B-PT"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ERNIE-4.5-VL-424B-A47B-PT"
+          },
+          {
+            "count": 1,
+            "value": "cognitivecomputations/Dolphin-Mistral-24B-Venice-Edition"
+          },
+          {
+            "count": 1,
+            "value": "deepseek-ai/DeepSeek-V3.1-Base"
+          },
+          {
+            "count": 1,
+            "value": "google/gemma-3n-E2B-it"
+          },
+          {
+            "count": 1,
+            "value": "mistralai/Devstral-Small-2507"
+          },
+          {
+            "count": 1,
+            "value": "tngtech/DeepSeek-TNG-R1T2-Chimera"
+          },
+          {
+            "count": 1,
+            "value": "zai-org/GLM-4.5"
+          },
+          {
+            "count": 1,
+            "value": "zai-org/GLM-4.5V"
+          }
+        ]
+      }
+    },
+    "id": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 293,
+        "top": [
+          {
+            "count": 1,
+            "value": "ai21/jamba-large-1.7"
+          },
+          {
+            "count": 1,
+            "value": "ai21/jamba-mini-1.7"
+          },
+          {
+            "count": 1,
+            "value": "anthropic/claude-opus-4.1"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ernie-4.5-21b-a3b"
+          },
+          {
+            "count": 1,
+            "value": "baidu/ernie-4.5-vl-28b-a3b"
+          },
+          {
+            "count": 1,
+            "value": "deepseek/deepseek-chat-v3.1"
+          },
+          {
+            "count": 1,
+            "value": "deepseek/deepseek-chat-v3.1:free"
+          },
+          {
+            "count": 1,
+            "value": "deepseek/deepseek-v3.1-base"
+          },
+          {
+            "count": 1,
+            "value": "google/gemini-2.5-flash-image-preview"
+          },
+          {
+            "count": 1,
+            "value": "google/gemini-2.5-flash-image-preview:free"
+          },
+          {
+            "count": 1,
+            "value": "mistralai/codestral-2508"
+          },
+          {
+            "count": 1,
+            "value": "mistralai/mistral-medium-3.1"
+          },
+          {
+            "count": 1,
+            "value": "nousresearch/hermes-4-405b"
+          },
+          {
+            "count": 1,
+            "value": "nousresearch/hermes-4-70b"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-4o-audio-preview"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-chat"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-mini"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-5-nano"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-oss-120b"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-oss-120b:free"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-oss-20b"
+          },
+          {
+            "count": 1,
+            "value": "openai/gpt-oss-20b:free"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-30b-a3b-instruct-2507"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-30b-a3b-thinking-2507"
+          },
+          {
+            "count": 1,
+            "value": "qwen/qwen3-coder-30b-a3b-instruct"
+          },
+          {
+            "count": 1,
+            "value": "x-ai/grok-code-fast-1"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4.5"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4.5-air:free"
+          },
+          {
+            "count": 1,
+            "value": "z-ai/glm-4.5v"
+          }
+        ]
+      }
+    },
+    "name": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 323,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 293,
+        "top": [
+          {
+            "count": 1,
+            "value": "AI21: Jamba Large 1.7"
+          },
+          {
+            "count": 1,
+            "value": "AI21: Jamba Mini 1.7"
+          },
+          {
+            "count": 1,
+            "value": "Anthropic: Claude Opus 4.1"
+          },
+          {
+            "count": 1,
+            "value": "Baidu: ERNIE 4.5 21B A3B"
+          },
+          {
+            "count": 1,
+            "value": "Baidu: ERNIE 4.5 VL 28B A3B"
+          },
+          {
+            "count": 1,
+            "value": "DeepSeek: DeepSeek V3.1"
+          },
+          {
+            "count": 1,
+            "value": "DeepSeek: DeepSeek V3.1 (free)"
+          },
+          {
+            "count": 1,
+            "value": "DeepSeek: DeepSeek V3.1 Base"
+          },
+          {
+            "count": 1,
+            "value": "Google: Gemini 2.5 Flash Image Preview"
+          },
+          {
+            "count": 1,
+            "value": "Google: Gemini 2.5 Flash Image Preview (free)"
+          },
+          {
+            "count": 1,
+            "value": "Mistral: Codestral 2508"
+          },
+          {
+            "count": 1,
+            "value": "Mistral: Mistral Medium 3.1"
+          },
+          {
+            "count": 1,
+            "value": "Nous: Hermes 4 405B"
+          },
+          {
+            "count": 1,
+            "value": "Nous: Hermes 4 70B"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: GPT-4o Audio"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: GPT-5"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: GPT-5 Chat"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: GPT-5 Mini"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: GPT-5 Nano"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: gpt-oss-120b"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: gpt-oss-120b (free)"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: gpt-oss-20b"
+          },
+          {
+            "count": 1,
+            "value": "OpenAI: gpt-oss-20b (free)"
+          },
+          {
+            "count": 1,
+            "value": "Qwen: Qwen3 30B A3B Instruct 2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen: Qwen3 30B A3B Thinking 2507"
+          },
+          {
+            "count": 1,
+            "value": "Qwen: Qwen3 Coder 30B A3B Instruct"
+          },
+          {
+            "count": 1,
+            "value": "Z.AI: GLM 4.5"
+          },
+          {
+            "count": 1,
+            "value": "Z.AI: GLM 4.5 Air (free)"
+          },
+          {
+            "count": 1,
+            "value": "Z.AI: GLM 4.5V"
+          },
+          {
+            "count": 1,
+            "value": "xAI: Grok Code Fast 1"
+          }
+        ]
+      }
+    },
+    "per_request_limits": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 323,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 323,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": []
+      }
+    },
+    "pricing": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": [
+          {
+            "count": 323,
+            "key": "completion"
+          },
+          {
+            "count": 323,
+            "key": "prompt"
+          },
+          {
+            "count": 322,
+            "key": "image"
+          },
+          {
+            "count": 322,
+            "key": "internal_reasoning"
+          },
+          {
+            "count": 322,
+            "key": "request"
+          },
+          {
+            "count": 322,
+            "key": "web_search"
+          },
+          {
+            "count": 50,
+            "key": "input_cache_read"
+          },
+          {
+            "count": 20,
+            "key": "input_cache_write"
+          },
+          {
+            "count": 2,
+            "key": "audio"
+          }
+        ]
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 323,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": []
+      }
+    },
+    "pricing.audio": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 321,
+        "null": 0,
+        "present": 2,
+        "present_pct": 0.6191950464396285
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 2,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 1,
+            "value": "0.0000007"
+          },
+          {
+            "count": 1,
+            "value": "0.00004"
+          }
+        ]
+      }
+    },
+    "pricing.completion": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 323,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 129,
+        "top": [
+          {
+            "count": 59,
+            "value": "0"
+          },
+          {
+            "count": 15,
+            "value": "0.00001"
+          },
+          {
+            "count": 14,
+            "value": "0.000015"
+          },
+          {
+            "count": 11,
+            "value": "0.0000004"
+          },
+          {
+            "count": 9,
+            "value": "0.000002"
+          },
+          {
+            "count": 8,
+            "value": "0.0000001"
+          },
+          {
+            "count": 8,
+            "value": "0.000008"
+          },
+          {
+            "count": 7,
+            "value": "0.0000008"
+          },
+          {
+            "count": 7,
+            "value": "0.000000800064"
+          },
+          {
+            "count": 6,
+            "value": "0.00000015"
+          },
+          {
+            "count": 6,
+            "value": "0.0000002"
+          },
+          {
+            "count": 5,
+            "value": "0.00000028"
+          },
+          {
+            "count": 5,
+            "value": "0.0000015"
+          },
+          {
+            "count": 4,
+            "value": "0.0000009"
+          },
+          {
+            "count": 4,
+            "value": "0.0000011"
+          },
+          {
+            "count": 3,
+            "value": "0.000000207424"
+          },
+          {
+            "count": 3,
+            "value": "0.000075"
+          },
+          {
+            "count": 2,
+            "value": "0.000000138"
+          },
+          {
+            "count": 2,
+            "value": "0.00000031202496"
+          },
+          {
+            "count": 2,
+            "value": "0.0000003733632"
+          },
+          {
+            "count": 2,
+            "value": "0.00000125"
+          },
+          {
+            "count": 2,
+            "value": "0.0000018"
+          },
+          {
+            "count": 2,
+            "value": "0.0000019"
+          },
+          {
+            "count": 2,
+            "value": "0.0000025"
+          },
+          {
+            "count": 1,
+            "value": "0.00000003"
+          },
+          {
+            "count": 1,
+            "value": "0.0000002852"
+          },
+          {
+            "count": 1,
+            "value": "0.00000056"
+          },
+          {
+            "count": 1,
+            "value": "0.00000086"
+          },
+          {
+            "count": 1,
+            "value": "0.00000249"
+          },
+          {
+            "count": 1,
+            "value": "0.0000034"
+          }
+        ]
+      }
+    },
+    "pricing.image": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 1,
+        "null": 0,
+        "present": 322,
+        "present_pct": 99.69040247678019
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 322,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 275,
+            "value": "0"
+          },
+          {
+            "count": 5,
+            "value": "0.0048"
+          },
+          {
+            "count": 4,
+            "value": "0.003613"
+          },
+          {
+            "count": 4,
+            "value": "0.007225"
+          },
+          {
+            "count": 3,
+            "value": "0.00516"
+          },
+          {
+            "count": 3,
+            "value": "0.024"
+          },
+          {
+            "count": 2,
+            "value": "0.0001445"
+          },
+          {
+            "count": 2,
+            "value": "0.000217"
+          },
+          {
+            "count": 2,
+            "value": "0.0008415"
+          },
+          {
+            "count": 2,
+            "value": "0.001238"
+          },
+          {
+            "count": 1,
+            "value": "0.0000258"
+          },
+          {
+            "count": 1,
+            "value": "0.00004"
+          },
+          {
+            "count": 1,
+            "value": "0.00007948"
+          },
+          {
+            "count": 1,
+            "value": "0.00009"
+          },
+          {
+            "count": 1,
+            "value": "0.00017685"
+          },
+          {
+            "count": 1,
+            "value": "0.0002688"
+          },
+          {
+            "count": 1,
+            "value": "0.0004"
+          },
+          {
+            "count": 1,
+            "value": "0.0005058"
+          },
+          {
+            "count": 1,
+            "value": "0.0006575"
+          },
+          {
+            "count": 1,
+            "value": "0.0006684"
+          },
+          {
+            "count": 1,
+            "value": "0.001024"
+          },
+          {
+            "count": 1,
+            "value": "0.0012"
+          },
+          {
+            "count": 1,
+            "value": "0.00153"
+          },
+          {
+            "count": 1,
+            "value": "0.002888"
+          },
+          {
+            "count": 1,
+            "value": "0.0036"
+          },
+          {
+            "count": 1,
+            "value": "0.009"
+          },
+          {
+            "count": 1,
+            "value": "0.01445"
+          },
+          {
+            "count": 1,
+            "value": "0.0153"
+          },
+          {
+            "count": 1,
+            "value": "0.021675"
+          },
+          {
+            "count": 1,
+            "value": "0.21675"
+          }
+        ]
+      }
+    },
+    "pricing.input_cache_read": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 273,
+        "null": 0,
+        "present": 50,
+        "present_pct": 15.479876160990711
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 50,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 5,
+            "value": "0.000000025"
+          },
+          {
+            "count": 5,
+            "value": "0.000000075"
+          },
+          {
+            "count": 5,
+            "value": "0.0000003"
+          },
+          {
+            "count": 4,
+            "value": "0.00000055"
+          },
+          {
+            "count": 3,
+            "value": "0.00000031"
+          },
+          {
+            "count": 3,
+            "value": "0.00000075"
+          },
+          {
+            "count": 3,
+            "value": "0.00000125"
+          },
+          {
+            "count": 3,
+            "value": "0.0000015"
+          },
+          {
+            "count": 2,
+            "value": "0.00000002"
+          },
+          {
+            "count": 2,
+            "value": "0.00000008"
+          },
+          {
+            "count": 2,
+            "value": "0.000000125"
+          },
+          {
+            "count": 2,
+            "value": "0.000000275"
+          },
+          {
+            "count": 2,
+            "value": "0.0000005"
+          },
+          {
+            "count": 1,
+            "value": "0.000000005"
+          },
+          {
+            "count": 1,
+            "value": "0.00000001"
+          },
+          {
+            "count": 1,
+            "value": "0.00000001875"
+          },
+          {
+            "count": 1,
+            "value": "0.00000003"
+          },
+          {
+            "count": 1,
+            "value": "0.0000001"
+          },
+          {
+            "count": 1,
+            "value": "0.00000016"
+          },
+          {
+            "count": 1,
+            "value": "0.000000375"
+          },
+          {
+            "count": 1,
+            "value": "0.00000064"
+          },
+          {
+            "count": 1,
+            "value": "0.0000075"
+          }
+        ]
+      }
+    },
+    "pricing.input_cache_write": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 303,
+        "null": 0,
+        "present": 20,
+        "present_pct": 6.191950464396285
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 20,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 5,
+            "value": "0.00000375"
+          },
+          {
+            "count": 3,
+            "value": "0.0000001833"
+          },
+          {
+            "count": 3,
+            "value": "0.000001625"
+          },
+          {
+            "count": 3,
+            "value": "0.00001875"
+          },
+          {
+            "count": 2,
+            "value": "0.000001"
+          },
+          {
+            "count": 1,
+            "value": "0.0000000583"
+          },
+          {
+            "count": 1,
+            "value": "0.0000001583"
+          },
+          {
+            "count": 1,
+            "value": "0.0000003"
+          },
+          {
+            "count": 1,
+            "value": "0.0000003833"
+          }
+        ]
+      }
+    },
+    "pricing.internal_reasoning": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 1,
+        "null": 0,
+        "present": 322,
+        "present_pct": 99.69040247678019
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 322,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 321,
+            "value": "0"
+          },
+          {
+            "count": 1,
+            "value": "0.000003"
+          }
+        ]
+      }
+    },
+    "pricing.prompt": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 323,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 117,
+        "top": [
+          {
+            "count": 59,
+            "value": "0"
+          },
+          {
+            "count": 17,
+            "value": "0.000002"
+          },
+          {
+            "count": 13,
+            "value": "0.0000002"
+          },
+          {
+            "count": 13,
+            "value": "0.000003"
+          },
+          {
+            "count": 12,
+            "value": "0.0000001"
+          },
+          {
+            "count": 8,
+            "value": "0.0000003"
+          },
+          {
+            "count": 8,
+            "value": "0.0000004"
+          },
+          {
+            "count": 8,
+            "value": "0.0000005"
+          },
+          {
+            "count": 8,
+            "value": "0.0000025"
+          },
+          {
+            "count": 7,
+            "value": "0.0000001999188"
+          },
+          {
+            "count": 6,
+            "value": "0.00000125"
+          },
+          {
+            "count": 5,
+            "value": "0.00000025"
+          },
+          {
+            "count": 5,
+            "value": "0.0000009"
+          },
+          {
+            "count": 4,
+            "value": "0.00000004"
+          },
+          {
+            "count": 4,
+            "value": "0.00000005"
+          },
+          {
+            "count": 4,
+            "value": "0.000015"
+          },
+          {
+            "count": 3,
+            "value": "0.000000035"
+          },
+          {
+            "count": 3,
+            "value": "0.0000000518308"
+          },
+          {
+            "count": 3,
+            "value": "0.00000007"
+          },
+          {
+            "count": 3,
+            "value": "0.00000014"
+          },
+          {
+            "count": 2,
+            "value": "0.00000003"
+          },
+          {
+            "count": 2,
+            "value": "0.000000077968332"
+          },
+          {
+            "count": 2,
+            "value": "0.00000009329544"
+          },
+          {
+            "count": 1,
+            "value": "0.0000000713"
+          },
+          {
+            "count": 1,
+            "value": "0.000000072"
+          },
+          {
+            "count": 1,
+            "value": "0.00000028"
+          },
+          {
+            "count": 1,
+            "value": "0.00000029"
+          },
+          {
+            "count": 1,
+            "value": "0.00000042"
+          },
+          {
+            "count": 1,
+            "value": "0.00000085"
+          },
+          {
+            "count": 1,
+            "value": "0.00002"
+          }
+        ]
+      }
+    },
+    "pricing.request": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 1,
+        "null": 0,
+        "present": 322,
+        "present_pct": 99.69040247678019
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 322,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 318,
+            "value": "0"
+          },
+          {
+            "count": 2,
+            "value": "0.005"
+          },
+          {
+            "count": 1,
+            "value": "0.0275"
+          },
+          {
+            "count": 1,
+            "value": "0.035"
+          }
+        ]
+      }
+    },
+    "pricing.web_search": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 1,
+        "null": 0,
+        "present": 322,
+        "present_pct": 99.69040247678019
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 322,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 316,
+            "value": "0"
+          },
+          {
+            "count": 3,
+            "value": "0.005"
+          },
+          {
+            "count": 3,
+            "value": "0.01"
+          }
+        ]
+      }
+    },
+    "supported_parameters": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 3866
+        },
+        "lengths": [
+          {
+            "count": 1,
+            "len": 0
+          },
+          {
+            "count": 2,
+            "len": 2
+          },
+          {
+            "count": 5,
+            "len": 3
+          },
+          {
+            "count": 5,
+            "len": 4
+          },
+          {
+            "count": 6,
+            "len": 5
+          },
+          {
+            "count": 14,
+            "len": 6
+          },
+          {
+            "count": 15,
+            "len": 7
+          },
+          {
+            "count": 17,
+            "len": 8
+          },
+          {
+            "count": 16,
+            "len": 9
+          },
+          {
+            "count": 15,
+            "len": 10
+          },
+          {
+            "count": 47,
+            "len": 11
+          },
+          {
+            "count": 15,
+            "len": 12
+          },
+          {
+            "count": 38,
+            "len": 13
+          },
+          {
+            "count": 31,
+            "len": 14
+          },
+          {
+            "count": 48,
+            "len": 15
+          },
+          {
+            "count": 10,
+            "len": 16
+          },
+          {
+            "count": 23,
+            "len": 17
+          },
+          {
+            "count": 3,
+            "len": 18
+          },
+          {
+            "count": 12,
+            "len": 19
+          }
+        ],
+        "string_union_overflow": 0,
+        "string_union_top": [
+          {
+            "count": 321,
+            "value": "max_tokens"
+          },
+          {
+            "count": 305,
+            "value": "temperature"
+          },
+          {
+            "count": 299,
+            "value": "top_p"
+          },
+          {
+            "count": 274,
+            "value": "stop"
+          },
+          {
+            "count": 263,
+            "value": "seed"
+          },
+          {
+            "count": 250,
+            "value": "presence_penalty"
+          },
+          {
+            "count": 247,
+            "value": "frequency_penalty"
+          },
+          {
+            "count": 214,
+            "value": "top_k"
+          },
+          {
+            "count": 196,
+            "value": "response_format"
+          },
+          {
+            "count": 183,
+            "value": "logit_bias"
+          },
+          {
+            "count": 174,
+            "value": "repetition_penalty"
+          },
+          {
+            "count": 170,
+            "value": "min_p"
+          },
+          {
+            "count": 165,
+            "value": "tools"
+          },
+          {
+            "count": 156,
+            "value": "tool_choice"
+          },
+          {
+            "count": 149,
+            "value": "structured_outputs"
+          },
+          {
+            "count": 140,
+            "value": "logprobs"
+          },
+          {
+            "count": 140,
+            "value": "top_logprobs"
+          },
+          {
+            "count": 98,
+            "value": "include_reasoning"
+          },
+          {
+            "count": 98,
+            "value": "reasoning"
+          },
+          {
+            "count": 16,
+            "value": "web_search_options"
+          },
+          {
+            "count": 8,
+            "value": "top_a"
+          }
+        ]
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 323,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 3866,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 321,
+            "value": "max_tokens"
+          },
+          {
+            "count": 305,
+            "value": "temperature"
+          },
+          {
+            "count": 299,
+            "value": "top_p"
+          },
+          {
+            "count": 274,
+            "value": "stop"
+          },
+          {
+            "count": 263,
+            "value": "seed"
+          },
+          {
+            "count": 250,
+            "value": "presence_penalty"
+          },
+          {
+            "count": 247,
+            "value": "frequency_penalty"
+          },
+          {
+            "count": 214,
+            "value": "top_k"
+          },
+          {
+            "count": 196,
+            "value": "response_format"
+          },
+          {
+            "count": 183,
+            "value": "logit_bias"
+          },
+          {
+            "count": 174,
+            "value": "repetition_penalty"
+          },
+          {
+            "count": 170,
+            "value": "min_p"
+          },
+          {
+            "count": 165,
+            "value": "tools"
+          },
+          {
+            "count": 156,
+            "value": "tool_choice"
+          },
+          {
+            "count": 149,
+            "value": "structured_outputs"
+          },
+          {
+            "count": 140,
+            "value": "logprobs"
+          },
+          {
+            "count": 140,
+            "value": "top_logprobs"
+          },
+          {
+            "count": 98,
+            "value": "include_reasoning"
+          },
+          {
+            "count": 98,
+            "value": "reasoning"
+          },
+          {
+            "count": 16,
+            "value": "web_search_options"
+          },
+          {
+            "count": 8,
+            "value": "top_a"
+          }
+        ]
+      }
+    },
+    "top_provider": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": [
+          {
+            "count": 323,
+            "key": "context_length"
+          },
+          {
+            "count": 323,
+            "key": "is_moderated"
+          },
+          {
+            "count": 323,
+            "key": "max_completion_tokens"
+          }
+        ]
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 323,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": []
+      }
+    },
+    "top_provider.context_length": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 322,
+        "max": 2000000.0,
+        "min": 2824.0
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 1,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 322,
+        "null": 1,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 19,
+        "top": [
+          {
+            "count": 60,
+            "value": "32768"
+          },
+          {
+            "count": 56,
+            "value": "131072"
+          },
+          {
+            "count": 44,
+            "value": "128000"
+          },
+          {
+            "count": 20,
+            "value": "200000"
+          },
+          {
+            "count": 17,
+            "value": "8192"
+          },
+          {
+            "count": 16,
+            "value": "163840"
+          },
+          {
+            "count": 12,
+            "value": "1048576"
+          },
+          {
+            "count": 10,
+            "value": "40960"
+          },
+          {
+            "count": 8,
+            "value": "262144"
+          },
+          {
+            "count": 7,
+            "value": "65536"
+          },
+          {
+            "count": 6,
+            "value": "4096"
+          },
+          {
+            "count": 5,
+            "value": "1000000"
+          },
+          {
+            "count": 5,
+            "value": "256000"
+          },
+          {
+            "count": 5,
+            "value": "96000"
+          },
+          {
+            "count": 4,
+            "value": "16384"
+          },
+          {
+            "count": 4,
+            "value": "32000"
+          },
+          {
+            "count": 3,
+            "value": "1047576"
+          },
+          {
+            "count": 3,
+            "value": "400000"
+          },
+          {
+            "count": 3,
+            "value": "64000"
+          },
+          {
+            "count": 2,
+            "value": "123000"
+          },
+          {
+            "count": 2,
+            "value": "131000"
+          },
+          {
+            "count": 2,
+            "value": "7500"
+          },
+          {
+            "count": 2,
+            "value": "81920"
+          },
+          {
+            "count": 1,
+            "value": "120000"
+          },
+          {
+            "count": 1,
+            "value": "12288"
+          },
+          {
+            "count": 1,
+            "value": "127000"
+          },
+          {
+            "count": 1,
+            "value": "127072"
+          },
+          {
+            "count": 1,
+            "value": "30000"
+          },
+          {
+            "count": 1,
+            "value": "40000"
+          },
+          {
+            "count": 1,
+            "value": "63000"
+          }
+        ]
+      }
+    },
+    "top_provider.is_moderated": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 0,
+        "max": null,
+        "min": null
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 323,
+        "float": 0,
+        "int": 0,
+        "null": 0,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 0,
+        "top": [
+          {
+            "count": 264,
+            "value": "false"
+          },
+          {
+            "count": 59,
+            "value": "true"
+          }
+        ]
+      }
+    },
+    "top_provider.max_completion_tokens": {
+      "array": {
+        "elem_types": {
+          "array": 0,
+          "bool": 0,
+          "float": 0,
+          "int": 0,
+          "null": 0,
+          "object": 0,
+          "string": 0
+        },
+        "lengths": [],
+        "string_union_overflow": 0,
+        "string_union_top": []
+      },
+      "numeric": {
+        "floats": 0,
+        "ints": 172,
+        "max": 1048576.0,
+        "min": 512.0
+      },
+      "object": {
+        "key_union_top": []
+      },
+      "presence": {
+        "missing": 0,
+        "null": 151,
+        "present": 323,
+        "present_pct": 100.0
+      },
+      "types": {
+        "array": 0,
+        "bool": 0,
+        "float": 0,
+        "int": 172,
+        "null": 151,
+        "object": 0,
+        "string": 0,
+        "string_date_like": 0,
+        "string_numeric_like": 0,
+        "string_uuid_like": 0
+      },
+      "values": {
+        "overflow": 15,
+        "top": [
+          {
+            "count": 30,
+            "value": "16384"
+          },
+          {
+            "count": 26,
+            "value": "8192"
+          },
+          {
+            "count": 18,
+            "value": "4096"
+          },
+          {
+            "count": 9,
+            "value": "100000"
+          },
+          {
+            "count": 6,
+            "value": "32000"
+          },
+          {
+            "count": 6,
+            "value": "32768"
+          },
+          {
+            "count": 6,
+            "value": "65536"
+          },
+          {
+            "count": 5,
+            "value": "131072"
+          },
+          {
+            "count": 5,
+            "value": "2048"
+          },
+          {
+            "count": 5,
+            "value": "64000"
+          },
+          {
+            "count": 5,
+            "value": "65535"
+          },
+          {
+            "count": 4,
+            "value": "128000"
+          },
+          {
+            "count": 4,
+            "value": "40000"
+          },
+          {
+            "count": 4,
+            "value": "8000"
+          },
+          {
+            "count": 3,
+            "value": "4028"
+          },
+          {
+            "count": 3,
+            "value": "40960"
+          },
+          {
+            "count": 2,
+            "value": "131000"
+          },
+          {
+            "count": 2,
+            "value": "1500"
+          },
+          {
+            "count": 2,
+            "value": "20000"
+          },
+          {
+            "count": 2,
+            "value": "38000"
+          },
+          {
+            "count": 1,
+            "value": "10000"
+          },
+          {
+            "count": 1,
+            "value": "1000192"
+          },
+          {
+            "count": 1,
+            "value": "1048576"
+          },
+          {
+            "count": 1,
+            "value": "12000"
+          },
+          {
+            "count": 1,
+            "value": "16000"
+          },
+          {
+            "count": 1,
+            "value": "163840"
+          },
+          {
+            "count": 1,
+            "value": "262144"
+          },
+          {
+            "count": 1,
+            "value": "63000"
+          },
+          {
+            "count": 1,
+            "value": "65537"
+          },
+          {
+            "count": 1,
+            "value": "96000"
+          }
+        ]
+      }
+    }
+  },
+  "models": 323
+}

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf};
 
 use itertools::Itertools;
 use ploke_core::rag_types::{ContextPart, ContextPartKind, Modality};
@@ -18,7 +18,9 @@ pub trait Tool {
     async fn run(self, params: Self::Params) -> Result<Self::Output, ploke_error::Error>;
 
     /// JSON schema built at compile time via `schemars` or `serde_json!`.
-    fn schema() -> &'static serde_json::Map<String, Value>;
+    fn schema() -> &'static serde_json::Value;
+
+    fn tool_def() -> ToolFunctionDef;
 }
  // crates/ploke-tui/src/tools/apply_code_edit.rs
  use super::*;
@@ -117,11 +119,23 @@ impl Tool for RequstCodeContext {
         Ok(all_snippets)
     }
 
-    fn schema() -> &'static serde_json::Map<String, Value>{
-        let x = REQUEST_CODE_CONTEXT_PARAMETERS.as_object();
-        match x {
-            Some(map) => map,
-            None => panic!("Tool schema must be well-formed json object")
+    fn schema() -> &'static serde_json::Value {
+        REQUEST_CODE_CONTEXT_PARAMETERS.deref()
+        // match REQUEST_CODE_CONTEXT_PARAMETERS.as_object() {
+        //     Some(map) => map,
+        //     None => panic!("Tool schema must be well-formed json object")
+        // }
+    }
+
+    fn tool_def() -> ToolFunctionDef {
+        ToolFunctionDef { 
+            name: ToolName::CodeContextRequested, 
+            description: ToolDescr::CodeContextRequested, 
+            // TODO: See if it is possible to get rid of the clone, somehow, perhaps by
+            // implementing Deserialize on `&'static Value` or something? Not sure how serde works
+            // here, or if it is possible to create a zero-alloc version since we have a &'static
+            // underlying type.
+            parameters: Self::schema().clone()
         }
     }
 }
@@ -208,6 +222,13 @@ pub struct ToolDefinition {
 pub struct ToolFunctionDef {
     pub name: ToolName,
     pub description: ToolDescr,
+    // TODO: We want to make this something more type-safe, e.g. instead of Value, it should be
+    // generic over the types that implement a tool-calling trait
+    // - DO NOT use dynamic dispatch
+    // - DO use static dispatch
+    // - will likely require changing stuct definition to include a generic type e.g.
+    // `ToolFunctionDef<T>`
+    // - zero-alloc and zero-copy wherever possible, tools are hot path
     pub parameters: Value, // JSON Schema
 }
 

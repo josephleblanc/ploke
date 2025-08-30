@@ -387,9 +387,14 @@ fn traverse_model(builder: &mut StatsBuilder, v: &Value, path: &str, seen_paths:
     }
 }
 
-/// Profile JSON data for schema, enums, etc. (generalized and bounded)
 pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
-    let data = fs::read_to_string(path).expect("Failed to read file");
+    explore_file_visit_to_dir(path, None::<&Path>);
+}
+
+/// Profile JSON data and write stats next to configurable output directory.
+/// If out_dir is None, falls back to default REL_MODEL_ALL_DATA_STATS location.
+pub fn explore_file_visit_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_dir: Option<Q>) {
+    let data = fs::read_to_string(&path).expect("Failed to read file");
     let root: Value = serde_json::from_str(&data).expect("Invalid JSON");
     let models: Vec<Value> = root
         .get("data")
@@ -402,13 +407,11 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
 
     for model in &models {
         let mut seen_paths: HashSet<String> = HashSet::new();
-        // traverse each top-level model
         if let Value::Object(map) = model {
             for (k, v) in map {
                 traverse_model(&mut builder, v, k, &mut seen_paths);
             }
         } else {
-            // fallback: treat the whole model at root
             traverse_model(&mut builder, model, "", &mut seen_paths);
         }
     }
@@ -418,14 +421,12 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     out.push_str("=== JSON Profiling Report ===\n");
     out.push_str(&format!("Models analyzed: {}\n\n", models.len()));
 
-    // Field presence / null / missing
     out.push_str("Field presence (%, present/null/missing):\n");
     let mut fields_sorted: Vec<_> = builder.fields.iter().collect();
     fields_sorted.sort_by(|a, b| a.0.cmp(b.0));
     for (field, st) in &fields_sorted {
         let present = st.presence_models as f64;
         let total = models.len() as f64;
-        let nulls = st.null_models as f64;
         let missing = total - present;
         out.push_str(&format!(
             "({:>5.1}%) {}: present={} null={} missing={}\n",
@@ -438,7 +439,6 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Type distributions
     out.push_str("Type distributions per field:\n");
     for (field, st) in &fields_sorted {
         let tc = &st.type_counts;
@@ -460,7 +460,6 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Array length and element types
     out.push_str("Array stats (lengths and element types):\n");
     for (field, st) in &fields_sorted {
         if !st.array_len_dist.is_empty() {
@@ -479,16 +478,14 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Candidate enum-like fields with frequencies (top-K)
     out.push_str("Candidate enum-like fields (top values):\n");
     for (field, st) in &fields_sorted {
         let total_models = models.len();
-        // Heuristic: only consider scalar-dominant fields with small cardinality and non-numeric-only
         let has_scalar_types = st.type_counts.bool_ + st.type_counts.int + st.type_counts.float + st.type_counts.string_non_numeric + st.type_counts.string_numeric_like > 0;
         if !has_scalar_types { continue; }
         let numeric_only = st.type_counts.bool_ == 0 && st.type_counts.string_non_numeric == 0 && st.type_counts.string_numeric_like == 0 && (st.type_counts.int + st.type_counts.float > 0);
         if numeric_only { continue; }
-        let cardinality = st.value_unique_tracked.len() + if st.value_overflow > 0 { st.value_overflow /* lower bound */ } else { 0 };
+        let cardinality = st.value_unique_tracked.len() + if st.value_overflow > 0 { st.value_overflow } else { 0 };
         let ratio = if total_models > 0 { (cardinality as f64) / (total_models as f64) } else { 1.0 };
         if cardinality > 1 && (cardinality <= builder.config.enum_max_cardinality || ratio <= builder.config.enum_ratio_max) {
             out.push_str(&format!(
@@ -507,7 +504,6 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Array-of-strings unions (generalized)
     out.push_str("Array-of-strings unions (top values):\n");
     for (field, st) in &fields_sorted {
         if !st.array_string_union_freq.is_empty() {
@@ -524,7 +520,6 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Object key unions (for object fields)
     out.push_str("Object key unions (top keys):\n");
     for (field, st) in &fields_sorted {
         if !st.object_key_union_freq.is_empty() {
@@ -538,41 +533,24 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
     }
     out.push('\n');
 
-    // Potential coercions and mixed-type fields
-    out.push_str("Potential coercions and mixed-type fields:\n");
-    for (field, st) in &fields_sorted {
-        let strings = st.type_counts.string_non_numeric + st.type_counts.string_numeric_like;
-        let numerics = st.type_counts.int + st.type_counts.float;
-        if st.type_counts.string_numeric_like > 0 && numerics == 0 {
-            out.push_str(&format!("{}: numeric-like strings present; consider parsing as number\n", field));
-        }
-        if numerics > 0 && strings > 0 {
-            out.push_str(&format!("{}: mixed numeric/string types; consider tagged enum or coercion\n", field));
-        }
-    }
-    out.push('\n');
+    // Choose output directory
+    let (txt_path, json_path) = if let Some(dir) = out_dir.as_ref().map(|d| d.as_ref().to_path_buf()) {
+        let base = std::path::Path::new(path.as_ref()).file_stem().and_then(|s| s.to_str()).unwrap_or("stats");
+        let mut txt = dir.clone();
+        txt.push(format!("{}_stats.txt", base));
+        let mut js = dir;
+        js.push(format!("{}_stats.json", base));
+        (txt, js)
+    } else {
+        let mut out_path = workspace_root();
+        out_path.push(REL_MODEL_ALL_DATA_STATS);
+        let json_out = out_path.with_extension("json");
+        (out_path, json_out)
+    };
 
-    // High-cardinality identifiers (likely not enums)
-    out.push_str("High-cardinality fields (likely identifiers):\n");
-    for (field, st) in &fields_sorted {
-        let present = st.presence_models;
-        let unique_tracked = st.value_unique_tracked.len();
-        let all_unique_tracked = st.value_overflow == 0 && unique_tracked == present && present > 0;
-        let above_enum_threshold = unique_tracked + st.value_overflow > builder.config.enum_max_cardinality * 2;
-        if all_unique_tracked || above_enum_threshold {
-            out.push_str(&format!(
-                "{}: unique~{} present={} overflow={}\n",
-                field, unique_tracked, present, st.value_overflow
-            ));
-        }
-    }
-    out.push('\n');
+    fs::write(&txt_path, &out).expect("Failed to write stats file");
 
-    let mut out_path = workspace_root();
-    out_path.push(REL_MODEL_ALL_DATA_STATS);
-    fs::write(out_path, out).expect("Failed to write stats file");
-
-    // Also emit a JSON artifact with structured stats (bounded top lists)
+    // Also emit JSON artifact
     let mut json_fields = serde_json::Map::new();
     for (field, st) in &builder.fields {
         let mut values_top: Vec<_> = st.value_freq.iter().collect();
@@ -651,24 +629,219 @@ pub fn explore_file_visit<P: AsRef<Path>>(path: P) {
                     "string_union_top": arr_union,
                     "string_union_overflow": st.array_string_union_overflow,
                 },
-                "object": {
-                    "key_union_top": obj_keys,
-                }
+                "object": { "key_union_top": obj_keys }
             }),
         );
     }
 
-    let json_summary = json!({
-        "models": models.len(),
-        "fields": json_fields,
-    });
+    let json_summary = json!({ "models": models.len(), "fields": json_fields });
+    fs::write(&json_path, serde_json::to_string_pretty(&json_summary).unwrap()).expect("Failed to write JSON stats file");
+}
 
-    let mut out_json_path = workspace_root();
-    out_json_path.push(REL_MODEL_ALL_DATA_STATS);
-    // replace .txt with .json
-    let out_json_path = out_json_path.with_extension("json");
-    fs::write(out_json_path, serde_json::to_string_pretty(&json_summary).unwrap())
-        .expect("Failed to write JSON stats file");
+/// Endpoints variant: root expects { data: { endpoints: [ ... ] } }
+pub fn explore_endpoints_file_visit_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_dir: Q) {
+    let data = fs::read_to_string(&path).expect("Failed to read file");
+    let root: Value = serde_json::from_str(&data).expect("Invalid JSON");
+    let arr = root
+        .get("data")
+        .and_then(|d| d.get("endpoints"))
+        .and_then(|v| v.as_array())
+        .expect("object with data.endpoints array")
+        .to_vec();
+
+    // Reuse the general logic by wrapping into { "data": [...] }
+    let wrapped = json!({ "data": arr });
+    let tmp = serde_json::to_string(&wrapped).unwrap();
+    // Write to a temp file in memory path? Instead, traverse directly using the same machinery.
+    // We'll inline traversal to avoid writing an intermediate file.
+
+    let cfg = Config::default();
+    let mut builder = StatsBuilder::new(cfg);
+
+    for v in wrapped.get("data").and_then(|a| a.as_array()).unwrap() {
+        let mut seen_paths: HashSet<String> = HashSet::new();
+        if let Value::Object(map) = v {
+            for (k, val) in map {
+                traverse_model(&mut builder, val, k, &mut seen_paths);
+            }
+        } else {
+            traverse_model(&mut builder, v, "", &mut seen_paths);
+        }
+    }
+
+    // Compose out paths
+    let base = std::path::Path::new(path.as_ref()).file_stem().and_then(|s| s.to_str()).unwrap_or("endpoint");
+    let mut txt = out_dir.as_ref().to_path_buf();
+    txt.push(format!("{}_stats.txt", base));
+    let mut js = out_dir.as_ref().to_path_buf();
+    js.push(format!("{}_stats.json", base));
+
+    // Emit text same as above
+    let mut out = String::new();
+    out.push_str("=== JSON Profiling Report (endpoints) ===\n");
+    out.push_str(&format!("Endpoints analyzed: {}\n\n", arr.len()));
+
+    let mut fields_sorted: Vec<_> = builder.fields.iter().collect();
+    fields_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    for (field, st) in &fields_sorted {
+        let present = st.presence_models as f64;
+        let total = arr.len() as f64;
+        let missing = total - present;
+        out.push_str(&format!(
+            "({:>5.1}%) {}: present={} null={} missing={}\n",
+            if total > 0.0 { present * 100.0 / total } else { 0.0 },
+            field,
+            st.presence_models,
+            st.null_models,
+            missing as usize
+        ));
+    }
+
+    fs::write(&txt, &out).expect("Failed to write endpoints stats txt");
+
+    // Emit JSON
+    let mut json_fields = serde_json::Map::new();
+    for (field, st) in &builder.fields {
+        json_fields.insert(
+            field.clone(),
+            json!({
+                "presence": {
+                    "present": st.presence_models,
+                    "null": st.null_models,
+                    "missing": arr.len().saturating_sub(st.presence_models),
+                }
+            }),
+        );
+    }
+    let summary = json!({ "endpoints": arr.len(), "fields": json_fields });
+    fs::write(&js, serde_json::to_string_pretty(&summary).unwrap()).expect("Failed to write endpoints stats json");
+}
+
+/// Analyze cardinality for specific keys at the top-level of models JSON and write to out_dir.
+pub fn analyze_cardinality_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_dir: Q, keys: &[&str]) {
+    let data = fs::read_to_string(&path).expect("Failed to read file");
+    let root: Value = serde_json::from_str(&data).expect("Invalid JSON");
+    let models: Vec<Value> = root
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("an object containing an array")
+        .to_vec();
+
+    let mut sets: HashMap<String, HashSet<String>> = HashMap::new();
+
+    fn collect(path: &str, v: &Value, sets: &mut HashMap<String, HashSet<String>>, targets: &std::collections::HashSet<String>) {
+        match v {
+            Value::Null | Value::Bool(_) | Value::Number(_) => {
+                // Only collect strings scalars to reduce noise, but include numbers stringified if directly targeted
+                if targets.contains(path) {
+                    sets.entry(path.to_string()).or_default().insert(v.to_string());
+                }
+            }
+            Value::String(s) => {
+                if targets.contains(path) {
+                    sets.entry(path.to_string()).or_default().insert(s.to_string());
+                }
+            }
+            Value::Array(arr) => {
+                for elem in arr {
+                    collect(path, elem, sets, targets);
+                }
+            }
+            Value::Object(map) => {
+                for (k, v2) in map {
+                    let child_path = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                    collect(&child_path, v2, sets, targets);
+                }
+            }
+        }
+    }
+
+    let target_set: std::collections::HashSet<String> = keys.iter().map(|s| s.to_string()).collect();
+    for model in &models {
+        if let Value::Object(map) = model {
+            for (k, v) in map {
+                let child_path = k.clone();
+                collect(&child_path, v, &mut sets, &target_set);
+            }
+        }
+    }
+
+    let mut out_txt = String::new();
+    out_txt.push_str("=== Cardinality Report ===\n");
+    for key in keys {
+        let set = sets.get(&key.to_string()).map(|s| s.len()).unwrap_or(0);
+        out_txt.push_str(&format!("{}: {} unique values\n", key, set));
+    }
+
+    let mut out_json = serde_json::Map::new();
+    for key in keys {
+        let values = sets.get(&key.to_string()).map(|s| {
+            let mut v: Vec<_> = s.iter().cloned().collect();
+            v.sort();
+            v
+        }).unwrap_or_default();
+        out_json.insert(key.to_string(), json!({ "unique": values.len(), "samples": values.iter().take(100).collect::<Vec<_>>() }));
+    }
+
+    let base = std::path::Path::new(path.as_ref()).file_stem().and_then(|s| s.to_str()).unwrap_or("models");
+    let mut txt = out_dir.as_ref().to_path_buf();
+    txt.push(format!("{}_cardinality.txt", base));
+    let mut js = out_dir.as_ref().to_path_buf();
+    js.push(format!("{}_cardinality.json", base));
+
+    fs::write(&txt, out_txt).expect("write cardinality txt");
+    fs::write(&js, serde_json::to_string_pretty(&Value::Object(out_json)).unwrap()).expect("write cardinality json");
+}
+
+/// Analyze endpoints cardinality: extract data.endpoints and then compute set sizes for selected keys.
+pub fn analyze_endpoints_cardinality_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_dir: Q, keys: &[&str]) {
+    let data = fs::read_to_string(&path).expect("Failed to read file");
+    let root: Value = serde_json::from_str(&data).expect("Invalid JSON");
+    let arr = root
+        .get("data")
+        .and_then(|d| d.get("endpoints"))
+        .and_then(|v| v.as_array())
+        .expect("object with data.endpoints array")
+        .to_vec();
+
+    let mut sets: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for ep in &arr {
+        if let Value::Object(map) = ep {
+            for (k, v) in map {
+                if keys.contains(&k.as_str()) {
+                    if let Value::String(s) = v { sets.entry(k.clone()).or_default().insert(s.clone()); }
+                    else { sets.entry(k.clone()).or_default().insert(v.to_string()); }
+                }
+            }
+        }
+    }
+
+    let mut out_txt = String::new();
+    out_txt.push_str("=== Endpoints Cardinality Report ===\n");
+    for key in keys {
+        let set = sets.get(&key.to_string()).map(|s| s.len()).unwrap_or(0);
+        out_txt.push_str(&format!("{}: {} unique values\n", key, set));
+    }
+
+    let mut out_json = serde_json::Map::new();
+    for key in keys {
+        let values = sets.get(&key.to_string()).map(|s| {
+            let mut v: Vec<_> = s.iter().cloned().collect();
+            v.sort();
+            v
+        }).unwrap_or_default();
+        out_json.insert(key.to_string(), json!({ "unique": values.len(), "samples": values.iter().take(100).collect::<Vec<_>>() }));
+    }
+
+    let base = std::path::Path::new(path.as_ref()).file_stem().and_then(|s| s.to_str()).unwrap_or("endpoint");
+    let mut txt = out_dir.as_ref().to_path_buf();
+    txt.push(format!("{}_cardinality.txt", base));
+    let mut js = out_dir.as_ref().to_path_buf();
+    js.push(format!("{}_cardinality.json", base));
+
+    fs::write(&txt, out_txt).expect("write endpoints cardinality txt");
+    fs::write(&js, serde_json::to_string_pretty(&Value::Object(out_json)).unwrap()).expect("write endpoints cardinality json");
 }
 
 mod tests {

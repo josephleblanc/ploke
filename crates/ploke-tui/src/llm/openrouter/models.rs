@@ -289,6 +289,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn flakey_models_all_raw_ep() -> color_eyre::Result<()> {
         let models_resp = {
             let rt = Runtime::new().unwrap();
@@ -353,8 +354,63 @@ mod tests {
             let f = File::create(&log_file)?;
             serde_json::to_writer_pretty(f, &models_resp)?;
             eprintln!("Updated golden file at {:?}", log_file);
+        }
+
+        // Also write to ai_temp_data if requested for exploration
+        if std::env::var("PLOKE_AI_TMP").is_ok() {
+            let mut ai_dir = workspace_root();
+            ai_dir.push("crates/ploke-tui/ai_temp_data");
+            std::fs::create_dir_all(&ai_dir).ok();
+            let mut out_path = ai_dir.clone();
+            out_path.push("models_all_raw.json");
+            let f = File::create(&out_path)?;
+            serde_json::to_writer_pretty(f, &models_resp)?;
+            eprintln!("Wrote models_all_raw.json to {}", out_path.display());
+            // Run visitor and write stats into ai_temp_data
+            crate::llm::openrouter::json_visitor::explore_file_visit_to_dir(&out_path, Some(&ai_dir));
+            // Cardinality for id/canonical_slug and provider identities
+            crate::llm::openrouter::json_visitor::analyze_cardinality_to_dir(
+                &out_path,
+                &ai_dir,
+                &["id", "canonical_slug", "providers.id", "providers.provider", "providers.name", "providers.slug", "providers.provider_slug"],
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "live_api_tests")]
+    fn ai_temp_endpoint_dump_and_stats() -> color_eyre::Result<()> {
+        use crate::llm::openrouter::provider_endpoints::ProvEnd;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        if std::env::var("PLOKE_AI_TMP").is_err() {
+            eprintln!("PLOKE_AI_TMP not set; skipping dump");
             return Ok(());
         }
+        // Build a known endpoint URL and use ProvEnd to fetch raw
+        use crate::llm::openrouter::providers::Author;
+        let rt = Runtime::new().unwrap();
+        let v = rt.block_on(async move {
+            let pe = ProvEnd { author: Author::deepseek, model: std::sync::Arc::<str>::from("deepseek-chat-v3.1") };
+            pe.call_endpoint_raw().await
+        })?;
+
+        let mut ai_dir = workspace_root();
+        ai_dir.push("crates/ploke-tui/ai_temp_data");
+        std::fs::create_dir_all(&ai_dir).ok();
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let mut out_path = ai_dir.clone();
+        out_path.push(format!("endpoint_qwen3-30b-a3b-thinking-2507_{}.json", ts));
+        let f = File::create(&out_path)?;
+        serde_json::to_writer_pretty(f, &v)?;
+        eprintln!("Wrote endpoint raw JSON to {}", out_path.display());
+        // Analyze endpoints array and write stats to ai_temp_data
+        crate::llm::openrouter::json_visitor::explore_endpoints_file_visit_to_dir(&out_path, &ai_dir);
+        crate::llm::openrouter::json_visitor::analyze_endpoints_cardinality_to_dir(
+            &out_path,
+            &ai_dir,
+            &["id", "name", "provider", "slug", "provider_slug"],
+        );
         Ok(())
     }
 

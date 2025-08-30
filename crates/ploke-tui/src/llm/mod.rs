@@ -49,7 +49,12 @@ pub struct OpenAiRequest<'a> {
     provider: Option<ProviderPreferences>,
 }
 
-#[derive(Serialize, Debug, Clone, Default)]
+// NOTE: Can only be used in the request body for:
+//  - https://openrouter.ai/api/v1/chat/completions
+//  - https://openrouter.ai/api/v1/completions
+//  - see local copy of openrouter docs at:
+//      `crates/ploke-tui/docs/openrouter/provider_routing.md`
+#[derive(Serialize, Debug, Clone, Default, Deserialize)]
 pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub allow: Vec<String>,
@@ -57,6 +62,10 @@ pub struct ProviderPreferences {
     pub deny: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub order: Vec<String>,
+    // TODO: We need to change "skip_bool_always", since this would mean we never force selection
+    // of a model with tool-calling or enforce user-specified provider choices made locally.
+    // - may break some requests in current model if we change, but this likely indicates we need
+    // to handle those requests differently and/or adjust our data structures to handle it.
     #[serde(skip_serializing_if = "skip_bool_always")]
     pub require_parameters: bool,
 }
@@ -105,7 +114,7 @@ pub fn get_file_metadata_tool_def() -> ToolDefinition {
     }
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct RequestMessage {
     pub role: Role,
     pub content: String,
@@ -113,6 +122,29 @@ pub struct RequestMessage {
     pub tool_call_id: Option<String>,
 }
 
+// TODO: Add Role::Tool
+// - be careful when adding `Tool`
+// - note differences in the way the original json handles the `type Message` when there is a
+// `role: 'tool'`, such that it requires a `tool_call_id`. We will need to propogate this
+// requirement somehow. Needs HUMAN decision, ask.
+// - see original json below:
+// ```json
+// type Message =
+//   | {
+//       role: 'user' | 'assistant' | 'system';
+//       // ContentParts are only for the "user" role:
+//       content: string | ContentPart[];
+//       // If "name" is included, it will be prepended like this
+//       // for non-OpenAI models: `{name}: {content}`
+//       name?: string;
+//     }
+//   | {
+//       role: 'tool';
+//       content: string;
+//       tool_call_id: string;
+//       name?: string;
+//     };
+// ```
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -136,6 +168,8 @@ impl From<MessageKind> for Role {
         match value {
             MessageKind::User => Role::User,
             MessageKind::Assistant => Role::Assistant,
+            // TODO: Should change below to Role::System, might break something, check tests
+            // before/after
             MessageKind::System => Role::Assistant,
             _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
         }
@@ -144,6 +178,7 @@ impl From<MessageKind> for Role {
 
 // OpenAI tool/function definition (for request payload)
 #[derive(Serialize, Debug, Clone, Deserialize)]
+#[deprecated = "Use tools::ToolDefinition instead"]
 pub struct ToolDefinition {
     #[serde(rename = "type")]
     pub r#type: &'static str, // "function"
@@ -151,6 +186,7 @@ pub struct ToolDefinition {
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize)]
+#[deprecated = "Use tools::ToolFunctionDef instead"]
 pub struct ToolFunctionDef {
     pub name: &'static str,
     pub description: &'static str,
@@ -158,6 +194,7 @@ pub struct ToolFunctionDef {
 }
 
 // Helper to define our example tool
+#[deprecated = "Use tools::RequstCodeContext::tool_def() instead"]
 pub fn request_code_context_tool_def() -> ToolDefinition {
     ToolDefinition {
         r#type: "function",

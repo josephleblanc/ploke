@@ -1,0 +1,305 @@
+=== JSON Profiling Report ===
+Models analyzed: 323
+
+Field presence (%, present/null/missing):
+(100.0%) architecture: present=323 null=0 missing=0
+(100.0%) architecture.input_modalities: present=323 null=0 missing=0
+(100.0%) architecture.instruct_type: present=323 null=209 missing=0
+(100.0%) architecture.modality: present=323 null=0 missing=0
+(100.0%) architecture.output_modalities: present=323 null=0 missing=0
+(100.0%) architecture.tokenizer: present=323 null=0 missing=0
+(100.0%) canonical_slug: present=323 null=0 missing=0
+(100.0%) context_length: present=323 null=0 missing=0
+(100.0%) created: present=323 null=0 missing=0
+(100.0%) description: present=323 null=0 missing=0
+(100.0%) hugging_face_id: present=323 null=43 missing=0
+(100.0%) id: present=323 null=0 missing=0
+(100.0%) name: present=323 null=0 missing=0
+(100.0%) per_request_limits: present=323 null=323 missing=0
+(100.0%) pricing: present=323 null=0 missing=0
+(  0.6%) pricing.audio: present=2 null=0 missing=321
+(100.0%) pricing.completion: present=323 null=0 missing=0
+( 99.7%) pricing.image: present=322 null=0 missing=1
+( 15.5%) pricing.input_cache_read: present=50 null=0 missing=273
+(  6.2%) pricing.input_cache_write: present=20 null=0 missing=303
+( 99.7%) pricing.internal_reasoning: present=322 null=0 missing=1
+(100.0%) pricing.prompt: present=323 null=0 missing=0
+( 99.7%) pricing.request: present=322 null=0 missing=1
+( 99.7%) pricing.web_search: present=322 null=0 missing=1
+(100.0%) supported_parameters: present=323 null=0 missing=0
+(100.0%) top_provider: present=323 null=0 missing=0
+(100.0%) top_provider.context_length: present=323 null=1 missing=0
+(100.0%) top_provider.is_moderated: present=323 null=0 missing=0
+(100.0%) top_provider.max_completion_tokens: present=323 null=151 missing=0
+
+Type distributions per field:
+architecture: null=0 bool=0 int=0 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=323 arr=0
+architecture.input_modalities: null=0 bool=0 int=0 float=0 str=462 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=323
+architecture.instruct_type: null=209 bool=0 int=0 float=0 str=114 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+architecture.modality: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+architecture.output_modalities: null=0 bool=0 int=0 float=0 str=325 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=323
+architecture.tokenizer: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+canonical_slug: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+context_length: null=0 bool=0 int=323 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+  numeric: ints=323 floats=0 min=2824.000000 max=2000000.000000
+created: null=0 bool=0 int=323 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+  numeric: ints=323 floats=0 min=1685232000.000000 max=1756399192.000000
+description: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+hugging_face_id: null=43 bool=0 int=0 float=0 str=280 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+id: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+name: null=0 bool=0 int=0 float=0 str=323 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+per_request_limits: null=323 bool=0 int=0 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing: null=0 bool=0 int=0 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=323 arr=0
+pricing.audio: null=0 bool=0 int=0 float=0 str=0 str(num)=2 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.completion: null=0 bool=0 int=0 float=0 str=0 str(num)=323 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.image: null=0 bool=0 int=0 float=0 str=0 str(num)=322 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.input_cache_read: null=0 bool=0 int=0 float=0 str=0 str(num)=50 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.input_cache_write: null=0 bool=0 int=0 float=0 str=0 str(num)=20 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.internal_reasoning: null=0 bool=0 int=0 float=0 str=0 str(num)=322 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.prompt: null=0 bool=0 int=0 float=0 str=0 str(num)=323 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.request: null=0 bool=0 int=0 float=0 str=0 str(num)=322 str(date)=0 str(uuid)=0 obj=0 arr=0
+pricing.web_search: null=0 bool=0 int=0 float=0 str=0 str(num)=322 str(date)=0 str(uuid)=0 obj=0 arr=0
+supported_parameters: null=0 bool=0 int=0 float=0 str=3866 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=323
+top_provider: null=0 bool=0 int=0 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=323 arr=0
+top_provider.context_length: null=1 bool=0 int=322 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+  numeric: ints=322 floats=0 min=2824.000000 max=2000000.000000
+top_provider.is_moderated: null=0 bool=323 int=0 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+top_provider.max_completion_tokens: null=151 bool=0 int=172 float=0 str=0 str(num)=0 str(date)=0 str(uuid)=0 obj=0 arr=0
+  numeric: ints=172 floats=0 min=512.000000 max=1048576.000000
+
+Array stats (lengths and element types):
+architecture.input_modalities:
+  len 1: 226 models
+  len 2: 63 models
+  len 3: 26 models
+  len 4: 8 models
+  elem types: null=0 bool=0 int=0 float=0 str=462 obj=0 arr=0
+architecture.output_modalities:
+  len 1: 321 models
+  len 2: 2 models
+  elem types: null=0 bool=0 int=0 float=0 str=325 obj=0 arr=0
+supported_parameters:
+  len 0: 1 models
+  len 2: 2 models
+  len 3: 5 models
+  len 4: 5 models
+  len 5: 6 models
+  len 6: 14 models
+  len 7: 15 models
+  len 8: 17 models
+  len 9: 16 models
+  len 10: 15 models
+  len 11: 47 models
+  len 12: 15 models
+  len 13: 38 models
+  len 14: 31 models
+  len 15: 48 models
+  len 16: 10 models
+  len 17: 23 models
+  len 18: 3 models
+  len 19: 12 models
+  elem types: null=0 bool=0 int=0 float=0 str=3866 obj=0 arr=0
+
+Candidate enum-like fields (top values):
+architecture.input_modalities (cardinality~4, ratio~0.012):
+  - text (323 models)
+  - image (96 models)
+  - file (34 models)
+  - audio (9 models)
+architecture.instruct_type (cardinality~14, ratio~0.043):
+  - deepseek-r1 (26 models)
+  - llama3 (21 models)
+  - chatml (15 models)
+  - qwen3 (11 models)
+  - mistral (10 models)
+  - gemma (9 models)
+  - alpaca (6 models)
+  - none (4 models)
+  - phi3 (3 models)
+  - airoboros (2 models)
+  - deepseek-v3.1 (2 models)
+  - qwq (2 models)
+  - vicuna (2 models)
+  - code-llama (1 models)
+architecture.modality (cardinality~3, ratio~0.009):
+  - text->text (227 models)
+  - text+image->text (94 models)
+  - text+image->text+image (2 models)
+architecture.output_modalities (cardinality~2, ratio~0.006):
+  - text (323 models)
+  - image (2 models)
+architecture.tokenizer (cardinality~15, ratio~0.046):
+  - Other (81 models)
+  - Mistral (40 models)
+  - GPT (38 models)
+  - Llama3 (37 models)
+  - Qwen (26 models)
+  - Gemini (24 models)
+  - DeepSeek (17 models)
+  - Qwen3 (17 models)
+  - Claude (11 models)
+  - Grok (9 models)
+  - Cohere (8 models)
+  - Llama2 (7 models)
+  - Llama4 (4 models)
+  - Nova (3 models)
+  - Router (1 models)
+pricing.audio (cardinality~2, ratio~0.006):
+  - 0.0000007 (1 models)
+  - 0.00004 (1 models)
+pricing.image (cardinality~30, ratio~0.093):
+  - 0 (275 models)
+  - 0.0048 (5 models)
+  - 0.003613 (4 models)
+  - 0.007225 (4 models)
+  - 0.00516 (3 models)
+  - 0.024 (3 models)
+  - 0.0001445 (2 models)
+  - 0.000217 (2 models)
+  - 0.0008415 (2 models)
+  - 0.001238 (2 models)
+  - 0.0000258 (1 models)
+  - 0.00004 (1 models)
+  - 0.00007948 (1 models)
+  - 0.00009 (1 models)
+  - 0.00017685 (1 models)
+  - 0.0002688 (1 models)
+  - 0.0004 (1 models)
+  - 0.0005058 (1 models)
+  - 0.0006575 (1 models)
+  - 0.0006684 (1 models)
+  - 0.001024 (1 models)
+  - 0.0012 (1 models)
+  - 0.00153 (1 models)
+  - 0.002888 (1 models)
+  - 0.0036 (1 models)
+  - 0.009 (1 models)
+  - 0.01445 (1 models)
+  - 0.0153 (1 models)
+  - 0.021675 (1 models)
+  - 0.21675 (1 models)
+pricing.input_cache_read (cardinality~22, ratio~0.068):
+  - 0.000000025 (5 models)
+  - 0.000000075 (5 models)
+  - 0.0000003 (5 models)
+  - 0.00000055 (4 models)
+  - 0.00000031 (3 models)
+  - 0.00000075 (3 models)
+  - 0.00000125 (3 models)
+  - 0.0000015 (3 models)
+  - 0.00000002 (2 models)
+  - 0.00000008 (2 models)
+  - 0.000000125 (2 models)
+  - 0.000000275 (2 models)
+  - 0.0000005 (2 models)
+  - 0.000000005 (1 models)
+  - 0.00000001 (1 models)
+  - 0.00000001875 (1 models)
+  - 0.00000003 (1 models)
+  - 0.0000001 (1 models)
+  - 0.00000016 (1 models)
+  - 0.000000375 (1 models)
+  - 0.00000064 (1 models)
+  - 0.0000075 (1 models)
+pricing.input_cache_write (cardinality~9, ratio~0.028):
+  - 0.00000375 (5 models)
+  - 0.0000001833 (3 models)
+  - 0.000001625 (3 models)
+  - 0.00001875 (3 models)
+  - 0.000001 (2 models)
+  - 0.0000000583 (1 models)
+  - 0.0000001583 (1 models)
+  - 0.0000003 (1 models)
+  - 0.0000003833 (1 models)
+pricing.internal_reasoning (cardinality~2, ratio~0.006):
+  - 0 (321 models)
+  - 0.000003 (1 models)
+pricing.request (cardinality~4, ratio~0.012):
+  - 0 (318 models)
+  - 0.005 (2 models)
+  - 0.0275 (1 models)
+  - 0.035 (1 models)
+pricing.web_search (cardinality~3, ratio~0.009):
+  - 0 (316 models)
+  - 0.005 (3 models)
+  - 0.01 (3 models)
+supported_parameters (cardinality~21, ratio~0.065):
+  - max_tokens (321 models)
+  - temperature (305 models)
+  - top_p (299 models)
+  - stop (274 models)
+  - seed (263 models)
+  - presence_penalty (250 models)
+  - frequency_penalty (247 models)
+  - top_k (214 models)
+  - response_format (196 models)
+  - logit_bias (183 models)
+  - repetition_penalty (174 models)
+  - min_p (170 models)
+  - tools (165 models)
+  - tool_choice (156 models)
+  - structured_outputs (149 models)
+  - logprobs (140 models)
+  - top_logprobs (140 models)
+  - include_reasoning (98 models)
+  - reasoning (98 models)
+  - web_search_options (16 models)
+  - top_a (8 models)
+top_provider.is_moderated (cardinality~2, ratio~0.006):
+  - false (264 models)
+  - true (59 models)
+
+Array-of-strings unions (top values):
+architecture.input_modalities:
+  - text (323)
+  - image (96)
+  - file (34)
+  - audio (9)
+architecture.output_modalities:
+  - text (323)
+  - image (2)
+supported_parameters:
+  - max_tokens (321)
+  - temperature (305)
+  - top_p (299)
+  - stop (274)
+  - seed (263)
+  - presence_penalty (250)
+  - frequency_penalty (247)
+  - top_k (214)
+  - response_format (196)
+  - logit_bias (183)
+  - repetition_penalty (174)
+  - min_p (170)
+  - tools (165)
+  - tool_choice (156)
+  - structured_outputs (149)
+  - logprobs (140)
+  - top_logprobs (140)
+  - include_reasoning (98)
+  - reasoning (98)
+  - web_search_options (16)
+  - top_a (8)
+
+Object key unions (top keys):
+architecture:
+  - input_modalities (323)
+  - instruct_type (323)
+  - modality (323)
+  - output_modalities (323)
+  - tokenizer (323)
+pricing:
+  - completion (323)
+  - prompt (323)
+  - image (322)
+  - internal_reasoning (322)
+  - request (322)
+  - web_search (322)
+  - input_cache_read (50)
+  - input_cache_write (20)
+  - audio (2)
+top_provider:
+  - context_length (323)
+  - is_moderated (323)
+  - max_completion_tokens (323)
+

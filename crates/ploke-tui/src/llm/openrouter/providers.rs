@@ -327,64 +327,6 @@ impl Author {
     }
 }
 
-mod tests {
-    use reqwest::Client;
-    use std::time::Duration;
-
-    use crate::{
-        llm::providers::ProvidersResponse,
-        test_harness::{default_headers, openrouter_env},
-        user_config::openrouter_url,
-    };
-
-    #[tokio::test]
-    #[ignore = "Live, flakey test"]
-    /// Flakey test to help notice when OpenRouter changes their provider list.
-    async fn flakey_openrouter_providers() -> color_eyre::Result<()> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(5))
-            .default_headers(default_headers())
-            .build()
-            .expect("client");
-        let url = openrouter_url().join("providers").expect("Malformed Url");
-        eprintln!("url: {}", url);
-        let api_key = openrouter_env().expect("No key").key;
-
-        let resp = client
-            .get(url)
-            .bearer_auth(&api_key)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())?;
-        let providers_response: ProvidersResponse = resp.json().await?;
-
-        let count_providers = providers_response.data.iter().count();
-        assert_eq!(61, count_providers);
-
-        let count_tos = providers_response
-            .data
-            .iter()
-            .filter(|p| p.privacy_policy_url.is_some())
-            .count();
-        assert_eq!(54, count_tos);
-
-        let count_status_page = providers_response
-            .data
-            .iter()
-            .filter(|p| p.status_page_url.is_some())
-            .count();
-        assert_eq!(27, count_status_page);
-
-        let count_pp = providers_response
-            .data
-            .iter()
-            .filter(|p| p.privacy_policy_url.is_some())
-            .count();
-        assert_eq!(54, count_pp);
-        Ok(())
-    }
-}
-
 impl std::str::FromStr for Author {
     type Err = ();
 
@@ -453,5 +395,77 @@ impl std::str::FromStr for Author {
             "gmicloud" => Ok(Author::gmicloud),
             _ => Err(()),
         }
+    }
+}
+
+mod tests {
+    use reqwest::Client;
+    use std::time::Duration;
+
+    use crate::{
+        llm::providers::ProvidersResponse,
+        test_harness::{default_headers, openrouter_env},
+        user_config::openrouter_url,
+    };
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    /// Flakey test to help notice when OpenRouter changes their provider list.
+    async fn flakey_openrouter_providers() -> color_eyre::Result<()> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .default_headers(default_headers())
+            .build()
+            .expect("client");
+        let url = openrouter_url().join("providers").expect("Malformed Url");
+        eprintln!("url: {}", url);
+        let api_key = openrouter_env().expect("No key").key;
+
+        let resp = client
+            .get(url)
+            .bearer_auth(&api_key)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())?;
+        let body = resp.json::<serde_json::Value>().await?;
+        {
+            use std::fs;
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let mut dir = ploke_test_utils::workspace_root();
+            dir.push("crates/ploke-tui/data/providers");
+            fs::create_dir_all(&dir).ok();
+            let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let mut path = dir;
+            path.push(format!("providers-{}.json", ts));
+            let f = fs::File::create(&path)?;
+            serde_json::to_writer_pretty(f, &body)?;
+            eprintln!("wrote providers JSON to {}", path.display());
+        }
+        let providers_response: ProvidersResponse = serde_json::from_value(body)?;
+
+        let count_providers = providers_response.data.len();
+        assert_eq!(61, count_providers);
+
+        let count_tos = providers_response
+            .data
+            .iter()
+            .filter(|p| p.privacy_policy_url.is_some())
+            .count();
+        assert_eq!(54, count_tos);
+
+        let count_status_page = providers_response
+            .data
+            .iter()
+            .filter(|p| p.status_page_url.is_some())
+            .count();
+        assert_eq!(27, count_status_page);
+
+        let count_pp = providers_response
+            .data
+            .iter()
+            .filter(|p| p.privacy_policy_url.is_some())
+            .count();
+        assert_eq!(54, count_pp);
+        Ok(())
     }
 }
