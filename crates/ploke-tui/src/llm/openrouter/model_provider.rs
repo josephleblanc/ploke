@@ -18,7 +18,7 @@
 //  - We can add the `ModelProvider` to a cache of `ModelProvider` that forms our official
 //  `ModelRegistry`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub struct ModelProvider {}
 
@@ -85,18 +85,71 @@ pub struct CompReq<'a> {
     // corresponding json: `frequency_penalty?: number; // Range: [-2, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
     frequency_penalty: Option<f32>,
-    // AI: Finish defining the struct as above AI!
-    // corresponding json: `presence_penalty?: number; // Range: [-2, 2]`
-    // corresponding json: `repetition_penalty?: number; // Range: (0, 2]`
-    // corresponding json: `logit_bias?: { [key: number]: number };`
-    // corresponding json: `top_logprobs: number; // Integer only`
-    // corresponding json: `min_p?: number; // Range: [0, 1]`
-    // corresponding json: `top_a?: number; // Range: [0, 1]`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repetition_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logit_bias: Option<std::collections::HashMap<i32, f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_logprobs: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_a: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<ProviderPreferences>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RequestMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ToolDefinition {
+    pub r#type: String,
+    pub function: FunctionDefinition,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ToolChoice {
+    pub r#type: String,
+    pub function: Option<FunctionChoice>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FunctionChoice {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProviderPreferences {
+    pub allow_fallbacks: Option<bool>,
+    pub require_parameters: Option<bool>,
+    pub data_collection: Option<String>,
 }
 
 // TODO: We should create a Marker struct for this, similar to `FunctionMarker` in
 // `crates/ploke-tui/src/tools/mod.rs`, since this can onlly have the value (in json):
 //  `{ type: 'json_object' }`
-pub struct JsonObjMarker;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonObjMarker {
+    pub r#type: String,
+}
+
+impl JsonObjMarker {
+    pub fn new() -> Self {
+        Self {
+            r#type: "json_object".to_string(),
+        }
+    }
+}
