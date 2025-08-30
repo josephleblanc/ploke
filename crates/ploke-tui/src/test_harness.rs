@@ -12,6 +12,7 @@ use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::workspace_root;
 
+#[cfg(feature = "test_harness")]
 lazy_static! {
     /// A globally accessible App instance for tests, wrapped in Arc<Mutex<...>>.
     pub static ref TEST_APP: Arc<Mutex<App>> = {
@@ -146,6 +147,7 @@ lazy_static! {
 }
 
 /// Convenience accessor for the global test App.
+#[cfg(feature = "test_harness")]
 pub fn app() -> &'static Arc<Mutex<App>> {
     &TEST_APP
 }
@@ -153,6 +155,7 @@ pub fn app() -> &'static Arc<Mutex<App>> {
 /// Accessor for the shared AppState used by TEST_APP.
 /// This provides a clone of the Arc<AppState> so integration tests can stage
 /// proposals or inspect state efficiently without recreating the app.
+#[cfg(feature = "test_harness")]
 pub async fn get_state() -> Arc<AppState> {
     let app = TEST_APP.lock().await;
     app.test_get_state()

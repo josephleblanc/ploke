@@ -57,7 +57,7 @@ use ploke_embed::{
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{self, openrouter_catalog, RequestMessage};
+use crate::llm::{self, openrouter_catalog, provider_endpoints::{SupportedParameters, SupportsTools}, RequestMessage};
 
 lazy_static! {
     pub static ref OPENROUTER_URL: Url = 
@@ -519,7 +519,7 @@ impl ModelRegistry {
             let model_level_tools = m
                 .supported_parameters
                 .as_ref()
-                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                .map(|v| v.supports_tools())
                 .unwrap_or(false);
 
             let provider_tools = m
@@ -552,8 +552,8 @@ impl ModelRegistry {
                 context_length: m
                     .context_length
                     .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                input_cost_per_million: m.pricing.as_ref().and_then(|p| p.input),
-                output_cost_per_million: m.pricing.as_ref().and_then(|p| p.output),
+                input_cost_per_million: m.pricing.as_ref().map(|p| p.prompt),
+                output_cost_per_million: m.pricing.as_ref().map(|p| p.completion),
             };
             self.capabilities.insert(m.id, caps);
         }

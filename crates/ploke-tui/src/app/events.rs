@@ -49,8 +49,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                             ModelProviderRow {
                                 id: p.id,
                                 context_length: p.context_length,
-                                input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
-                                output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                                input_cost: p.pricing.as_ref().map(|pr| pr.prompt),
+                                output_cost: p.pricing.as_ref().map(|pr| pr.completion),
                                 supports_tools,
                             }
                         })

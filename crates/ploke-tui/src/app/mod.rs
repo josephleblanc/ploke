@@ -1,3 +1,4 @@
+use crate::llm::provider_endpoints::SupportsTools as _;
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -1146,8 +1147,8 @@ impl App {
                     .map(|p| ModelProviderRow {
                         id: p.id,
                         context_length: p.context_length,
-                        input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
-                        output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                        input_cost: p.pricing.as_ref().map(|pr| pr.prompt),
+                        output_cost: p.pricing.as_ref().map(|p| p.completion),
                         supports_tools: p
                             .supported_parameters
                             .as_ref()
@@ -1161,7 +1162,7 @@ impl App {
                 let model_supports_tools = m
                     .supported_parameters
                     .as_ref()
-                    .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                    .map(|v| v.supports_tools())
                     .unwrap_or(false)
                     || provider_rows.iter().any(|p| p.supports_tools);
 
@@ -1171,8 +1172,8 @@ impl App {
                     context_length: m
                         .context_length
                         .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                    input_cost: m.pricing.as_ref().and_then(|p| p.input),
-                    output_cost: m.pricing.as_ref().and_then(|p| p.output),
+                    input_cost: m.pricing.as_ref().map(|p| p.prompt),
+                    output_cost: m.pricing.as_ref().map(|p| p.completion),
                     supports_tools: model_supports_tools,
                     providers: provider_rows,
                     expanded: false,

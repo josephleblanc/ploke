@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use crate::test_harness::openrouter_env;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, instrument, warn, Level};
@@ -9,12 +10,13 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters, SupportsTools};
 use crate::tracing_setup::{init_tracing, init_tracing_tests};
 use crate::user_config::OPENROUTER_URL;
 
 // Leverage the in-crate test harness (Arc<Mutex<App>>) for constructing a realistic App.
-use crate::test_harness::{app, openrouter_env};
+#[cfg(feature = "test_harness")]
+use crate::test_harness::app;
 
 ///// Helper to resolve API key and base URL for OpenRouter.
 //fn openrouter_env() -> Option<(String, String)> {
@@ -105,7 +107,7 @@ async fn choose_tools_model(
             if let Some(m) = models.iter().find(|m| {
                 m.supported_parameters
                     .as_ref()
-                    .map(|sp| sp.iter().any(|p| p.eq_ignore_ascii_case("tools")))
+                    .map(|sp| sp.supports_tools())
                     .unwrap_or(false)
             }) {
                 info!(
@@ -362,6 +364,7 @@ fn save_response_body(prefix: &str, contents: &str) -> String {
 /// Very basic check that our test App can be acquired from the harness.
 #[instrument(skip_all)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "test_harness")]
 async fn harness_smoke_app_constructs() {
     let app_arc = app();
     let app_lock = app_arc.lock().await;
