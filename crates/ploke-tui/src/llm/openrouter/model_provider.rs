@@ -18,9 +18,11 @@
 //  - We can add the `ModelProvider` to a cache of `ModelProvider` that forms our official
 //  `ModelRegistry`.
 
+use serde::Serialize;
+
 pub struct ModelProvider {}
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct CompReq<'a> {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
     // corresponding json: `messages?: Message[];`
@@ -83,6 +85,7 @@ pub struct CompReq<'a> {
     // corresponding json: `frequency_penalty?: number; // Range: [-2, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
     frequency_penalty: Option<f32>,
+    // AI: Finish defining the struct as above AI!
     // corresponding json: `presence_penalty?: number; // Range: [-2, 2]`
     // corresponding json: `repetition_penalty?: number; // Range: (0, 2]`
     // corresponding json: `logit_bias?: { [key: number]: number };`
