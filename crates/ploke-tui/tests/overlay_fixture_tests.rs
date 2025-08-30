@@ -1,3 +1,4 @@
+#![cfg(feature = "test_harness")]
 //! Overlay + fixture-backed render tests using the global TEST_APP.
 //! This leverages the lazy-static app to avoid repeated heavy setup across tests.
 
@@ -21,7 +22,6 @@ fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "test_harness")]
 async fn overlay_renders_with_fixture_app_state() {
     let state = ploke_tui::test_harness::get_state().await;
     // Clear any existing proposals to avoid interference

@@ -16,6 +16,7 @@ use crate::utils::de::string_or_f64_opt;
 use crate::utils::de::string_or_f64;
 
 use super::provider_endpoints::SupportedParameters;
+use super::model_provider as or_ep;
 
 #[derive(Deserialize, Debug)]
 /// OpenRouter `/models` response container.
@@ -67,7 +68,7 @@ pub struct ModelPricing {
     pub audio: Option<f64>,
     // Price per token in USD for generated tokens
     // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
-    #[serde(deserialize_with = "string_or_f64")]
+    #[serde(default, deserialize_with = "string_or_f64")]
     pub completion: f64,
     #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
     pub image: Option<f64>,
@@ -79,7 +80,7 @@ pub struct ModelPricing {
     pub internal_reasoning: Option<f64>,
     // Price per token in USD for system(?) prompt
     // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
-    #[serde(deserialize_with = "string_or_f64")]
+    #[serde(default, deserialize_with = "string_or_f64")]
     pub prompt: f64,
     // Price per token in USD for system(?) prompt
     // Most have this, 322/323 have it, so all but one
@@ -203,11 +204,14 @@ pub async fn fetch_model_endpoints(
     model_id: &str,
 ) -> color_eyre::Result<Vec<ProviderEntry>> {
     let model_path = canonicalize_model_id_for_endpoints(model_id);
+    let (author, slug) = model_path
+        .split_once('/')
+        .ok_or_else(|| color_eyre::eyre::eyre!("invalid model id, expected 'author/slug'"))?;
+
     let url = base_url
-        .join("/models/user")
-        .and_then(|u| u.join(model_id))
-        .and_then(|u| u.join("endpoints"))
-        .expect("Malformed url");
+        .join(&format!("models/{}/{}/endpoints", author, slug))
+        .map_err(|e| color_eyre::eyre::eyre!("Malformed url: {}", e))?;
+
     let resp = client
         .get(url)
         .bearer_auth(api_key)
@@ -219,8 +223,26 @@ pub async fn fetch_model_endpoints(
         .error_for_status()?;
 
     let body = resp.text().await?;
-    let parsed: EndpointsResponse = serde_json::from_str(&body)?;
-    Ok(parsed.data)
+    // Parse with stronger typed endpoint shape first
+    let parsed: or_ep::EndpointsResponse = serde_json::from_str(&body)?;
+
+    // Map typed Endpoint -> ProviderEntry expected by UI
+    let providers: Vec<ProviderEntry> = parsed
+        .data
+        .endpoints
+        .into_iter()
+        .map(|e| ProviderEntry {
+            id: e.preferred_provider_slug(),
+            context_length: e.context_length,
+            pricing: Some(e.pricing),
+            capabilities: None,
+            supported_parameters: e
+                .supported_parameters
+                .map(|v| v.into_iter().map(|p| serde_json::to_string(&p).unwrap().trim_matches('"').to_string()).collect()),
+        })
+        .collect();
+
+    Ok(providers)
 }
 
 #[cfg(test)]

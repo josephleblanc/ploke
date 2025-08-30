@@ -298,9 +298,7 @@ impl<'a> RequestSession<'a> {
         } else {
             tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
 
-            let user_friendly_msg = construct_user_friendly_msg(status, error_text);
-
-            user_friendly_msg
+            construct_user_friendly_msg(status, error_text)
         };
         Some(err_msg)
     }
@@ -322,7 +320,7 @@ impl<'a> RequestSession<'a> {
 }
 
 fn construct_user_friendly_msg(status: u16, error_text: String) -> String {
-    let user_friendly_msg = if status == 401 {
+    if status == 401 {
         format!(
             "Authentication failed. Please check your API key configuration.\n\nDetails {}",
             error_text
@@ -339,8 +337,7 @@ fn construct_user_friendly_msg(status: u16, error_text: String) -> String {
         )
     } else {
         format!("API error (status {}): {}", status, error_text)
-    };
-    user_friendly_msg
+    }
 }
 pub fn build_openai_request<'a>(
     provider: &'a crate::user_config::ModelConfig,

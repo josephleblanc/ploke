@@ -1,3 +1,4 @@
+#![allow(unused_variables, unused_mut, dead_code, unreachable_code)]
 /*!
 E2E live tool-cycle tests using:
 - A real App initialization (test_harness) to approximate runtime config
@@ -34,26 +35,17 @@ Reliability:
 mod harness;
 
 use harness::AppHarness;
-use itertools::Itertools;
 use lazy_static::lazy_static;
-use ploke_error::Error;
-use ploke_tui::app_state::StateCommand;
 use ploke_tui::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsResponse, SupportedParameters};
-use ploke_tui::llm;
 use ploke_tui::llm::providers::ProvidersResponse;
-use ploke_tui::rag::context::{PROMPT_CODE, PROMPT_HEADER};
 use ploke_tui::test_harness::openrouter_env;
 use ploke_tui::tracing_setup::init_tracing_tests;
-use ploke_tui::user_config::{OPENROUTER_URL, ModelCapabilities};
-use ploke_tui::{AppEvent, EventPriority};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use tokio::time::Duration;
 use tracing::{info, warn, Level};
-use uuid::Uuid;
 
 // Ensure a realistic App initialization occurs (settings/env seeded).
 // We don't yet drive the in-app event loops, but this simulates runtime config.

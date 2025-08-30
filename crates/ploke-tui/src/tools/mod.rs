@@ -1,145 +1,12 @@
-use std::{ops::Deref, path::PathBuf};
+use std::{ops::Deref, path::PathBuf, sync::Arc};
 
 use itertools::Itertools;
 use ploke_core::rag_types::{ContextPart, ContextPartKind, Modality};
-use ploke_rag::{RagService, RetrievalStrategy};
+use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 use serde_json::{json, Value};
 use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use syn_parser::parser::nodes::NodePath;
-
-pub trait Tool {
-    /// Static strings so they can be used in const contexts.
-    const NAME: &'static str;
-    const DESCRIPTION: &'static str;
-
-    type Params: for<'de> Deserialize<'de>;
-    type Output: Serialize;
-
-    async fn run(self, params: Self::Params) -> Result<Self::Output, ploke_error::Error>;
-
-    /// JSON schema built at compile time via `schemars` or `serde_json!`.
-    fn schema() -> &'static serde_json::Value;
-
-    fn tool_def() -> ToolFunctionDef;
-}
- // crates/ploke-tui/src/tools/apply_code_edit.rs
- use super::*;
-
- pub struct RequstCodeContext {
-    rag: Arc<RagService>,
-    top_k: u16,
-    budget: TokenBudget,
-    strategy: RetrievalStrategy,
-}
-
-#[derive(Clone, PartialOrd, PartialEq, Deserialize)]
-pub struct RequestCodeContextInput {
-    hint: String,
-    top_k: Option<u16>,
-}
-
-#[derive(Clone, PartialOrd, PartialEq, Serialize)]
-pub struct RequestCodeContextOutput {
-    code: Vec<CodeSnippet>,
-    meta: Vec<SnippetMeta>
-}
-
-#[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Ord, Eq)]
-pub struct CodeSnippet {
-    file_path: String,
-    snippet: String,
-    // canonical_path: NodePath
-}
-
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Serialize)]
-pub struct SnippetMeta {
-    id: Uuid,
-    kind: ContextPartKind,
-    score: f32,
-    modality: Modality
-}
-
-impl SnippetMeta {
-    fn extract_meta(cp: &ContextPart) -> Self {
-        SnippetMeta {
-            id: cp.id, 
-            kind: cp.kind, 
-            score: cp.score, 
-            modality: cp.modality
-        }
-    }
-}
-
-lazy_static::lazy_static! {
-    static ref REQUEST_CODE_CONTEXT_PARAMETERS: serde_json::Value = json!({
-        "type": "object",
-        "properties": {
-            "search_term": {
-                "type": "string",
-                "description": "The text used to perform a dense vector similarity and bm25 hybrid search of the code base."
-            },
-            "top_k": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Optional suggestion for number of results to return."
-            }
-        },
-        "required": ["hint"],
-        "additionalProperties": false
-    });
-}
-impl Tool for RequstCodeContext {
-    const NAME: &'static str = "apply_code_edit";
-    const DESCRIPTION: &'static str = "Apply a diff-style edit to a source file.";
-
-    type Params = RequestCodeContextInput;
-    type Output = RequestCodeContextOutput;
-
-    async fn run(self, p: Self::Params) -> Result<Self::Output, ploke_error::Error> { 
-        let query = &p.hint;
-        let top_k = p.top_k.unwrap_or(self.top_k);
-        let budget = self.budget;
-        let strategy = self.strategy;
-        let assembed_context = self.rag.get_context(query, top_k as usize, &budget, &strategy).await?;
-
-        let stats = assembed_context.stats;
-        let parts = assembed_context.parts;
-        let (snippets, metadata): (Vec<CodeSnippet>, Vec<SnippetMeta>) = parts.into_iter().map(|cp| {
-            let meta = SnippetMeta {id: cp.id, kind: cp.kind, score: cp.score, modality: cp.modality};
-            let snippet = CodeSnippet {
-                file_path: cp.file_path, snippet: cp.text
-                // , canonical_path
-            };
-            (snippet, meta)
-        }).unzip();
-        let all_snippets = RequestCodeContextOutput {
-            code: snippets,
-            meta: metadata
-        };
-        Ok(all_snippets)
-    }
-
-    fn schema() -> &'static serde_json::Value {
-        REQUEST_CODE_CONTEXT_PARAMETERS.deref()
-        // match REQUEST_CODE_CONTEXT_PARAMETERS.as_object() {
-        //     Some(map) => map,
-        //     None => panic!("Tool schema must be well-formed json object")
-        // }
-    }
-
-    fn tool_def() -> ToolFunctionDef {
-        ToolFunctionDef { 
-            name: ToolName::CodeContextRequested, 
-            description: ToolDescr::CodeContextRequested, 
-            // TODO: See if it is possible to get rid of the clone, somehow, perhaps by
-            // implementing Deserialize on `&'static Value` or something? Not sure how serde works
-            // here, or if it is possible to create a zero-alloc version since we have a &'static
-            // underlying type.
-            parameters: Self::schema().clone()
-        }
-    }
-}
-
+use uuid::Uuid;
 use crate::{
     rag::{
         tools::{
@@ -154,17 +21,35 @@ use crate::{
 };
 
 mod request_code_context;
+pub use request_code_context::{ RequestCodeContext, RequestCodeContextInput, RequestCodeContextOutput };
+
+pub trait Tool {
+    /// Static strings so they can be used in const contexts.
+    const NAME: &'static str;
+    const DESCRIPTION: &'static str;
+
+    type Params: for<'de> Deserialize<'de>;
+    type Output: Serialize;
+
+    fn run(self, params: Self::Params) -> impl std::future::Future<Output = Result<Self::Output, ploke_error::Error>> + Send;
+
+    /// JSON schema built at compile time via `schemars` or `serde_json!`.
+    fn schema() -> &'static serde_json::Value;
+
+    fn tool_def() -> ToolFunctionDef;
+}
+
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolName {
-    CodeContextRequested
+    RequestCodeContext
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
 pub enum ToolDescr {
     #[serde(rename = "Request additional code context from the repository up to a token budget.")] 
-    CodeContextRequested,
+    RequestCodeContext
 }
 
  #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
@@ -232,13 +117,6 @@ pub struct ToolFunctionDef {
     pub parameters: Value, // JSON Schema
 }
 
-pub trait ToolParams {
-    fn name() -> ToolName;
-    fn description() -> ToolDescr;
-    fn parameters() -> serde_json::Value;
-}
-
-
 #[tracing::instrument(skip(tool_call_params),
     fields( 
         request_id = %tool_call_params.request_id,
@@ -246,7 +124,7 @@ pub trait ToolParams {
         call_id = %tool_call_params.call_id
     )
 )]
-pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>) {
+pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams<'_>) {
     let ToolCallParams {
         state,
         event_bus,
@@ -281,7 +159,7 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         parent_id,
  
         name: name.clone(),
-        arguments: arguments.clone(),
+        arguments,
         call_id: call_id.clone(),
     };
     match name.as_str() {

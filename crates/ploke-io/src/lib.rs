@@ -1,4 +1,4 @@
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(unused_variables, unused_imports, dead_code, clippy::duplicated_attributes)]
 //! ploke-io — Async I/O actor for safe, concurrent file operations
 //!
 //! ploke-io provides an actor-style I/O service that runs on its own Tokio runtime

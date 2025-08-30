@@ -571,13 +571,13 @@ impl RagService {
                 let bm25_list = bm25_res?;
                 let dense_list = dense_res
                     .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
-                let mut fused = rrf_fuse(&bm25_list, &dense_list, &rrf);
+                let mut fused = rrf_fuse(&bm25_list, &dense_list, rrf);
                 fused.truncate(top_k);
                 if let Some(mcfg) = mmr {
                     // Optional diversity re-ranking based on embeddings; default to no-embeddings map.
                     let embed_map: HashMap<Uuid, Vec<f32>> = HashMap::new();
 
-                    mmr_select(&fused, top_k, &embed_map, &mcfg)
+                    mmr_select(&fused, top_k, &embed_map, mcfg)
                 } else {
                     fused
                 }

@@ -302,6 +302,7 @@ pub(super) struct ResponseUsage {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub(super) enum Choices {
     NonChatChoice {
         finish_reason: Option<String>,

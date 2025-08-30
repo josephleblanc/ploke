@@ -214,12 +214,10 @@ fn record_scalar_value_with_limits(st: &mut FieldStats, cfg: Config, val: String
     if st.value_unique_tracked.len() < cfg.top_k_values {
         let _ = st.value_unique_tracked.insert(val.clone());
         *st.value_freq.entry(val).or_insert(0) += 1;
+    } else if st.value_freq.contains_key(&val) {
+        *st.value_freq.get_mut(&val).unwrap() += 1;
     } else {
-        if st.value_freq.contains_key(&val) {
-            *st.value_freq.get_mut(&val).unwrap() += 1;
-        } else {
-            st.value_overflow += 1;
-        }
+        st.value_overflow += 1;
     }
 }
 
@@ -249,7 +247,7 @@ fn is_uuid_like(s: &str) -> bool {
     }
     for (i, &b) in bytes.iter().enumerate() {
         if i == 8 || i == 13 || i == 18 || i == 23 { continue; }
-        let is_hex = (b'0'..=b'9').contains(&b) || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b);
+        let is_hex = b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b);
         if !is_hex { return false; }
     }
     true
@@ -260,9 +258,9 @@ fn is_iso8601_like(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.len() >= 10 {
         let ok_date = bytes.get(4) == Some(&b'-') && bytes.get(7) == Some(&b'-')
-            && bytes[..4].iter().all(|b| (b'0'..=b'9').contains(b))
-            && bytes[5..7].iter().all(|b| (b'0'..=b'9').contains(b))
-            && bytes[8..10].iter().all(|b| (b'0'..=b'9').contains(b));
+            && bytes[..4].iter().all(|b: &u8| b.is_ascii_digit())
+            && bytes[5..7].iter().all(|b: &u8| b.is_ascii_digit())
+            && bytes[8..10].iter().all(|b: &u8| b.is_ascii_digit());
         if ok_date {
             // If time part exists, check basic structure
             if s.len() > 10 {
@@ -591,7 +589,7 @@ pub fn explore_file_visit_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_di
                     "present": st.presence_models,
                     "null": st.null_models,
                     "missing": models.len().saturating_sub(st.presence_models),
-                    "present_pct": if models.len() > 0 { (st.presence_models as f64) * 100.0 / (models.len() as f64) } else { 0.0 },
+                    "present_pct": if !models.is_empty() { (st.presence_models as f64) * 100.0 / (models.len() as f64) } else { 0.0 },
                 },
                 "types": {
                     "null": st.type_counts.null,
@@ -769,13 +767,13 @@ pub fn analyze_cardinality_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path: P, out_d
     let mut out_txt = String::new();
     out_txt.push_str("=== Cardinality Report ===\n");
     for key in keys {
-        let set = sets.get(&key.to_string()).map(|s| s.len()).unwrap_or(0);
+        let set = sets.get(*key).map(|s| s.len()).unwrap_or(0);
         out_txt.push_str(&format!("{}: {} unique values\n", key, set));
     }
 
     let mut out_json = serde_json::Map::new();
     for key in keys {
-        let values = sets.get(&key.to_string()).map(|s| {
+        let values = sets.get(*key).map(|s| {
             let mut v: Vec<_> = s.iter().cloned().collect();
             v.sort();
             v
@@ -820,13 +818,13 @@ pub fn analyze_endpoints_cardinality_to_dir<P: AsRef<Path>, Q: AsRef<Path>>(path
     let mut out_txt = String::new();
     out_txt.push_str("=== Endpoints Cardinality Report ===\n");
     for key in keys {
-        let set = sets.get(&key.to_string()).map(|s| s.len()).unwrap_or(0);
+        let set = sets.get(*key).map(|s| s.len()).unwrap_or(0);
         out_txt.push_str(&format!("{}: {} unique values\n", key, set));
     }
 
     let mut out_json = serde_json::Map::new();
     for key in keys {
-        let values = sets.get(&key.to_string()).map(|s| {
+        let values = sets.get(*key).map(|s| {
             let mut v: Vec<_> = s.iter().cloned().collect();
             v.sort();
             v

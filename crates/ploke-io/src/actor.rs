@@ -314,7 +314,6 @@ impl IoManager {
         let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
             let semaphore = semaphore.clone();
             let roots = roots.clone();
-            let symlink_policy = symlink_policy;
             tokio::spawn(async move {
                 Self::process_file_with_roots(path, reqs, semaphore, roots, symlink_policy).await
             })
@@ -539,7 +538,6 @@ impl IoManager {
             futures::stream::iter(requests.into_iter().enumerate().map(|(idx, file_data)| {
                 let sem = semaphore.clone();
                 let roots = roots.clone();
-                let symlink_policy = symlink_policy.clone();
                 async move {
                     (
                         idx,

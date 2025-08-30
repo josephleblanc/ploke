@@ -15,7 +15,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use ploke_tui as tui;
 use tui::app::{App, RunOptions};
 use tui::app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState};
-use tui::chat_history::MessageKind;
 use tui::llm::llm_manager;
 use tui::user_config::{UserConfig, default_model};
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};

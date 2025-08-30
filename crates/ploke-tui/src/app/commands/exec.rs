@@ -16,7 +16,7 @@ use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::openrouter_catalog::{self, ModelEntry};
-use crate::llm::provider_endpoints::{ModelEndpointsResponse, Pricing, SupportedParameters};
+use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
 use crate::user_config::{openrouter_url, ModelRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
@@ -549,7 +549,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
     tokio::spawn(async move {
         let span = info_span!("list_model_providers", model_id = model_id.as_str());
         let _guard = span.enter();
-        // Resolve API key
+        // Resolve API key and base URL
         let (api_key, base_url) = {
             let cfg = state.config.read().await;
             let key = cfg
@@ -560,7 +560,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
                 .map(|p| p.resolve_api_key())
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .unwrap_or_default();
-            (key, OPENROUTER_URL.to_string())
+            (key, openrouter_url())
         };
 
         if api_key.is_empty() {
@@ -574,128 +574,48 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             return;
         }
 
-        // Parse model id into author/slug
-        let parts: Vec<&str> = model_id.split('/').collect();
-        if parts.len() != 2 {
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: format!(
-                        "Invalid model id '{}'. Expected format '<author>/<slug>'.",
-                        model_id
-                    ),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
-            return;
-        }
-        let author = parts[0];
-        let slug = parts[1];
-
         let client = Client::new();
-
-        // Build a provider name -> slug map from /providers
-        let providers_map: std::collections::HashMap<String, String> = match client
-            .get(format!("{}/providers", base_url))
-            .bearer_auth(&api_key)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(v) => v
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                let name = p.get("name").and_then(|x| x.as_str())?;
-                                let slug = p.get("slug").and_then(|x| x.as_str())?;
-                                Some((name.to_string(), slug.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                Err(_) => Default::default(),
-            },
-            Err(_) => Default::default(),
-        };
-
-        debug!("providers_map loaded: {} entries", providers_map.len());
-        // Fetch endpoints for this model
-        let url = format!("{}/models/{}/{}/endpoints", base_url, author, slug);
-        debug!("fetching model endpoints: {}", url);
-        match client
-            .get(url)
-            .bearer_auth(&api_key)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
-            Ok(resp) => match resp.json::<ModelEndpointsResponse>().await {
-                Ok(payload) => {
-                    debug!(
-                        "endpoints response parsed: {} endpoints",
-                        payload.data.endpoints.len()
-                    );
-                    let mut lines = vec![
-                        format!("Available endpoints for model '{}':", model_id),
-                        "  (Providers marked [tools] advertise tool support)".to_string(),
-                    ];
-
-                    if !payload.data.endpoints.is_empty() {
-                        for ep in payload.data.endpoints {
-                            let supports_tools = ep
-                                .supported_parameters
-                                .iter()
-                                .any(|p| matches!(p, SupportedParameters::Tools));
-                            let slug = providers_map
-                                .get(&ep.name)
-                                .cloned()
-                                .unwrap_or_else(|| ep.name.to_lowercase().replace(' ', "-"));
-                            lines.push(format!(
-                                "  - {} (slug: {}) {}{}",
-                                &ep.name,
-                                slug,
-                                if supports_tools { "[tools]" } else { "" },
-                                if ep.context_length == 0 {
-                                    "".to_string()
-                                } else {
-                                    format!("context length = {}", ep.context_length)
-                                }
-                            ));
-                        }
-                    } else {
-                        lines.push("  No endpoints returned for this model.".to_string());
+        match openrouter_catalog::fetch_model_endpoints(&client, base_url, &api_key, &model_id).await {
+            Ok(providers) => {
+                let mut lines = vec![
+                    format!("Available endpoints for model '{}':", model_id),
+                    "  (Providers marked [tools] advertise tool support)".to_string(),
+                ];
+                if providers.is_empty() {
+                    lines.push("  No endpoints returned for this model.".to_string());
+                } else {
+                    for p in providers {
+                        let supports_tools = p
+                            .supported_parameters
+                            .as_ref()
+                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                            .or_else(|| p.capabilities.as_ref().and_then(|c| c.tools))
+                            .unwrap_or(false);
+                        let ctx = p.context_length.map(|v| format!(" context length = {}", v)).unwrap_or_default();
+                        lines.push(format!(
+                            "  - {} {}{}",
+                            p.id,
+                            if supports_tools { "[tools]" } else { "" },
+                            ctx
+                        ));
                     }
-
-                    lines.push("".to_string());
-                    lines.push("To pin a provider endpoint:".to_string());
-                    lines.push(format!("  :provider pin {} <provider_slug>", model_id));
-                    lines.push("To enforce tool-capable routing:".to_string());
-                    lines.push("  :provider tools-only on".to_string());
-
-                    let _ = cmd_tx
-                        .send(StateCommand::AddMessageImmediate {
-                            msg: lines.join("\n"),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                        .await;
                 }
-                Err(e) => {
-                    warn!("Failed to parse endpoints response: {}", e);
-                    let _ = cmd_tx
-                        .send(StateCommand::AddMessageImmediate {
-                            msg: format!("Failed to parse endpoints response: {}", e),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                        .await;
-                }
-            },
+                lines.push("".to_string());
+                lines.push("To pin a provider endpoint:".to_string());
+                lines.push(format!("  :provider pin {} <provider_slug>", model_id));
+                lines.push("To enforce tool-capable routing:".to_string());
+                lines.push("  :provider tools-only on".to_string());
+
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: lines.join("
+"),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
             Err(e) => {
-                warn!("Failed to query OpenRouter models: {}", e);
                 warn!("Failed to fetch endpoints for {}: {}", model_id, e);
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
@@ -1082,25 +1002,26 @@ mod typed_response_tests {
             }
         });
 
-        let parsed: ModelEndpointsResponse =
+        let parsed: crate::llm::openrouter::model_provider::EndpointsResponse =
             serde_json::from_value(payload).expect("valid response");
         assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(parsed.data.endpoints[0].name, "foo/bar");
-        assert_eq!(parsed.data.endpoints[0].context_length, 8192);
+        assert_eq!(parsed.data.endpoints[0].provider_name.as_ref().map(|n| n.as_str()), Some("Foo Provider"));
+        assert_eq!(parsed.data.endpoints[0].context_length, Some(8192));
         assert!(
             parsed.data.endpoints[0]
                 .supported_parameters
-                .iter()
-                .any(|p| matches!(p, SupportedParameters::Tools))
+                .as_ref()
+                .map(|v| v.iter().any(|p| matches!(p, SupportedParameters::Tools)))
+                .unwrap_or(false)
         );
-        assert_eq!(parsed.data.endpoints[1].name, "");
-        assert!(parsed.data.endpoints[1].context_length == 0);
+        assert_eq!(parsed.data.endpoints[1].provider_name.as_ref().map(|n| n.as_str()), Some("Bar Provider"));
+        assert!(parsed.data.endpoints[1].context_length.is_none());
     }
 
     #[test]
     fn default_fields_do_not_panic() {
         let minimal = serde_json::json!({"data": {"endpoints": []}});
-        let parsed: ModelEndpointsResponse = serde_json::from_value(minimal).unwrap();
+        let parsed: crate::llm::openrouter::model_provider::EndpointsResponse = serde_json::from_value(minimal).unwrap();
         assert!(parsed.data.endpoints.is_empty());
     }
 }

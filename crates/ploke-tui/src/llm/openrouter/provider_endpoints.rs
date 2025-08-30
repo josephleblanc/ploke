@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use ploke_test_utils::workspace_root;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use crate::llm::openrouter::openrouter_catalog::ModelPricing;
 
 const MODEL_ENDPOINT_RESP_DIR: &str = "crates/ploke-tui/data/endpoints/";
 
@@ -18,7 +19,7 @@ lazy_static! {
         Url::parse("https://openrouter.ai/api/v1/models").expect("Invalid OpenRouter models URL");
 }
 
-use std::{convert::TryFrom, str::FromStr};
+use std::convert::TryFrom;
 
 // TODO: This is the shape of the response from the call for all models. 
 // Next we need to: 
@@ -201,7 +202,7 @@ use std::{convert::TryFrom, str::FromStr};
 // deserialize the `canonical_slug` from the json files into `ProvEnd`.
 #[derive(Debug, Clone)]
 pub struct ProvEnd {
-    pub author: crate::llm::providers::Author,
+    pub author: Arc<str>,
     pub model: Arc<str>,
 }
 
@@ -283,8 +284,7 @@ impl<'de> Deserialize<'de> for ProvEnd {
         let model_str = parts
             .next()
             .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
-        let author = Author::from_str(author_str).map_err(|_| serde::de::Error::custom(format!("invalid author: {}", author_str)))?;
-        Ok(ProvEnd { author, model: Arc::<str>::from(model_str) })
+        Ok(ProvEnd { author: Arc::<str>::from(author_str), model: Arc::<str>::from(model_str) })
     }
 }
 
@@ -304,7 +304,7 @@ impl std::fmt::Display for ProvEnd {
         write!(f, "{}/{}", self.author, &self.model)
     }
 }
-use crate::llm::providers::Author;
+
 #[derive(Debug)]
 pub enum ProvEndParseError {
     NoPathSegments,
@@ -344,8 +344,6 @@ impl TryFrom<&Url> for ProvEnd {
 
         // {author}
         let author_str = segs.next().ok_or(ProvEndParseError::MissingAuthor)?;
-        let author = Author::from_str(author_str)
-            .map_err(|_| ProvEndParseError::MissingAuthor)?;
 
         // {model}
         let model_str: &str = segs.next().ok_or(ProvEndParseError::MissingModel)?;
@@ -362,10 +360,7 @@ impl TryFrom<&Url> for ProvEnd {
             return Err(ProvEndParseError::TrailingSegments);
         }
 
-        Ok(ProvEnd {
-            author,
-            model: model_arc,
-        })
+        Ok(ProvEnd { author: Arc::<str>::from(author_str), model: model_arc })
     }
 }
 
@@ -420,7 +415,7 @@ pub struct ModelEndpoint {
     #[serde(default)]
     pub top_provider: TopProvider,
     #[serde(default)]
-    pub pricing: Pricing,
+    pub pricing: ModelPricing,
     /// For example:
     /// - "canonical_slug": "qwen/qwen3-30b-a3b-thinking-2507",
     /// - "canonical_slug": "x-ai/grok-code-fast-1",
@@ -588,9 +583,6 @@ pub struct TopProvider {
     max_completion_tokens: Option<u64>,
 }
 
-/// Pricing information for using the model.
-#[deprecated(note = "Use openrouter_catalog::ModelPricing; this alias will be removed after migration.")]
-pub type Pricing = crate::llm::openrouter::openrouter_catalog::ModelPricing;
 
 // --- serde helpers for flexible number-or-string fields ---
 

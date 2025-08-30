@@ -22,7 +22,6 @@ use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_test_utils::workspace_root;
-use ploke_tui::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
 use ploke_tui::tracing_setup::init_tracing_tests;
 use ploke_tui as app;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
@@ -49,67 +48,6 @@ fn copy_fixture_to_temp() -> (tempfile::TempDir, PathBuf) {
     let dst_file_path = dst_file.join("lib.rs");
     fs::copy(&src_file, &dst_file_path).expect("copy lib.rs");
     (tmp, dst_file_path)
-}
-
-/// Fetch endpoints for a given model_id and return the first tools-capable provider slug.
-async fn find_tools_capable_provider(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    model_id: &str,
-) -> color_eyre::Result<Option<String>> {
-    // Use the same HTTP shape as other passing live tests
-    let mut parts = model_id.split('/');
-    let author = parts.next().unwrap_or(model_id);
-    let slug = parts.next().unwrap_or("");
-    let url = format!(
-        "{}/models/{}/{}/endpoints",
-        base_url.trim_end_matches('/'),
-        author,
-        slug
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(api_key)
-        .send()
-        .await?
-        .error_for_status()?;
-    let body = resp.text().await?;
-    // Dump endpoints for diagnostics
-    let _ = std::fs::create_dir_all("target/test-output/openrouter_e2e");
-    let fname = format!(
-        "target/test-output/openrouter_e2e/endpoints_{}_{}.json",
-        model_id.replace('/', "_"),
-        chrono::Utc::now().format("%Y%m%d-%H%M%S")
-    );
-    let _ = std::fs::write(&fname, &body);
-    // let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::json!({"data":[]}));
-    let v: ModelEndpointsResponse = serde_json::from_str(&body)?;
-    // OpenRouter shape observed:
-    //  { "data": 
-    //      { 
-    //          id, 
-    //          name, 
-    //          endpoints: [ 
-    //              { 
-    //                  id/provider fields, 
-    //                  supported_parameters, 
-    //                  capabilities 
-    //              } 
-    //          ] 
-    //      } 
-    //  }
-    let arr = v.data.endpoints;
-    eprintln!("Fetched endpoints for {} via {}: {} entries", model_id, base_url, arr.len());
-    let slug = arr.into_iter().find_map(|ep| {
-        if ep.supported_parameters.contains(&SupportedParameters::Tools) {
-            Some( ep.id )
-
-        } else {
-            None
-        }
-    });
-    Ok(slug)
 }
 
 /// Build a provider config for moonshotai/kimi-k2 without pinning a provider slug.
@@ -294,11 +232,8 @@ Run ':model refresh' in the TUI and verify endpoints for tools."
     let mut req_id: Option<Uuid> = None;
     let deadline = Instant::now() + Duration::from_secs(120);
     while Instant::now() < deadline {
-        match timeout(Duration::from_secs(10), bg_rx_events.recv()).await {
-            Ok(Ok(app::AppEvent::LlmTool(ploke_tui::llm::ToolEvent::Requested { name, request_id, .. }))) => {
-                if name == "apply_code_edit" { req_id = Some(request_id); break; }
-            }
-            _ => {}
+        if let Ok(Ok(app::AppEvent::LlmTool(ploke_tui::llm::ToolEvent::Requested { name, request_id, .. }))) = timeout(Duration::from_secs(10), bg_rx_events.recv()).await {
+            if name == "apply_code_edit" { req_id = Some(request_id); break; }
         }
     }
     let req_id = req_id.expect("provider did not request apply_code_edit");

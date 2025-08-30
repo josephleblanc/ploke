@@ -2,7 +2,6 @@ use ploke_core::rag_types::{
     ApplyCodeEditResult, AssembledContext, ContextPart, ContextPartKind, ContextStats,
     GetFileMetadataResult, Modality, RequestCodeContextArgs, RequestCodeContextResult,
 };
-use serde_json;
 use uuid::Uuid;
 
 #[test]

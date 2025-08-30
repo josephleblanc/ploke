@@ -1,3 +1,6 @@
+#![allow(unused_variables)]
+use std::default;
+
 use ploke_db::{Database, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity};
 
 #[test]
