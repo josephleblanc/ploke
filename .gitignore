@@ -62,6 +62,9 @@ nvim_debug.log
 .gemini/
 GEMINI.md
 
+# codex
+.codex/
+
 # opencode
 .opencode/
 OpenCode.md
