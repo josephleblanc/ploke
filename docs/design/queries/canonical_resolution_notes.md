@@ -89,3 +89,30 @@ Next Steps
 - Implement `resolve_nodes_by_canon` in ploke-db (no file filter) with identical projections as the strict helper.
 - Update `apply_code_edit` canonical tool path to strict→fallback using the relaxed query with app-side path normalization.
 - Add instrumentation for 0/1/>1 matches, module path, and candidate file paths to ease debugging.
+
+
+Fix applied: handle nested modules without direct file_mod
+- Root Cause: strict helper joined `*file_mod{ owner_id: mod_id }` which only succeeds for file-level modules. Nested modules (e.g., `crate::const_static::inner_mod`) do not own a `file_mod` row; their containing file module does.
+- Fix: introduce a rule to resolve the file-owning module as self-or-ancestor with a `file_mod` entry, then join to fetch `file_path` and `namespace`.
+
+Updated rule sketch (used in both strict and relaxed helpers):
+```
+module_has_file_mod[mid] := *file_mod{ owner_id: mid @ 'NOW' }
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{ id, name, tracking_hash: hash, span @ 'NOW' },
+  ancestor[id, mod_id],
+  *module{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' },
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{ owner_id: file_owner_id, file_path, namespace @ 'NOW' },
+  name == <item_name>,
+  [optional] file_path == <abs_path>,
+  mod_path == <["crate", ...]>
+```
+
+Evidence
+- Test `helpers::tests::test_resolve_nodes_by_canon_in_file_via_paths_from_id` now passes with nested static:
+  - `canon=crate::const_static::inner_mod::INNER_MUT_STATIC` resolves via strict path when `file_owner_for_module` is used.
+- Artifact: `crates/ploke-db/tests/ai_temp_data/test-output.txt` captures per-relation results for sampled nodes.

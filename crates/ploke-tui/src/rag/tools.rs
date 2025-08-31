@@ -286,16 +286,19 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
-                let abs_path = {
+                let (abs_path, file_is_relative) = {
                     let p = PathBuf::from(file);
                     if p.is_absolute() {
-                        p
+                        (p, false)
                     } else if let Some(root) = crate_root.as_ref() {
-                        root.join(file)
+                        (root.join(file), true)
                     } else {
-                        std::env::current_dir()
-                            .unwrap_or_else(|_| PathBuf::from("."))
-                            .join(file)
+                        (
+                            std::env::current_dir()
+                                .unwrap_or_else(|_| PathBuf::from("."))
+                                .join(file),
+                            true,
+                        )
                     }
                 };
                 let canon_trim = canon.trim();
@@ -312,11 +315,23 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         .tool_call_failed("Invalid 'canon': missing item name".to_string());
                     return;
                 }
-                let mut mod_path: Vec<&str> = vec!["crate"];
-                if !mods_slice.is_empty() {
-                    mod_path.extend(mods_slice.split("::").filter(|s| !s.is_empty()));
-                }
-                let mod_path_owned: Vec<String> = mod_path.iter().map(|s| s.to_string()).collect();
+                let mod_path_owned: Vec<String> = if mods_slice.is_empty() {
+                    vec!["crate".to_string()]
+                } else {
+                    let mut segs = mods_slice
+                        .split("::")
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    if segs.first().map(|s| s.as_str()) != Some("crate") {
+                        let mut with_crate = Vec::with_capacity(segs.len() + 1);
+                        with_crate.push("crate".to_string());
+                        with_crate.extend(segs.into_iter());
+                        with_crate
+                    } else {
+                        segs
+                    }
+                };
                 let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(
                     &state.db,
                     node_type.relation_str(),
@@ -332,13 +347,64 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     }
                 };
                 if nodes.is_empty() {
-                    let err = format!(
-                        "No matching node found for canon={} in file={}",
-                        canon,
-                        abs_path.display()
-                    );
-                    tool_call_params.tool_call_failed(err);
-                    return;
+                    // Fallback: relaxed resolver (module-only) with post-filtering by normalized file path
+                    let cands = match ploke_db::helpers::resolve_nodes_by_canon(
+                        &state.db,
+                        node_type.relation_str(),
+                        &mod_path_owned,
+                        item_name,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            let err = format!("DB relaxed resolve failed: {}", e);
+                            tool_call_params.tool_call_failed(err);
+                            return;
+                        }
+                    };
+                    let mut filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
+                        .into_iter()
+                        .filter(|ed| {
+                            if ed.file_path == abs_path {
+                                true
+                            } else if file_is_relative {
+                                ed.file_path
+                                    .to_string_lossy()
+                                    .ends_with(file)
+                            } else {
+                                false
+                            }
+                        })
+                        .collect();
+                    if filtered.is_empty() {
+                        let cfiles: Vec<String> = filtered
+                            .iter()
+                            .map(|ed| ed.file_path.display().to_string())
+                            .collect();
+                        let err = format!(
+                            "No matching node found (strict+fallback) for canon={} in file={}; candidates files={:?}",
+                            canon,
+                            abs_path.display(),
+                            cfiles
+                        );
+                        tool_call_params.tool_call_failed(err);
+                        return;
+                    }
+                    if filtered.len() > 1 {
+                        let cfiles: Vec<String> = filtered
+                            .iter()
+                            .map(|ed| ed.file_path.display().to_string())
+                            .collect();
+                        let err = format!(
+                            "Ambiguous node resolution ({} candidates after fallback) for canon={} in file={}; candidates files={:?}",
+                            filtered.len(),
+                            canon,
+                            abs_path.display(),
+                            cfiles
+                        );
+                        tool_call_params.tool_call_failed(err);
+                        return;
+                    }
+                    nodes = filtered;
                 }
                 if nodes.len() > 1 {
                     let err = format!(

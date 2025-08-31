@@ -124,6 +124,7 @@ Mode B: Splice
 
 1) Provide a relaxed canonical resolver
 - Add `resolve_nodes_by_canon(db, relation, module_path, item_name)` (no file filter) and filter results in Rust by normalized file path (using `crate_focus` + relative path). Use as fallback if the strict in-file resolver returns 0 matches.
+- Note: Both strict and relaxed helpers must resolve file path via `file_owner_for_module` (self-or-ancestor with `file_mod`) to support nested modules.
 
 2) Add DB inspection helpers/tests
 - Small queries/utilities to list:
@@ -139,6 +140,23 @@ Mode B: Splice
 ## Appendix: Current Helper (Strict)
 
 `resolve_nodes_by_canon_in_file` (simplified):
+```
+parent_of[child, parent] := *syntax_edge{..., relation_kind: "Contains" @ 'NOW' }
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+module_has_file_mod[mid] := *file_mod{ owner_id: mid @ 'NOW' }
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{ id, name, tracking_hash: hash, span @ 'NOW' },
+  ancestor[id, mod_id],
+  *module{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' },
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{ owner_id: file_owner_id, file_path, namespace @ 'NOW' },
+  name == <item_name>,
+  file_path == <abs_path>,
+  mod_path == <["crate", ...]>
 ```
 parent_of[child, parent] := *syntax_edge{..., relation_kind: "Contains" @ 'NOW' }
 ancestor[desc, asc] := parent_of[desc, asc]

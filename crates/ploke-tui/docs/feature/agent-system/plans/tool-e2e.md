@@ -8,7 +8,7 @@ Related Docs
 - Long-term: AGENT_SYSTEM_PLAN.md
 - Contract: crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md
 - Canonical notes: docs/design/queries/canonical_resolution_notes.md
-- Latest impl-log: docs/plans/agentic-system-plan/impl-log/impl_20250831-211500Z.md
+- Latest impl-log: docs/plans/agentic-system-plan/impl-log/impl_20250831-214500Z.md
 - Test artifact: crates/ploke-db/tests/ai_temp_data/test-output.txt
 
 Objectives & Scope

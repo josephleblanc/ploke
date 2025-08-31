@@ -29,11 +29,16 @@ parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, r
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
 ?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
-  *file_mod{{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
   name == {item_name_lit},
   file_path == {file_path_lit},
   mod_path == {mod_path_lit}
@@ -70,11 +75,16 @@ parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, r
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
 ?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
-  *file_mod{{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
   name == {item_name_lit},
   mod_path == {mod_path_lit}
 "#,
@@ -216,5 +226,78 @@ mod tests {
             assert!(matched, "resolve_nodes_by_canon_in_file failed to resolve id={} canon={} file={}", id, canon, node_paths.file);
         }
         fs::write(out_path, log).expect("write artifact");
+    }
+
+    #[test]
+    fn test_relaxed_fallback_when_file_mismatch() {
+        let db_arc = TEST_DB_NODES
+            .clone()
+            .expect("problem loading fixture_nodes from cold start");
+        let db = db_arc
+            .lock()
+            .expect("problem getting lock on test db for fixture_nodes");
+
+        // Pick the first common node as a target
+        let qr = db.get_common_nodes().expect("get_common_nodes");
+        let id_index: usize = get_pos(&qr.headers, "id").expect("id header");
+        let name_index: usize = get_pos(&qr.headers, "name").expect("name header");
+        let row = qr.rows.into_iter().next().expect("at least one node");
+        let id = to_uuid(&row[id_index]).expect("id uuid");
+        let name = to_string(&row[name_index]).expect("name str");
+
+        // Get authoritative canon + file path
+        let paths_rows = db.paths_from_id(id).expect("paths_from_id");
+        let node_paths: NodePaths = paths_rows.try_into().expect("NodePaths");
+
+        // Split canon
+        let last_sep = node_paths
+            .canon
+            .rfind("::")
+            .expect("canon has module path");
+        let module_vec: Vec<String> = node_paths.canon[..last_sep]
+            .split("::")
+            .map(|s| s.to_string())
+            .collect();
+        let item_name = &node_paths.canon[last_sep + 2..];
+
+        // Create a mismatched absolute path to force strict failure
+        let wrong_path = PathBuf::from("/__invalid_root__").join(
+            Path::new(&node_paths.file)
+                .file_name()
+                .expect("has filename"),
+        );
+
+        // Strict should fail
+        let mut strict_any = false;
+        for ty in NodeType::primary_nodes() {
+            let rel = ty.relation_str();
+            let res = resolve_nodes_by_canon_in_file(
+                &db,
+                rel,
+                wrong_path.as_path(),
+                &module_vec,
+                item_name,
+            );
+            match res {
+                Ok(v) if !v.is_empty() => strict_any = true,
+                _ => {}
+            }
+        }
+        assert!(!strict_any, "strict should not match with wrong file path");
+
+        // Relaxed should find candidates and include our id
+        let mut relaxed_any = false;
+        for ty in NodeType::primary_nodes() {
+            let rel = ty.relation_str();
+            let res = resolve_nodes_by_canon(&db, rel, &module_vec, item_name);
+            match res {
+                Ok(v) if v.iter().any(|ed| ed.id == id) => {
+                    relaxed_any = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(relaxed_any, "relaxed resolver should recover and include target id");
     }
 }
