@@ -1,35 +1,36 @@
 #![allow(clippy::needless_lifetimes)]
 
-use std::{ops::Deref, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
+use crate::{
+    AppEvent,
+    app_state::AppState,
+    rag::{
+        tools::{apply_code_edit_tool, get_file_metadata_tool, handle_request_context},
+        utils::ToolCallParams,
+    },
+    system::SystemEvent,
+};
+use code_edit::GatCodeEdit;
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
 use ploke_core::rag_types::{ContextPart, ContextPartKind, Modality};
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
-use serde_json::{json, Value};
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
+use request_code_context::RequestCodeContextGat;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Value, json};
 use syn_parser::parser::nodes::NodePath;
-use uuid::Uuid;
 use tokio::sync::mpsc;
-use once_cell::sync::OnceCell;
-use crate::{
-    rag::{
-        tools::{
-            apply_code_edit_tool,
-            get_file_metadata_tool,
-            handle_request_context
-        },
-        utils::ToolCallParams
-    },
-    system::SystemEvent, 
-    AppEvent
-};
+use uuid::Uuid;
 
 mod request_code_context;
-pub use request_code_context::{ RequestCodeContext, RequestCodeContextInput, RequestCodeContextOutput };
+pub use request_code_context::{
+    RequestCodeContext, RequestCodeContextInput, RequestCodeContextOutput,
+};
 mod code_edit;
-pub use code_edit::{ CodeEdit, CodeEditInput, CanonicalEdit };
+pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput};
 mod get_file_metadata;
-pub use get_file_metadata::{ GetFileMetadataTool, GetFileMetadataInput };
+pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadataTool};
 
 pub trait Tool {
     const NAME: &'static str;
@@ -38,7 +39,10 @@ pub trait Tool {
     type Params: for<'de> Deserialize<'de>;
     type Output: Serialize;
 
-    fn run(self, params: Self::Params) -> impl std::future::Future<Output = Result<Self::Output, ploke_error::Error>> + Send;
+    fn run(
+        self,
+        params: Self::Params,
+    ) -> impl std::future::Future<Output = Result<Self::Output, ploke_error::Error>> + Send;
     fn schema() -> &'static serde_json::Value;
     fn tool_def() -> ToolFunctionDef;
 }
@@ -67,12 +71,14 @@ where
         Ok(v) => v,
         Err(e) => {
             let err = format!("Invalid payload for {}: {}", T::NAME, e);
-            let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                error: err,
-            }));
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id,
+                    call_id: call_id.clone(),
+                    error: err,
+                }));
             return;
         }
     };
@@ -80,15 +86,16 @@ where
     // Build and run tool. Tools are responsible for emitting Completed events if needed.
     let tool = T::build(&tool_call_params);
     if let Err(e) = tool.run(parsed).await {
-        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallFailed {
-            request_id,
-            parent_id,
-            call_id: call_id.clone(),
-            error: e.to_string(),
-        }));
+        let _ = event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                error: e.to_string(),
+            }));
     }
 }
-
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -97,58 +104,74 @@ pub enum ToolName {
     ApplyCodeEdit,
     GetFileMetadata,
 }
+
+impl ToolName {
+    pub fn as_str(self) -> &'static str {
+        use ToolName::*;
+        match self {
+            RequestCodeContext => "request_code_context",
+            ApplyCodeEdit => "apply_code_edit",
+            GetFileMetadata => "get_file_metadata",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
 pub enum ToolDescr {
     #[serde(rename = "Request additional code context from the repository up to a token budget.")]
     RequestCodeContext,
-    #[serde(rename = "Apply canonical code edits to one or more nodes identified by canonical path.")]
+    #[serde(
+        rename = "Apply canonical code edits to one or more nodes identified by canonical path."
+    )]
     ApplyCodeEdit,
-    #[serde(rename = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.")]
+    #[serde(
+        rename = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits."
+    )]
     GetFileMetadata,
 }
 
- #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
- pub struct FunctionMarker;
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+pub struct FunctionMarker;
 
- impl FunctionMarker {
-     pub const VALUE: &'static str = "function";
- }
+impl FunctionMarker {
+    pub const VALUE: &'static str = "function";
+}
 
- // Serialize/deserialize always produces/expects the string "function".
- impl Serialize for FunctionMarker {
-     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-     where
-         S: serde::Serializer,
-     {
-         serializer.serialize_str(Self::VALUE)
-     }
- }
+// Serialize/deserialize always produces/expects the string "function".
+impl Serialize for FunctionMarker {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(Self::VALUE)
+    }
+}
 
- impl<'de> Deserialize<'de> for FunctionMarker {
-     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-     where
-         D: serde::Deserializer<'de>,
-     {
-         struct V;
-         impl serde::de::Visitor<'_> for V {
-             type Value = FunctionMarker;
-             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                 write!(f, "\"{}\"", FunctionMarker::VALUE)
-             }
-             fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-             where
-                 E: serde::de::Error,
-             {
-                 if s == FunctionMarker::VALUE {
-                     Ok(FunctionMarker)
-                 } else {
-                     Err(E::invalid_value(serde::de::Unexpected::Str(s), &self))
-                 }
-             }
-         }
-         deserializer.deserialize_str(V)
-     }
- }
+impl<'de> Deserialize<'de> for FunctionMarker {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = FunctionMarker;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "\"{}\"", FunctionMarker::VALUE)
+            }
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if s == FunctionMarker::VALUE {
+                    Ok(FunctionMarker)
+                } else {
+                    Err(E::invalid_value(serde::de::Unexpected::Str(s), &self))
+                }
+            }
+        }
+        deserializer.deserialize_str(V)
+    }
+}
 
 // OpenAI tool/function definition (for request payload)
 #[derive(Serialize, Debug, Clone, Deserialize)]
@@ -173,13 +196,25 @@ pub struct ToolFunctionDef {
 }
 
 // --- GAT-based tool dispatch (pilot) ---
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Ctx {
     pub state: Arc<crate::app_state::AppState>,
     pub event_bus: Arc<crate::EventBus>,
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub call_id: Arc<str>,
+}
+
+impl Clone for Ctx {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            event_bus: self.event_bus.clone(),
+            request_id: self.request_id,
+            parent_id: self.parent_id,
+            call_id: self.call_id.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -193,16 +228,98 @@ pub struct ToolCallRecord {
     pub created_at_ms: i64,
 }
 
+#[derive(serde::Deserialize)]
+struct ToolCall<'a> {
+    #[serde(borrow, rename = "id")]
+    call_id: Cow<'a, str>,
+    #[serde(rename = "type")]
+    call_type: FunctionMarker,
+    #[serde(borrow)]
+    function: FunctionCall<'a>,
+}
+
+#[derive(serde::Deserialize)]
+struct FunctionCall<'a> {
+    name: ToolName,
+    // Store raw JSON to avoid allocating
+    #[serde(borrow)]
+    arguments: &'a str,
+}
+
+// Tool result structure
+#[derive(Debug, Serialize)]
+pub struct ToolResult {
+    pub content: String,
+}
+
+// Tool errors
+#[derive(Debug, thiserror::Error)]
+pub enum ToolError {
+    #[error("Deserialization Error: {0}")]
+    DeserializationError(String),
+    #[error("Execution Error: {0}")]
+    ExecutionError(String),
+}
+
+#[allow(clippy::from_over_into)]
+impl Into<ploke_error::Error> for ToolError {
+    fn into(self) -> ploke_error::Error {
+        use ToolError::*;
+        match self {
+            DeserializationError(s) => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s)),
+            ExecutionError(s) => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
+        }
+    }
+}
+
+// potential alternative for static dispatch, might be helpful for macro
+async fn process_tool<'a>(tool_call: ToolCall<'a>, ctx: &Ctx) -> color_eyre::Result<()> {
+    // TODO: Implement this as the Clone method for Ctx
+    let new_ctx = Ctx {
+        state: ctx.state.clone(),
+        event_bus: ctx.event_bus.clone(),
+        request_id: ctx.request_id,
+        parent_id: ctx.parent_id,
+        call_id: ctx.call_id.clone(),
+    };
+    match tool_call.function.name {
+        ToolName::RequestCodeContext => {
+            let args = tool_call.function.arguments;
+            let params = RequestCodeContextGat::deserialize_params(args)?;
+            let ToolResult { content }= RequestCodeContextGat::execute(params, new_ctx).await?;
+            RequestCodeContextGat::emit_completed(ctx, content);
+            Ok(())
+        }
+        ToolName::ApplyCodeEdit => {
+            let args = tool_call.function.arguments;
+            let params = GatCodeEdit::deserialize_params(args)?;
+            let ToolResult { content }= GatCodeEdit::execute(params, new_ctx).await?;
+            GatCodeEdit::emit_completed(ctx, content);
+            Ok(())
+        },
+        ToolName::GetFileMetadata => {
+            let args = tool_call.function.arguments;
+            let params = GetFileMetadataTool::deserialize_params(args)?;
+            let ToolResult { content }= GetFileMetadataTool::execute(params, new_ctx).await?;
+            GetFileMetadataTool::emit_completed(ctx, content);
+            Ok(())
+        },
+        // more here
+    }
+}
+
 static TOOL_PERSIST_SENDER: OnceCell<mpsc::Sender<ToolCallRecord>> = OnceCell::new();
 
 pub fn set_tool_persist_sender(tx: mpsc::Sender<ToolCallRecord>) {
     let _ = TOOL_PERSIST_SENDER.set(tx);
 }
 
-pub trait GatTool {
-    type Output: Serialize + Send + 'static;
-    type OwnedParams: Serialize + Send + 'static;
-    type Params<'de>: Deserialize<'de> + Send;
+pub(crate) trait GatTool {
+    type Output: Serialize + Send;
+    type OwnedParams: Serialize + Send;
+    type Params<'de>: Deserialize<'de> + Send
+    where
+        Self: 'de;
 
     fn name() -> ToolName;
     fn description() -> ToolDescr;
@@ -212,7 +329,7 @@ pub trait GatTool {
     where
         Self: Sized;
 
-    fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams;
+    fn into_owned<'de>(params: &Self::Params<'de>) -> Self::OwnedParams;
 
     fn tool_def() -> ToolFunctionDef {
         ToolFunctionDef {
@@ -223,97 +340,117 @@ pub trait GatTool {
     }
 
     fn emit_completed(ctx: &Ctx, output_json: String) {
-        let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(crate::system::SystemEvent::ToolCallCompleted {
-            request_id: ctx.request_id,
-            parent_id: ctx.parent_id,
-            call_id: ctx.call_id.to_string(),
-            content: output_json,
-        }));
+        let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
+            crate::system::SystemEvent::ToolCallCompleted {
+                request_id: ctx.request_id,
+                parent_id: ctx.parent_id,
+                call_id: ctx.call_id.to_string(),
+                content: output_json,
+            },
+        ));
     }
 
-    fn run<'a>(self, params: &Self::Params<'a>, ctx: Ctx)
-        -> impl std::future::Future<Output = Result<Self::Output, ploke_error::Error>> + Send;
+    // Helper for deserializing the arguments JSON string
+    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolError> {
+        serde_json::from_str(json).map_err(|e| ToolError::DeserializationError(e.to_string()))
+    }
+
+    async fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> Result<ToolResult, ploke_error::Error>;
 }
 
-pub async fn dispatch_tool_gat<T>(tool_call_params: ToolCallParams)
-where
-    T: GatTool,
-{
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name: _name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use super::*;
+    use std::sync::Arc;
+    use tokio::time::{timeout, Duration};
 
-    let ctx = Ctx {
-        state: Arc::clone(&state),
-        event_bus: Arc::clone(&event_bus),
-        request_id,
-        parent_id,
-        call_id: Arc::from(call_id.as_str()),
-    };
+    #[test]
+    fn function_marker_roundtrip() {
+        let fm = FunctionMarker;
+        let v = serde_json::to_value(&fm).expect("serialize");
+        assert_eq!(v, serde_json::Value::String("function".to_string()));
 
-    let args_str = match serde_json::to_string(&arguments) {
-        Ok(s) => s,
-        Err(e) => {
-            let err = format!("Failed to serialize tool arguments: {}", e);
-            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(crate::system::SystemEvent::ToolCallFailed {
-                request_id: ctx.request_id,
-                parent_id: ctx.parent_id,
-                call_id: ctx.call_id.to_string(),
-                error: err,
-            }));
-            return;
-        }
-    };
-    let args_arc: Arc<str> = Arc::from(args_str);
+        let de: FunctionMarker = serde_json::from_value(v).expect("deserialize 'function'");
+        let bad = serde_json::from_str::<FunctionMarker>("\"not-a-function\"");
+        assert!(bad.is_err(), "unexpectedly accepted non-'function' value");
+        let _ = de; // silence unused
+    }
 
-    let params: T::Params<'_> = match serde_json::from_str(&args_arc) {
-        Ok(v) => v,
-        Err(e) => {
-            let err = format!("Invalid payload for {:?}: {}", T::name(), e);
-            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(crate::system::SystemEvent::ToolCallFailed {
-                request_id: ctx.request_id,
-                parent_id: ctx.parent_id,
-                call_id: ctx.call_id.to_string(),
-                error: err,
-            }));
-            return;
-        }
-    };
+    #[test]
+    fn tool_name_as_str_mappings() {
+        assert_eq!(ToolName::RequestCodeContext.as_str(), "request_code_context");
+        assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
+        assert_eq!(ToolName::GetFileMetadata.as_str(), "get_file_metadata");
+    }
 
-    let tool = T::build(&ctx);
-    match tool.run(&params, ctx.clone()).await {
-        Ok(output) => {
-            let output_json = serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string());
-            T::emit_completed(&ctx, output_json.clone());
-            let owned_params = T::into_owned(&params);
-            let params_json: Arc<String> = Arc::new(serde_json::to_string(&owned_params).unwrap_or_else(|_| "{}".to_string()));
-            let output_json: Arc<String> = Arc::new(output_json);
-            if let Some(tx) = TOOL_PERSIST_SENDER.get() {
-                let _ = tx.try_send(ToolCallRecord {
-                    name: T::name(),
-                    request_id: ctx.request_id,
-                    parent_id: ctx.parent_id,
-                    call_id: ctx.call_id.to_string(),
-                    params_json: params_json.clone(),
-                    output_json: output_json.clone(),
-                    created_at_ms: chrono::Utc::now().timestamp_millis(),
-                });
+    #[test]
+    fn tool_definition_serializes_expected_shape() {
+        let def = ToolDefinition {
+            r#type: FunctionMarker,
+            function: ToolFunctionDef {
+                name: ToolName::ApplyCodeEdit,
+                description: ToolDescr::ApplyCodeEdit,
+                parameters: json!({"type": "object"}),
+            },
+        };
+        let v = serde_json::to_value(&def).expect("serialize");
+        let obj = v.as_object().expect("obj");
+        assert_eq!(obj.get("type").and_then(|v| v.as_str()), Some("function"));
+        let f = obj.get("function").and_then(|f| f.as_object()).expect("function obj");
+        assert_eq!(f.get("name").and_then(|n| n.as_str()), Some("apply_code_edit"));
+        assert!(f.contains_key("parameters"));
+    }
+
+    #[tokio::test]
+    async fn process_tool_emits_completed_for_get_file_metadata() {
+        use crate::test_utils::mock::create_mock_app_state;
+        use crate::{AppEvent, EventBus, event_bus::EventBusCaps};
+
+        // Prepare ctx
+        let state = Arc::new(create_mock_app_state());
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let call_id = Arc::<str>::from("test-call");
+        let ctx = Ctx {
+            state: Arc::clone(&state),
+            event_bus: Arc::clone(&event_bus),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: call_id.clone(),
+        };
+
+        // Create a temporary file
+        let tmp = std::env::temp_dir().join(format!("gat_meta_{}.txt", Uuid::new_v4()));
+        std::fs::write(&tmp, b"abc").expect("write temp");
+
+        // Build ToolCall
+        let args = json!({"file_path": tmp.display().to_string()}).to_string();
+        let tc = ToolCall {
+            call_id: Cow::Borrowed("test-call"),
+            call_type: FunctionMarker,
+            function: FunctionCall { name: ToolName::GetFileMetadata, arguments: &args },
+        };
+
+        let mut rx = event_bus.realtime_tx.subscribe();
+        process_tool(tc, &ctx).await.expect("process ok");
+
+        // Expect a ToolCallCompleted with matching call_id
+        let got = timeout(Duration::from_secs(1), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted { call_id, content, .. })) => {
+                        if call_id == ctx.call_id.to_string() {
+                            break Some(content);
+                        }
+                    }
+                    Ok(_) => continue,
+                    Err(_) => break None,
+                }
             }
+        })
+        .await
+        .expect("timeout waiting for event");
 
-        }
-        Err(e) => {
-            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(crate::system::SystemEvent::ToolCallFailed {
-                request_id: ctx.request_id,
-                parent_id: ctx.parent_id,
-                call_id: ctx.call_id.to_string(),
-                error: e.to_string(),
-            }));
-        }
+        assert!(got.is_some(), "no ToolCallCompleted captured");
     }
 }

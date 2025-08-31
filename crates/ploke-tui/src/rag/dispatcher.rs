@@ -1,6 +1,7 @@
 use crate::rag::tools::apply_code_edit_tool;
 
 use super::{tools::get_file_metadata_tool, utils::ToolCallParams, *};
+// TODO: Route get_file_metadata via GAT once Send/'static issue resolved in spawn path
 
 pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
     let ToolCallParams {

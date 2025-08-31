@@ -249,9 +249,13 @@ impl ObservabilityStore for Database {
     :put conversation_turn { id, at => parent_id, message_id, kind, content, thread_id }
 }
 "#;
-        self.run_script(script, params, ScriptMutability::Mutable)
-            .map(|_| ())
-            .map_err(|e| DbError::Cozo(e.to_string()))
+        match self.run_script(script, params, ScriptMutability::Mutable) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("record_tool_call_requested script error: {}\nscript:\n{}", e, script);
+                Err(DbError::Cozo(e.to_string()))
+            }
+        }
     }
 
     fn list_conversation_since(
@@ -382,12 +386,11 @@ impl ObservabilityStore for Database {
         // Upsert requested state
         let script = r#"
 {
- 
+    ?[request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
         request_id = $request_id,
         call_id = $call_id,
         at = 'ASSERT',
         parent_id = $parent_id,
- 
         model = $model,
         provider_slug = $provider_slug,
         tool_name = $tool_name,
@@ -399,13 +402,17 @@ impl ObservabilityStore for Database {
         outcome_json = null,
         error_kind = null,
         error_msg = null
- 
+    :put tool_call { request_id, call_id, at => parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
 }
 "#;
 
-        self.run_script(script, params, ScriptMutability::Mutable)
-            .map(|_| ())
-            .map_err(|e| DbError::Cozo(e.to_string()))
+        match self.run_script(script, params, ScriptMutability::Mutable) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("record_tool_call_done script error: {}\nscript:\n{}", e, script);
+                Err(DbError::Cozo(e.to_string()))
+            }
+        }
     }
 
     fn record_tool_call_done(&self, done: ToolCallDone) -> Result<(), DbError> {
@@ -511,10 +518,10 @@ impl ObservabilityStore for Database {
 
         let script = r#"
 {
- 
-        at = 'ASSERT',
+    ?[request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
         request_id = $request_id,
         call_id = $call_id,
+        at = 'ASSERT',
         parent_id = $parent_id,
         model = $model,
         provider_slug = $provider_slug,
@@ -527,7 +534,7 @@ impl ObservabilityStore for Database {
         outcome_json = $outcome_json,
         error_kind = $error_kind,
         error_msg = $error_msg
- 
+    :put tool_call { request_id, call_id, at => parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
 }
 "#;
 
@@ -552,11 +559,8 @@ impl ObservabilityStore for Database {
 
         // Use dump_json to return JSON strings to the client
         let script = r#"
- 
-    *tool_call{
- 
-        @ 'NOW'
-    },
+?[request_id, call_id, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+    *tool_call{ request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg @ 'NOW' },
     request_id = $request_id,
     call_id = $call_id,
     arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
@@ -651,11 +655,8 @@ impl ObservabilityStore for Database {
         params.insert("limit".into(), DataValue::from(limit as i64));
 
         let script = r#"
- 
-    *tool_call{
- 
-        @ 'NOW'
-    },
+?[request_id, call_id, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+    *tool_call{ request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg @ 'NOW' },
     parent_id = $parent_id,
     arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
     outcome_json_s = if(is_null(outcome_json), null, dump_json(outcome_json)),

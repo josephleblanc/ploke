@@ -42,12 +42,11 @@ Rust Doc Comments (non-negotiable formatting)
 - Do not place `//!` after imports or mix multiple `//!` blocks in a file; prefer one contiguous block at the very top.
 - Integration test files are crate roots; if documenting the whole test crate, put a single `//!` block at the very top. Otherwise, prefer `///` on specific items.
 
-## Ongoing Plan
+## Ongoing Plan 
 
-TODO: 
-
+Ongoing Plan Re:
 Next we need to: 
-Agent TODO (starting with TODOs in this file to help identify where to start following points):
+TODO (starting with TODOs in this file to help identify where to start following points):
  - (ongoing): Update impl-logs with reasoning + steps taken ongoing.
      - request human input when blockers encountered and/or instructions too unclear to
      implement, create report explaining why blocker cannot be solved independently and requires
@@ -55,19 +54,25 @@ Agent TODO (starting with TODOs in this file to help identify where to start fol
      request human input
      - request human input when tests needed behind cfg gating
      - otherwise continue working
- - ensure we can deserialize the response well (e.g. all types take expected values + test)
-     - Can start with the values we care about most for now, 
-         - "supported_parameters" -> SupportedParameters
-         - "pricing" -> Pricing
-         - "canonical_slug" -> ProvEnd
-     - keep allocations as low as possible
-     - leverage serde where possible (should completely deserialize)
- - take the "canonical_slug" or "id" and get all the models.
- - save all the models called to a single file
- - use the `crates/ploke-tui/src/llm/openrouter/json_visitor.rs` functions to analyze the shape
- of the response across models
- - If shape is the same/similar to ModelEndpoint, then either use ModelEndpoint to test
- deserailization (if same) or create a similar struct (if different) and test same.
+
+  - Integrate and/or build out trait-based Tool calling system, starting with
+   `request_more_context` tool that uses vector similarity + bm25 search
+     - test new trait system in unit tests
+     - test e2e with TEST_APP and live API calls
+     - if trait system valid, extend to other tools + refine approach
+  - expand tool calls
+     - add tests + benches
+  - expand db methods for targeted code context search
+     - get neighboring code items in module tree
+     - get all code items in current file
+     - add tests + benches
+ - expand the `crates/ploke-tui/src/llm/openrouter/json_visitor.rs` functions to analyze the shape
+ of the response across model tool call responses
+    - develop testing matrix framework against live endpoints
+      - vary prompts
+      - vary number of tools
+      - vary providers
+      - add benches for latency + serializable structs for tracking data of latency + other metrics
  - Create a persistent Model registry (we have a semi-working version now, but it is not
  grounded in the truth of the API expectations)
  - Transform response + filter providers/sort for desired fields
@@ -83,40 +88,26 @@ Agent TODO (starting with TODOs in this file to help identify where to start fol
      - record benches
      - profile performance for later comparison
      - smooth any super jagged edges
- - Evaluate current handling of endpoint cycle in `ploke-tui` crate so far, and identify how to
- streamline to make more ergonomic, simplify call sites where possible while improving
- performance.
  - Migrate system to use new approach
      - slash and burn for old approach where tests are repeated.
      - replace e2e tests with approach using gated TEST_APP in `test_harness.rs` behind
      `#[cfg(feature = "test_harness")]` for realistic end-to-end testing with multithreaded
      event system.
      - include snapshot testing, ensure UI/UX does not regress
- - TBD
-
- Human TODO:
- - Integrate and/or build out trait-based Tool calling system, starting with
- `request_more_context` tool that uses vector similarity + bm25 search
-     - test new trait system in unit tests
-     - test e2e with TEST_APP and live API calls
-     - if trait system valid, extend to other tools + refine approach
- - expand db methods for targeted code context search
-     - get neighboring code items in module tree
-     - get all code items in current file
- - expand tool calls
-     - add tests + benches
- - invest more design time into agentic system (not yet created)
-     - overall simple loops
-     - prompt decomposition
-     - planning
-     - revisit tool design, re-evaluate current system
  - ensure current API system works as expected, and that we can make the expected calls
-     - agent TODO list above finished
      - UI smoothed out for selecting model (currently buggy re: selecting model provider)
      - accurate + comprehensive model registry exists
      - API tested + validated, shapes of responses recorded, strong typing on all
      request/response schema for ergonimic use and mutation (filter, destructure, etc)
      - performant (efficient, low alloc, no dynamic dispatch, static dispatch)
+ - TBD
+
+ TODO:
+ - invest more design time into agentic system (not yet created)
+     - overall simple loops
+     - prompt decomposition
+     - planning
+     - revisit tool design, re-evaluate current system
  - fill out tools + API calls into working, complete system
      - e2e tests exist and validate all testable properties offline
      - e2e + live tests exist and validate all testable properties online on a wide variety of

@@ -1,6 +1,6 @@
 use super::*;
+use crate::{EventBus, app_state::core::PreviewMode};
 use ploke_core::rag_types::ApplyCodeEditResult;
-use crate::{app_state::core::PreviewMode, EventBus};
 use ploke_db::NodeType;
 
 /// CodeEdit tool: applies one or more canonical edits to source files.
@@ -8,11 +8,11 @@ use ploke_db::NodeType;
 /// - Calls into the existing `rag::tools::apply_code_edit_tool` path (no behavior changes),
 ///   using the Canonical edit mode exclusively.
 /// - Returns an `ApplyCodeEditResult` summarizing the staged proposal.
+pub struct GatCodeEdit;
 pub struct CodeEdit {
-    pub state: Arc<crate::app_state::AppState>,
-    pub event_bus: Arc<EventBus>,
-    /// Parent message id for correlation in the conversation tree.
-    pub parent_id: Uuid,
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    parent_id: Uuid,
 }
 
 use std::borrow::Cow;
@@ -50,69 +50,84 @@ pub struct CanonicalEditOwned {
     pub code: String,
 }
 
-impl super::GatTool for CodeEdit {
+impl super::GatTool for GatCodeEdit {
     type Output = ApplyCodeEditResult;
     type OwnedParams = CodeEditParamsOwned;
     type Params<'de> = CodeEditParams<'de>;
 
-    fn name() -> super::ToolName { super::ToolName::ApplyCodeEdit }
-    fn description() -> super::ToolDescr { super::ToolDescr::ApplyCodeEdit }
-    fn schema() -> &'static serde_json::Value { CODE_EDIT_PARAMETERS.deref() }
+    fn name() -> super::ToolName {
+        super::ToolName::ApplyCodeEdit
+    }
+    fn description() -> super::ToolDescr {
+        super::ToolDescr::ApplyCodeEdit
+    }
+    fn schema() -> &'static serde_json::Value {
+        CODE_EDIT_PARAMETERS.deref()
+    }
 
     fn build(ctx: &super::Ctx) -> Self {
-        Self {
-            state: Arc::clone(&ctx.state),
-            event_bus: Arc::clone(&ctx.event_bus),
-            parent_id: ctx.parent_id,
-        }
+        Self
     }
 
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         CodeEditParamsOwned {
             confidence: params.confidence,
-            edits: params.edits.iter().map(|e| CanonicalEditOwned {
-                file: e.file.clone().into_owned(),
-                canon: e.canon.clone().into_owned(),
-                node_type: e.node_type,
-                code: e.code.clone().into_owned(),
-            }).collect(),
+            edits: params
+                .edits
+                .iter()
+                .map(|e| CanonicalEditOwned {
+                    file: e.file.clone().into_owned(),
+                    canon: e.canon.clone().into_owned(),
+                    node_type: e.node_type,
+                    code: e.code.clone().into_owned(),
+                })
+                .collect(),
         }
     }
 
-    async fn run<'a>(self, params: &Self::Params<'a>, _ctx: super::Ctx) -> Result<Self::Output, ploke_error::Error> {
-        use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
+    async fn execute<'a>(
+        params: Self::Params<'a>,
+        ctx: super::Ctx,
+    ) -> Result<ToolResult, ploke_error::Error> {
         use crate::rag::tools::apply_code_edit_tool;
+        use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
         // Convert borrowed -> owned typed request
         let typed_req = ApplyCodeEditRequest {
             confidence: params.confidence,
-            edits: params.edits.iter().map(|e| Edit::Canonical {
-                file: e.file.clone().into_owned(),
-                canon: e.canon.clone().into_owned(),
-                node_type: e.node_type,
-                code: e.code.clone().into_owned(),
-            }).collect(),
+            edits: params
+                .edits
+                .iter()
+                .map(|e| Edit::Canonical {
+                    file: e.file.clone().into_owned(),
+                    canon: e.canon.clone().into_owned(),
+                    node_type: e.node_type,
+                    code: e.code.clone().into_owned(),
+                })
+                .collect(),
         };
-        let arguments = serde_json::to_value(typed_req)
-            .map_err(|e| ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
-                "Failed to serialize CodeEditParams: {}", e
-            ))))?;
+        let arguments = serde_json::to_value(typed_req).map_err(|e| {
+            ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+                "Failed to serialize CodeEditParams: {}",
+                e
+            )))
+        })?;
         // Execute legacy staging path; rely on proposal store for result
         let request_id = Uuid::new_v4();
         let call_id = Uuid::new_v4().to_string();
         let params_env = ToolCallParams {
-            state: Arc::clone(&self.state),
-            event_bus: Arc::clone(&self.event_bus),
+            state: Arc::clone(&ctx.state),
+            event_bus: Arc::clone(&ctx.event_bus),
             request_id,
-            parent_id: self.parent_id,
+            parent_id: ctx.parent_id,
             name: "apply_code_edit".to_string(),
             arguments,
             call_id,
         };
         apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        let proposal_opt = { self.state.proposals.read().await.get(&request_id).cloned() };
+        let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
         if let Some(prop) = proposal_opt {
-            let crate_root = { self.state.system.read().await.crate_focus.clone() };
+            let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
             let display_files: Vec<String> = prop
                 .files
                 .iter()
@@ -126,33 +141,30 @@ impl super::GatTool for CodeEdit {
                     }
                 })
                 .collect();
-            let editing_cfg = { self.state.config.read().await.editing.clone() };
+            let editing_cfg = { ctx.state.config.read().await.editing.clone() };
             let preview_mode = match editing_cfg.preview_mode {
                 PreviewMode::Diff => "diff".to_string(),
                 PreviewMode::CodeBlock => "codeblock".to_string(),
             };
-            Ok(ApplyCodeEditResult {
+            let structured_result = ApplyCodeEditResult {
                 ok: true,
                 staged: prop.edits.len(),
                 applied: 0,
                 files: display_files,
                 preview_mode,
                 auto_confirmed: editing_cfg.auto_confirm_edits,
+            };
+            let serialized_str =
+                serde_json::to_string(&structured_result).expect("Incorrect deserialization");
+            Ok(ToolResult {
+                content: serialized_str,
             })
         } else {
-            Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
-                "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
-            )))
-        }
-    }
-}
-
-impl super::ToolFromParams for CodeEdit {
-    fn build(params: &crate::rag::utils::ToolCallParams) -> Self {
-        Self {
-            state: Arc::clone(&params.state),
-            event_bus: Arc::clone(&params.event_bus),
-            parent_id: params.parent_id,
+            Err(ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(
+                    "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
+                ),
+            ))
         }
     }
 }
@@ -204,14 +216,15 @@ lazy_static::lazy_static! {
 
 impl Tool for CodeEdit {
     const NAME: &'static str = "apply_code_edit";
-    const DESCRIPTION: &'static str = "Apply canonical code edits to one or more nodes identified by canonical path.";
+    const DESCRIPTION: &'static str =
+        "Apply canonical code edits to one or more nodes identified by canonical path.";
 
     type Params = CodeEditInput;
     type Output = ApplyCodeEditResult;
 
     async fn run(self, p: Self::Params) -> Result<Self::Output, ploke_error::Error> {
-        use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
         use crate::rag::tools::apply_code_edit_tool;
+        use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 
         // Convert to the strongly-typed request expected by the dispatcher/tool handler
         let typed_req = ApplyCodeEditRequest {
@@ -228,11 +241,12 @@ impl Tool for CodeEdit {
                 .collect(),
         };
 
-        let arguments = serde_json::to_value(typed_req)
-            .map_err(|e| ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+        let arguments = serde_json::to_value(typed_req).map_err(|e| {
+            ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
                 "Failed to serialize CodeEditInput: {}",
                 e
-            ))))?;
+            )))
+        })?;
 
         // Prepare tool call envelope
         let request_id = Uuid::new_v4();
@@ -288,9 +302,11 @@ impl Tool for CodeEdit {
                 auto_confirmed: editing_cfg.auto_confirm_edits,
             })
         } else {
-            Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
-                "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
-            )))
+            Err(ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(
+                    "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
+                ),
+            ))
         }
     }
 
@@ -307,7 +323,6 @@ impl Tool for CodeEdit {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,11 +332,23 @@ mod tests {
         let def = <CodeEdit as Tool>::tool_def();
         let v = serde_json::to_value(&def).expect("serialize");
         let func = v.as_object().expect("def obj");
-        assert_eq!(func.get("name").and_then(|n| n.as_str()), Some("apply_code_edit"));
-        let params = func.get("parameters").and_then(|p| p.as_object()).expect("params obj");
-        let props = params.get("properties").and_then(|p| p.as_object()).expect("props obj");
+        assert_eq!(
+            func.get("name").and_then(|n| n.as_str()),
+            Some("apply_code_edit")
+        );
+        let params = func
+            .get("parameters")
+            .and_then(|p| p.as_object())
+            .expect("params obj");
+        let props = params
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("props obj");
         assert!(props.contains_key("edits"));
-        let edits = props.get("edits").and_then(|e| e.as_object()).expect("edits obj");
+        let edits = props
+            .get("edits")
+            .and_then(|e| e.as_object())
+            .expect("edits obj");
         assert!(edits.contains_key("items"));
     }
 
@@ -353,8 +380,76 @@ mod tests {
         };
         let payload = serde_json::to_value(&typed).expect("serialize typed");
         let first = payload
-            .get("edits").and_then(|e| e.as_array()).and_then(|a| a.first())
-            .and_then(|e| e.as_object()).expect("obj");
-        assert_eq!(first.get("mode").and_then(|m| m.as_str()), Some("canonical"));
+            .get("edits")
+            .and_then(|e| e.as_array())
+            .and_then(|a| a.first())
+            .and_then(|e| e.as_object())
+            .expect("obj");
+        assert_eq!(
+            first.get("mode").and_then(|m| m.as_str()),
+            Some("canonical")
+        );
+    }
+}
+
+#[cfg(test)]
+mod gat_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn params_deserialize_and_into_owned() {
+        let raw = r#"{
+            "edits": [
+                {
+                    "file": "src/lib.rs",
+                    "canon": "crate::foo::bar",
+                    "node_type": "function",
+                    "code": "fn bar(){}"
+                }
+            ],
+            "confidence": 0.42
+        }"#;
+        let params = GatCodeEdit::deserialize_params(raw).expect("parse");
+        assert_eq!(params.confidence, Some(0.42));
+        assert_eq!(params.edits.len(), 1);
+        let owned = GatCodeEdit::into_owned(&params);
+        assert_eq!(owned.confidence, Some(0.42));
+        assert_eq!(owned.edits[0].file, "src/lib.rs");
+        assert_eq!(owned.edits[0].canon, "crate::foo::bar");
+        assert_eq!(owned.edits[0].code, "fn bar(){}");
+    }
+
+    #[test]
+    fn name_desc_and_schema_present() {
+        assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
+        assert!(matches!(GatCodeEdit::description(), ToolDescr::ApplyCodeEdit));
+        let schema = GatCodeEdit::schema();
+        assert!(schema.as_object().unwrap().contains_key("properties"));
+    }
+
+    #[tokio::test]
+    async fn execute_errors_when_proposal_not_staged() {
+        use crate::event_bus::EventBusCaps;
+        let state = Arc::new(crate::test_utils::mock::create_mock_app_state());
+        let event_bus = Arc::new(crate::EventBus::new(EventBusCaps::default()));
+        let ctx = super::Ctx {
+            state,
+            event_bus,
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: Arc::<str>::from("code-edit-test"),
+        };
+        let params = CodeEditParams {
+            edits: vec![CanonicalEditBorrowed {
+                file: Cow::Borrowed("src/lib.rs"),
+                canon: Cow::Borrowed("crate::nope::missing"),
+                node_type: ploke_db::NodeType::Function,
+                code: Cow::Borrowed("fn missing(){}"),
+            }],
+            confidence: Some(0.1),
+        };
+        let res = GatCodeEdit::execute(params, ctx).await;
+        assert!(res.is_err(), "expected failure when no proposal was staged");
     }
 }
