@@ -12,7 +12,7 @@ use ploke_tui::llm::openrouter::openrouter_catalog::fetch_model_endpoints;
 use ploke_tui::llm::openrouter::model_provider::{ToolChoice, ToolChoiceFunction};
 use ploke_tui::llm::{RequestMessage, Role};
 use ploke_tui::test_harness::{default_headers, openrouter_env};
-use ploke_tui::tools::{FunctionMarker, GatTool, ToolDefinition};
+use ploke_tui::tools::{FunctionMarker, GatTool};
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::user_config::{ModelConfig, ProviderType};
 
@@ -20,10 +20,6 @@ fn ai_temp_dir() -> PathBuf {
     let p = PathBuf::from("ai_temp_data/live");
     fs::create_dir_all(&p).ok();
     p
-}
-
-fn make_request_code_context_def() -> ToolDefinition {
-    ToolDefinition { r#type: FunctionMarker, function: RequestCodeContextGat::tool_def() }
 }
 
 #[tokio::test]
@@ -60,7 +56,7 @@ async fn live_tool_call_request_code_context() {
     let sys = RequestMessage { role: Role::System, content: "You can call tools.".to_string(), tool_call_id: None };
     let user = RequestMessage { role: Role::User, content: "Fetch context for lib.rs via tool; only call the tool.".to_string(), tool_call_id: None };
     let messages = vec![sys, user];
-    let tools = vec![make_request_code_context_def()];
+    let tools = vec![RequestCodeContextGat::tool_def()];
 
     let params = ploke_tui::llm::LLMParameters { max_tokens: Some(64), temperature: Some(0.0), ..Default::default() };
     let mut request = build_openai_request(&provider, messages, &params, Some(tools), true, true);
