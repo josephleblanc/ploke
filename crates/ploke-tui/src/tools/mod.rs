@@ -24,6 +24,7 @@ mod request_code_context;
 pub use request_code_context::{ RequestCodeContext, RequestCodeContextInput, RequestCodeContextOutput };
 mod code_edit;
 pub use code_edit::{ CodeEdit, CodeEditInput, CanonicalEdit };
+mod get_file_metadata;
 
 pub trait Tool {
     /// Static strings so they can be used in const contexts.
