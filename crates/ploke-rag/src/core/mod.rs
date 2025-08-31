@@ -16,7 +16,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {
     Dense,
     Sparse {
@@ -27,6 +27,7 @@ pub enum RetrievalStrategy {
         mmr: Option<MmrConfig>,
     },
 }
+// AI: add manual impl of Default for `RetrievalStrategy::Hybrid` AI!
 
 #[derive(Debug, Clone, Copy)]
 pub struct SearchParams {
