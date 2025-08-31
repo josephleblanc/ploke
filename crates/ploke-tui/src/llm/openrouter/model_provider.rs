@@ -336,10 +336,10 @@ pub struct CompReq<'a> {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
     // corresponding json: `messages?: Message[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    messages: Option<Vec<crate::llm::RequestMessage>>,
+    pub messages: Option<Vec<crate::llm::RequestMessage>>,
     // corresponding json: `prompt?: string;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    prompt: Option<String>,
+    pub prompt: Option<String>,
     // OpenRouter docs: "If "model" is unspecified, uses the user's default"
     //  - Note: This default is set on the OpenRouter website
     //  - If we get errors for "No model available", provide the user with a message suggesting
@@ -349,29 +349,29 @@ pub struct CompReq<'a> {
     //  to no models being available for the requests we send.
     // corresponding json: `model?: string;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<&'a str>,
+    pub model: Option<&'a str>,
     // TODO: We should create a Marker struct for this, similar to `FunctionMarker` in
     // `crates/ploke-tui/src/tools/mod.rs`, since this is a constant value
     // corresponding json: `response_format?: { type: 'json_object' };`
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<JsonObjMarker>, // TODO
+    pub response_format: Option<JsonObjMarker>, // TODO
 
     // corresponding json: `stop?: string | string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    stop: Option<Vec<String>>,
+    pub stop: Option<Vec<String>>,
     // OpenRouter docs: "Enable streaming"
     // corresponding json: `stream?: boolean;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
+    pub stream: Option<bool>,
 
     // Openrouter docs: See LLM Parameters (openrouter.ai/docs/api-reference/parameters)
     //
     // corresponding json: `max_tokens?: number; // Range: [1, context_length)`
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
+    pub max_tokens: Option<u32>,
     // corresponding json: `temperature?: number; // Range: [0, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
+    pub temperature: Option<f32>,
     // OpenRouter docs:
     //  Tool calling
     //  Will be passed down as-is for providers implementing OpenAI's interface.
@@ -382,64 +382,64 @@ pub struct CompReq<'a> {
     // for API calls, this is a website and not an API endpoint... fool me once, *sigh*
     // corresponding json: `tools?: Tool[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<ToolDefinition>>,
+    pub tools: Option<Vec<ToolDefinition>>,
     // corresponding json: tool_choice?: ToolChoice;
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<ToolChoice>,
+    pub tool_choice: Option<ToolChoice>,
 
     // OpenRouter docs: Advanced optional parameters
     //
     // corresponding json: `seed?: number; // Integer only`
     #[serde(skip_serializing_if = "Option::is_none")]
-    seed: Option<i64>,
+    pub seed: Option<i64>,
     // corresponding json: `top_p?: number; // Range: (0, 1]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f32>,
+    pub top_p: Option<f32>,
     // corresponding json: `top_k?: number; // Range: [1, Infinity) Not available for OpenAI models`
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_k: Option<f32>,
+    pub top_k: Option<f32>,
     // corresponding json: `frequency_penalty?: number; // Range: [-2, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    frequency_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
     // corresponding json: `presence_penalty?: number; // Range: [-2, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    presence_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
     // corresponding json: `repetition_penalty?: number; // Range: (0, 2]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    repetition_penalty: Option<f32>,
+    pub repetition_penalty: Option<f32>,
     // corresponding json: `logit_bias?: { [key: number]: number };`
     #[serde(skip_serializing_if = "Option::is_none")]
-    logit_bias: Option<BTreeMap<i32, f32>>,
+    pub logit_bias: Option<BTreeMap<i32, f32>>,
     // corresponding json: `top_logprobs: number; // Integer only`
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_logprobs: Option<i32>,
+    pub top_logprobs: Option<i32>,
     // corresponding json: `min_p?: number; // Range: [0, 1]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    min_p: Option<f32>,
+    pub min_p: Option<f32>,
     // corresponding json: `top_a?: number; // Range: [0, 1]`
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_a: Option<f32>,
+    pub top_a: Option<f32>,
 
     // OpenRouter docs: OpenRouter-only parameters
     //
     // OpenRouter docs: See "Prompt Transforms" section: openrouter.ai/docs/transforms
     // corresponding json: `transforms?: string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    transforms: Option<Vec<String>>,
+    pub transforms: Option<Vec<String>>,
     // OpenRouter docs: See "Model Routing" section: openrouter.ai/docs/model-routing
     // corresponding json: `models?: string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    models: Option<Vec<String>>,
+    pub models: Option<Vec<String>>,
     // corresponding json: `route?: 'fallback';`
     #[serde(skip_serializing_if = "Option::is_none")]
-    route: Option<FallbackMarker>, // TODO
+    pub route: Option<FallbackMarker>, // TODO
     // OpenRouter docs: See "Provider Routing" section: openrouter.ai/docs/provider-routing
     // corresponding json: `provider?: ProviderPreferences;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<ProviderPreferences>,
+    pub provider: Option<ProviderPreferences>,
     // corresponding json: `user?: string; // A stable identifier for your end-users. Used to help detect and prevent abuse.`
     #[serde(skip_serializing_if = "Option::is_none")]
-    user: Option<String>,
+    pub user: Option<String>,
 }
 
 // Marker for response_format -> { "type": "json_object" }

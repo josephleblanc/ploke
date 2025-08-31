@@ -1,127 +1,75 @@
 use super::*;
 
+// Canonical schema: RequestCodeContextArgs { token_budget, hint }
 pub struct RequestCodeContext {
     rag: Arc<RagService>,
-    top_k: u16,
-    budget: TokenBudget,
-    strategy: RetrievalStrategy,
 }
 
 #[derive(Clone, PartialOrd, PartialEq, Deserialize)]
 pub struct RequestCodeContextInput {
-    search_term: String,
-    top_k: Option<u16>,
-}
-
-#[derive(Clone, PartialOrd, PartialEq, Serialize)]
-pub struct RequestCodeContextOutput {
-    code: Vec<CodeSnippet>,
-    meta: Vec<SnippetMeta>,
-}
-
-#[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Ord, Eq)]
-pub struct CodeSnippet {
-    file_path: String,
-    snippet: String,
-    // canonical_path: NodePath
-}
-
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Serialize)]
-pub struct SnippetMeta {
-    id: Uuid,
-    kind: ContextPartKind,
-    score: f32,
-    modality: Modality,
-}
-
-impl SnippetMeta {
-    fn extract_meta(cp: &ContextPart) -> Self {
-        SnippetMeta {
-            id: cp.id,
-            kind: cp.kind,
-            score: cp.score,
-            modality: cp.modality,
-        }
-    }
+    pub token_budget: u32,
+    #[serde(default)]
+    pub hint: Option<String>,
 }
 
 lazy_static::lazy_static! {
     static ref REQUEST_CODE_CONTEXT_PARAMETERS: serde_json::Value = json!({
         "type": "object",
         "properties": {
-            "search_term": {
-                "type": "string",
-                "description": "The text used to perform a dense vector similarity and bm25 hybrid search of the code base."
-            },
-            "top_k": {
+            "token_budget": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Optional suggestion for number of results to return."
+                "description": "Maximum tokens of code context to return."
+            },
+            "hint": {
+                "type": "string",
+                "description": "Optional hint to guide which code to retrieve."
             }
         },
-        "required": ["search_term"],
+        "required": ["token_budget"],
         "additionalProperties": false
     });
 }
 impl Tool for RequestCodeContext {
     const NAME: &'static str = "request_code_context";
     const DESCRIPTION: &'static str =
-        "Perform a dense vector similarity and bm25 hybrid search of the code base.";
+        "Request additional code context from the repository up to a token budget.";
 
     type Params = RequestCodeContextInput;
-    type Output = RequestCodeContextOutput;
+    type Output = ploke_core::rag_types::RequestCodeContextResult;
 
     async fn run(self, p: Self::Params) -> Result<Self::Output, ploke_error::Error> {
-        let query = &p.search_term;
-        let top_k = p.top_k.unwrap_or(self.top_k);
-        let budget = self.budget;
-        let strategy = self.strategy;
-        let assembed_context = self
-            .rag
-            .get_context(query, top_k as usize, &budget, &strategy)
-            .await?;
+        use crate::rag::utils::calc_top_k_for_budget;
+        use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 
-        let stats = assembed_context.stats;
-        let parts = assembed_context.parts;
-        let (snippets, metadata): (Vec<CodeSnippet>, Vec<SnippetMeta>) = parts
-            .into_iter()
-            .map(|cp| {
-                let meta = SnippetMeta {
-                    id: cp.id,
-                    kind: cp.kind,
-                    score: cp.score,
-                    modality: cp.modality,
-                };
-                let snippet = CodeSnippet {
-                    file_path: cp.file_path,
-                    snippet: cp.text, // , canonical_path
-                };
-                (snippet, meta)
-            })
-            .unzip();
-        let all_snippets = RequestCodeContextOutput {
-            code: snippets,
-            meta: metadata,
-        };
-        Ok(all_snippets)
+        let budget = TokenBudget { max_total: p.token_budget as usize, ..Default::default() };
+        let query = p.hint.unwrap_or_default();
+        if query.trim().is_empty() {
+            return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
+                "No query available (hint missing or empty)".to_string(),
+            )));
+        }
+        let top_k = calc_top_k_for_budget(p.token_budget);
+        let assembled = self
+            .rag
+            .get_context(
+                &query,
+                top_k,
+                &budget,
+                &RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None },
+            )
+            .await?;
+        Ok(ploke_core::rag_types::RequestCodeContextResult { ok: true, query, top_k, context: assembled })
     }
 
     fn schema() -> &'static serde_json::Value {
         REQUEST_CODE_CONTEXT_PARAMETERS.deref()
-        // match REQUEST_CODE_CONTEXT_PARAMETERS.as_object() {
-        //     Some(map) => map,
-        //     None => panic!("Tool schema must be well-formed json object")
-        // }
     }
 
     fn tool_def() -> ToolFunctionDef {
         ToolFunctionDef {
             name: ToolName::RequestCodeContext,
             description: ToolDescr::RequestCodeContext,
-            // TODO: See if it is possible to get rid of the clone, somehow, perhaps by
-            // implementing Deserialize on `&'static Value` or something? Not sure how serde works
-            // here, or if it is possible to create a zero-alloc version since we have a &'static
-            // underlying type.
             parameters: Self::schema().clone(),
         }
     }
@@ -130,27 +78,18 @@ impl Tool for RequestCodeContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn tool_def_serializes_expected_shape() {
         let def = <RequestCodeContext as Tool>::tool_def();
         let v = serde_json::to_value(&def).expect("serialize");
         let func = v.as_object().expect("def obj");
-        assert_eq!(
-            func.get("name").and_then(|n| n.as_str()),
-            Some("request_code_context")
-        );
-        let params = func
-            .get("parameters")
-            .and_then(|p| p.as_object())
-            .expect("params obj");
-        let props = params
-            .get("properties")
-            .and_then(|p| p.as_object())
-            .expect("props obj");
-        assert!(props.contains_key("search_term"));
-        assert!(props.contains_key("top_k"));
+        assert_eq!(func.get("name").and_then(|n| n.as_str()), Some("request_code_context"));
+        let params = func.get("parameters").and_then(|p| p.as_object()).expect("params obj");
+        let req = params.get("required").and_then(|r| r.as_array()).expect("req arr");
+        assert!(req.iter().any(|s| s.as_str() == Some("token_budget")));
+        let props = params.get("properties").and_then(|p| p.as_object()).expect("props obj");
+        assert!(props.contains_key("hint"));
     }
 }
 
@@ -159,16 +98,15 @@ use std::borrow::Cow;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RequestCodeContextParams<'a> {
-    #[serde(borrow)]
-    pub search_term: Cow<'a, str>,
-    #[serde(default)]
-    pub top_k: Option<u16>,
+    pub token_budget: u32,
+    #[serde(borrow, default)]
+    pub hint: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestCodeContextParamsOwned {
-    pub search_term: String,
-    pub top_k: Option<u16>,
+    pub token_budget: u32,
+    pub hint: Option<String>,
 }
 
 /// Unit struct for GAT-based tool; uses Ctx to access RagService/state
@@ -179,7 +117,7 @@ pub struct RequestCodeContextGat {
 }
 
 impl super::GatTool for RequestCodeContextGat {
-    type Output = RequestCodeContextOutput;
+    type Output = ploke_core::rag_types::RequestCodeContextResult;
     type OwnedParams = RequestCodeContextParamsOwned;
     type Params<'de>
         = RequestCodeContextParams<'de>
@@ -201,10 +139,7 @@ impl super::GatTool for RequestCodeContextGat {
     }
 
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
-        RequestCodeContextParamsOwned {
-            search_term: params.search_term.clone().into_owned(),
-            top_k: params.top_k,
-        }
+        RequestCodeContextParamsOwned { token_budget: params.token_budget, hint: params.hint.clone().map(|h| h.into_owned()) }
     }
 
     // async fn run<'a>(self, params: &Self::Params<'a>, ctx: super::Ctx) -> Result<Self::Output, ploke_error::Error> {
@@ -232,6 +167,7 @@ impl super::GatTool for RequestCodeContextGat {
     // }
 
     async fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> Result<ToolResult, ploke_error::Error> {
+        use crate::rag::utils::calc_top_k_for_budget;
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
         let rag = match &ctx.state.rag {
             Some(r) => r.clone(),
@@ -243,29 +179,23 @@ impl super::GatTool for RequestCodeContextGat {
                 ));
             }
         };
-        let top_k = params.top_k.unwrap_or(16) as usize;
-        let budget = TokenBudget::default();
-        let strategy = RetrievalStrategy::Hybrid {
-            rrf: RrfConfig::default(),
-            mmr: None,
+        let hint = params.hint.as_ref().map(|h| h.as_ref()).unwrap_or("");
+        if hint.trim().is_empty() {
+            return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
+                "No query available (hint missing or empty)".to_string(),
+            )));
+        }
+        let top_k = calc_top_k_for_budget(params.token_budget);
+        let budget = TokenBudget { max_total: params.token_budget as usize, ..Default::default() };
+        let strategy = RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None };
+        let assembled = rag.get_context(hint, top_k, &budget, &strategy).await?;
+        let result = ploke_core::rag_types::RequestCodeContextResult {
+            ok: true,
+            query: hint.to_string(),
+            top_k,
+            context: assembled,
         };
-        let assembled = rag
-            .get_context(params.search_term.as_ref(), top_k, &budget, &strategy)
-            .await?;
-        let (code, meta): (Vec<CodeSnippet>, Vec<SnippetMeta>) = assembled
-            .parts
-            .into_iter()
-            .map(|cp| {
-                let meta = SnippetMeta::extract_meta(&cp);
-                let snippet = CodeSnippet {
-                    file_path: cp.file_path,
-                    snippet: cp.text,
-                };
-                (snippet, meta)
-            })
-            .unzip();
-        let serialized = serde_json::to_string(&code).expect("Invalid state: Unconfigured Serialization");
-        // Ok(RequestCodeContextOutput { code, meta })
+        let serialized = serde_json::to_string(&result).expect("Invalid state: serialization");
         Ok(ToolResult { content: serialized })
     }
 }
@@ -277,13 +207,13 @@ mod gat_tests {
 
     #[test]
     fn params_deserialize_and_into_owned() {
-        let raw = r#"{"search_term":"foo bar","top_k":7}"#;
+        let raw = r#"{"token_budget":512,"hint":"foo bar"}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
-        assert_eq!(params.search_term.as_ref(), "foo bar");
-        assert_eq!(params.top_k, Some(7));
+        assert_eq!(params.token_budget, 512);
+        assert_eq!(params.hint.as_deref(), Some("foo bar"));
         let owned = RequestCodeContextGat::into_owned(&params);
-        assert_eq!(owned.search_term, "foo bar");
-        assert_eq!(owned.top_k, Some(7));
+        assert_eq!(owned.token_budget, 512);
+        assert_eq!(owned.hint.as_deref(), Some("foo bar"));
     }
 
     #[test]
@@ -307,10 +237,7 @@ mod gat_tests {
             parent_id: Uuid::new_v4(),
             call_id: Arc::<str>::from("rcctx-test"),
         };
-        let params = RequestCodeContextParams {
-            search_term: Cow::Borrowed("fn"),
-            top_k: Some(4),
-        };
+        let params = RequestCodeContextParams { token_budget: 256, hint: Some(Cow::Borrowed("fn")) };
         let out = RequestCodeContextGat::execute(params, ctx).await;
         assert!(out.is_err(), "expected execute to error with mock/unavailable RAG");
     }

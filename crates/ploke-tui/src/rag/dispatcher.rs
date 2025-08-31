@@ -1,7 +1,4 @@
-use crate::rag::tools::apply_code_edit_tool;
-
-use super::{tools::get_file_metadata_tool, utils::ToolCallParams, *};
-// TODO: Route get_file_metadata via GAT once Send/'static issue resolved in spawn path
+use super::{utils::ToolCallParams, *};
 
 pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
     let ToolCallParams {
@@ -39,17 +36,6 @@ pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
         call_id: call_id.clone(),
     };
 
-    match name.as_str() {
-        "apply_code_edit" => apply_code_edit_tool(tool_call_params).await,
-        // Route get_file_metadata through the GAT-based dispatcher
-        "get_file_metadata" => get_file_metadata_tool(tool_call_params).await,
-        // Keep request_code_context on legacy RAG handler for now
-        // "request_code_context" => handle_request_context(tool_call_params).await,
-        _ => {
-            tracing::warn!("Unsupported tool call: {}", name);
-            let err = format!("Unsupported tool: {}", name);
-            let _ = tool_call_params.event_bus.realtime_tx.send(tool_call_failed(err));
-            return;
-        }
-    }
+    // Route all supported tools via the GAT dispatcher
+    crate::tools::dispatch_gat_tool(tool_call_params).await;
 }

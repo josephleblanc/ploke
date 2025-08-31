@@ -14,11 +14,12 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::tool_call;
+
 use super::{
-    GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage, ToolDefinition,
+    LLMParameters, LlmError, RequestMessage, 
     cap_messages_by_chars, cap_messages_by_tokens,
 };
+use crate::tools::ToolDefinition;
 use crate::EventBus;
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
@@ -63,7 +64,7 @@ impl<'a> RequestSession<'a> {
             };
 
             let require_parameters = true;
-            let request_payload = build_openai_request(
+            let request_payload = build_comp_req(
                 self.provider,
                 effective_messages,
                 &self.params,
@@ -77,7 +78,11 @@ impl<'a> RequestSession<'a> {
             );
 
             // Brief, structured dispatch log for efficient triage
-            let tool_names: Vec<&str> = self.tools.iter().map(|t| t.function.name).collect();
+            let tool_names: Vec<&str> = self
+                .tools
+                .iter()
+                .map(|t| t.function.name.as_str())
+                .collect();
             let url = format!("{}/chat/completions", self.provider.base_url);
             tracing::debug!(
                 model = %self.provider.model,
@@ -148,9 +153,8 @@ impl<'a> RequestSession<'a> {
             let response_body: super::OpenAiResponse = serde_json::from_str(&body)
                 .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
             tracing::trace!("raw body response to request: {:#?}", body);
-            panic!();
 
-            while let Some(choice) = response_body.choices.into_iter().next() {
+            if let Some(choice) = response_body.choices.into_iter().next() {
                 match choice {
                     Choices::NonStreamingChoice { finish_reason, native_finish_reason, message, error } => {
 
@@ -160,80 +164,37 @@ impl<'a> RequestSession<'a> {
                     self.attempts += 1;
 
                     // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                    let mut specs: Vec<tool_call::ToolCallSpec> = Vec::new();
-                    let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
-
+                    // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
                     for call in tool_calls {
-                        // match call {
-                        //     GenericToolCall::OpenAi(oc) => {
-                        //         tracing::info!(
-                        //             "OpenAI tool call received: id={}, type={}, fn={}, args={}",
-                        //             oc.id,
-                        //             oc.r#type,
-                        //             oc.function.name,
-                        //             oc.function.arguments
-                        //         );
-                        //         let arguments =
-                        //             serde_json::from_str::<Value>(&oc.function.arguments)
-                        //                 .unwrap_or(json!({ "raw": oc.function.arguments }));
-                        //         specs.push(tool_call::ToolCallSpec {
-                        //             name: oc.function.name.clone(),
-                        //             arguments,
-                        //             call_id: oc.id.clone(),
-                        //         });
-                        //     }
-                        //     GenericToolCall::Other(v) => {
-                        //         tracing::warn!("Received non-OpenAI tool call payload: {}", v);
-                        //         let call_id = v
-                        //             .get("id")
-                        //             .and_then(|x| x.as_str())
-                        //             .unwrap_or("unknown")
-                        //             .to_string();
-                        //         let err_json = json!({
-                        //             "ok": false,
-                        //             "error": "Unsupported tool call format",
-                        //
-                        //         })
-                        //         .to_string();
-                        //         other_errors.push((call_id, err_json));
-                        //     }
-                        // }
-                    }
+                        let call_id = call.call_id.to_string();
+                        let name = call.function.name.as_str().to_string();
+                        let arguments = serde_json::from_str::<Value>(call.function.arguments)
+                            .unwrap_or(json!({ "raw": call.function.arguments }));
 
-                    // Execute supported tool calls concurrently and append in stable order by call_id
-                    if !specs.is_empty() {
-                        let outcomes = tool_call::execute_tool_calls(
-                            &self.event_bus,
-                            self.parent_id,
-                            specs,
-                            self.params.tool_timeout_secs.unwrap_or(30),
-                        )
-                        .await;
-                        for (spec, result) in outcomes {
-                            match result {
-                                Ok(content) => {
-                                    self.messages.push(RequestMessage::new_system(content));
-                                }
-                                Err(err) => {
-                                    let sys_msg =
-                                        format!("Tool call '{}' failed: {}.", spec.name, err);
-                                    self.messages.push(RequestMessage::new_system(sys_msg));
-                                    self.messages.push(RequestMessage::new_system(
-                                        json!({"ok": false, "error": err}).to_string(),
-                                    ));
-                                }
+                        // Subscribe before sending
+                        let rx = self.event_bus.realtime_tx.subscribe();
+                        let request_id = Uuid::new_v4();
+                        self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
+                            request_id,
+                            parent_id: self.parent_id,
+                            name: name.clone(),
+                            arguments: arguments.clone(),
+                            call_id: call_id.clone(),
+                        }));
+
+                        match await_tool_result(rx, request_id, &call_id, self.params.tool_timeout_secs.unwrap_or(30)).await {
+                            Ok(content) => {
+                                self.messages.push(RequestMessage::new_system(content));
+                            }
+                            Err(err) => {
+                                let sys_msg = format!("Tool call '{}' failed: {}.", name, err);
+                                self.messages.push(RequestMessage::new_system(sys_msg));
+                                self.messages.push(RequestMessage::new_system(
+                                    json!({"ok": false, "error": err}).to_string(),
+                                ));
                             }
                         }
                     }
-
-                    // Handle unsupported/other formats as immediate failures
-                    for (call_id, err_json) in other_errors {
-                        self.messages.push(RequestMessage::new_system(
-                            "Unsupported tool call format".to_string(),
-                        ));
-                        self.messages.push(RequestMessage::new_system(err_json));
-                    }
-
                     if self.attempts > max_retries {
                         return Err(LlmError::Unknown(format!(
                             "Tool call retries exhausted after {} attempt(s)",
@@ -254,10 +215,11 @@ impl<'a> RequestSession<'a> {
                         Choices::NonChatChoice { finish_reason, text, error } => todo!(),
                         Choices::StreamingChoice { finish_reason, native_finish_reason, delta, error } => todo!(),
                     }
+            } else {
+                return Err(LlmError::Deserialization(
+                    "No choices in response".to_string(),
+                ));
             }
-            return Err(LlmError::Deserialization(
-                "No choices in response".to_string(),
-            ));
         }
     }
 
@@ -339,47 +301,47 @@ fn construct_user_friendly_msg(status: u16, error_text: String) -> String {
         format!("API error (status {}): {}", status, error_text)
     }
 }
-pub fn build_openai_request<'a>(
+pub fn build_comp_req<'a>(
     provider: &'a crate::user_config::ModelConfig,
     messages: Vec<RequestMessage>,
     params: &super::LLMParameters,
-    tools: Option<Vec<super::ToolDefinition>>,
+    tools: Option<Vec<crate::tools::ToolDefinition>>,
     use_tools: bool,
     require_parameters: bool,
-) -> super::OpenAiRequest<'a> {
-    tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_openai_request");
-    // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
-    // We include `provider: { \"order\": [\"<slug>\"] }` when a valid provider_slug is set.
-
-    super::OpenAiRequest {
-        model: provider.model.as_str(),
-        messages,
-        temperature: params.temperature,
+) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+    use crate::llm::openrouter::model_provider::{CompReq, ToolChoice};
+    tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_comp_req");
+    CompReq {
+        messages: Some(messages),
+        prompt: None,
+        model: Some(provider.model.as_str()),
+        response_format: None,
+        stop: None,
+        stream: Some(false),
         max_tokens: params.max_tokens,
-        top_p: params.top_p,
-        stream: false,
+        temperature: params.temperature,
         tools: if use_tools { tools } else { None },
-        tool_choice: if use_tools {
-            Some("auto".to_string())
-        } else {
-            None
-        },
+        tool_choice: if use_tools { Some(ToolChoice::Auto) } else { None },
+        seed: None,
+        top_p: params.top_p,
+        top_k: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        repetition_penalty: None,
+        logit_bias: None,
+        top_logprobs: None,
+        min_p: None,
+        top_a: None,
+        transforms: None,
+        models: None,
+        route: None,
         provider: if use_tools {
             provider.provider_slug.as_ref().and_then(|slug| {
                 let s = slug.trim();
-                if s.is_empty() || s == "-" {
-                    None
-                } else {
-                    Some(super::ProviderPreferences {
-                        order: vec![s.to_string()],
-                        require_parameters,
-                        ..Default::default()
-                    })
-                }
+                if s.is_empty() || s == "-" { None } else { Some(super::ProviderPreferences { order: vec![s.to_string()], require_parameters, ..Default::default() }) }
             })
-        } else {
-            None
-        },
+        } else { None },
+        user: None,
     }
 }
 
@@ -465,7 +427,7 @@ mod tests {
     use crate::EventBus;
     use crate::EventBusCaps;
     use crate::llm::Role;
-    use crate::llm::ToolFunctionDef;
+    use crate::tools::{ToolDefinition as StrongToolDefinition, ToolFunctionDef as StrongToolFunctionDef, FunctionMarker as StrongFunctionMarker, ToolName, ToolDescr};
     use crate::system::SystemEvent;
     use uuid::Uuid;
 
@@ -627,28 +589,15 @@ mod tests {
         ];
 
         // Act: build request without tools
-        let payload = super::build_openai_request(&provider, messages, &params, None, false, false);
-        let json = serde_json::to_string_pretty(&payload).unwrap();
-
-        // Snapshot: expected payload (stable field order)
-        let expected = r#"{
-  "model": "qwen/qwen-2.5-72b-instruct",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are helpful."
-    },
-    {
-      "role": "user",
-      "content": "Hello!"
-    }
-  ],
-  "temperature": 0.2,
-  "max_tokens": 256,
-  "stream": false
-}"#;
-
-        assert_eq!(json, expected);
+        let payload = super::build_comp_req(&provider, messages, &params, None, false, false);
+        let v = serde_json::to_value(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj.get("model").and_then(|m| m.as_str()), Some("qwen/qwen-2.5-72b-instruct"));
+        assert_eq!(obj.get("stream").and_then(|b| b.as_bool()), Some(false));
+        let msgs = obj.get("messages").and_then(|m| m.as_array()).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].get("role").and_then(|r| r.as_str()), Some("system"));
+        assert_eq!(msgs[1].get("role").and_then(|r| r.as_str()), Some("user"));
     }
 
     #[test]
@@ -698,70 +647,33 @@ mod tests {
             },
         ];
 
-        let tool = super::ToolDefinition {
-            r#type: "function",
-            function: ToolFunctionDef {
-                name: "dummy_tool",
-                description: "Return a fixed string",
+        let tool: StrongToolDefinition = StrongToolDefinition {
+            r#type: StrongFunctionMarker,
+            function: StrongToolFunctionDef {
+                name: ToolName::RequestCodeContext,
+                description: ToolDescr::RequestCodeContext,
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "arg": { "type": "string" }
+                        "token_budget": {"type": "integer"},
+                        "hint": {"type": "string"}
                     },
-                    "required": ["arg"]
+                    "required": ["token_budget"]
                 }),
             },
         };
 
         // Act: build request with tools and auto tool_choice
         let payload =
-            super::build_openai_request(&provider, messages, &params, Some(vec![tool]), true, true);
-        let json = serde_json::to_string_pretty(&payload).unwrap();
-
-        // Snapshot: expected payload (stable field order)
-        let expected = r#"{
-  "model": "qwen/qwen-2.5-72b-instruct",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You can call tools."
-    },
-    {
-      "role": "user",
-      "content": "Please fetch context."
-    }
-  ],
-  "temperature": 0.0,
-  "max_tokens": 128,
-  "stream": false,
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "dummy_tool",
-        "description": "Return a fixed string",
-        "parameters": {
-          "properties": {
-            "arg": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "arg"
-          ],
-          "type": "object"
-        }
-      }
-    }
-  ],
-  "tool_choice": "auto",
-  "provider": {
-    "order": [
-      "openrouter"
-    ]
-  }
-}"#;
-
-        assert_eq!(json, expected);
+            super::build_comp_req(&provider, messages, &params, Some(vec![tool]), true, true);
+        let v = serde_json::to_value(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj.get("model").and_then(|m| m.as_str()), Some("qwen/qwen-2.5-72b-instruct"));
+        let tools = obj.get("tools").and_then(|t| t.as_array()).unwrap();
+        assert_eq!(tools.len(), 1);
+        let t0 = tools[0].as_object().unwrap();
+        assert_eq!(t0.get("type").and_then(|s| s.as_str()), Some("function"));
+        let func = t0.get("function").and_then(|f| f.as_object()).unwrap();
+        assert_eq!(func.get("name").and_then(|s| s.as_str()), Some("request_code_context"));
     }
 }

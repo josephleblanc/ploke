@@ -1,7 +1,6 @@
 pub mod openrouter;
 pub mod registry;
 mod session;
-mod tool_call;
 
 pub use openrouter::*;
 
@@ -18,7 +17,7 @@ use uuid::Uuid;
 
 use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
-use crate::tools::FunctionMarker;
+use crate::tools::{FunctionCall, FunctionMarker, ToolCall};
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -30,75 +29,15 @@ use crate::{
 
 use super::*;
 
-#[derive(Serialize, Debug)]
-pub struct OpenAiRequest<'a> {
-    model: &'a str,
-    messages: Vec<RequestMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f32>,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<ToolDefinition>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<String>, // e.g., "auto"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<ProviderPreferences>,
-}
-
-// NOTE: Can only be used in the request body for:
-//  - https://openrouter.ai/api/v1/chat/completions
-//  - https://openrouter.ai/api/v1/completions
-//  - see local copy of openrouter docs at:
-//      `crates/ploke-tui/docs/openrouter/provider_routing.md`
-#[derive(Serialize, Debug, Clone, Default, Deserialize)]
-pub struct ProviderPreferences {
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub allow: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub deny: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub order: Vec<String>,
-    // TODO: We need to change "skip_bool_always", since this would mean we never force selection
-    // of a model with tool-calling or enforce user-specified provider choices made locally.
-    // - may break some requests in current model if we change, but this likely indicates we need
-    // to handle those requests differently and/or adjust our data structures to handle it.
-    #[serde(skip_serializing_if = "skip_bool_always")]
-    pub require_parameters: bool,
-}
-
-impl<'a> OpenAiRequest<'a> {
-    pub fn new(
-        model: &'a str,
-        messages: Vec<RequestMessage>,
-        temperature: Option<f32>,
-        max_tokens: Option<u32>,
-        top_p: Option<f32>,
-    ) -> Self {
-        Self {
-            model,
-            messages,
-            temperature,
-            max_tokens,
-            top_p,
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            provider: None,
-        }
-    }
-}
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
-pub fn get_file_metadata_tool_def() -> ToolDefinition {
+pub fn get_file_metadata_tool_def() -> crate::tools::ToolDefinition {
+    use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
     ToolDefinition {
-        r#type: "function",
+        r#type: FunctionMarker,
         function: ToolFunctionDef {
-            name: "get_file_metadata",
-            description: "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.",
+            name: ToolName::GetFileMetadata,
+            description: ToolDescr::GetFileMetadata,
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -176,31 +115,14 @@ impl From<MessageKind> for Role {
     }
 }
 
-// OpenAI tool/function definition (for request payload)
-#[derive(Serialize, Debug, Clone, Deserialize)]
-#[deprecated = "Use tools::ToolDefinition instead"]
-pub struct ToolDefinition {
-    #[serde(rename = "type")]
-    pub r#type: &'static str, // "function"
-    pub function: ToolFunctionDef,
-}
-
-#[derive(Serialize, Debug, Clone, Deserialize)]
-#[deprecated = "Use tools::ToolFunctionDef instead"]
-pub struct ToolFunctionDef {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub parameters: Value, // JSON Schema
-}
-
-// Helper to define our example tool
-#[deprecated = "Use tools::RequstCodeContext::tool_def() instead"]
-pub fn request_code_context_tool_def() -> ToolDefinition {
+// Helper to define request_code_context with legacy parameter shape (token_budget + hint)
+pub fn request_code_context_tool_def() -> crate::tools::ToolDefinition {
+    use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
     ToolDefinition {
-        r#type: "function",
+        r#type: FunctionMarker,
         function: ToolFunctionDef {
-            name: "request_code_context",
-            description: "Request additional code context from the repository up to a token budget.",
+            name: ToolName::RequestCodeContext,
+            description: ToolDescr::RequestCodeContext,
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -222,12 +144,14 @@ pub fn request_code_context_tool_def() -> ToolDefinition {
 }
 
 // New tool definition for applying code edits atomically via ploke-io
-pub fn apply_code_edit_tool_def() -> ToolDefinition {
+pub fn apply_code_edit_tool_def() -> crate::tools::ToolDefinition {
+    use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
+    // Keep legacy splice schema for compatibility with existing dispatcher fallback
     ToolDefinition {
-        r#type: "function",
+        r#type: FunctionMarker,
         function: ToolFunctionDef {
-            name: "apply_code_edit",
-            description: "Apply one or more code edits atomically (tempfile + fsync + rename) using ploke-io. Each edit splices bytes [start_byte, end_byte) with replacement.",
+            name: ToolName::ApplyCodeEdit,
+            description: ToolDescr::ApplyCodeEdit,
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -266,11 +190,11 @@ pub fn apply_code_edit_tool_def() -> ToolDefinition {
 }
 
 #[derive(Deserialize, Debug)]
-pub(super) struct OpenAiResponse {
+pub(super) struct OpenAiResponse<'a> {
     #[serde(default)]
     id: Uuid,
-    #[serde(default)]
-    choices: Vec<Choices>,
+    #[serde(borrow, default)]
+    choices: Vec<Choices<'a>>,
     #[serde(default)]
     created: i64,
     #[serde(default)]
@@ -303,7 +227,7 @@ pub(super) struct ResponseUsage {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[allow(clippy::enum_variant_names)]
-pub(super) enum Choices {
+pub(super) enum Choices<'a> {
     NonChatChoice {
         finish_reason: Option<String>,
         text: String,
@@ -313,29 +237,30 @@ pub(super) enum Choices {
     NonStreamingChoice {
         finish_reason: Option<String>,
         native_finish_reason: Option<String>,
-        message: ResponseMessage,
+        #[serde(borrow)]
+        message: ResponseMessage<'a>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<ErrorResponse>,
     },
     StreamingChoice {
         finish_reason: Option<String>,
         native_finish_reason: Option<String>,
-        delta: StreamingDelta,
+        delta: StreamingDelta<'a>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<ErrorResponse>,
     },
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialOrd, PartialEq, Debug)]
-pub(super) struct StreamingDelta {
+pub(super) struct StreamingDelta<'a> {
     // May be null or string
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     // May or may not be present
     role: Option<Role>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
     // May or may not be present
-    tool_calls: Option<Vec< ToolCall >>,
+    tool_calls: Option<Vec<ToolCall<'a>>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -348,54 +273,26 @@ pub(super) struct ErrorResponse {
     metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq)]
-pub(super) struct ToolCall {
-    id: String,
-    r#type: FunctionMarker,
-    // WARN: It is not clear from the API exactly what this is. I suspect it is an object with the
-    // tool call we requested from the LLM, so that it will have fields as defined by the tool call
-    // description we sent to the LLM, but its hard to say exactly.
-    function: String,
-}
+// Use OpenAI-style normalized tool call shape per OpenRouter docs
 
-#[derive(Deserialize, Debug)]
-pub(super) struct Choice {
-    message: ResponseMessage,
+#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
+pub(super) struct Choice<'a> {
+    #[serde(borrow)]
+    message: ResponseMessage<'a>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(super) struct ResponseMessage {
+pub(super) struct ResponseMessage<'a> {
     // When tool_calls are present, role may be null/absent
     role: Option<String>,
     // When tool_calls are present, content may be null/absent
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ToolCall>>,
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ToolCall<'a>>>,
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub(super) enum GenericToolCall {
-    // NonStreamingChoice(Value),
-    // StreamingChoice(Value),
-    OpenAi(OpenAiToolCall),
-    Other(Value),
-}
-
-#[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
-pub(super) struct OpenAiToolCall {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub r#type: String, // should be "function"
-    pub function: OpenAiToolFunctionCall,
-}
-
-#[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
-pub(super) struct OpenAiToolFunctionCall {
-    pub name: String,
-    pub arguments: String, // JSON string
-}
+// Removed legacy OpenAiToolCall and OpenAiToolFunctionCall in favor of tools::ToolCall<'a>
 
 pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
@@ -877,7 +774,7 @@ or disable enforcement with ':provider tools-only off'.",
         });
     }
 
-    let tools = if supports_tools_opt.unwrap_or(false) {
+    let tools: Vec<crate::tools::ToolDefinition> = if supports_tools_opt.unwrap_or(false) {
         vec![
             request_code_context_tool_def(),
             get_file_metadata_tool_def(),
@@ -888,7 +785,7 @@ or disable enforcement with ':provider tools-only off'.",
     };
 
     // Summarize tools we will include for this request
-    let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name).collect();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
     tracing::debug!(
         "llm_request_tools:\n\tuse_tools: {}\n\ttool_names: {}",
         !tools.is_empty(),
