@@ -41,16 +41,25 @@ async fn live_tool_call_request_code_context() {
         llm_params: None,
     };
 
-    // Fetch endpoints and pick a provider that supports tools if available
+    // Fetch endpoints and pick a provider that supports tools if available; skip gracefully otherwise
     if let Ok(eps) = fetch_model_endpoints(&client, env.url.clone(), &env.key, &provider.model).await {
-        if let Some(p) = eps.into_iter().find(|e| {
+        if let Some(p) = eps.iter().find(|e| {
             e.supported_parameters
                 .as_ref()
                 .map(|sp| sp.iter().any(|s| s == "tools"))
                 .unwrap_or(false)
         }) {
-            provider.provider_slug = Some(p.id);
+            provider.provider_slug = Some(p.id.clone());
+        } else {
+            let dir = ai_temp_dir().join(format!("openrouter-{}", Utc::now().format("%Y%m%d-%H%M%S")));
+            fs::create_dir_all(&dir).ok();
+            let note = format!("No tools-capable provider found for model '{}'; skipping.", provider.model);
+            fs::write(dir.join("no_tool_providers.txt"), note).ok();
+            return;
         }
+    } else {
+        // Unable to fetch endpoints; skip to avoid false negatives in constrained environments
+        return;
     }
 
     let sys = RequestMessage { role: Role::System, content: "You can call tools.".to_string(), tool_call_id: None };

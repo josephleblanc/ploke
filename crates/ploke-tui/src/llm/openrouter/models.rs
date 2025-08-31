@@ -328,6 +328,55 @@ use std::path::PathBuf;
         Ok(())
     }
 
+    /// Write the current tool-capable models to ai_temp_data for quick reference and reuse.
+    #[test]
+    fn write_tool_capable_models_to_ai_temp() -> color_eyre::Result<()> {
+        use itertools::Itertools;
+        use std::fs;
+        let models_resp = MODELS_RESPONSE.deref();
+
+        let tools_filter = |m: &ModelEntry| {
+            m.supported_parameters
+                .as_ref()
+                .is_some_and(|p| p.supports_tools())
+        };
+
+        let selected: Vec<ModelEntry> = models_resp
+            .data
+            .clone()
+            .into_iter()
+            .filter(tools_filter)
+            .collect_vec();
+
+        // ai_temp_data directory under crate
+        let mut ai_dir = workspace_root();
+        ai_dir.push("crates/ploke-tui/ai_temp_data");
+        fs::create_dir_all(&ai_dir).ok();
+
+        // Write JSON with full entries
+        let mut out_json = ai_dir.clone();
+        out_json.push("tool_capable_models.json");
+        let f = File::create(&out_json)?;
+        serde_json::to_writer_pretty(f, &selected)?;
+
+        // Also write a plain text list of model ids for quick scanning
+        let mut out_txt = ai_dir.clone();
+        out_txt.push("tool_capable_models.txt");
+        let mut buf = String::new();
+        for id in selected.iter().map(|m| m.id.as_str()) {
+            buf.push_str(id);
+            buf.push('\n');
+        }
+        fs::write(&out_txt, buf)?;
+
+        eprintln!(
+            "Wrote tool-capable models to:\n  {}\n  {}",
+            out_json.display(),
+            out_txt.display()
+        );
+        Ok(())
+    }
+
     #[test]
     #[ignore]
     fn flakey_models_all_raw_ep() -> color_eyre::Result<()> {

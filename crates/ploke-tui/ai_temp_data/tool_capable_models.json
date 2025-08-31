@@ -1,0 +1,5801 @@
+[
+  {
+    "id": "qwen/qwen3-30b-a3b-thinking-2507",
+    "name": "Qwen: Qwen3 30B A3B Thinking 2507",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": 262144
+    },
+    "pricing": {
+      "completion": 2.852e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.13e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-code-fast-1",
+    "name": "xAI: Grok Code Fast 1",
+    "context_length": 256000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 256000,
+      "max_completion_tokens": 10000
+    },
+    "pricing": {
+      "completion": 1.5e-6,
+      "image": 0.0,
+      "input_cache_read": 2e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "logprobs",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "nousresearch/hermes-4-70b",
+    "name": "Nous: Hermes 4 70B",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 3.733632e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 9.329544e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "nousresearch/hermes-4-405b",
+    "name": "Nous: Hermes 4 405B",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-chat-v3.1:free",
+    "name": "DeepSeek: DeepSeek V3.1 (free)",
+    "context_length": 64000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 64000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-chat-v3.1",
+    "name": "DeepSeek: DeepSeek V3.1",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-audio-preview",
+    "name": "OpenAI: GPT-4o Audio",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "audio": 0.00004,
+      "completion": 0.00001,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-medium-3.1",
+    "name": "Mistral: Mistral Medium 3.1",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "z-ai/glm-4.5v",
+    "name": "Z.AI: GLM 4.5V",
+    "context_length": 65536,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 65536,
+      "max_completion_tokens": 65536
+    },
+    "pricing": {
+      "completion": 1.8e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "ai21/jamba-mini-1.7",
+    "name": "AI21: Jamba Mini 1.7",
+    "context_length": 256000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 256000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "ai21/jamba-large-1.7",
+    "name": "AI21: Jamba Large 1.7",
+    "context_length": 256000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 256000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 8e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-5",
+    "name": "OpenAI: GPT-5",
+    "context_length": 400000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 400000,
+      "max_completion_tokens": 128000
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.0,
+      "input_cache_read": 1.25e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.25e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-5-mini",
+    "name": "OpenAI: GPT-5 Mini",
+    "context_length": 400000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 400000,
+      "max_completion_tokens": 128000
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "input_cache_read": 2.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-5-nano",
+    "name": "OpenAI: GPT-5 Nano",
+    "context_length": 400000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 400000,
+      "max_completion_tokens": 128000
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "input_cache_read": 5e-9,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-oss-120b",
+    "name": "OpenAI: gpt-oss-120b",
+    "context_length": 131000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131000,
+      "max_completion_tokens": 131000
+    },
+    "pricing": {
+      "completion": 2.8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.2e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-oss-20b",
+    "name": "OpenAI: gpt-oss-20b",
+    "context_length": 131000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131000,
+      "max_completion_tokens": 131000
+    },
+    "pricing": {
+      "completion": 1.5e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-opus-4.1",
+    "name": "Anthropic: Claude Opus 4.1",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 32000
+    },
+    "pricing": {
+      "completion": 0.000075,
+      "image": 0.024,
+      "input_cache_read": 1.5e-6,
+      "input_cache_write": 0.00001875,
+      "internal_reasoning": 0.0,
+      "prompt": 0.000015,
+      "request": 0.0,
+      "web_search": 0.01
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/codestral-2508",
+    "name": "Mistral: Codestral 2508",
+    "context_length": 256000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 256000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 9e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-coder-30b-a3b-instruct",
+    "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.07424e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5.18308e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-30b-a3b-instruct-2507",
+    "name": "Qwen: Qwen3 30B A3B Instruct 2507",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.07424e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5.18308e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "z-ai/glm-4.5",
+    "name": "Z.AI: GLM 4.5",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1.3201056e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3.2986602e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_a",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "z-ai/glm-4.5-air:free",
+    "name": "Z.AI: GLM 4.5 Air (free)",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "z-ai/glm-4.5-air",
+    "name": "Z.AI: GLM 4.5 Air",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 131072
+    },
+    "pricing": {
+      "completion": 8.6e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-235b-a22b-thinking-2507",
+    "name": "Qwen: Qwen3 235B A22B Thinking 2507",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 3.1202496e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.7968332e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "z-ai/glm-4-32b",
+    "name": "Z.AI: GLM 4 32B ",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-coder:free",
+    "name": "Qwen: Qwen3 Coder 480B A35B (free)",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-coder",
+    "name": "Qwen: Qwen3 Coder 480B A35B",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-flash-lite",
+    "name": "Google: Gemini 2.5 Flash Lite",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65535
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "input_cache_read": 2.5e-8,
+      "input_cache_write": 1.833e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-235b-a22b-2507",
+    "name": "Qwen: Qwen3 235B A22B Instruct 2507",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 3.1202496e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.7968332e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "moonshotai/kimi-k2:free",
+    "name": "MoonshotAI: Kimi K2 (free)",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "moonshotai/kimi-k2",
+    "name": "MoonshotAI: Kimi K2",
+    "context_length": 63000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 63000,
+      "max_completion_tokens": 63000
+    },
+    "pricing": {
+      "completion": 2.49e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/devstral-medium",
+    "name": "Mistral: Devstral Medium",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/devstral-small",
+    "name": "Mistral: Devstral Small 1.1",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-4",
+    "name": "xAI: Grok 4",
+    "context_length": 256000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 256000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0,
+      "input_cache_read": 7.5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "logprobs",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "inception/mercury",
+    "name": "Inception: Mercury",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 1e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small-3.2-24b-instruct:free",
+    "name": "Mistral: Mistral Small 3.2 24B (free)",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small-3.2-24b-instruct",
+    "name": "Mistral: Mistral Small 3.2 24B",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "minimax/minimax-m1",
+    "name": "MiniMax: MiniMax M1",
+    "context_length": 1000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1000000,
+      "max_completion_tokens": 40000
+    },
+    "pricing": {
+      "completion": 1.65e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-flash-lite-preview-06-17",
+    "name": "Google: Gemini 2.5 Flash Lite Preview 06-17",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65535
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "input_cache_read": 2.5e-8,
+      "input_cache_write": 1.833e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-flash",
+    "name": "Google: Gemini 2.5 Flash",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65535
+    },
+    "pricing": {
+      "completion": 2.5e-6,
+      "image": 0.001238,
+      "input_cache_read": 7.5e-8,
+      "input_cache_write": 3.833e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-pro",
+    "name": "Google: Gemini 2.5 Pro",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65536
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.00516,
+      "input_cache_read": 3.1e-7,
+      "input_cache_write": 1.625e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 1.25e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o3-pro",
+    "name": "OpenAI: o3 Pro",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 0.00008,
+      "image": 0.0153,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00002,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-3-mini",
+    "name": "xAI: Grok 3 Mini",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 5e-7,
+      "image": 0.0,
+      "input_cache_read": 7.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "logprobs",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-3",
+    "name": "xAI: Grok 3",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0,
+      "input_cache_read": 7.5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/magistral-small-2506",
+    "name": "Mistral: Magistral Small 2506",
+    "context_length": 40000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40000,
+      "max_completion_tokens": 40000
+    },
+    "pricing": {
+      "completion": 1.5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "presence_penalty",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/magistral-medium-2506",
+    "name": "Mistral: Magistral Medium 2506",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": 40000
+    },
+    "pricing": {
+      "completion": 5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "presence_penalty",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/magistral-medium-2506:thinking",
+    "name": "Mistral: Magistral Medium 2506 (thinking)",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": 40000
+    },
+    "pricing": {
+      "completion": 5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "presence_penalty",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-pro-preview",
+    "name": "Google: Gemini 2.5 Pro Preview 06-05",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65536
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.00516,
+      "input_cache_read": 3.1e-7,
+      "input_cache_write": 1.625e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 1.25e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-r1-0528",
+    "name": "DeepSeek: R1 0528",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-opus-4",
+    "name": "Anthropic: Claude Opus 4",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 32000
+    },
+    "pricing": {
+      "completion": 0.000075,
+      "image": 0.024,
+      "input_cache_read": 1.5e-6,
+      "input_cache_write": 0.00001875,
+      "internal_reasoning": 0.0,
+      "prompt": 0.000015,
+      "request": 0.0,
+      "web_search": 0.01
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-sonnet-4",
+    "name": "Anthropic: Claude Sonnet 4",
+    "context_length": 1000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1000000,
+      "max_completion_tokens": 64000
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0048,
+      "input_cache_read": 3e-7,
+      "input_cache_write": 3.75e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/devstral-small-2505:free",
+    "name": "Mistral: Devstral Small 2505 (free)",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/devstral-small-2505",
+    "name": "Mistral: Devstral Small 2505",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/codex-mini",
+    "name": "OpenAI: Codex Mini",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 6e-6,
+      "image": 0.0,
+      "input_cache_read": 3.75e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.3-8b-instruct:free",
+    "name": "Meta: Llama 3.3 8B Instruct (free)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4028
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "repetition_penalty",
+      "response_format",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-medium-3",
+    "name": "Mistral: Mistral Medium 3",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-pro-preview-05-06",
+    "name": "Google: Gemini 2.5 Pro Preview 05-06",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65535
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.00516,
+      "input_cache_read": 3.1e-7,
+      "input_cache_write": 1.625e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 1.25e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "arcee-ai/virtuoso-large",
+    "name": "Arcee AI: Virtuoso Large",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 64000
+    },
+    "pricing": {
+      "completion": 1.2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "inception/mercury-coder",
+    "name": "Inception: Mercury Coder",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 1e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-4b:free",
+    "name": "Qwen: Qwen3 4B (free)",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "presence_penalty",
+      "reasoning",
+      "response_format",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-30b-a3b",
+    "name": "Qwen: Qwen3 30B A3B",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-14b",
+    "name": "Qwen: Qwen3 14B",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": 40960
+    },
+    "pricing": {
+      "completion": 2.4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 6e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-32b",
+    "name": "Qwen: Qwen3 32B",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 7.200576e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.7992692e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-235b-a22b:free",
+    "name": "Qwen: Qwen3 235B A22B (free)",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen3-235b-a22b",
+    "name": "Qwen: Qwen3 235B A22B",
+    "context_length": 40960,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 40960,
+      "max_completion_tokens": 40960
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o4-mini-high",
+    "name": "OpenAI: o4 Mini High",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 4.4e-6,
+      "image": 0.0008415,
+      "input_cache_read": 2.75e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o3",
+    "name": "OpenAI: o3",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 8e-6,
+      "image": 0.00153,
+      "input_cache_read": 5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o4-mini",
+    "name": "OpenAI: o4 Mini",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 4.4e-6,
+      "image": 0.0008415,
+      "input_cache_read": 2.75e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4.1",
+    "name": "OpenAI: GPT-4.1",
+    "context_length": 1047576,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 1047576,
+      "max_completion_tokens": 32768
+    },
+    "pricing": {
+      "completion": 8e-6,
+      "image": 0.0,
+      "input_cache_read": 5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4.1-mini",
+    "name": "OpenAI: GPT-4.1 Mini",
+    "context_length": 1047576,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 1047576,
+      "max_completion_tokens": 32768
+    },
+    "pricing": {
+      "completion": 1.6e-6,
+      "image": 0.0,
+      "input_cache_read": 1e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4.1-nano",
+    "name": "OpenAI: GPT-4.1 Nano",
+    "context_length": 1047576,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 1047576,
+      "max_completion_tokens": 32768
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "input_cache_read": 2.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-3-mini-beta",
+    "name": "xAI: Grok 3 Mini Beta",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 5e-7,
+      "image": 0.0,
+      "input_cache_read": 7.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "logprobs",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-3-beta",
+    "name": "xAI: Grok 3 Beta",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0,
+      "input_cache_read": 7.5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-4-maverick:free",
+    "name": "Meta: Llama 4 Maverick (free)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4028
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "repetition_penalty",
+      "response_format",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-4-maverick",
+    "name": "Meta: Llama 4 Maverick",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.0006684,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-4-scout:free",
+    "name": "Meta: Llama 4 Scout (free)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4028
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "repetition_penalty",
+      "response_format",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-4-scout",
+    "name": "Meta: Llama 4 Scout",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 1048576
+    },
+    "pricing": {
+      "completion": 3e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.5-pro-exp-03-25",
+    "name": "Google: Gemini 2.5 Pro Experimental",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 65535
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-chat-v3-0324:free",
+    "name": "DeepSeek: DeepSeek V3 0324 (free)",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-chat-v3-0324",
+    "name": "DeepSeek: DeepSeek V3 0324",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small-3.1-24b-instruct:free",
+    "name": "Mistral: Mistral Small 3.1 24B (free)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small-3.1-24b-instruct",
+    "name": "Mistral: Mistral Small 3.1 24B",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 96000
+    },
+    "pricing": {
+      "completion": 8.00064e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwq-32b",
+    "name": "Qwen: QwQ 32B",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1.5e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.0-flash-lite-001",
+    "name": "Google: Gemini 2.0 Flash Lite",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 3e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.7-sonnet",
+    "name": "Anthropic: Claude 3.7 Sonnet",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0048,
+      "input_cache_read": 3e-7,
+      "input_cache_write": 3.75e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.7-sonnet:thinking",
+    "name": "Anthropic: Claude 3.7 Sonnet (thinking)",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 200000,
+      "max_completion_tokens": 64000
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0048,
+      "input_cache_read": 3e-7,
+      "input_cache_write": 3.75e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-saba",
+    "name": "Mistral: Saba",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o3-mini-high",
+    "name": "OpenAI: o3 Mini High",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 4.4e-6,
+      "image": 0.0,
+      "input_cache_read": 5.5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.0-flash-001",
+    "name": "Google: Gemini 2.0 Flash",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "audio": 7e-7,
+      "completion": 4e-7,
+      "image": 0.0000258,
+      "input_cache_read": 2.5e-8,
+      "input_cache_write": 1.833e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen-turbo",
+    "name": "Qwen: Qwen-Turbo",
+    "context_length": 1000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1000000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 2e-7,
+      "image": 0.0,
+      "input_cache_read": 2e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen-plus",
+    "name": "Qwen: Qwen-Plus",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 1.2e-6,
+      "image": 0.0,
+      "input_cache_read": 1.6e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen-max",
+    "name": "Qwen: Qwen-Max ",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 6.4e-6,
+      "image": 0.0,
+      "input_cache_read": 6.4e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.6e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o3-mini",
+    "name": "OpenAI: o3 Mini",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 4.4e-6,
+      "image": 0.0,
+      "input_cache_read": 5.5e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 1.1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small-24b-instruct-2501",
+    "name": "Mistral: Mistral Small 3",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-r1-distill-llama-70b",
+    "name": "DeepSeek: R1 Distill Llama 70B",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1.03712e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.59154e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-r1",
+    "name": "DeepSeek: R1",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": 163840
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/codestral-2501",
+    "name": "Mistral: Codestral 2501",
+    "context_length": 262144,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 262144,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 9e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "deepseek/deepseek-chat",
+    "name": "DeepSeek: DeepSeek V3",
+    "context_length": 163840,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 163840,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 8.00064e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.999188e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/o1",
+    "name": "OpenAI: o1",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 100000
+    },
+    "pricing": {
+      "completion": 0.00006,
+      "image": 0.021675,
+      "input_cache_read": 7.5e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 0.000015,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "structured_outputs",
+      "tool_choice",
+      "tools"
+    ],
+    "providers": null
+  },
+  {
+    "id": "x-ai/grok-2-1212",
+    "name": "xAI: Grok 2 1212",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-2.0-flash-exp:free",
+    "name": "Google: Gemini 2.0 Flash Experimental (free)",
+    "context_length": 1048576,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1048576,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.3-70b-instruct:free",
+    "name": "Meta: Llama 3.3 70B Instruct (free)",
+    "context_length": 65536,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 65536,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.3-70b-instruct",
+    "name": "Meta: Llama 3.3 70B Instruct",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 1.2e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3.8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "amazon/nova-lite-v1",
+    "name": "Amazon: Nova Lite 1.0",
+    "context_length": 300000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 300000,
+      "max_completion_tokens": 5120
+    },
+    "pricing": {
+      "completion": 2.4e-7,
+      "image": 0.00009,
+      "internal_reasoning": 0.0,
+      "prompt": 6e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "amazon/nova-micro-v1",
+    "name": "Amazon: Nova Micro 1.0",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 5120
+    },
+    "pricing": {
+      "completion": 1.4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3.5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "amazon/nova-pro-v1",
+    "name": "Amazon: Nova Pro 1.0",
+    "context_length": 300000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 300000,
+      "max_completion_tokens": 5120
+    },
+    "pricing": {
+      "completion": 3.2e-6,
+      "image": 0.0012,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-2024-11-20",
+    "name": "OpenAI: GPT-4o (2024-11-20)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.003613,
+      "input_cache_read": 1.25e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-large-2411",
+    "name": "Mistral Large 2411",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-large-2407",
+    "name": "Mistral Large 2407",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/pixtral-large-2411",
+    "name": "Mistral: Pixtral Large 2411",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-6,
+      "image": 0.002888,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "thedrummer/unslopnemo-12b",
+    "name": "TheDrummer: UnslopNemo 12B",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 4e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.5-haiku",
+    "name": "Anthropic: Claude 3.5 Haiku",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 4e-6,
+      "image": 0.0,
+      "input_cache_read": 8e-8,
+      "input_cache_write": 1e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-7,
+      "request": 0.0,
+      "web_search": 0.01
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.5-haiku-20241022",
+    "name": "Anthropic: Claude 3.5 Haiku (2024-10-22)",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 4e-6,
+      "image": 0.0,
+      "input_cache_read": 8e-8,
+      "input_cache_write": 1e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.5-sonnet",
+    "name": "Anthropic: Claude 3.5 Sonnet",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0048,
+      "input_cache_read": 3e-7,
+      "input_cache_write": 3.75e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/ministral-8b",
+    "name": "Mistral: Ministral 8B",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "nvidia/llama-3.1-nemotron-70b-instruct",
+    "name": "NVIDIA: Llama 3.1 Nemotron 70B Instruct",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 3e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-flash-1.5-8b",
+    "name": "Google: Gemini 1.5 Flash 8B",
+    "context_length": 1000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1000000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 1.5e-7,
+      "image": 0.0,
+      "input_cache_read": 1e-8,
+      "input_cache_write": 5.83e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 3.75e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "thedrummer/rocinante-12b",
+    "name": "TheDrummer: Rocinante 12B",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 4.3e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.7e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.2-3b-instruct",
+    "name": "Meta: Llama 3.2 3B Instruct",
+    "context_length": 20000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 20000,
+      "max_completion_tokens": 20000
+    },
+    "pricing": {
+      "completion": 6e-9,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-9,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "qwen/qwen-2.5-72b-instruct",
+    "name": "Qwen2.5 72B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.07424e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5.18308e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/pixtral-12b",
+    "name": "Mistral: Pixtral 12B",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0001445,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r-plus-08-2024",
+    "name": "Cohere: Command R+ (08-2024)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r-08-2024",
+    "name": "Cohere: Command R (08-2024)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "microsoft/phi-3.5-mini-128k-instruct",
+    "name": "Microsoft: Phi-3.5 Mini 128K Instruct",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "nousresearch/hermes-3-llama-3.1-70b",
+    "name": "Nous: Hermes 3 70B Instruct",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-2024-08-06",
+    "name": "OpenAI: GPT-4o (2024-08-06)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.003613,
+      "input_cache_read": 1.25e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.1-8b-instruct",
+    "name": "Meta: Llama 3.1 8B Instruct",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 2e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.1-405b-instruct",
+    "name": "Meta: Llama 3.1 405B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3.1-70b-instruct",
+    "name": "Meta: Llama 3.1 70B Instruct",
+    "context_length": 131072,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 2.8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-nemo",
+    "name": "Mistral: Mistral Nemo",
+    "context_length": 32000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 5e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 7.5e-9,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-mini",
+    "name": "OpenAI: GPT-4o-mini",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.000217,
+      "input_cache_read": 7.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-mini-2024-07-18",
+    "name": "OpenAI: GPT-4o-mini (2024-07-18)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.007225,
+      "input_cache_read": 7.5e-8,
+      "internal_reasoning": 0.0,
+      "prompt": 1.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3.5-sonnet-20240620",
+    "name": "Anthropic: Claude 3.5 Sonnet (2024-06-20)",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0048,
+      "input_cache_read": 3e-7,
+      "input_cache_write": 3.75e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-7b-instruct:free",
+    "name": "Mistral: Mistral 7B Instruct (free)",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 0.0,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-7b-instruct",
+    "name": "Mistral: Mistral 7B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 5.4e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-7b-instruct-v0.3",
+    "name": "Mistral: Mistral 7B Instruct v0.3",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 5.4e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "microsoft/phi-3-mini-128k-instruct",
+    "name": "Microsoft: Phi-3 Mini 128K Instruct",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "microsoft/phi-3-medium-128k-instruct",
+    "name": "Microsoft: Phi-3 Medium 128K Instruct",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-flash-1.5",
+    "name": "Google: Gemini 1.5 Flash ",
+    "context_length": 1000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 1000000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 3e-7,
+      "image": 0.00004,
+      "input_cache_read": 1.875e-8,
+      "input_cache_write": 1.583e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 7.5e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o",
+    "name": "OpenAI: GPT-4o",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 0.00001,
+      "image": 0.003613,
+      "input_cache_read": 1.25e-6,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o:extended",
+    "name": "OpenAI: GPT-4o (extended)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 64000
+    },
+    "pricing": {
+      "completion": 0.000018,
+      "image": 0.007225,
+      "internal_reasoning": 0.0,
+      "prompt": 6e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4o-2024-05-13",
+    "name": "OpenAI: GPT-4o (2024-05-13)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.007225,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3-8b-instruct",
+    "name": "Meta: Llama 3 8B Instruct",
+    "context_length": 8192,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 8192,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 6e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "meta-llama/llama-3-70b-instruct",
+    "name": "Meta: Llama 3 70B Instruct",
+    "context_length": 8192,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 8192,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mixtral-8x22b-instruct",
+    "name": "Mistral: Mixtral 8x22B Instruct",
+    "context_length": 65536,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 65536,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 9e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 9e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "google/gemini-pro-1.5",
+    "name": "Google: Gemini 1.5 Pro",
+    "context_length": 2000000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 2000000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "completion": 5e-6,
+      "image": 0.0006575,
+      "internal_reasoning": 0.0,
+      "prompt": 1.25e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4-turbo",
+    "name": "OpenAI: GPT-4 Turbo",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00003,
+      "image": 0.01445,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00001,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r-plus",
+    "name": "Cohere: Command R+",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r-plus-04-2024",
+    "name": "Cohere: Command R+ (04-2024)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r",
+    "name": "Cohere: Command R",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 1.5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3-haiku",
+    "name": "Anthropic: Claude 3 Haiku",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 1.25e-6,
+      "image": 0.0004,
+      "input_cache_read": 3e-8,
+      "input_cache_write": 3e-7,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "anthropic/claude-3-opus",
+    "name": "Anthropic: Claude 3 Opus",
+    "context_length": 200000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.000075,
+      "image": 0.024,
+      "input_cache_read": 1.5e-6,
+      "input_cache_write": 0.00001875,
+      "internal_reasoning": 0.0,
+      "prompt": 0.000015,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "cohere/command-r-03-2024",
+    "name": "Cohere: Command R (03-2024)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "completion": 1.5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-large",
+    "name": "Mistral Large",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 128000,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-3.5-turbo-0613",
+    "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
+    "context_length": 4095,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 4095,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4-turbo-preview",
+    "name": "OpenAI: GPT-4 Turbo Preview",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00003,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00001,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small",
+    "name": "Mistral Small",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 6e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-tiny",
+    "name": "Mistral Tiny",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 2.5e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mixtral-8x7b-instruct",
+    "name": "Mistral: Mixtral 8x7B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 2.4e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4-1106-preview",
+    "name": "OpenAI: GPT-4 Turbo (older v1106)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00003,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00001,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-7b-instruct-v0.1",
+    "name": "Mistral: Mistral 7B Instruct v0.1",
+    "context_length": 2824,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 2824,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 1.9e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.1e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-3.5-turbo-16k",
+    "name": "OpenAI: GPT-3.5 Turbo 16k",
+    "context_length": 16385,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 16385,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 4e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 3e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-3.5-turbo",
+    "name": "OpenAI: GPT-3.5 Turbo",
+    "context_length": 16385,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 16385,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 1.5e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4",
+    "name": "OpenAI: GPT-4",
+    "context_length": 8191,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 8191,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00006,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00003,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4-0314",
+    "name": "OpenAI: GPT-4 (older v0314)",
+    "context_length": 8191,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 8191,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00006,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00003,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  }
+]
