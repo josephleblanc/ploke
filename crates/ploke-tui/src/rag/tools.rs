@@ -61,8 +61,8 @@ impl ToolOutput for SystemEvent {}
 impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
     async fn call_tool(&self, tool_input: GetContextInput) -> SystemEvent {
         let tool_call_params = ToolCallParams {
-            state: &self.state,
-            event_bus: &self.event_bus,
+            state: Arc::clone(&self.state),
+            event_bus: Arc::clone(&self.event_bus),
             request_id: tool_input.request_id,
             parent_id: tool_input.parent_id,
             name: "request_code_context".to_string(),
@@ -100,7 +100,7 @@ impl ToolInput<serde_json::Value> for GetContextInput {
     }
 }
 
-pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
+pub async fn get_file_metadata_tool(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
         event_bus,
@@ -170,7 +170,7 @@ pub async fn get_file_metadata_tool<'a>(tool_call_params: ToolCallParams<'a>) {
     }
 }
 
-pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
+pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
         event_bus,
@@ -189,7 +189,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
                 request_id
             );
             tool_call_params.tool_call_failed(msg.clone());
-            chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
+            chat::add_msg_immediate(&state, &event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
                 .await;
             return;
         }
@@ -224,9 +224,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
 
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
-        chat::add_msg_immediate(
-            state,
-            event_bus,
+        chat::add_msg_immediate(&state, &event_bus,
             Uuid::new_v4(),
             "apply_code_edit: No edits provided".to_string(),
             MessageKind::SysInfo,
@@ -513,7 +511,7 @@ pub async fn apply_code_edit_tool<'a>(tool_call_params: ToolCallParams<'a>) {
         );
     }
     // Persist proposals (best-effort)
-    crate::app_state::handlers::proposals::save_proposals(state).await;
+    crate::app_state::handlers::proposals::save_proposals(&state).await;
 
     // Emit SysInfo summary with how to approve/deny
     let summary = format!(
@@ -534,9 +532,7 @@ Deny:     edit deny {request_id}{2}"#,
             ""
         },
     );
-    chat::add_msg_immediate(
-        state,
-        event_bus,
+    chat::add_msg_immediate(&state, &event_bus,
         Uuid::new_v4(),
         summary,
         MessageKind::SysInfo,
@@ -570,21 +566,21 @@ Deny:     edit deny {request_id}{2}"#,
         }));
 
     if editing_cfg.auto_confirm_edits {
-        let state2 = Arc::clone(state);
-        let event_bus2 = Arc::clone(event_bus);
+        let state2 = Arc::clone(&state);
+        let event_bus2 = Arc::clone(&event_bus);
         tokio::spawn(async move {
             approve_edits(&state2, &event_bus2, request_id).await;
         });
     }
 }
 
-pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) -> SystemEvent {
+pub async fn handle_request_context(tool_call_params: ToolCallParams) -> SystemEvent {
     let ToolCallParams {
         state,
         event_bus,
         request_id,
         parent_id,
-        name: _,
+        name,
         arguments,
         call_id,
     } = tool_call_params.clone();

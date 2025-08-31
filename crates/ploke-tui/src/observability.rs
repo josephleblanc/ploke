@@ -1,10 +1,11 @@
-use std::sync::Arc;
 
+use std::sync::Arc;
 use chrono::Utc;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::select;
 use uuid::Uuid;
+use tokio::sync::mpsc;
 
 use crate::app_state::MessageUpdatedEvent;
 use crate::chat_history::{Message, MessageKind};
@@ -47,6 +48,8 @@ struct ToolDonePersistParams {
 /// more type-safe patterns. Future work: ploke-db to accept Json directly to
 /// avoid string round-trips; track latency by correlating start/end timestamps.
 pub async fn run_observability(event_bus: Arc<EventBus>, state: Arc<AppState>) {
+    // Initialize tool persistence worker (best-effort)
+    init_tool_persist_worker(&state);
     let mut rt_rx = event_bus.subscribe(EventPriority::Realtime);
     let mut bg_rx = event_bus.subscribe(EventPriority::Background);
 
@@ -72,6 +75,55 @@ pub async fn run_observability(event_bus: Arc<EventBus>, state: Arc<AppState>) {
             }
         }
     }
+}
+
+fn init_tool_persist_worker(state: &Arc<AppState>) {
+    let (tx, mut rx) = mpsc::channel::<crate::tools::ToolCallRecord>(1024);
+    crate::tools::set_tool_persist_sender(tx);
+    let state = Arc::clone(state);
+    tokio::spawn(async move {
+        while let Some(rec) = rx.recv().await {
+            let args_json = match Arc::try_unwrap(rec.params_json) {
+                Ok(s) => s,
+                Err(arc) => (*arc).clone(),
+            };
+            let out_json = match Arc::try_unwrap(rec.output_json) {
+                Ok(s) => s,
+                Err(arc) => (*arc).clone(),
+            };
+            // Build request and done params using existing helpers
+            let arguments: serde_json::Value = match serde_json::from_str(&args_json) {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
+            let done_value: serde_json::Value = match serde_json::from_str(&out_json) {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
+            // Reuse persist helpers from this module
+            let req_params = ToolRequestPersistParams {
+                request_id: rec.request_id,
+                parent_id: rec.parent_id,
+                tool_name: format!("{:?}", rec.name).to_lowercase(),
+                arguments,
+                call_id: rec.call_id.clone(),
+            };
+            if let Err(e) = persist_tool_requested(&state, &req_params).await {
+                tracing::warn!("observability: mpsc record_tool_call_requested failed: {}", e);
+            }
+            let done_params = ToolDonePersistParams {
+                request_id: rec.request_id,
+                parent_id: rec.parent_id,
+                call_id: rec.call_id.clone(),
+                outcome: Some(done_value),
+                error: None,
+                status: ploke_db::observability::ToolStatus::Completed,
+            };
+            if let Err(e) = persist_tool_done(&state, &done_params).await {
+                tracing::warn!("observability: mpsc record_tool_call_done failed: {}", e);
+            }
+        }
+    });
 }
 
 async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {

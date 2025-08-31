@@ -59,7 +59,7 @@ lazy_static::lazy_static! {
                 "description": "Optional suggestion for number of results to return."
             }
         },
-        "required": ["hint"],
+        "required": ["search_term"],
         "additionalProperties": false
     });
 }
@@ -124,5 +124,87 @@ impl Tool for RequestCodeContext {
             // underlying type.
             parameters: Self::schema().clone(),
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn tool_def_serializes_expected_shape() {
+        let def = <RequestCodeContext as Tool>::tool_def();
+        let v = serde_json::to_value(&def).expect("serialize");
+        let func = v.as_object().expect("def obj");
+        assert_eq!(func.get("name").and_then(|n| n.as_str()), Some("request_code_context"));
+        let params = func.get("parameters").and_then(|p| p.as_object()).expect("params obj");
+        let props = params.get("properties").and_then(|p| p.as_object()).expect("props obj");
+        assert!(props.contains_key("search_term"));
+        assert!(props.contains_key("top_k"));
+    }
+}
+
+// --- GAT implementation ---
+use std::borrow::Cow;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RequestCodeContextParams<'a> {
+    #[serde(borrow)]
+    pub search_term: Cow<'a, str>,
+    #[serde(default)]
+    pub top_k: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestCodeContextParamsOwned {
+    pub search_term: String,
+    pub top_k: Option<u16>,
+}
+
+/// Unit struct for GAT-based tool; uses Ctx to access RagService/state
+pub struct RequestCodeContextGat;
+
+impl super::GatTool for RequestCodeContextGat {
+    type Output = RequestCodeContextOutput;
+    type OwnedParams = RequestCodeContextParamsOwned;
+    type Params<'de> = RequestCodeContextParams<'de>;
+
+    fn name() -> ToolName { ToolName::RequestCodeContext }
+    fn description() -> ToolDescr { ToolDescr::RequestCodeContext }
+    fn schema() -> &'static serde_json::Value { REQUEST_CODE_CONTEXT_PARAMETERS.deref() }
+
+    fn build(_ctx: &super::Ctx) -> Self { RequestCodeContextGat }
+
+    fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
+        RequestCodeContextParamsOwned {
+            search_term: params.search_term.clone().into_owned(),
+            top_k: params.top_k,
+        }
+    }
+
+    async fn run<'a>(self, params: &Self::Params<'a>, ctx: super::Ctx) -> Result<Self::Output, ploke_error::Error> {
+        use ploke_rag::{TokenBudget, RetrievalStrategy, RrfConfig};
+        let rag = match &ctx.state.rag {
+            Some(r) => r.clone(),
+            None => {
+                return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
+                    "RAG service unavailable".to_string(),
+                )))
+            }
+        };
+        let top_k = params.top_k.unwrap_or(16) as usize;
+        let budget = TokenBudget::default();
+        let strategy = RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None };
+        let assembled = rag
+            .get_context(params.search_term.as_ref(), top_k, &budget, &strategy)
+            .await?;
+        let (code, meta): (Vec<CodeSnippet>, Vec<SnippetMeta>) = assembled.parts.into_iter().map(|cp| {
+            let meta = SnippetMeta::extract_meta(&cp);
+            let snippet = CodeSnippet { file_path: cp.file_path, snippet: cp.text };
+            (snippet, meta)
+        }).unzip();
+        Ok(RequestCodeContextOutput { code, meta })
     }
 }

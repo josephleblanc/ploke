@@ -1,15 +1,13 @@
-use crate::rag::tools::{apply_code_edit_tool, get_file_metadata_tool};
+use crate::rag::tools::apply_code_edit_tool;
 
-use super::{tools::handle_request_context, utils::ToolCallParams, *};
+use super::{tools::get_file_metadata_tool, utils::ToolCallParams, *};
 
-#[tracing::instrument(skip(tool_call_params))]
-pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>) {
+pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
         event_bus,
         request_id,
         parent_id,
- 
         name,
         arguments,
         call_id,
@@ -18,7 +16,6 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         request_id = %request_id,
         parent_id = %parent_id,
         call_id = %call_id,
- 
         name = %name,
         "handle_tool_call_requested"
     );
@@ -36,20 +33,21 @@ pub async fn handle_tool_call_requested<'a>(tool_call_params: ToolCallParams<'a>
         event_bus,
         request_id,
         parent_id,
- 
         name: name.clone(),
         arguments: arguments.clone(),
         call_id: call_id.clone(),
     };
+
     match name.as_str() {
         "apply_code_edit" => apply_code_edit_tool(tool_call_params).await,
-        // New: get_file_metadata tool for fetching current file hash and basic metadata
+        // Route get_file_metadata through the GAT-based dispatcher
         "get_file_metadata" => get_file_metadata_tool(tool_call_params).await,
+        // Keep request_code_context on legacy RAG handler for now
         // "request_code_context" => handle_request_context(tool_call_params).await,
         _ => {
             tracing::warn!("Unsupported tool call: {}", name);
             let err = format!("Unsupported tool: {}", name);
-            let _ = event_bus.realtime_tx.send(tool_call_failed(err.clone()));
+            let _ = tool_call_params.event_bus.realtime_tx.send(tool_call_failed(err));
             return;
         }
     }

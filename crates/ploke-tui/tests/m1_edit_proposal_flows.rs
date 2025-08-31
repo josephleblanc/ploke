@@ -100,8 +100,8 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
     let call_id = Uuid::new_v4().to_string();
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
-        state: &state,
-        event_bus: &event_bus,
+        state: state.clone(),
+        event_bus: event_bus.clone(),
         request_id,
         parent_id,
  
@@ -156,8 +156,8 @@ async fn approve_applies_edits_and_updates_status() {
     let call_id = Uuid::new_v4().to_string();
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
-        state: &state,
-        event_bus: &event_bus,
+        state: state.clone(),
+        event_bus: event_bus.clone(),
         request_id,
         parent_id,
  
@@ -215,8 +215,8 @@ async fn deny_marks_denied_and_does_not_change_file() {
     let call_id = Uuid::new_v4().to_string();
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
-        state: &state,
-        event_bus: &event_bus,
+        state: state.clone(),
+        event_bus: event_bus.clone(),
         request_id,
         parent_id,
  

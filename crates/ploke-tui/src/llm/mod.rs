@@ -552,18 +552,7 @@ pub async fn llm_manager(
                 );
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
-                tokio::spawn(async move {
-                    rag::dispatcher::handle_tool_call_requested(ToolCallParams {
-                        state: &state,
-                        event_bus: &event_bus,
-                        request_id,
-                        parent_id,
-                        name,
-                        arguments,
-                        call_id,
-                    })
-                    .await;
-                });
+                tokio::spawn(spawn_tool_call(state, event_bus, request_id, parent_id, name, arguments, call_id));
             }
             AppEvent::ModelEndpointsRequest { model_id } => {
                 let state = Arc::clone(&state);
@@ -1108,6 +1097,26 @@ pub enum ToolEvent {
     },
 }
 
+async fn spawn_tool_call(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request_id: Uuid,
+    parent_id: Uuid,
+    name: String,
+    arguments: Value,
+    call_id: String,
+) {
+    let params = ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        arguments,
+        call_id,
+    };
+    rag::dispatcher::handle_tool_call_requested(params).await;
+}
 #[derive(Clone, Debug)]
 pub enum Event {
     /// Request to generate content from an LLM

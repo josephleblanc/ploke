@@ -96,9 +96,9 @@ pub struct LegacySpliceInput {
 }
 
 #[derive(Clone, Debug)]
-pub struct ToolCallParams<'a> {
-    pub state: &'a Arc<AppState>,
-    pub event_bus: &'a Arc<EventBus>,
+pub struct ToolCallParams {
+    pub state: Arc<AppState>,
+    pub event_bus: Arc<EventBus>,
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub name: String,
@@ -106,7 +106,7 @@ pub struct ToolCallParams<'a> {
     pub call_id: String,
 }
 
-impl<'a> ToolCallParams<'a> {
+impl ToolCallParams {
     pub(super) fn tool_call_failed(&self, error: String) {
         let _ = self
             .event_bus
