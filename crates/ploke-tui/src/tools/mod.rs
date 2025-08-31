@@ -1,5 +1,7 @@
 #![allow(clippy::needless_lifetimes)]
 
+// For any db-related issues, check cross-crate contract with db in:
+//  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
 use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{

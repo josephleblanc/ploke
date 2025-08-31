@@ -24,10 +24,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    llm::ProviderPreferences,
-    tools::{FunctionMarker, ToolDefinition},
-};
+use crate::tools::{FunctionMarker, ToolDefinition};
+use crate::llm::ProviderPreferences;
 
 // Example json response to /endpoints:
 //

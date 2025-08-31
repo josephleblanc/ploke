@@ -338,7 +338,7 @@ pub fn build_comp_req<'a>(
         provider: if use_tools {
             provider.provider_slug.as_ref().and_then(|slug| {
                 let s = slug.trim();
-                if s.is_empty() || s == "-" { None } else { Some(super::ProviderPreferences { order: vec![s.to_string()], require_parameters, ..Default::default() }) }
+                if s.is_empty() || s == "-" { None } else { Some(crate::llm::ProviderPreferences { order: vec![s.to_string()], require_parameters, ..Default::default() }) }
             })
         } else { None },
         user: None,

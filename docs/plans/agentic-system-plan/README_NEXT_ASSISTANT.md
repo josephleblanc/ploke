@@ -73,6 +73,7 @@ How To Run Tests
 Key Documents To Read
 - Plan: AGENTIC_SYSTEM_PLAN.md
 - Agents operating guide: AGENTS.md (workflow + type-safety policy)
+- Workflows: crates/ploke-tui/docs/workflows/message_and_tool_call_lifecycle.md (end-to-end message + tool-call flow)
 - Affected code paths guide: docs/reports/affected_code_paths_20250826-204758Z.md
 - Testing guidelines: docs/testing/TEST_GUIDELINES.md (stopping points, UI snapshot and benchmarks)
   - Live API policy: budgeted runs, `kimi/kimi-k2` recommendation, gating, artifacts.
@@ -90,6 +91,12 @@ Implementation Logs (create for each change)
   - AGENTIC_SYSTEM_PLAN step operated on
   - Next steps / recommendations
   - References (docs, code locations, external specs)
+
+Immediate Next Assistant Tasks
+- Use the workflow doc to validate and extend end-to-end harness scenarios:
+  - Canonical edit E2E on `fixture_nodes` (unignore once DB rule fixed or fixture pre-indexed path restored).
+  - Add streaming tool-call handling and corresponding tests.
+  - Expand live API tests (gated) to verify full roundtrip with persisted artifacts under `ai_temp_data/`.
 
 Design/UX Preferences To Respect
 - Strong typing for all OpenRouter request/response types (serde derives; numeric fields as numeric types). Consider GhostData if helpful for staged states.

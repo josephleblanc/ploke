@@ -93,7 +93,7 @@ quote = { workspace = true }
 syn = { workspace = true }
 
 [features]
-default = ["custom_list", "json_visitor"]
+default = ["custom_list", "json_visitor", "test_harness"]
 custom_list = []
 live_api_tests = []
 test_harness = []

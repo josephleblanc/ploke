@@ -195,7 +195,7 @@ mod tests {
                 .expect("Error returning file_path");
             eprintln!("  Found file_path: {node_res_file_path:?}");
             let node_paths: NodePaths = db_res.try_into()?;
-            // .expect("Could not parse NamedRows into NodePaths");
+
             eprintln!("  Found file_path: {node_paths:#?}");
         }
 

@@ -1,5 +1,5 @@
-pub mod openrouter;
 pub mod registry;
+pub mod openrouter;
 mod session;
 
 pub use openrouter::*;
@@ -28,6 +28,19 @@ use crate::{
 // API and Config
 
 use super::*;
+
+#[derive(Serialize, Debug, Clone, Default, Deserialize)]
+pub struct ProviderPreferences {
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub allow: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub deny: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub order: Vec<String>,
+    // Prefer explicit gate on parameter enforcement for provider routing
+    #[serde(skip_serializing_if = "skip_bool_always")]
+    pub require_parameters: bool,
+}
 
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
