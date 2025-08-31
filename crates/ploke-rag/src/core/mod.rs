@@ -27,7 +27,14 @@ pub enum RetrievalStrategy {
         mmr: Option<MmrConfig>,
     },
 }
-// AI: add manual impl of Default for `RetrievalStrategy::Hybrid` AI!
+impl Default for RetrievalStrategy {
+    fn default() -> Self {
+        Self::Hybrid {
+            rrf: RrfConfig::default(),
+            mmr: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SearchParams {
