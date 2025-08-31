@@ -31,14 +31,6 @@ use std::convert::TryFrom;
 //      request human input
 //      - request human input when tests needed behind cfg gating
 //      - otherwise continue working
-//  - ensure we can deserialize the response well (e.g. all types take expected values + test)
-//      - Can start with the values we care about most for now, 
-//          - "supported_parameters" -> SupportedParameters
-//          - "pricing" -> Pricing
-//          - "canonical_slug" -> ProvEnd
-//      - keep allocations as low as possible
-//      - leverage serde where possible (should completely deserialize)
-//  - take the "canonical_slug" or "id" and get all the models.
 //  - save all the models called to a single file
 //  - use the `crates/ploke-tui/src/llm/openrouter/json_visitor.rs` functions to analyze the shape
 //  of the response across models

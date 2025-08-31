@@ -69,15 +69,7 @@ impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
             arguments: tool_input.arguments,
             call_id: Uuid::new_v4().to_string(),
         };
-        // let return_val = SystemEvent::ToolCallCompleted {
-        //     request_id: tool_input.request_id,
-        //     parent_id: tool_input.parent_id,
-        //     call_id: String::new(),
-        //     content: String::new(),
-        // };
         handle_request_context(tool_call_params).await
-
-        // return_val
     }
 }
 
@@ -632,9 +624,10 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) ->
     let top_k = calc_top_k_for_budget(args.token_budget);
 
     // Build token budget for RAG
-    let mut budget = TokenBudget::default();
-    budget.max_total = args.token_budget as usize;
-
+    let budget = TokenBudget {
+        max_total: args.token_budget as usize,
+        ..Default::default()
+    };
     if let Some(rag) = &state.rag {
         match rag
             .get_context(
@@ -664,7 +657,7 @@ pub async fn handle_request_context<'a>(tool_call_params: ToolCallParams<'a>) ->
                     },
                     Err(e) => {
                         let msg = format!("Failed to serialize RequestCodeContextResult: {}", e);
-                        return tool_call_params.tool_call_err(msg);
+                        tool_call_params.tool_call_err(msg)
                     }
                 }
             }

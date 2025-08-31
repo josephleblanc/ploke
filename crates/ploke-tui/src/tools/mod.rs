@@ -22,6 +22,8 @@ use crate::{
 
 mod request_code_context;
 pub use request_code_context::{ RequestCodeContext, RequestCodeContextInput, RequestCodeContextOutput };
+mod code_edit;
+pub use code_edit::{ CodeEdit, CodeEditInput, CanonicalEdit };
 
 pub trait Tool {
     /// Static strings so they can be used in const contexts.
@@ -43,13 +45,16 @@ pub trait Tool {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolName {
-    RequestCodeContext
+    RequestCodeContext,
+    ApplyCodeEdit,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
 pub enum ToolDescr {
-    #[serde(rename = "Request additional code context from the repository up to a token budget.")] 
-    RequestCodeContext
+    #[serde(rename = "Request additional code context from the repository up to a token budget.")]
+    RequestCodeContext,
+    #[serde(rename = "Apply canonical code edits to one or more nodes identified by canonical path.")]
+    ApplyCodeEdit,
 }
 
  #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
