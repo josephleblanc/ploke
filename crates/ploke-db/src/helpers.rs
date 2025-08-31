@@ -50,6 +50,44 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
 
+/// Resolve nodes by canonical module path and item name (no file_path equality).
+/// This relaxed resolver is intended for diagnostics and as a fallback when
+/// absolute file paths differ across environments. It mirrors the projection of
+/// `resolve_nodes_by_canon_in_file` but omits the `file_path == ...` filter.
+pub fn resolve_nodes_by_canon(
+    db: &Database,
+    relation: &str,
+    module_path: &[String],
+    item_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+
+    let script = format!(
+        r#"
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  mod_path == {mod_path_lit}
+"#,
+        rel = relation,
+        item_name_lit = item_name_lit,
+        mod_path_lit = mod_path_lit
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +174,36 @@ mod tests {
                     }
                     Err(e) => {
                         log.push_str(&format!("  relation={} error: {}\n", rel, e));
+                    }
+                }
+            }
+
+            // If strict matching failed, run relaxed diagnostics to surface module-only candidates
+            if !matched {
+                log.push_str("  strict match failed; running relaxed module-only diagnostics\n");
+                for ty in NodeType::primary_nodes() {
+                    let rel = ty.relation_str();
+                    match resolve_nodes_by_canon(&db, rel, &module_vec, item_name) {
+                        Ok(cands) => {
+                            let files: Vec<String> = cands
+                                .iter()
+                                .map(|ed| ed.file_path.to_string_lossy().to_string())
+                                .collect();
+                            let any_id = cands.iter().any(|ed| ed.id == id);
+                            log.push_str(&format!(
+                                "  relaxed relation={} candidates={} any_id_match={} files={:?}\n",
+                                rel,
+                                cands.len(),
+                                any_id,
+                                files
+                            ));
+                        }
+                        Err(e) => {
+                            log.push_str(&format!(
+                                "  relaxed relation={} error: {}\n",
+                                rel, e
+                            ));
+                        }
                     }
                 }
             }

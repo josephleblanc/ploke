@@ -47,3 +47,14 @@ Checking id=c76a4b26-5770-5075-a084-b6eca2cf8073 name=INNER_MUT_STATIC
   relation=trait returned 0 rows
   relation=type_alias returned 0 rows
   relation=union returned 0 rows
+  strict match failed; running relaxed module-only diagnostics
+  relaxed relation=function candidates=0 any_id_match=false files=[]
+  relaxed relation=const candidates=0 any_id_match=false files=[]
+  relaxed relation=enum candidates=0 any_id_match=false files=[]
+  relaxed relation=macro candidates=0 any_id_match=false files=[]
+  relaxed relation=module candidates=0 any_id_match=false files=[]
+  relaxed relation=static candidates=0 any_id_match=false files=[]
+  relaxed relation=struct candidates=0 any_id_match=false files=[]
+  relaxed relation=trait candidates=0 any_id_match=false files=[]
+  relaxed relation=type_alias candidates=0 any_id_match=false files=[]
+  relaxed relation=union candidates=0 any_id_match=false files=[]
