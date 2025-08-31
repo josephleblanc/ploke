@@ -3592,6 +3592,7 @@ dependencies = [
  "bm25",
  "clap",
  "cozo",
+ "criterion",
  "crossbeam-channel",
  "itertools 0.14.0",
  "lazy_static",

@@ -2,16 +2,23 @@
 
 use std::sync::Arc;
 
-use serde_json::json;
+// serde_json::json already imported above; no need to re-import here
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use ploke_tui::app_state::core::PreviewMode;
 use ploke_tui::event_bus::EventBusCaps;
 use ploke_tui::{AppEvent, EventBus};
 use ploke_tui::system::SystemEvent;
 use ploke_tui::rag::utils::ToolCallParams;
 use ploke_test_utils::workspace_root;
+use ploke_tui::tools::{FunctionMarker, GatTool, ToolDefinition};
+use ploke_tui::tools::request_code_context::RequestCodeContextGat;
+#[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
+use chrono::Utc;
+#[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
+use reqwest::Client;
+#[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
+use serde_json::json;
 
 #[tokio::test]
 async fn e2e_get_file_metadata_and_apply_code_edit_splice() {
@@ -193,4 +200,116 @@ async fn e2e_apply_code_edit_canonical_on_fixture() {
 
     // Restore original file to avoid test side effects
     std::fs::write(&abs_file, original).expect("restore original");
+}
+
+// Live tool-calling test: ensures OpenRouter returns JSON and includes tool_calls when tools are provided
+#[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
+#[tokio::test]
+async fn e2e_live_openrouter_tool_call_json() {
+    let Some(env) = ploke_tui::test_harness::openrouter_env() else { return; };
+    let client = Client::new();
+
+    // Construct a provider config and pick a tool-capable endpoint for the chosen model
+    let mut provider = ploke_tui::user_config::ModelConfig {
+        id: "live-openrouter".to_string(),
+        api_key: env.key.clone(),
+        provider_slug: None,
+        api_key_env: None,
+        base_url: env.url.to_string(),
+        model: "openai/gpt-4o-mini".to_string(),
+        display_name: None,
+        provider_type: ploke_tui::user_config::ProviderType::OpenRouter,
+        llm_params: None,
+    };
+    // Try a list of candidate models to find tool-capable endpoints
+    let candidates = [
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "google/gemini-2.0-flash-001",
+        "qwen/qwen-2.5-72b-instruct",
+    ];
+    'outer: for m in candidates { 
+        if let Ok(eps) = ploke_tui::llm::openrouter::openrouter_catalog::fetch_model_endpoints(
+            &client,
+            env.url.clone(),
+            &provider.api_key,
+            m,
+        ).await {
+            if let Some(p) = eps.into_iter().find(|e| {
+                e.supported_parameters
+                    .as_ref()
+                    .map(|sp| sp.iter().any(|s| s == "tools"))
+                    .unwrap_or(false)
+            }) {
+                provider.model = m.to_string();
+                provider.provider_slug = Some(p.id);
+                break 'outer;
+            }
+        }
+    }
+
+    // Build a minimal tool-call request to trigger tool_calls
+    let sys = ploke_tui::llm::RequestMessage { role: ploke_tui::llm::Role::System, content: "You can call tools.".to_string(), tool_call_id: None };
+    let user = ploke_tui::llm::RequestMessage { role: ploke_tui::llm::Role::User, content: "Call the tool to find SimpleStruct; do not answer directly.".to_string(), tool_call_id: None };
+    let messages = vec![sys, user];
+    let tools: Vec<ToolDefinition> = vec![RequestCodeContextGat::tool_def() ];
+    let params = ploke_tui::llm::LLMParameters { max_tokens: Some(4096), temperature: Some(0.0), ..Default::default() };
+    // Pass require_parameters=false to avoid over-restricting routing
+    let mut request = ploke_tui::llm::session::build_openai_request(&provider, messages, &params, Some(tools), true, false);
+    // Force a function tool call for validation
+    use ploke_tui::llm::openrouter::model_provider::{ToolChoice, ToolChoiceFunction};
+    request.tool_choice = Some(ToolChoice::Function { r#type: FunctionMarker, function: ToolChoiceFunction { name: "request_code_context".to_string() } });
+
+    // Persist artifacts
+    let ts = Utc::now().format("%Y%m%d-%H%M%S");
+    let dir = ploke_test_utils::workspace_root()
+        .join("crates/ploke-tui/ai_temp_data/live")
+        .join(format!("openrouter-{}", ts));
+    std::fs::create_dir_all(&dir).ok();
+    std::fs::write(dir.join("request.json"), serde_json::to_string_pretty(&request).unwrap()).ok();
+
+    // Send live request
+    let url = format!(
+        "{}/chat/completions",
+        provider.base_url.trim_end_matches('/')
+    );
+    let resp = client
+        .post(url)
+        .headers(ploke_tui::test_harness::default_headers())
+        .header("Accept", "application/json")
+        .bearer_auth(&provider.api_key)
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(ploke_tui::LLM_TIMEOUT_SECS))
+        .send()
+        .await
+        .expect("request send");
+
+    let status = resp.status();
+    let headers = format!("{:?}", resp.headers());
+    let body = resp.text().await.expect("body text");
+    assert!(status.is_success(), "non-success status: {} body: {}", status, body);
+
+    // Parse as JSON and assert presence of tool_calls in choices[...].message
+    if body.trim().is_empty() {
+        std::fs::write(dir.join("response_raw.txt"), format!("status={}\nheaders={}\n<body-empty>", status, headers)).ok();
+        panic!("empty body from API: status={} headers={}", status, headers);
+    }
+    let v: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            std::fs::write(dir.join("response_raw.txt"), format!("status={}\nheaders={}\n{}", status, headers, body)).ok();
+            panic!("valid JSON body: {}", e);
+        }
+    };
+    std::fs::write(dir.join("response.json"), serde_json::to_string_pretty(&v).unwrap()).ok();
+
+    // choices array must exist; check for tool_calls path
+    let choices = v.get("choices").and_then(|c| c.as_array()).expect("choices array");
+    let mut saw_tool_calls = false;
+    for ch in choices {
+        if let Some(msg) = ch.get("message") {
+            if msg.get("tool_calls").is_some() { saw_tool_calls = true; break; }
+        }
+    }
+    assert!(saw_tool_calls, "expected tool_calls in response; got: {}", serde_json::to_string(&v).unwrap());
 }

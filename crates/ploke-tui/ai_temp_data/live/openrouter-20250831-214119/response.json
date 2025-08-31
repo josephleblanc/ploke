@@ -1,0 +1,45 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "",
+        "reasoning": null,
+        "refusal": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"search_term\":\"SimpleStruct\"}",
+              "name": "request_code_context"
+            },
+            "id": "call_VoCiRB3lSvMwlitnbIb7C7UO",
+            "index": 0,
+            "type": "function"
+          }
+        ]
+      },
+      "native_finish_reason": "stop"
+    }
+  ],
+  "created": 1756676479,
+  "id": "gen-1756676479-auDjflSaqTi65Yi4oRhB",
+  "model": "openai/gpt-4o-mini",
+  "object": "chat.completion",
+  "provider": "OpenAI",
+  "system_fingerprint": "fp_560af6e559",
+  "usage": {
+    "completion_tokens": 7,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 117,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 124
+  }
+}

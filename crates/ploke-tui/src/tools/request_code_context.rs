@@ -9,24 +9,24 @@ pub struct RequestCodeContext {
 pub struct RequestCodeContextInput {
     pub token_budget: u32,
     #[serde(default)]
-    pub hint: Option<String>,
+    pub search_term: Option<String>,
 }
 
 lazy_static::lazy_static! {
     static ref REQUEST_CODE_CONTEXT_PARAMETERS: serde_json::Value = json!({
         "type": "object",
         "properties": {
+            "search_term": {
+                "type": "string",
+                "description": "Search term guide which code guide hybrid semantic search and bm25."
+            },
             "token_budget": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum tokens of code context to return."
-            },
-            "hint": {
-                "type": "string",
-                "description": "Optional hint to guide which code to retrieve."
+                "description": "Optional maximum tokens of code context to return, sane defaults"
             }
         },
-        "required": ["token_budget"],
+        "required": ["search_term"],
         "additionalProperties": false
     });
 }
@@ -43,7 +43,7 @@ impl Tool for RequestCodeContext {
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 
         let budget = TokenBudget { max_total: p.token_budget as usize, ..Default::default() };
-        let query = p.hint.unwrap_or_default();
+        let query = p.search_term.unwrap_or_default();
         if query.trim().is_empty() {
             return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
                 "No query available (hint missing or empty)".to_string(),
@@ -142,28 +142,12 @@ impl super::GatTool for RequestCodeContextGat {
         RequestCodeContextParamsOwned { token_budget: params.token_budget, hint: params.hint.clone().map(|h| h.into_owned()) }
     }
 
-    // async fn run<'a>(self, params: &Self::Params<'a>, ctx: super::Ctx) -> Result<Self::Output, ploke_error::Error> {
-    //     use ploke_rag::{TokenBudget, RetrievalStrategy, RrfConfig};
-    //     let rag = match &ctx.state.rag {
-    //         Some(r) => r.clone(),
-    //         None => {
-    //             return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
-    //                 "RAG service unavailable".to_string(),
-    //             )))
-    //         }
-    //     };
-    //     let top_k = params.top_k.unwrap_or(16) as usize;
-    //     let budget = TokenBudget::default();
-    //     let strategy = RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None };
-    //     let assembled = rag
-    //         .get_context(params.search_term.as_ref(), top_k, &budget, &strategy)
-    //         .await?;
-    //     let (code, meta): (Vec<CodeSnippet>, Vec<SnippetMeta>) = assembled.parts.into_iter().map(|cp| {
-    //         let meta = SnippetMeta::extract_meta(&cp);
-    //         let snippet = CodeSnippet { file_path: cp.file_path, snippet: cp.text };
-    //         (snippet, meta)
-    //     }).unzip();
-    //     Ok(RequestCodeContextOutput { code, meta })
+    // fn tool_def() -> ToolDefinition{
+    //     ToolFunctionDef {
+    //         name: ToolName::RequestCodeContext,
+    //         description: ToolDescr::RequestCodeContext,
+    //         parameters: Self::schema().clone(),
+    //     }.into()
     // }
 
     async fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> Result<ToolResult, ploke_error::Error> {

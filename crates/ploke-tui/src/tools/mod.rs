@@ -25,11 +25,11 @@ use syn_parser::parser::nodes::NodePath;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-mod request_code_context;
+pub mod request_code_context;
 pub use request_code_context::{RequestCodeContext, RequestCodeContextInput};
-mod code_edit;
+pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput};
-mod get_file_metadata;
+pub mod get_file_metadata;
 pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadataTool};
 
 pub trait Tool {
@@ -181,6 +181,15 @@ pub struct ToolDefinition {
     pub function: ToolFunctionDef,
 }
 
+impl Into<ToolDefinition> for ToolFunctionDef {
+    fn into(self) -> ToolDefinition {
+        ToolDefinition {
+            r#type: FunctionMarker,
+            function: self
+        }
+    }
+}
+
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct ToolFunctionDef {
     pub name: ToolName,
@@ -314,7 +323,7 @@ pub fn set_tool_persist_sender(tx: mpsc::Sender<ToolCallRecord>) {
     let _ = TOOL_PERSIST_SENDER.set(tx);
 }
 
-pub(crate) trait GatTool {
+pub trait GatTool {
     type Output: Serialize + Send;
     type OwnedParams: Serialize + Send;
     type Params<'de>: Deserialize<'de> + Send
@@ -331,12 +340,12 @@ pub(crate) trait GatTool {
 
     fn into_owned<'de>(params: &Self::Params<'de>) -> Self::OwnedParams;
 
-    fn tool_def() -> ToolFunctionDef {
+    fn tool_def() -> ToolDefinition {
         ToolFunctionDef {
             name: Self::name(),
             description: Self::description(),
             parameters: Self::schema().clone(),
-        }
+        }.into()
     }
 
     fn emit_completed(ctx: &Ctx, output_json: String) {
@@ -355,7 +364,7 @@ pub(crate) trait GatTool {
         serde_json::from_str(json).map_err(|e| ToolError::DeserializationError(e.to_string()))
     }
 
-    async fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> Result<ToolResult, ploke_error::Error>;
+    fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> impl std::future::Future<Output = Result<ToolResult, ploke_error::Error>> + Send;
 }
 
 /// Unified dispatcher for GAT-based tools using the existing ToolCallParams envelope.

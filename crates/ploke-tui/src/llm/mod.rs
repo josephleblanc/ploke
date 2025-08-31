@@ -1,6 +1,6 @@
 pub mod registry;
 pub mod openrouter;
-mod session;
+pub mod session;
 
 pub use openrouter::*;
 
@@ -17,7 +17,9 @@ use uuid::Uuid;
 
 use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
-use crate::tools::{FunctionCall, FunctionMarker, ToolCall};
+use crate::tools::code_edit::GatCodeEdit;
+use crate::tools::request_code_context::RequestCodeContextGat;
+use crate::tools::{FunctionCall, FunctionMarker, GatTool as _, GetFileMetadataTool, RequestCodeContext, ToolCall, ToolDefinition, ToolFunctionDef};
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -44,6 +46,7 @@ pub struct ProviderPreferences {
 
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
+#[deprecated = "use tools::GetFileMetadataTool::tool_def() instead"]
 pub fn get_file_metadata_tool_def() -> crate::tools::ToolDefinition {
     use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
     ToolDefinition {
@@ -125,80 +128,6 @@ impl From<MessageKind> for Role {
             MessageKind::System => Role::Assistant,
             _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
         }
-    }
-}
-
-// Helper to define request_code_context with legacy parameter shape (token_budget + hint)
-pub fn request_code_context_tool_def() -> crate::tools::ToolDefinition {
-    use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
-    ToolDefinition {
-        r#type: FunctionMarker,
-        function: ToolFunctionDef {
-            name: ToolName::RequestCodeContext,
-            description: ToolDescr::RequestCodeContext,
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "token_budget": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Maximum tokens of code context to return."
-                    },
-                    "hint": {
-                        "type": "string",
-                        "description": "Optional hint to guide which code to retrieve."
-                    }
-                },
-                "required": ["token_budget"],
-                "additionalProperties": false
-            }),
-        },
-    }
-}
-
-// New tool definition for applying code edits atomically via ploke-io
-pub fn apply_code_edit_tool_def() -> crate::tools::ToolDefinition {
-    use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
-    // Keep legacy splice schema for compatibility with existing dispatcher fallback
-    ToolDefinition {
-        r#type: FunctionMarker,
-        function: ToolFunctionDef {
-            name: ToolName::ApplyCodeEdit,
-            description: ToolDescr::ApplyCodeEdit,
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "description": "Optional model confidence (0.0–1.0) for approval gating."
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Optional namespace UUID for tracking."
-                    },
-                    "edits": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": { "type": "string" },
-                                "expected_file_hash": { "type": "string" },
-                                "start_byte": { "type": "integer", "minimum": 0 },
-                                "end_byte": { "type": "integer", "minimum": 0 },
-                                "replacement": { "type": "string" }
-                            },
-                            "required": ["file_path", "expected_file_hash", "start_byte", "end_byte", "replacement"],
-                            "additionalProperties": false
-                        },
-                        "minItems": 1
-                    }
-                },
-                "required": ["edits"],
-                "additionalProperties": false
-            }),
-        },
     }
 }
 
@@ -787,11 +716,11 @@ or disable enforcement with ':provider tools-only off'.",
         });
     }
 
-    let tools: Vec<crate::tools::ToolDefinition> = if supports_tools_opt.unwrap_or(false) {
+    let tools: Vec<ToolDefinition> = if supports_tools_opt.unwrap_or(false) {
         vec![
-            request_code_context_tool_def(),
-            get_file_metadata_tool_def(),
-            apply_code_edit_tool_def(),
+            RequestCodeContextGat::tool_def(),
+            GatCodeEdit::tool_def(),
+            GetFileMetadataTool::tool_def()
         ]
     } else {
         Vec::new()

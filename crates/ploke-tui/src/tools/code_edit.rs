@@ -314,6 +314,7 @@ impl Tool for CodeEdit {
         CODE_EDIT_PARAMETERS.deref()
     }
 
+
     fn tool_def() -> ToolFunctionDef {
         ToolFunctionDef {
             name: ToolName::ApplyCodeEdit,

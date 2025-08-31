@@ -345,6 +345,18 @@ pub fn build_comp_req<'a>(
     }
 }
 
+/// Backward-compat alias used by live tests
+pub fn build_openai_request<'a>(
+    provider: &'a crate::user_config::ModelConfig,
+    messages: Vec<RequestMessage>,
+    params: &super::LLMParameters,
+    tools: Option<Vec<crate::tools::ToolDefinition>>,
+    use_tools: bool,
+    require_parameters: bool,
+) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+    build_comp_req(provider, messages, params, tools, use_tools, require_parameters)
+}
+
 /// Await a correlated ToolCall completion/failure on the realtime broadcast channel.
 ///
 /// - `rx`: a subscribed `broadcast::Receiver<AppEvent>` (must be subscribed before the request is emitted)
