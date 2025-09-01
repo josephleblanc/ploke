@@ -1,13 +1,11 @@
 #![cfg(test)]
 
-use serde_json::Value;
-
 #[test]
 fn comp_req_with_tools_and_provider_prefs() {
     use ploke_tui::llm::session::build_comp_req;
-    use ploke_tui::llm::openrouter::model_provider::{ToolChoice, JsonObjMarker};
+    use ploke_tui::llm::openrouter::model_provider::ToolChoice;
     use ploke_tui::llm::{RequestMessage, Role};
-    use ploke_tui::tools::{FunctionMarker, GatTool};
+    use ploke_tui::tools::{FunctionMarker, Tool};
     use ploke_tui::tools::request_code_context::RequestCodeContextGat;
     use ploke_tui::user_config::{ModelConfig, ProviderType};
 

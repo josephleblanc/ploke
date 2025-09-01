@@ -19,7 +19,7 @@ use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
-use crate::tools::{FunctionCall, FunctionMarker, GatTool as _, GetFileMetadataTool, RequestCodeContext, ToolCall, ToolDefinition, ToolFunctionDef};
+use crate::tools::{FunctionCall, FunctionMarker, Tool as _, GetFileMetadata, RequestCodeContext, ToolCall, ToolDefinition, ToolFunctionDef};
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -39,14 +39,13 @@ pub struct ProviderPreferences {
     pub deny: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub order: Vec<String>,
-    // Prefer explicit gate on parameter enforcement for provider routing
-    #[serde(skip_serializing_if = "skip_bool_always")]
+    // Gate to enforce provider-side parameter availability (per docs)
     pub require_parameters: bool,
 }
 
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
-#[deprecated = "use tools::GetFileMetadataTool::tool_def() instead"]
+#[deprecated = "use tools::GetFileMetadata::tool_def() instead"]
 pub fn get_file_metadata_tool_def() -> crate::tools::ToolDefinition {
     use crate::tools::{FunctionMarker, ToolDefinition, ToolDescr, ToolFunctionDef, ToolName};
     ToolDefinition {
@@ -106,6 +105,7 @@ pub enum Role {
     User,
     Assistant,
     System,
+    Tool,
 }
 
 impl RequestMessage {
@@ -115,6 +115,45 @@ impl RequestMessage {
             content,
             tool_call_id: None,
         }
+    }
+
+    pub fn new_tool(content: String, tool_call_id: String) -> Self {
+        Self {
+            role: Role::Tool,
+            content,
+            tool_call_id: Some(tool_call_id),
+        }
+    }
+
+    pub fn new_user(content: String) -> Self {
+        Self {
+            role: Role::User,
+            content,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn new_assistant(content: String) -> Self {
+        Self {
+            role: Role::Assistant,
+            content,
+            tool_call_id: None,
+        }
+    }
+
+    /// Validates that the message structure is correct according to OpenAI/OpenRouter spec
+    pub fn validate(&self) -> Result<(), String> {
+        match self.role {
+            Role::Tool => {
+                if self.tool_call_id.is_none() {
+                    return Err("Tool messages must have a tool_call_id".to_string());
+                }
+            }
+            Role::User | Role::Assistant | Role::System => {
+                // These roles should not have tool_call_id set, but we allow it for flexibility
+            }
+        }
+        Ok(())
     }
 }
 
@@ -720,7 +759,7 @@ or disable enforcement with ':provider tools-only off'.",
         vec![
             RequestCodeContextGat::tool_def(),
             GatCodeEdit::tool_def(),
-            GetFileMetadataTool::tool_def()
+            GetFileMetadata::tool_def()
         ]
     } else {
         Vec::new()
@@ -1304,4 +1343,109 @@ fn default_true() -> bool {
 
 fn skip_bool_always(_: &bool) -> bool {
     true
+}
+
+// Test-only typed response summary to validate live parsing against our internal DTOs.
+#[cfg(feature = "test_harness")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseParseSummary {
+    pub choices: usize,
+    pub tool_calls_total: usize,
+    pub has_message: bool,
+    pub has_content: bool,
+}
+
+/// Attempt to parse a provider response body into our OpenAI-compatible types and summarize.
+#[cfg(feature = "test_harness")]
+pub fn test_parse_response_summary(body: &str) -> Result<ResponseParseSummary, String> {
+    let parsed: OpenAiResponse<'_> = serde_json::from_str(body)
+        .map_err(|e| format!("typed parse failed: {}", e))?;
+    let mut choices_cnt = 0usize;
+    let mut tool_calls_total = 0usize;
+    let mut has_message = false;
+    let mut has_content = false;
+    for ch in parsed.choices.iter() {
+        match ch {
+            Choices::NonStreamingChoice { message, .. } => {
+                choices_cnt += 1;
+                has_message = true;
+                if message.content.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+                    has_content = true;
+                }
+                if let Some(tcs) = &message.tool_calls {
+                    tool_calls_total += tcs.len();
+                }
+            }
+            Choices::NonChatChoice { text, .. } => {
+                choices_cnt += 1;
+                if !text.is_empty() { has_content = true; }
+            }
+            Choices::StreamingChoice { .. } => {
+                choices_cnt += 1;
+            }
+        }
+    }
+    Ok(ResponseParseSummary { choices: choices_cnt, tool_calls_total, has_message, has_content })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_tool_serialization() {
+        // Test that Role::Tool serializes correctly
+        let role = Role::Tool;
+        let serialized = serde_json::to_string(&role).unwrap();
+        assert_eq!(serialized, "\"tool\"");
+        
+        // Test deserialization
+        let deserialized: Role = serde_json::from_str("\"tool\"").unwrap();
+        assert_eq!(deserialized, Role::Tool);
+    }
+
+    #[test]
+    fn test_tool_message_constructors() {
+        // Test new_tool constructor
+        let tool_msg = RequestMessage::new_tool("result content".to_string(), "call_123".to_string());
+        assert_eq!(tool_msg.role, Role::Tool);
+        assert_eq!(tool_msg.content, "result content");
+        assert_eq!(tool_msg.tool_call_id, Some("call_123".to_string()));
+        
+        // Test validation passes for valid tool message
+        assert!(tool_msg.validate().is_ok());
+        
+        // Test other constructors don't have tool_call_id
+        let user_msg = RequestMessage::new_user("hello".to_string());
+        assert_eq!(user_msg.role, Role::User);
+        assert_eq!(user_msg.tool_call_id, None);
+        assert!(user_msg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_tool_message_validation() {
+        // Valid tool message
+        let valid_tool = RequestMessage::new_tool("content".to_string(), "call_id".to_string());
+        assert!(valid_tool.validate().is_ok());
+        
+        // Invalid tool message (missing tool_call_id)
+        let invalid_tool = RequestMessage {
+            role: Role::Tool,
+            content: "content".to_string(),
+            tool_call_id: None,
+        };
+        assert!(invalid_tool.validate().is_err());
+        assert!(invalid_tool.validate().unwrap_err().contains("tool_call_id"));
+    }
+
+    #[test]
+    fn test_tool_message_serialization() {
+        let tool_msg = RequestMessage::new_tool("test result".to_string(), "call_abc".to_string());
+        let serialized = serde_json::to_string(&tool_msg).unwrap();
+        
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed["role"], "tool");
+        assert_eq!(parsed["content"], "test result");
+        assert_eq!(parsed["tool_call_id"], "call_abc");
+    }
 }

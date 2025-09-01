@@ -1,0 +1,49 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You can call tools."
+    },
+    {
+      "role": "user",
+      "content": "You can call tools. Only call request_code_context to fetch context about lib.rs."
+    }
+  ],
+  "model": "qwen/qwen-2.5-7b-instruct",
+  "stream": false,
+  "max_tokens": 4096,
+  "temperature": 0.0,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "request_code_context",
+        "description": "Request additional code context from the repository up to a token budget.",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "search_term": {
+              "description": "Search term guide which code guide hybrid semantic search and bm25.",
+              "type": "string"
+            },
+            "token_budget": {
+              "description": "Optional maximum tokens of code context to return, sane defaults",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "search_term"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "function",
+    "function": {
+      "name": "request_code_context"
+    }
+  }
+}

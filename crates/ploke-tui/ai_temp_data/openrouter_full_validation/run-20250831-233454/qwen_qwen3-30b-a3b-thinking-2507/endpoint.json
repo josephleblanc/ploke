@@ -1,0 +1,32 @@
+{
+  "id": "chutes",
+  "context_length": 262144,
+  "pricing": {
+    "completion": 2.852e-7,
+    "image": 0.0,
+    "internal_reasoning": 0.0,
+    "prompt": 7.13e-8,
+    "request": 0.0,
+    "web_search": 0.0
+  },
+  "capabilities": null,
+  "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+    "frequency_penalty",
+    "presence_penalty",
+    "seed",
+    "top_k",
+    "min_p",
+    "repetition_penalty",
+    "logprobs",
+    "logit_bias",
+    "top_logprobs"
+  ]
+}

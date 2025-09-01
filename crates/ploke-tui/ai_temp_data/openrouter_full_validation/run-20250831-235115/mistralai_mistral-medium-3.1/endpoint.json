@@ -1,0 +1,26 @@
+{
+  "id": "mistral",
+  "context_length": 131072,
+  "pricing": {
+    "completion": 2e-6,
+    "image": 0.0,
+    "internal_reasoning": 0.0,
+    "prompt": 4e-7,
+    "request": 0.0,
+    "web_search": 0.0
+  },
+  "capabilities": null,
+  "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+    "frequency_penalty",
+    "presence_penalty",
+    "seed",
+    "response_format",
+    "structured_outputs"
+  ]
+}

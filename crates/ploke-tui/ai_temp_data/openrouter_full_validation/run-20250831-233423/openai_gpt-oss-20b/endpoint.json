@@ -1,0 +1,30 @@
+{
+  "id": "deepinfra",
+  "context_length": 131072,
+  "pricing": {
+    "completion": 1.6e-7,
+    "image": 0.0,
+    "internal_reasoning": 0.0,
+    "prompt": 4e-8,
+    "request": 0.0,
+    "web_search": 0.0
+  },
+  "capabilities": null,
+  "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "top_k",
+    "seed",
+    "min_p",
+    "response_format"
+  ]
+}

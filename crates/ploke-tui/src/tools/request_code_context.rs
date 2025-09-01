@@ -14,65 +14,21 @@ pub struct RequestCodeContextInput {
 
 lazy_static::lazy_static! {
     static ref REQUEST_CODE_CONTEXT_PARAMETERS: serde_json::Value = json!({
-        "type": "object",
-        "properties": {
-            "search_term": {
-                "type": "string",
-                "description": "Search term guide which code guide hybrid semantic search and bm25."
+            "type": "object",
+            "properties": {
+                "search_term": {
+                    "type": "string",
+                    "description": "Search term guide which code guide hybrid semantic search and bm25."
+                },
+                "token_budget": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional maximum tokens of code context to return, sane defaults"
+                }
             },
-            "token_budget": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Optional maximum tokens of code context to return, sane defaults"
-            }
-        },
-        "required": ["search_term"],
-        "additionalProperties": false
-    });
-}
-impl Tool for RequestCodeContext {
-    const NAME: &'static str = "request_code_context";
-    const DESCRIPTION: &'static str =
-        "Request additional code context from the repository up to a token budget.";
-
-    type Params = RequestCodeContextInput;
-    type Output = ploke_core::rag_types::RequestCodeContextResult;
-
-    async fn run(self, p: Self::Params) -> Result<Self::Output, ploke_error::Error> {
-        use crate::rag::utils::calc_top_k_for_budget;
-        use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
-
-        let budget = TokenBudget { max_total: p.token_budget as usize, ..Default::default() };
-        let query = p.search_term.unwrap_or_default();
-        if query.trim().is_empty() {
-            return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
-                "No query available (hint missing or empty)".to_string(),
-            )));
+            "required": ["search_term"]
         }
-        let top_k = calc_top_k_for_budget(p.token_budget);
-        let assembled = self
-            .rag
-            .get_context(
-                &query,
-                top_k,
-                &budget,
-                &RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None },
-            )
-            .await?;
-        Ok(ploke_core::rag_types::RequestCodeContextResult { ok: true, query, top_k, context: assembled })
-    }
-
-    fn schema() -> &'static serde_json::Value {
-        REQUEST_CODE_CONTEXT_PARAMETERS.deref()
-    }
-
-    fn tool_def() -> ToolFunctionDef {
-        ToolFunctionDef {
-            name: ToolName::RequestCodeContext,
-            description: ToolDescr::RequestCodeContext,
-            parameters: Self::schema().clone(),
-        }
-    }
+    );
 }
 
 #[cfg(test)]
@@ -80,16 +36,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_def_serializes_expected_shape() {
-        let def = <RequestCodeContext as Tool>::tool_def();
+    fn tool_def_serializes_expected_shape() -> color_eyre::Result<()> {
+        let def = <RequestCodeContextGat as Tool>::tool_def();
         let v = serde_json::to_value(&def).expect("serialize");
-        let func = v.as_object().expect("def obj");
-        assert_eq!(func.get("name").and_then(|n| n.as_str()), Some("request_code_context"));
-        let params = func.get("parameters").and_then(|p| p.as_object()).expect("params obj");
-        let req = params.get("required").and_then(|r| r.as_array()).expect("req arr");
-        assert!(req.iter().any(|s| s.as_str() == Some("token_budget")));
-        let props = params.get("properties").and_then(|p| p.as_object()).expect("props obj");
+        eprintln!("{}", serde_json::to_string_pretty(&v)?);
+        let func = v
+            .get("function")
+            .expect("function field name")
+            .as_object()
+            .expect("def obj");
+        assert_eq!(
+            func.get("name").and_then(|n| n.as_str()),
+            Some("request_code_context")
+        );
+        let params = func
+            .get("parameters")
+            .and_then(|p| p.as_object())
+            .expect("parameters obj");
+        let req = params
+            .get("required")
+            .and_then(|r| r.as_array())
+            .expect("req arr");
+        assert!(req.iter().any(|s| s.as_str() == Some("search_terms")));
+        let props = params
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("props obj");
         assert!(props.contains_key("hint"));
+        Ok(())
     }
 }
 
@@ -116,7 +90,7 @@ pub struct RequestCodeContextGat {
     pub strategy: RetrievalStrategy,
 }
 
-impl super::GatTool for RequestCodeContextGat {
+impl super::Tool for RequestCodeContextGat {
     type Output = ploke_core::rag_types::RequestCodeContextResult;
     type OwnedParams = RequestCodeContextParamsOwned;
     type Params<'de>
@@ -139,7 +113,10 @@ impl super::GatTool for RequestCodeContextGat {
     }
 
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
-        RequestCodeContextParamsOwned { token_budget: params.token_budget, hint: params.hint.clone().map(|h| h.into_owned()) }
+        RequestCodeContextParamsOwned {
+            token_budget: params.token_budget,
+            hint: params.hint.clone().map(|h| h.into_owned()),
+        }
     }
 
     // fn tool_def() -> ToolDefinition{
@@ -150,7 +127,10 @@ impl super::GatTool for RequestCodeContextGat {
     //     }.into()
     // }
 
-    async fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> Result<ToolResult, ploke_error::Error> {
+    async fn execute<'de>(
+        params: Self::Params<'de>,
+        ctx: Ctx,
+    ) -> Result<ToolResult, ploke_error::Error> {
         use crate::rag::utils::calc_top_k_for_budget;
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
         let rag = match &ctx.state.rag {
@@ -165,13 +145,21 @@ impl super::GatTool for RequestCodeContextGat {
         };
         let hint = params.hint.as_ref().map(|h| h.as_ref()).unwrap_or("");
         if hint.trim().is_empty() {
-            return Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
-                "No query available (hint missing or empty)".to_string(),
-            )));
+            return Err(ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(
+                    "No query available (hint missing or empty)".to_string(),
+                ),
+            ));
         }
         let top_k = calc_top_k_for_budget(params.token_budget);
-        let budget = TokenBudget { max_total: params.token_budget as usize, ..Default::default() };
-        let strategy = RetrievalStrategy::Hybrid { rrf: RrfConfig::default(), mmr: None };
+        let budget = TokenBudget {
+            max_total: params.token_budget as usize,
+            ..Default::default()
+        };
+        let strategy = RetrievalStrategy::Hybrid {
+            rrf: RrfConfig::default(),
+            mmr: None,
+        };
         let assembled = rag.get_context(hint, top_k, &budget, &strategy).await?;
         let result = ploke_core::rag_types::RequestCodeContextResult {
             ok: true,
@@ -180,7 +168,9 @@ impl super::GatTool for RequestCodeContextGat {
             context: assembled,
         };
         let serialized = serde_json::to_string(&result).expect("Invalid state: serialization");
-        Ok(ToolResult { content: serialized })
+        Ok(ToolResult {
+            content: serialized,
+        })
     }
 }
 
@@ -202,8 +192,14 @@ mod gat_tests {
 
     #[test]
     fn name_desc_and_schema_present() {
-        assert!(matches!(RequestCodeContextGat::name(), ToolName::RequestCodeContext));
-        assert!(matches!(RequestCodeContextGat::description(), ToolDescr::RequestCodeContext));
+        assert!(matches!(
+            RequestCodeContextGat::name(),
+            ToolName::RequestCodeContext
+        ));
+        assert!(matches!(
+            RequestCodeContextGat::description(),
+            ToolDescr::RequestCodeContext
+        ));
         let schema = RequestCodeContextGat::schema();
         let obj = schema.as_object().expect("schema obj");
         assert!(obj.contains_key("properties"));
@@ -221,8 +217,44 @@ mod gat_tests {
             parent_id: Uuid::new_v4(),
             call_id: Arc::<str>::from("rcctx-test"),
         };
-        let params = RequestCodeContextParams { token_budget: 256, hint: Some(Cow::Borrowed("fn")) };
+        let params = RequestCodeContextParams {
+            token_budget: 256,
+            hint: Some(Cow::Borrowed("fn")),
+        };
         let out = RequestCodeContextGat::execute(params, ctx).await;
-        assert!(out.is_err(), "expected execute to error with mock/unavailable RAG");
+        assert!(
+            out.is_err(),
+            "expected execute to error with mock/unavailable RAG"
+        );
+    }
+
+    #[test]
+    fn de_to_value() -> color_eyre::Result<()> {
+        let def = <RequestCodeContextGat as Tool>::tool_def();
+        let v = serde_json::to_value(&def).expect("serialize");
+        eprintln!("{}", serde_json::to_string_pretty(&v)?);
+        let expected = json!({
+            "type": "function",
+            "function": {
+                "name": "request_code_context",
+                "description": "Request additional code context from the repository up to a token budget.",
+                "parameters": {
+                    "type": "object",
+                    "search_term": {
+                        "type": "string",
+                        "description": "Search term guide which code guide hybrid semantic search and bm25."
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional maximum tokens of code context to return, sane defaults"
+                    },
+                    "required": ["search_term"],
+                }
+            }
+        });
+        assert_eq!(expected, v);
+
+        Ok(())
     }
 }

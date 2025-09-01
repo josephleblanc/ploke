@@ -12,7 +12,7 @@ use ploke_tui::llm::openrouter::openrouter_catalog::fetch_model_endpoints;
 use ploke_tui::llm::openrouter::model_provider::{ToolChoice, ToolChoiceFunction};
 use ploke_tui::llm::{RequestMessage, Role};
 use ploke_tui::test_harness::{default_headers, openrouter_env};
-use ploke_tui::tools::{FunctionMarker, GatTool};
+use ploke_tui::tools::{FunctionMarker, Tool};
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::user_config::{ModelConfig, ProviderType};
 

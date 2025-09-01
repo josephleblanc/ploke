@@ -1,0 +1,30 @@
+{
+  "id": "parasail",
+  "context_length": 65536,
+  "pricing": {
+    "completion": 1.8e-6,
+    "image": 0.0,
+    "internal_reasoning": 0.0,
+    "prompt": 5e-7,
+    "request": 0.0,
+    "web_search": 0.0
+  },
+  "capabilities": null,
+  "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "min_p",
+    "presence_penalty",
+    "repetition_penalty",
+    "seed",
+    "stop",
+    "top_k",
+    "logit_bias"
+  ]
+}

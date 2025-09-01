@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "I understand you'd like me to fetch context about lib.rs. To help me search for the most relevant code, could you please specify what specific aspect or functionality of lib.rs you're interested in? For example:\n\n- Are you looking for a specific function or module?\n- Do you want to understand the overall structure or main exports?\n- Are you interested in particular features or implementations?\n\nThis will help me search for the most relevant code context from the repository.",
+        "reasoning": null,
+        "refusal": null,
+        "role": "assistant"
+      },
+      "native_finish_reason": "stop"
+    }
+  ],
+  "created": 1756681221,
+  "id": "gen-1756681221-EMTV3zfp3IXFwMjLwVDw",
+  "model": "deepseek/deepseek-chat-v3.1",
+  "object": "chat.completion",
+  "provider": "Chutes",
+  "usage": {
+    "completion_tokens": 93,
+    "prompt_tokens": 237,
+    "prompt_tokens_details": null,
+    "total_tokens": 330
+  }
+}

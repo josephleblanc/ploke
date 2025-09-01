@@ -64,7 +64,7 @@
 
 3.2 `session.run()` loops and makes API calls
   - trims messages to a char or token limit (default 12000 or 4096)
-  - calls LLM with timeout (default 45s, configured in const LLM_TIMEOUT_SECS in lib.rs)
+  - calls LLM with timeout (default 10s, configured in const LLM_TIMEOUT_SECS in lib.rs)
   - uses `build_openai_request` to form request, including tool definitions
   - makes api call
   - checks error codes:

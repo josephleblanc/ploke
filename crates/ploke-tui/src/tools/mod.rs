@@ -30,72 +30,9 @@ pub use request_code_context::{RequestCodeContext, RequestCodeContextInput};
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput};
 pub mod get_file_metadata;
-pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadataTool};
+pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadata};
 
-pub trait Tool {
-    const NAME: &'static str;
-    const DESCRIPTION: &'static str;
 
-    type Params: for<'de> Deserialize<'de>;
-    type Output: Serialize;
-
-    fn run(
-        self,
-        params: Self::Params,
-    ) -> impl std::future::Future<Output = Result<Self::Output, ploke_error::Error>> + Send;
-    fn schema() -> &'static serde_json::Value;
-    fn tool_def() -> ToolFunctionDef;
-}
-
-pub trait ToolFromParams: Tool {
-    fn build(params: &ToolCallParams) -> Self;
-}
-
-#[tracing::instrument(skip(tool_call_params))]
-pub async fn dispatch_tool<T>(tool_call_params: ToolCallParams)
-where
-    T: Tool + ToolFromParams,
-{
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name: _,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-
-    // Parse typed params
-    let parsed: T::Params = match serde_json::from_value(arguments.clone()) {
-        Ok(v) => v,
-        Err(e) => {
-            let err = format!("Invalid payload for {}: {}", T::NAME, e);
-            let _ = event_bus
-                .realtime_tx
-                .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    error: err,
-                }));
-            return;
-        }
-    };
-
-    // Build and run tool. Tools are responsible for emitting Completed events if needed.
-    let tool = T::build(&tool_call_params);
-    if let Err(e) = tool.run(parsed).await {
-        let _ = event_bus
-            .realtime_tx
-            .send(AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                error: e.to_string(),
-            }));
-    }
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -181,11 +118,11 @@ pub struct ToolDefinition {
     pub function: ToolFunctionDef,
 }
 
-impl Into<ToolDefinition> for ToolFunctionDef {
-    fn into(self) -> ToolDefinition {
+impl From<ToolFunctionDef> for ToolDefinition {
+    fn from(val: ToolFunctionDef) -> Self {
         ToolDefinition {
             r#type: FunctionMarker,
-            function: self
+            function: val,
         }
     }
 }
@@ -275,8 +212,12 @@ impl Into<ploke_error::Error> for ToolError {
     fn into(self) -> ploke_error::Error {
         use ToolError::*;
         match self {
-            DeserializationError(s) => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s)),
-            ExecutionError(s) => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
+            DeserializationError(s) => {
+                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
+            }
+            ExecutionError(s) => {
+                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
+            }
         }
     }
 }
@@ -295,24 +236,24 @@ async fn process_tool<'a>(tool_call: ToolCall<'a>, ctx: &Ctx) -> color_eyre::Res
         ToolName::RequestCodeContext => {
             let args = tool_call.function.arguments;
             let params = RequestCodeContextGat::deserialize_params(args)?;
-            let ToolResult { content }= RequestCodeContextGat::execute(params, new_ctx).await?;
+            let ToolResult { content } = RequestCodeContextGat::execute(params, new_ctx).await?;
             RequestCodeContextGat::emit_completed(ctx, content);
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
             let args = tool_call.function.arguments;
             let params = GatCodeEdit::deserialize_params(args)?;
-            let ToolResult { content }= GatCodeEdit::execute(params, new_ctx).await?;
+            let ToolResult { content } = GatCodeEdit::execute(params, new_ctx).await?;
             GatCodeEdit::emit_completed(ctx, content);
             Ok(())
-        },
+        }
         ToolName::GetFileMetadata => {
             let args = tool_call.function.arguments;
-            let params = GetFileMetadataTool::deserialize_params(args)?;
-            let ToolResult { content }= GetFileMetadataTool::execute(params, new_ctx).await?;
-            GetFileMetadataTool::emit_completed(ctx, content);
+            let params = GetFileMetadata::deserialize_params(args)?;
+            let ToolResult { content } = GetFileMetadata::execute(params, new_ctx).await?;
+            GetFileMetadata::emit_completed(ctx, content);
             Ok(())
-        },
+        }
         // more here
     }
 }
@@ -323,7 +264,7 @@ pub fn set_tool_persist_sender(tx: mpsc::Sender<ToolCallRecord>) {
     let _ = TOOL_PERSIST_SENDER.set(tx);
 }
 
-pub trait GatTool {
+pub trait Tool {
     type Output: Serialize + Send;
     type OwnedParams: Serialize + Send;
     type Params<'de>: Deserialize<'de> + Send
@@ -345,7 +286,8 @@ pub trait GatTool {
             name: Self::name(),
             description: Self::description(),
             parameters: Self::schema().clone(),
-        }.into()
+        }
+        .into()
     }
 
     fn emit_completed(ctx: &Ctx, output_json: String) {
@@ -364,16 +306,27 @@ pub trait GatTool {
         serde_json::from_str(json).map_err(|e| ToolError::DeserializationError(e.to_string()))
     }
 
-    fn execute<'de>(params: Self::Params<'de>, ctx: Ctx) -> impl std::future::Future<Output = Result<ToolResult, ploke_error::Error>> + Send;
+    fn execute<'de>(
+        params: Self::Params<'de>,
+        ctx: Ctx,
+    ) -> impl std::future::Future<Output = Result<ToolResult, ploke_error::Error>> + Send;
 }
 
 /// Unified dispatcher for GAT-based tools using the existing ToolCallParams envelope.
 /// Converts the legacy name/value envelope into borrowed JSON args and routes to the
-/// appropriate GatTool implementation, emitting ToolCallCompleted/Failed.
+/// appropriate Tool implementation, emitting ToolCallCompleted/Failed.
 pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallParams) {
     use crate::rag::utils::ToolCallParams as Params;
 
-    let Params { state, event_bus, request_id, parent_id, name, arguments, call_id } = tool_call_params.clone();
+    let Params {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        arguments,
+        call_id,
+    } = tool_call_params.clone();
     let ctx = Ctx {
         state,
         event_bus,
@@ -384,21 +337,9 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
     let args_str = arguments.to_string();
 
     match name.as_str() {
-        "request_code_context" => {
-            match RequestCodeContextGat::deserialize_params(&args_str) {
-                Ok(params) => match RequestCodeContextGat::execute(params, ctx.clone()).await {
-                    Ok(ToolResult { content }) => RequestCodeContextGat::emit_completed(&ctx, content),
-                    Err(e) => {
-                        let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                            crate::system::SystemEvent::ToolCallFailed {
-                                request_id: ctx.request_id,
-                                parent_id: ctx.parent_id,
-                                call_id: ctx.call_id.to_string(),
-                                error: e.to_string(),
-                            },
-                        ));
-                    }
-                },
+        "request_code_context" => match RequestCodeContextGat::deserialize_params(&args_str) {
+            Ok(params) => match RequestCodeContextGat::execute(params, ctx.clone()).await {
+                Ok(ToolResult { content }) => RequestCodeContextGat::emit_completed(&ctx, content),
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                         crate::system::SystemEvent::ToolCallFailed {
@@ -409,8 +350,18 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                         },
                     ));
                 }
+            },
+            Err(e) => {
+                let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
+                    crate::system::SystemEvent::ToolCallFailed {
+                        request_id: ctx.request_id,
+                        parent_id: ctx.parent_id,
+                        call_id: ctx.call_id.to_string(),
+                        error: e.to_string(),
+                    },
+                ));
             }
-        }
+        },
         "apply_code_edit" => {
             match GatCodeEdit::deserialize_params(&args_str) {
                 Ok(params) => match GatCodeEdit::execute(params, ctx.clone()).await {
@@ -432,21 +383,9 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                 }
             }
         }
-        "get_file_metadata" => {
-            match GetFileMetadataTool::deserialize_params(&args_str) {
-                Ok(params) => match GetFileMetadataTool::execute(params, ctx.clone()).await {
-                    Ok(ToolResult { content }) => GetFileMetadataTool::emit_completed(&ctx, content),
-                    Err(e) => {
-                        let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                            crate::system::SystemEvent::ToolCallFailed {
-                                request_id: ctx.request_id,
-                                parent_id: ctx.parent_id,
-                                call_id: ctx.call_id.to_string(),
-                                error: e.to_string(),
-                            },
-                        ));
-                    }
-                },
+        "get_file_metadata" => match GetFileMetadata::deserialize_params(&args_str) {
+            Ok(params) => match GetFileMetadata::execute(params, ctx.clone()).await {
+                Ok(ToolResult { content }) => GetFileMetadata::emit_completed(&ctx, content),
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                         crate::system::SystemEvent::ToolCallFailed {
@@ -457,8 +396,18 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                         },
                     ));
                 }
+            },
+            Err(e) => {
+                let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
+                    crate::system::SystemEvent::ToolCallFailed {
+                        request_id: ctx.request_id,
+                        parent_id: ctx.parent_id,
+                        call_id: ctx.call_id.to_string(),
+                        error: e.to_string(),
+                    },
+                ));
             }
-        }
+        },
         other => {
             let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                 crate::system::SystemEvent::ToolCallFailed {
@@ -474,15 +423,15 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
     use super::*;
+    use std::borrow::Cow;
     use std::sync::Arc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     #[test]
     fn function_marker_roundtrip() {
         let fm = FunctionMarker;
-        let v = serde_json::to_value(&fm).expect("serialize");
+        let v = serde_json::to_value(fm).expect("serialize");
         assert_eq!(v, serde_json::Value::String("function".to_string()));
 
         let de: FunctionMarker = serde_json::from_value(v).expect("deserialize 'function'");
@@ -493,7 +442,10 @@ mod tests {
 
     #[test]
     fn tool_name_as_str_mappings() {
-        assert_eq!(ToolName::RequestCodeContext.as_str(), "request_code_context");
+        assert_eq!(
+            ToolName::RequestCodeContext.as_str(),
+            "request_code_context"
+        );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
         assert_eq!(ToolName::GetFileMetadata.as_str(), "get_file_metadata");
     }
@@ -511,8 +463,14 @@ mod tests {
         let v = serde_json::to_value(&def).expect("serialize");
         let obj = v.as_object().expect("obj");
         assert_eq!(obj.get("type").and_then(|v| v.as_str()), Some("function"));
-        let f = obj.get("function").and_then(|f| f.as_object()).expect("function obj");
-        assert_eq!(f.get("name").and_then(|n| n.as_str()), Some("apply_code_edit"));
+        let f = obj
+            .get("function")
+            .and_then(|f| f.as_object())
+            .expect("function obj");
+        assert_eq!(
+            f.get("name").and_then(|n| n.as_str()),
+            Some("apply_code_edit")
+        );
         assert!(f.contains_key("parameters"));
     }
 
@@ -542,7 +500,10 @@ mod tests {
         let tc = ToolCall {
             call_id: Cow::Borrowed("test-call"),
             call_type: FunctionMarker,
-            function: FunctionCall { name: ToolName::GetFileMetadata, arguments: &args },
+            function: FunctionCall {
+                name: ToolName::GetFileMetadata,
+                arguments: &args,
+            },
         };
 
         let mut rx = event_bus.realtime_tx.subscribe();
@@ -552,7 +513,11 @@ mod tests {
         let got = timeout(Duration::from_secs(1), async move {
             loop {
                 match rx.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted { call_id, content, .. })) => {
+                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        call_id,
+                        content,
+                        ..
+                    })) => {
                         if call_id == ctx.call_id.to_string() {
                             break Some(content);
                         }

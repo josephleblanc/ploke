@@ -7,21 +7,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// GetFileMetadata tool: fetches file existence, size, modified time, and tracking hash.
-pub struct GetFileMetadataTool {
+pub struct GetFileMetadata {
     pub state: Arc<crate::app_state::AppState>,
     pub event_bus: Arc<EventBus>,
     /// Parent message id for correlation in the conversation tree.
     pub parent_id: Uuid,
-}
-
-impl super::ToolFromParams for GetFileMetadataTool {
-    fn build(params: &crate::rag::utils::ToolCallParams) -> Self {
-        Self {
-            state: Arc::clone(&params.state),
-            event_bus: Arc::clone(&params.event_bus),
-            parent_id: params.parent_id,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -39,95 +29,7 @@ lazy_static::lazy_static! {
             }
         },
         "required": ["file_path"],
-        "additionalProperties": false
     });
-}
-
-impl Tool for GetFileMetadataTool {
-    const NAME: &'static str = "get_file_metadata";
-    const DESCRIPTION: &'static str = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.";
-
-    type Params = GetFileMetadataInput;
-    type Output = GetFileMetadataResult;
-
-    async fn run(self, p: Self::Params) -> Result<Self::Output, ploke_error::Error> {
-        use crate::rag::tools::get_file_metadata_tool;
-        use crate::rag::utils::ToolCallParams;
-
-        // Subscribe before dispatching to avoid missing fast responses
-        let mut rx = self.event_bus.realtime_tx.subscribe();
-
-        let request_id = Uuid::new_v4();
-        let call_id = Uuid::new_v4().to_string();
-        let args = serde_json::json!({ "file_path": p.file_path });
-        let params = ToolCallParams {
-            state: Arc::clone(&self.state),
-            event_bus: Arc::clone(&self.event_bus),
-            request_id,
-            parent_id: self.parent_id,
-            name: Self::NAME.to_string(),
-            arguments: args,
-            call_id: call_id.clone(),
-        };
-        get_file_metadata_tool(params).await;
-
-        let wait = async {
-            loop {
-                match rx.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                        request_id: rid,
-                        call_id: cid,
-                        content,
-                        ..
-                    })) if rid == request_id && cid == call_id => {
-                        break Ok(content);
-                    }
-                    Ok(AppEvent::System(SystemEvent::ToolCallFailed {
-                        request_id: rid,
-                        call_id: cid,
-                        error,
-                        ..
-                    })) if rid == request_id && cid == call_id => {
-                        break Err(error);
-                    }
-                    Ok(_) => { /* ignore unrelated */ }
-                    Err(e) => break Err(format!("Event channel error: {}", e)),
-                }
-            }
-        };
-
-        match tokio::time::timeout(std::time::Duration::from_secs(5), wait).await {
-            Ok(Ok(content)) => match serde_json::from_str::<GetFileMetadataResult>(&content) {
-                Ok(res) => Ok(res),
-                Err(e) => Err(ploke_error::Error::Internal(
-                    ploke_error::InternalError::CompilerError(format!(
-                        "Failed to deserialize GetFileMetadataResult: {}",
-                        e
-                    )),
-                )),
-            },
-            Ok(Err(err)) => Err(ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(err),
-            )),
-            Err(_) => Err(ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(
-                    "Timed out waiting for get_file_metadata result".to_string(),
-                ),
-            )),
-        }
-    }
-
-    fn schema() -> &'static serde_json::Value {
-        GET_FILE_METADATA_PARAMETERS.deref()
-    }
-
-    fn tool_def() -> ToolFunctionDef {
-        ToolFunctionDef {
-            name: ToolName::GetFileMetadata,
-            description: ToolDescr::GetFileMetadata,
-            parameters: <GetFileMetadataTool as super::Tool>::schema().clone(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -136,9 +38,10 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn tool_def_serializes_expected_shape() {
-        let def = <GetFileMetadataTool as Tool>::tool_def();
+    fn tool_def_serializes_expected_shape() -> color_eyre::Result<()> {
+        let def = <GetFileMetadata as Tool>::tool_def();
         let v = serde_json::to_value(&def).expect("serialize");
+        eprintln!("{}", serde_json::to_string_pretty(&v)?);
         let func = v.as_object().expect("def obj");
         assert_eq!(
             func.get("name").and_then(|n| n.as_str()),
@@ -153,38 +56,7 @@ mod tests {
             .and_then(|r| r.as_array())
             .expect("req arr");
         assert!(req.iter().any(|s| s.as_str() == Some("file_path")));
-    }
-
-    #[tokio::test]
-    async fn run_happy_path_tempfile() {
-        use std::fs;
-
-        let state = Arc::new(crate::test_utils::mock::create_mock_app_state());
-        let event_bus = Arc::new(crate::EventBus::new(
-            crate::event_bus::EventBusCaps::default(),
-        ));
-
-        let tmp = std::env::temp_dir().join(format!("get_meta_{}.txt", Uuid::new_v4()));
-        fs::write(&tmp, b"hello").expect("write tmp");
-
-        let tool = GetFileMetadataTool {
-            state,
-            event_bus,
-            parent_id: Uuid::new_v4(),
-        };
-        let res = super::Tool::run(
-            tool,
-            GetFileMetadataInput {
-                file_path: tmp.display().to_string(),
-            },
-        )
-        .await
-        .expect("run ok");
-        assert!(res.ok);
-        assert!(res.exists);
-        assert_eq!(res.byte_len, 5);
-        assert_eq!(res.file_path, tmp.display().to_string());
-        assert_eq!(res.tracking_hash.len(), 36);
+        Ok(())
     }
 }
 
@@ -202,7 +74,7 @@ pub struct GetFileMetadataParamsOwned {
     pub file_path: String,
 }
 
-impl super::GatTool for GetFileMetadataTool {
+impl super::Tool for GetFileMetadata {
     type Output = GetFileMetadataResult;
     type OwnedParams = GetFileMetadataParamsOwned;
     type Params<'de> = GetFileMetadataParams<'de>;
@@ -288,17 +160,20 @@ mod gat_tests {
     #[test]
     fn params_deserialize_and_into_owned() {
         let raw = r#"{"file_path":"/tmp/somefile.txt"}"#;
-        let params = GetFileMetadataTool::deserialize_params(raw).expect("parse");
+        let params = GetFileMetadata::deserialize_params(raw).expect("parse");
         assert_eq!(params.file_path.as_ref(), "/tmp/somefile.txt");
-        let owned = GetFileMetadataTool::into_owned(&params);
+        let owned = GetFileMetadata::into_owned(&params);
         assert_eq!(owned.file_path, "/tmp/somefile.txt");
     }
 
     #[test]
     fn name_desc_and_schema_present() {
-        assert!(matches!(GetFileMetadataTool::name(), ToolName::GetFileMetadata));
-        assert!(matches!(GetFileMetadataTool::description(), ToolDescr::GetFileMetadata));
-        let schema = <GetFileMetadataTool as super::GatTool>::schema();
+        assert!(matches!(GetFileMetadata::name(), ToolName::GetFileMetadata));
+        assert!(matches!(
+            GetFileMetadata::description(),
+            ToolDescr::GetFileMetadata
+        ));
+        let schema = <GetFileMetadata as super::Tool>::schema();
         let props = schema
             .as_object()
             .and_then(|o| o.get("properties"))
@@ -323,8 +198,10 @@ mod gat_tests {
         let tmp = std::env::temp_dir().join(format!("get_meta_gat_{}.txt", Uuid::new_v4()));
         std::fs::write(&tmp, b"hello").expect("write tmp");
 
-        let params = GetFileMetadataParams { file_path: Cow::Owned(tmp.display().to_string()) };
-        let out = GetFileMetadataTool::execute(params, ctx).await.expect("ok");
+        let params = GetFileMetadataParams {
+            file_path: Cow::Owned(tmp.display().to_string()),
+        };
+        let out = GetFileMetadata::execute(params, ctx).await.expect("ok");
         let parsed: GetFileMetadataResult = serde_json::from_str(&out.content).expect("json");
         assert!(parsed.ok);
         assert!(parsed.exists);
@@ -345,8 +222,37 @@ mod gat_tests {
             parent_id: Uuid::new_v4(),
             call_id: Arc::<str>::from("get-meta-test-missing"),
         };
-        let params = GetFileMetadataParams { file_path: Cow::Borrowed("/no/such/file/and/path.txt") };
-        let out = GetFileMetadataTool::execute(params, ctx).await;
+        let params = GetFileMetadataParams {
+            file_path: Cow::Borrowed("/no/such/file/and/path.txt"),
+        };
+        let out = GetFileMetadata::execute(params, ctx).await;
         assert!(out.is_err());
+    }
+
+    #[test]
+    fn de_to_value() -> color_eyre::Result<()> {
+        let def = <GetFileMetadata as Tool>::tool_def();
+        let v = serde_json::to_value(&def).expect("serialize");
+        eprintln!("{}", serde_json::to_string_pretty(&v)?);
+        let expected = json!({
+            "type": "function",
+            "function": {
+                "name": "get_file_metadata",
+                "description": "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute path to the target file."
+                        }
+                    },
+                    "required": ["file_path"]
+                }
+            }
+        });
+        assert_eq!(expected, v);
+
+        Ok(())
     }
 }

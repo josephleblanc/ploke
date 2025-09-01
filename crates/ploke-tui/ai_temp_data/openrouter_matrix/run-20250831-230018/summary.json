@@ -1,0 +1,56 @@
+[
+  {
+    "attempts": 1,
+    "avg_ms": 546.0,
+    "model": "qwen/qwen-2.5-7b-instruct",
+    "ok": 0,
+    "prompt_id": "implicit_tool_hint",
+    "tool_calls": 0,
+    "tool_choice": "function"
+  },
+  {
+    "attempts": 1,
+    "avg_ms": 647.0,
+    "model": "qwen/qwen-2.5-7b-instruct",
+    "ok": 0,
+    "prompt_id": "force_tool_simple",
+    "tool_calls": 0,
+    "tool_choice": "auto"
+  },
+  {
+    "attempts": 1,
+    "avg_ms": 4496.0,
+    "model": "deepseek/deepseek-chat-v3.1",
+    "ok": 1,
+    "prompt_id": "force_tool_simple",
+    "tool_calls": 0,
+    "tool_choice": "auto"
+  },
+  {
+    "attempts": 1,
+    "avg_ms": 3562.0,
+    "model": "deepseek/deepseek-chat-v3.1",
+    "ok": 1,
+    "prompt_id": "force_tool_simple",
+    "tool_calls": 0,
+    "tool_choice": "function"
+  },
+  {
+    "attempts": 1,
+    "avg_ms": 418.0,
+    "model": "qwen/qwen-2.5-7b-instruct",
+    "ok": 0,
+    "prompt_id": "implicit_tool_hint",
+    "tool_calls": 0,
+    "tool_choice": "auto"
+  },
+  {
+    "attempts": 1,
+    "avg_ms": 457.0,
+    "model": "qwen/qwen-2.5-7b-instruct",
+    "ok": 0,
+    "prompt_id": "force_tool_simple",
+    "tool_calls": 0,
+    "tool_choice": "function"
+  }
+]

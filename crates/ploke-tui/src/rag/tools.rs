@@ -318,7 +318,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 let mod_path_owned: Vec<String> = if mods_slice.is_empty() {
                     vec!["crate".to_string()]
                 } else {
-                    let mut segs = mods_slice
+                    let segs = mods_slice
                         .split("::")
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
@@ -361,7 +361,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             return;
                         }
                     };
-                    let mut filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
+                    let filtered: Vec<ploke_core::io_types::EmbeddingData> = cands
                         .into_iter()
                         .filter(|ed| {
                             if ed.file_path == abs_path {

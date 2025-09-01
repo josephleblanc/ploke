@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "content": "I understand you'd like me to fetch context about lib.rs. However, I need a bit more information to help you effectively. \n\nCould you please specify what you're looking for in lib.rs? For example:\n- Are you looking for a specific function, struct, or module?\n- Do you need information about a particular feature or implementation?\n- Or are you looking for general structure and organization of the lib.rs file?\n\nOnce you provide a search term or topic, I can use the request_code_context tool to fetch the relevant code context for you.",
+        "reasoning": null,
+        "refusal": null,
+        "role": "assistant"
+      },
+      "native_finish_reason": "stop"
+    }
+  ],
+  "created": 1756681204,
+  "id": "gen-1756681204-DI6Dwh6ksiP7XAdfofW1",
+  "model": "deepseek/deepseek-chat-v3.1",
+  "object": "chat.completion",
+  "provider": "Chutes",
+  "usage": {
+    "completion_tokens": 112,
+    "prompt_tokens": 237,
+    "prompt_tokens_details": null,
+    "total_tokens": 349
+  }
+}

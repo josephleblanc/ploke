@@ -1,0 +1,29 @@
+{
+  "id": "xai",
+  "context_length": 256000,
+  "pricing": {
+    "completion": 1.5e-6,
+    "image": 0.0,
+    "input_cache_read": 2e-8,
+    "internal_reasoning": 0.0,
+    "prompt": 2e-7,
+    "request": 0.0,
+    "web_search": 0.0
+  },
+  "capabilities": null,
+  "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "structured_outputs",
+    "response_format",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "seed",
+    "logprobs",
+    "top_logprobs",
+    "stop"
+  ]
+}

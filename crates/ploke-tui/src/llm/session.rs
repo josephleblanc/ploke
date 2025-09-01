@@ -184,14 +184,13 @@ impl<'a> RequestSession<'a> {
 
                         match await_tool_result(rx, request_id, &call_id, self.params.tool_timeout_secs.unwrap_or(30)).await {
                             Ok(content) => {
-                                self.messages.push(RequestMessage::new_system(content));
+                                // Add proper tool message with the required tool_call_id
+                                self.messages.push(RequestMessage::new_tool(content, call_id.clone()));
                             }
                             Err(err) => {
-                                let sys_msg = format!("Tool call '{}' failed: {}.", name, err);
-                                self.messages.push(RequestMessage::new_system(sys_msg));
-                                self.messages.push(RequestMessage::new_system(
-                                    json!({"ok": false, "error": err}).to_string(),
-                                ));
+                                // For tool errors, we still use a tool message but with error content
+                                let error_content = json!({"ok": false, "error": err}).to_string();
+                                self.messages.push(RequestMessage::new_tool(error_content, call_id.clone()));
                             }
                         }
                     }
