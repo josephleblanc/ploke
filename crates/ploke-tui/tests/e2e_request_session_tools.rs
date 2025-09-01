@@ -9,22 +9,15 @@
 //! 4. Error handling and fallback scenarios
 //! 5. Timeout and retry behavior
 
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::timeout;
 use uuid::Uuid;
-use serde_json::json;
+use reqwest::Client;
 
 // Simplified test - complex test_utils removed for now
 
-use ploke_tui::llm::session::RequestSession;
-use ploke_tui::llm::{RequestMessage, Role, LLMParameters};
 use ploke_tui::tools::{Tool, ToolDefinition};
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::tools::get_file_metadata::GetFileMetadata;
-use ploke_tui::user_config::{ModelConfig, ProviderType};
-use ploke_tui::test_harness::{openrouter_env, default_headers};
-use reqwest::Client;
+use ploke_tui::test_harness::openrouter_env;
 
 /// Test RequestSession with tool-enabled conversation cycle
 #[tokio::test]
@@ -47,8 +40,8 @@ async fn e2e_request_session_with_tool_integration() {
     ];
     
     assert_eq!(tools.len(), 2);
-    assert_eq!(tools[0].name.as_str(), "request_code_context");
-    assert_eq!(tools[1].name.as_str(), "get_file_metadata");
+    assert_eq!(tools[0].function.name.as_str(), "request_code_context");
+    assert_eq!(tools[1].function.name.as_str(), "get_file_metadata");
 }
 
 /// Test RequestSession error handling with invalid tool calls

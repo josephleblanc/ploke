@@ -14,8 +14,7 @@ use harness::AppHarness;
 /// Test placeholder for tool execution latency benchmarks
 #[tokio::test]
 async fn e2e_tool_execution_latency() {
-    let harness = AppHarness::new().await
-        .expect("Failed to create harness");
+    let harness = AppHarness::spawn().await;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Tool execution latency test placeholder");
@@ -26,8 +25,7 @@ async fn e2e_tool_execution_latency() {
 /// Test placeholder for concurrent tool execution performance
 #[tokio::test]
 async fn e2e_concurrent_tool_performance() {
-    let harness = AppHarness::new().await
-        .expect("Failed to create harness");
+    let harness = AppHarness::spawn().await;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Concurrent tool performance test placeholder");
@@ -38,8 +36,7 @@ async fn e2e_concurrent_tool_performance() {
 /// Test placeholder for memory usage validation
 #[tokio::test]
 async fn e2e_memory_usage_validation() {
-    let harness = AppHarness::new().await
-        .expect("Failed to create harness");
+    let harness = AppHarness::spawn().await;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Memory usage validation test placeholder");
@@ -50,8 +47,7 @@ async fn e2e_memory_usage_validation() {
 /// Test placeholder for resource cleanup verification
 #[tokio::test]
 async fn e2e_resource_cleanup_verification() {
-    let harness = AppHarness::new().await
-        .expect("Failed to create harness");
+    let harness = AppHarness::spawn().await;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Resource cleanup verification test placeholder");
