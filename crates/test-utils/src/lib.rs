@@ -191,7 +191,9 @@ pub fn setup_db_full_embeddings(
 }
 
 use fmt::format::FmtSpan;
+use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::util::TryInitError;
 use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
 pub fn init_tracing_v2() -> WorkerGuard {
@@ -256,6 +258,44 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with(layer)
         .with(filter)
         .init();
+}
+
+pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<Level>) {
+    let base = base.unwrap_or(Level::ERROR);
+    let base_filter = filter::Targets::new()
+        // .with_target("debug_dup", Level::ERROR)
+        .with_target("ploke", base)
+        .with_target("ploke_tui", base)
+        .with_target("ploke_embed", base)
+        .with_target("ploke-db", base)
+        .with_target("ploke-embed", base)
+        .with_target("ploke-io", base)
+        .with_target("ploke-transform", base)
+        // cozo is verbose, set to Error
+        .with_target("cozo", Level::ERROR)
+        .with_target(target_name, target_level);
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from("")); // Default to 'info' level
+
+    // File appender with custom timestamp format
+    let log_dir = "test-logs";
+    std::fs::create_dir_all(log_dir).expect("Failed to create logs directory");
+    let file_appender = tracing_appender::rolling::hourly(log_dir, "ploke.log");
+
+    // Also log to stderr so test failures print captured diagnostics without requiring manual file inspection.
+    let console_subscriber = fmt::layer()
+        .with_target(true)
+        .with_level(true)
+        .without_time()
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_ansi(true);
+
+    // Use try_init to avoid panicking if a global subscriber is already set (e.g., across tests)
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(console_subscriber.with_writer(std::io::stderr))
+        .try_init();
 }
 
 // Should return result

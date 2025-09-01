@@ -58,10 +58,13 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## async
 - [ ] Look for opportunities to let things run in the background without `.await`, and then `join` them together. 
 
-### Test Database
-* [ ] Tests for loading database from config file
-  * [ ] Graceful failures
-
+### Tests
+* Database
+  * [ ] Tests for loading database from config file
+    * [ ] Graceful failures
+* `syn_parser`
+  * [ ] Add test for multiple imports renamed as `_` in the same file, as followup to squashed bug
+    - See bug report in `ploke/docs/bugs/squashed.md` under "Duplicate Relation (Sep 1, 2025)"
 ## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
   Missing Rust types:
