@@ -57,12 +57,12 @@ mod tests {
             .get("required")
             .and_then(|r| r.as_array())
             .expect("req arr");
-        assert!(req.iter().any(|s| s.as_str() == Some("search_terms")));
+        assert!(req.iter().any(|s| s.as_str() == Some("search_term")));
         let props = params
             .get("properties")
             .and_then(|p| p.as_object())
             .expect("props obj");
-        assert!(props.contains_key("hint"));
+        assert!(props.contains_key("search_term"));
         Ok(())
     }
 }
@@ -240,16 +240,18 @@ mod gat_tests {
                 "description": "Request additional code context from the repository up to a token budget.",
                 "parameters": {
                     "type": "object",
-                    "search_term": {
-                        "type": "string",
-                        "description": "Search term guide which code guide hybrid semantic search and bm25."
+                    "properties": {
+                        "search_term": {
+                            "type": "string",
+                            "description": "Search term guide which code guide hybrid semantic search and bm25."
+                        },
+                        "token_budget": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Optional maximum tokens of code context to return, sane defaults"
+                        }
                     },
-                    "token_budget": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Optional maximum tokens of code context to return, sane defaults"
-                    },
-                    "required": ["search_term"],
+                    "required": ["search_term"]
                 }
             }
         });

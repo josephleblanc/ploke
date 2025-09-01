@@ -12,7 +12,6 @@ mod harness;
 use harness::AppHarness;
 
 use ploke_tui::llm::{RequestMessage, Role};
-use ploke_tui::llm::openrouter::model_provider::CompReq;
 use ploke_tui::tools::Tool;
 use ploke_tui::tools::get_file_metadata::GetFileMetadata;
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
@@ -170,7 +169,9 @@ async fn e2e_completion_request_serialization_compliance() {
     assert_eq!(req_json["model"], "openai/gpt-4o-mini");
     assert!(req_json["tools"].is_array(), "tools should be array");
     assert_eq!(req_json["max_tokens"], 1000);
-    assert_eq!(req_json["temperature"], 0.1);
+    // Temperature should be approximately 0.1 (accounting for f32 precision)
+    let temp = req_json["temperature"].as_f64().expect("temperature should be number");
+    assert!((temp - 0.1).abs() < 0.01, "temperature should be approximately 0.1, got {}", temp);
     
     // Validate messages structure
     let messages_array = req_json["messages"].as_array().unwrap();
@@ -194,10 +195,7 @@ async fn e2e_completion_request_serialization_compliance() {
 /// Test live API request/response cycle with type validation
 #[tokio::test]
 async fn e2e_live_api_request_response_types() {
-    let Some(env) = openrouter_env() else {
-        println!("Skipping live API test: OPENROUTER_API_KEY not set");
-        return;
-    };
+    let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
     let harness = AppHarness::spawn().await;
     
@@ -243,8 +241,9 @@ async fn e2e_live_api_request_response_types() {
     
     // Make actual API call using reqwest
     let client = reqwest::Client::new();
+    let api_url = format!("{}/chat/completions", env.url.as_str().trim_end_matches('/'));
     let response = client
-        .post(env.url.clone())
+        .post(&api_url)
         .header("Authorization", format!("Bearer {}", env.key))
         .header("HTTP-Referer", "https://github.com/your-repo")
         .header("X-Title", "ploke-tui-e2e-tests")
@@ -283,10 +282,7 @@ async fn e2e_live_api_request_response_types() {
 /// Test live API tool call request/response cycle with type validation
 #[tokio::test]
 async fn e2e_live_api_tool_call_types() {
-    let Some(env) = openrouter_env() else {
-        println!("Skipping live API tool test: OPENROUTER_API_KEY not set");
-        return;
-    };
+    let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
     let harness = AppHarness::spawn().await;
     
@@ -339,8 +335,9 @@ async fn e2e_live_api_tool_call_types() {
     
     // Make API call
     let client = reqwest::Client::new();
+    let api_url = format!("{}/chat/completions", env.url.as_str().trim_end_matches('/'));
     let response = client
-        .post(env.url.clone())
+        .post(&api_url)
         .header("Authorization", format!("Bearer {}", env.key))
         .header("HTTP-Referer", "https://github.com/your-repo")
         .header("X-Title", "ploke-tui-e2e-tool-tests")

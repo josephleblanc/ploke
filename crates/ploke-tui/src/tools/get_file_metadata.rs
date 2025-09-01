@@ -43,11 +43,17 @@ mod tests {
         let v = serde_json::to_value(&def).expect("serialize");
         eprintln!("{}", serde_json::to_string_pretty(&v)?);
         let func = v.as_object().expect("def obj");
+        // Tool definition should have the correct OpenRouter structure
         assert_eq!(
-            func.get("name").and_then(|n| n.as_str()),
+            func.get("type").and_then(|t| t.as_str()),
+            Some("function")
+        );
+        let function = func.get("function").and_then(|f| f.as_object()).expect("function obj");
+        assert_eq!(
+            function.get("name").and_then(|n| n.as_str()),
             Some("get_file_metadata")
         );
-        let params = func
+        let params = function
             .get("parameters")
             .and_then(|p| p.as_object())
             .expect("params obj");
