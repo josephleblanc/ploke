@@ -323,7 +323,7 @@ fn show_model_info_async(app: &App) {
                 format!("  Provider type: {:?}", p.provider_type),
                 format!(
                     "  Provider slug: {}",
-                    p.provider_slug.as_deref().unwrap_or("-")
+                    p.provider_slug.map(|ps| ps.to_string()).unwrap_or("-".to_string())
                 ),
                 "".to_string(),
                 "  LLM parameters:".to_string(),

@@ -98,6 +98,10 @@ mod test_utils {
 
     #[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
     pub mod live_api {
+        use std::str::FromStr;
+
+        use ploke_tui::llm::providers::ProviderSlug;
+
         use super::*;
         
         /// Finds a tool-capable model endpoint from a list of candidates
@@ -138,7 +142,7 @@ mod test_utils {
                             .unwrap_or(false)
                     }) {
                         provider.model = model.to_string();
-                        provider.provider_slug = Some(endpoint.id);
+                        provider.provider_slug = Some(ProviderSlug::from_str( &endpoint.id ).expect("endpoint.id"));
                         return Ok(provider);
                     }
                 }

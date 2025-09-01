@@ -295,7 +295,7 @@ async fn persist_tool_requested(
     let (model, provider_slug) = {
         let cfg = state.config.read().await;
         if let Some(p) = cfg.model_registry.get_active_model_config() {
-            (p.model.clone(), p.provider_slug.clone())
+            (p.model.clone(), p.provider_slug.map(|ps| ps.to_string()))
         } else {
             ("".to_string(), None)
         }

@@ -46,7 +46,7 @@ pub fn init_tracing() -> WorkerGuard {
 }
 
 pub fn init_tracing_tests(level: Level) -> WorkerGuard {
-    let env_filter = format!("{},ploke_db=error,cozo=error,tokenizer=error", level);
+    let env_filter = format!("{},ploke_db=error,cozo=error,tokenizer=error,candle_transformers=error,hyper_util=error", level);
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&env_filter)); // Default to 'info' level
 

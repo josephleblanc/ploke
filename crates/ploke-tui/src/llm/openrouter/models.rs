@@ -477,7 +477,7 @@ use std::path::PathBuf;
             return Ok(());
         }
         // Build a known endpoint URL and use ProvEnd to fetch raw
-        use crate::llm::openrouter::providers::Author;
+        use crate::llm::openrouter::providers::ProviderSlug;
         let rt = Runtime::new().unwrap();
         let v = rt.block_on(async move {
             let pe = ProvEnd { author: std::sync::Arc::<str>::from("deepseek"), model: std::sync::Arc::<str>::from("deepseek-chat-v3.1") };

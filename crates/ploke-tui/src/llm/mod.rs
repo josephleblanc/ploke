@@ -29,6 +29,8 @@ use crate::{
 
 // API and Config
 
+use self::providers::ProviderSlug;
+
 use super::*;
 
 #[derive(Serialize, Debug, Clone, Default, Deserialize)]
@@ -38,7 +40,7 @@ pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub deny: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub order: Vec<String>,
+    pub order: Vec<ProviderSlug>,
     // Gate to enforce provider-side parameter availability (per docs)
     pub require_parameters: bool,
 }

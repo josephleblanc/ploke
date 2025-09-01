@@ -14,13 +14,11 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-
 use super::{
-    LLMParameters, LlmError, RequestMessage, 
-    cap_messages_by_chars, cap_messages_by_tokens,
+    LLMParameters, LlmError, RequestMessage, cap_messages_by_chars, cap_messages_by_tokens,
 };
-use crate::tools::ToolDefinition;
 use crate::EventBus;
+use crate::tools::ToolDefinition;
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
 pub struct RequestSession<'a> {
@@ -156,64 +154,92 @@ impl<'a> RequestSession<'a> {
 
             if let Some(choice) = response_body.choices.into_iter().next() {
                 match choice {
-                    Choices::NonStreamingChoice { finish_reason, native_finish_reason, message, error } => {
+                    Choices::NonStreamingChoice {
+                        finish_reason,
+                        native_finish_reason,
+                        message,
+                        error,
+                    } => {
+                        let resp_msg = message;
 
-                let resp_msg = message;
+                        if let Some(tool_calls) = resp_msg.tool_calls {
+                            self.attempts += 1;
 
-                if let Some(tool_calls) = resp_msg.tool_calls {
-                    self.attempts += 1;
+                            // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
+                            // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
+                            for call in tool_calls {
+                                let call_id = call.call_id.to_string();
+                                let name = call.function.name.as_str().to_string();
+                                let arguments =
+                                    serde_json::from_str::<Value>(call.function.arguments)
+                                        .unwrap_or(json!({ "raw": call.function.arguments }));
 
-                    // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                    // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
-                    for call in tool_calls {
-                        let call_id = call.call_id.to_string();
-                        let name = call.function.name.as_str().to_string();
-                        let arguments = serde_json::from_str::<Value>(call.function.arguments)
-                            .unwrap_or(json!({ "raw": call.function.arguments }));
+                                // Subscribe before sending
+                                let rx = self.event_bus.realtime_tx.subscribe();
+                                let request_id = Uuid::new_v4();
+                                self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
+                                    request_id,
+                                    parent_id: self.parent_id,
+                                    name: name.clone(),
+                                    arguments: arguments.clone(),
+                                    call_id: call_id.clone(),
+                                }));
 
-                        // Subscribe before sending
-                        let rx = self.event_bus.realtime_tx.subscribe();
-                        let request_id = Uuid::new_v4();
-                        self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
-                            request_id,
-                            parent_id: self.parent_id,
-                            name: name.clone(),
-                            arguments: arguments.clone(),
-                            call_id: call_id.clone(),
-                        }));
-
-                        match await_tool_result(rx, request_id, &call_id, self.params.tool_timeout_secs.unwrap_or(30)).await {
-                            Ok(content) => {
-                                // Add proper tool message with the required tool_call_id
-                                self.messages.push(RequestMessage::new_tool(content, call_id.clone()));
+                                match await_tool_result(
+                                    rx,
+                                    request_id,
+                                    &call_id,
+                                    self.params.tool_timeout_secs.unwrap_or(30),
+                                )
+                                .await
+                                {
+                                    Ok(content) => {
+                                        // Add proper tool message with the required tool_call_id
+                                        self.messages.push(RequestMessage::new_tool(
+                                            content,
+                                            call_id.clone(),
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        // For tool errors, we still use a tool message but with error content
+                                        let error_content =
+                                            json!({"ok": false, "error": err}).to_string();
+                                        self.messages.push(RequestMessage::new_tool(
+                                            error_content,
+                                            call_id.clone(),
+                                        ));
+                                    }
+                                }
                             }
-                            Err(err) => {
-                                // For tool errors, we still use a tool message but with error content
-                                let error_content = json!({"ok": false, "error": err}).to_string();
-                                self.messages.push(RequestMessage::new_tool(error_content, call_id.clone()));
+                            if self.attempts > max_retries {
+                                return Err(LlmError::Unknown(format!(
+                                    "Tool call retries exhausted after {} attempt(s)",
+                                    self.attempts
+                                )));
                             }
+
+                            // Continue loop to let the model observe tool outputs and respond
+                            continue;
                         }
-                    }
-                    if self.attempts > max_retries {
-                        return Err(LlmError::Unknown(format!(
-                            "Tool call retries exhausted after {} attempt(s)",
-                            self.attempts
-                        )));
-                    }
 
-                    // Continue loop to let the model observe tool outputs and respond
-                    continue;
+                        // No tool calls; finalize content
+                        let content = resp_msg
+                            .content
+                            .unwrap_or_else(|| "No content received from API.".to_string());
+                        return Ok(content);
+                    }
+                    Choices::NonChatChoice {
+                        finish_reason,
+                        text,
+                        error,
+                    } => todo!(),
+                    Choices::StreamingChoice {
+                        finish_reason,
+                        native_finish_reason,
+                        delta,
+                        error,
+                    } => todo!(),
                 }
-
-                // No tool calls; finalize content
-                let content = resp_msg
-                    .content
-                    .unwrap_or_else(|| "No content received from API.".to_string());
-                return Ok(content);
-                    },
-                        Choices::NonChatChoice { finish_reason, text, error } => todo!(),
-                        Choices::StreamingChoice { finish_reason, native_finish_reason, delta, error } => todo!(),
-                    }
             } else {
                 return Err(LlmError::Deserialization(
                     "No choices in response".to_string(),
@@ -309,7 +335,7 @@ pub fn build_comp_req<'a>(
     require_parameters: bool,
 ) -> crate::llm::openrouter::model_provider::CompReq<'a> {
     use crate::llm::openrouter::model_provider::{CompReq, ToolChoice};
-    tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_comp_req");
+    tracing::debug!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_comp_req");
     CompReq {
         messages: Some(messages),
         prompt: None,
@@ -320,7 +346,11 @@ pub fn build_comp_req<'a>(
         max_tokens: params.max_tokens,
         temperature: params.temperature,
         tools: if use_tools { tools } else { None },
-        tool_choice: if use_tools { Some(ToolChoice::Auto) } else { None },
+        tool_choice: if use_tools {
+            Some(ToolChoice::Auto)
+        } else {
+            None
+        },
         seed: None,
         top_p: params.top_p,
         top_k: None,
@@ -335,11 +365,16 @@ pub fn build_comp_req<'a>(
         models: None,
         route: None,
         provider: if use_tools {
-            provider.provider_slug.as_ref().and_then(|slug| {
-                let s = slug.trim();
-                if s.is_empty() || s == "-" { None } else { Some(crate::llm::ProviderPreferences { order: vec![s.to_string()], require_parameters, ..Default::default() }) }
-            })
-        } else { None },
+            provider
+                .provider_slug
+                .map(|p| crate::llm::ProviderPreferences {
+                    order: vec![p],
+                    require_parameters,
+                    ..Default::default()
+                })
+        } else {
+            None
+        },
         user: None,
     }
 }
@@ -353,7 +388,14 @@ pub fn build_openai_request<'a>(
     use_tools: bool,
     require_parameters: bool,
 ) -> crate::llm::openrouter::model_provider::CompReq<'a> {
-    build_comp_req(provider, messages, params, tools, use_tools, require_parameters)
+    build_comp_req(
+        provider,
+        messages,
+        params,
+        tools,
+        use_tools,
+        require_parameters,
+    )
 }
 
 /// Await a correlated ToolCall completion/failure on the realtime broadcast channel.
@@ -434,12 +476,16 @@ mod tests {
 
     use tokio::time::sleep;
 
+    use crate::llm::providers::ProviderSlug;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
     use crate::llm::Role;
-    use crate::tools::{ToolDefinition as StrongToolDefinition, ToolFunctionDef as StrongToolFunctionDef, FunctionMarker as StrongFunctionMarker, ToolName, ToolDescr};
     use crate::system::SystemEvent;
+    use crate::tools::{
+        FunctionMarker as StrongFunctionMarker, ToolDefinition as StrongToolDefinition, ToolDescr,
+        ToolFunctionDef as StrongToolFunctionDef, ToolName,
+    };
     use uuid::Uuid;
 
     // Simple test logger with a rolling window of 3 files in target/test-logs
@@ -559,7 +605,7 @@ mod tests {
         let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
-            provider_slug: Some("openrouter".to_string()),
+            provider_slug: None,
             api_key_env: None,
             base_url: crate::user_config::OPENROUTER_URL.to_string(),
             model: "qwen/qwen-2.5-72b-instruct".to_string(),
@@ -603,7 +649,10 @@ mod tests {
         let payload = super::build_comp_req(&provider, messages, &params, None, false, false);
         let v = serde_json::to_value(&payload).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.get("model").and_then(|m| m.as_str()), Some("qwen/qwen-2.5-72b-instruct"));
+        assert_eq!(
+            obj.get("model").and_then(|m| m.as_str()),
+            Some("qwen/qwen-2.5-72b-instruct")
+        );
         assert_eq!(obj.get("stream").and_then(|b| b.as_bool()), Some(false));
         let msgs = obj.get("messages").and_then(|m| m.as_array()).unwrap();
         assert_eq!(msgs.len(), 2);
@@ -618,7 +667,7 @@ mod tests {
         let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
-            provider_slug: Some("openrouter".to_string()),
+            provider_slug: None,
             api_key_env: None,
             base_url: crate::user_config::OPENROUTER_URL.to_string(),
             model: "qwen/qwen-2.5-72b-instruct".to_string(),
@@ -679,12 +728,18 @@ mod tests {
             super::build_comp_req(&provider, messages, &params, Some(vec![tool]), true, true);
         let v = serde_json::to_value(&payload).unwrap();
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.get("model").and_then(|m| m.as_str()), Some("qwen/qwen-2.5-72b-instruct"));
+        assert_eq!(
+            obj.get("model").and_then(|m| m.as_str()),
+            Some("qwen/qwen-2.5-72b-instruct")
+        );
         let tools = obj.get("tools").and_then(|t| t.as_array()).unwrap();
         assert_eq!(tools.len(), 1);
         let t0 = tools[0].as_object().unwrap();
         assert_eq!(t0.get("type").and_then(|s| s.as_str()), Some("function"));
         let func = t0.get("function").and_then(|f| f.as_object()).unwrap();
-        assert_eq!(func.get("name").and_then(|s| s.as_str()), Some("request_code_context"));
+        assert_eq!(
+            func.get("name").and_then(|s| s.as_str()),
+            Some("request_code_context")
+        );
     }
 }

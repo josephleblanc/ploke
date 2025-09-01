@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use ploke_tui::llm::{model_provider::ToolChoiceFunction, providers::ProviderSlug};
+
 #[test]
 fn comp_req_with_tools_and_provider_prefs() {
     use ploke_tui::llm::session::build_comp_req;
@@ -12,10 +14,10 @@ fn comp_req_with_tools_and_provider_prefs() {
     let provider = ModelConfig {
         id: "unit-provider".into(),
         api_key: "sk-test".into(),
-        provider_slug: Some("openai".into()),
+        provider_slug: Some(ProviderSlug::openai),
         api_key_env: None,
         base_url: "https://openrouter.ai/api/v1".into(),
-        model: "qwen/qwen-2.5-7b-instruct".into(),
+        model: "openai/gpt-5".into(),
         display_name: None,
         provider_type: ProviderType::OpenRouter,
         llm_params: None,
@@ -31,7 +33,7 @@ fn comp_req_with_tools_and_provider_prefs() {
     let v = serde_json::to_value(&req).expect("json");
     // messages exist and model is set
     assert!(v.get("messages").is_some());
-    assert_eq!(v.get("model").and_then(|x| x.as_str()), Some("qwen/qwen-2.5-7b-instruct"));
+    assert_eq!(v.get("model").and_then(|x| x.as_str()), Some("openai/gpt-5"));
     // tools present, tool_choice auto by default
     assert!(v.get("tools").and_then(|t| t.as_array()).is_some());
     assert_eq!(v.get("tool_choice").and_then(|x| x.as_str()), Some("auto"));
@@ -48,7 +50,7 @@ fn comp_req_with_tools_and_provider_prefs() {
 
     // force function tool_choice and ensure shape
     let mut req2 = req;
-    req2.tool_choice = Some(ToolChoice::Function { r#type: FunctionMarker, function: ploke_tui::llm::openrouter::model_provider::ToolChoiceFunction { name: "request_code_context".into() } });
+    req2.tool_choice = Some(ToolChoice::Function { r#type: FunctionMarker, function: ToolChoiceFunction { name: "request_code_context".into() } });
     let v2 = serde_json::to_value(&req2).unwrap();
     let tc = v2.get("tool_choice").and_then(|x| x.as_object()).expect("function tool_choice");
     assert_eq!(tc.get("type").and_then(|x| x.as_str()), Some("function"));

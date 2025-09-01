@@ -6,6 +6,8 @@
 //! the OpenRouter API specification as documented in:
 //! crates/ploke-tui/docs/openrouter/request_structure.md
 
+use ploke_tui::llm::providers::ProviderSlug;
+use ploke_tui::tracing_setup::init_tracing_tests;
 use serde_json::{json, Value};
 
 mod harness;
@@ -16,6 +18,7 @@ use ploke_tui::tools::Tool;
 use ploke_tui::tools::get_file_metadata::GetFileMetadata;
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::test_harness::openrouter_env;
+use tracing::Level;
 
 /// Test that our RequestMessage serialization matches OpenRouter specification exactly
 #[tokio::test]
@@ -143,7 +146,7 @@ async fn e2e_completion_request_serialization_compliance() {
     let provider = ModelConfig {
         id: "test-compliance".to_string(),
         api_key: "test-key".to_string(),
-        provider_slug: Some("openai".to_string()),
+        provider_slug: Some( ProviderSlug::openai ),
         api_key_env: None,
         base_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
         model: "openai/gpt-4o-mini".to_string(),
@@ -221,7 +224,7 @@ async fn e2e_live_api_request_response_types() {
     let provider = ModelConfig {
         id: "test-live-api".to_string(),
         api_key: env.key.clone(),
-        provider_slug: Some("openai".to_string()),
+        provider_slug: Some( ProviderSlug::openai ),
         api_key_env: None,
         base_url: env.url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
@@ -282,6 +285,7 @@ async fn e2e_live_api_request_response_types() {
 /// Test live API tool call request/response cycle with type validation
 #[tokio::test]
 async fn e2e_live_api_tool_call_types() {
+    let _t = init_tracing_tests(Level::DEBUG);
     let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
     let harness = AppHarness::spawn().await;
@@ -315,7 +319,7 @@ async fn e2e_live_api_tool_call_types() {
     let provider = ModelConfig {
         id: "test-live-tools".to_string(),
         api_key: env.key.clone(),
-        provider_slug: Some("openai".to_string()),
+        provider_slug: Some( ProviderSlug::openai ),
         api_key_env: None,
         base_url: env.url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),

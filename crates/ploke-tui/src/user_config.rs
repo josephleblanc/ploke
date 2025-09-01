@@ -57,7 +57,7 @@ use ploke_embed::{
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{self, openrouter_catalog, provider_endpoints::{SupportedParameters, SupportsTools}, RequestMessage};
+use crate::llm::{self, openrouter_catalog, provider_endpoints::{SupportedParameters, SupportsTools}, providers::ProviderSlug, RequestMessage};
 
 lazy_static! {
     pub static ref OPENROUTER_URL: Url = 
@@ -247,7 +247,7 @@ pub struct ModelConfig {
     pub api_key: String,
     /// Optional: upstream provider slug (for OpenRouter routing preferences)
     #[serde(default)]
-    pub provider_slug: Option<String>,
+    pub provider_slug: Option<ProviderSlug>,
     /// Optional: provider-specific environment variable name for API key
     #[serde(default)]
     pub api_key_env: Option<String>,

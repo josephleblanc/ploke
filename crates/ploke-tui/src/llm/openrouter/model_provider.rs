@@ -73,7 +73,7 @@ use crate::llm::ProviderPreferences;
 use crate::llm::openrouter::provider_endpoints::ProvEnd;
 use crate::llm::openrouter::provider_endpoints::SupportedParameters;
 use crate::llm::openrouter_catalog::ModelPricing;
-use crate::llm::providers::{Author, ProviderName as ProviderNameEnum};
+use crate::llm::providers::{ProviderSlug, ProviderName as ProviderNameEnum};
 
 /// Raw model id as returned by APIs (may contain a variant suffix after ':').
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -106,20 +106,20 @@ impl CanonicalSlug {
         let s: &str = self.0.as_str();
         let (author, model) = s.split_once('/')?;
         // Validate author via enum mapping, but store as slug string for routing stability.
-        let _ = Author::from_str(author).ok()?;
+        let _ = ProviderSlug::from_str(author).ok()?;
         Some(ProvEnd { author: Arc::<str>::from(author), model: Arc::<str>::from(model) })
     }
 }
 
 /// Provider slug (preferred stable identifier for routing).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub struct ProviderSlug(pub String);
-impl ProviderSlug {
+pub struct ProviderSlugStr(pub String);
+impl ProviderSlugStr {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
-    pub fn to_author(&self) -> Option<Author> {
-        Author::from_str(self.0.as_str()).ok()
+    pub fn to_author(&self) -> Option<ProviderSlug> {
+        ProviderSlug::from_str(self.0.as_str()).ok()
     }
 }
 
@@ -137,14 +137,14 @@ impl ProviderNameStr {
             .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
             .collect::<String>()
     }
-    /// Attempt conversion via enum ProviderName, then map to Author; fall back to normalized slug parse.
-    pub fn to_author(&self) -> Option<Author> {
+    /// Attempt conversion via enum ProviderName, then map to ProviderSlug; fall back to normalized slug parse.
+    pub fn to_author(&self) -> Option<ProviderSlug> {
         // Try precise enum parse via serde
         let try_enum = serde_json::from_str::<ProviderNameEnum>(&format!("\"{}\"", self.0)).ok();
         if let Some(pn) = try_enum {
             return Some(pn.to_slug());
         }
-        Author::from_str(&self.normalized_slug()).ok()
+        ProviderSlug::from_str(&self.normalized_slug()).ok()
     }
 }
 
@@ -164,7 +164,7 @@ pub struct Endpoint {
     pub provider_id: ProviderIdRaw,
     /// Optional explicit slug or name if provided.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_slug: Option<ProviderSlug>,
+    pub provider_slug: Option<ProviderSlugStr>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_name: Option<ProviderNameStr>,
 
@@ -210,7 +210,7 @@ impl<'de> serde::Deserialize<'de> for Endpoint {
                 A: MapAccess<'de>,
             {
                 let mut provider_id: Option<ProviderIdRaw> = None;
-                let mut provider_slug: Option<ProviderSlug> = None;
+                let mut provider_slug: Option<ProviderSlugStr> = None;
                 let mut provider_name: Option<ProviderNameStr> = None;
                 let mut context_length: Option<u32> = None;
                 let mut max_completion_tokens: Option<u32> = None;
@@ -231,7 +231,7 @@ impl<'de> serde::Deserialize<'de> for Endpoint {
                         }
                         "provider_slug" | "slug" => {
                             let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            provider_slug = Some(ProviderSlug(s.clone()));
+                            provider_slug = Some(ProviderSlugStr(s.clone()));
                             if provider_id.is_none() {
                                 provider_id = Some(ProviderIdRaw(s));
                             }

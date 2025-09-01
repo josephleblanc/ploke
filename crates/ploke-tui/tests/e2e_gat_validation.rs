@@ -171,6 +171,7 @@ async fn e2e_live_gat_tool_call_with_persistence() {
     
     let tools = vec![GetFileMetadata::tool_def()];
     
+    use ploke_tui::llm::providers::ProviderSlug;
     // Build and send request
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
@@ -185,7 +186,7 @@ async fn e2e_live_gat_tool_call_with_persistence() {
     let provider = ModelConfig {
         id: "test-live-gat".to_string(),
         api_key: env.key.clone(),
-        provider_slug: Some("openai".to_string()),
+        provider_slug: Some( ProviderSlug::openai ),
         api_key_env: None,
         base_url: env.url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),

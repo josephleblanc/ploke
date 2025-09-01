@@ -301,7 +301,7 @@ impl std::fmt::Display for ProvEnd {
 pub enum ProvEndParseError {
     NoPathSegments,
     BadPrefix, // not /api/v1/models/...
-    MissingAuthor,
+    MissingProviderSlug,
     MissingModel,
     BadSuffix,        // not .../endpoints
     TrailingSegments, // extra segments beyond expected
@@ -312,7 +312,7 @@ impl std::fmt::Display for ProvEndParseError {
         match self {
             ProvEndParseError::NoPathSegments => write!(f, "URL has no path segments"),
             ProvEndParseError::BadPrefix => write!(f, "expected path to start with /api/v1/models"),
-            ProvEndParseError::MissingAuthor => write!(f, "missing author segment"),
+            ProvEndParseError::MissingProviderSlug => write!(f, "missing author segment"),
             ProvEndParseError::MissingModel => write!(f, "missing model segment"),
             ProvEndParseError::BadSuffix => write!(f, "expected path to end with /endpoints"),
             ProvEndParseError::TrailingSegments => write!(f, "unexpected trailing path segments"),
@@ -335,7 +335,7 @@ impl TryFrom<&Url> for ProvEnd {
         }
 
         // {author}
-        let author_str = segs.next().ok_or(ProvEndParseError::MissingAuthor)?;
+        let author_str = segs.next().ok_or(ProvEndParseError::MissingProviderSlug)?;
 
         // {model}
         let model_str: &str = segs.next().ok_or(ProvEndParseError::MissingModel)?;
@@ -624,7 +624,7 @@ mod tests {
     //         eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
     //         return Ok(());
     //     };
-    //     let prov = ProvEnd { author: crate::llm::providers::Author::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
     //     let v = prov.call_endpoint_raw().await?;
     //     assert!(v.get("data").is_some(), "live response missing data");
     //     Ok(())
@@ -637,7 +637,7 @@ mod tests {
     //         eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
     //         return Ok(());
     //     };
-    //     let prov = ProvEnd { author: crate::llm::providers::Author::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
     //     prov.persist_resp_raw().await?;
     //     let mut dir = ploke_test_utils::workspace_root();
     //     dir.push(MODEL_ENDPOINT_RESP_DIR);
