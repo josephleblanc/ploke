@@ -198,6 +198,13 @@ async fn e2e_conversation_with_tool_errors() -> color_eyre::Result<()> {
 }
 
 /// Test conversation state persistence across tool calls
+/// Inexpensive test: 
+///     - default model `kimi-k2`
+///     - Cost/run ~ $0.001146 with 
+///     - Tokens/run sent ~ 3730
+///     - Tokens/run received ~ 251
+///     - Avg tps 54.15 (reported by OpenRouter dashboard)
+///     - 4 total generation requests
 #[tokio::test]
 async fn e2e_conversation_state_persistence() -> Result<()> {
     let _g = init_tracing_tests(Level::DEBUG);
@@ -249,7 +256,7 @@ async fn e2e_tool_result_conversation_integration() -> color_eyre::Result<()> {
     
     // Create a realistic tool call scenario
     let user_msg_id = harness.add_user_msg("Check the size of Cargo.toml").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
     
     // Simulate successful tool execution with realistic result
     let tool_result = r#"{
@@ -305,7 +312,7 @@ async fn e2e_conversation_context_for_tools() -> color_eyre::Result<()> {
     for msg in &context_msgs {
         let id = harness.add_user_msg(*msg).await;
         msg_ids.push(id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
     
     // Verify conversation context is properly maintained

@@ -318,7 +318,7 @@ mod tests {
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
         let snippet_found = fetch_snippet_containing(db, ordered_node_ids, search_term).await;
 
-        // This assertion documents that dense search *does not* reliably
+        // This assertion documents that dense search does reliably
         // retrieve items whose identifier appears only once in the source.
         assert!(
             snippet_found.is_err(),
