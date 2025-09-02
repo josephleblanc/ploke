@@ -12,7 +12,7 @@
 //! Tests multi-turn conversations with tool usage
 
 use std::time::Duration;
-use ploke_tui::tracing_setup::init_tracing_tests;
+use ploke_tui::tracing_setup::{init_tracing, init_tracing_tests, init_tracing_to_file_ai};
 use tracing::Level;
 use uuid::Uuid;
 
@@ -133,15 +133,16 @@ async fn e2e_tool_execution_event_flow() -> color_eyre::Result<()> {
 /// Test multi-step conversation with sequential tool calls
 #[tokio::test]
 async fn e2e_multi_step_tool_conversation() -> color_eyre::Result<()> {
+    let _g = init_tracing_to_file_ai("e2e_multi_step_tool_conversation");
     let harness = AppHarness::spawn().await?;
     
     // Step 1: User asks for file metadata
     let msg1_id = harness.add_user_msg("Get metadata for Cargo.toml").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
     
     // Step 2: User asks for another file
     let msg2_id = harness.add_user_msg("Now get metadata for README.md").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
     
     // Verify both messages in chat history  
     {
@@ -156,7 +157,9 @@ async fn e2e_multi_step_tool_conversation() -> color_eyre::Result<()> {
         
         // Both messages should exist (chronological order is maintained by the path)
         assert_eq!(msg1.unwrap().content, "Get metadata for Cargo.toml");
-        assert_eq!(msg2.unwrap().content, "Now get metadata for README.md");
+        // NOTE: There is no README.md the file can retrieve, as we only store data parse from Rust
+        // files and Cargo.toml files
+        assert_eq!(msg2.unwrap().content, "Now get metadata for README.md"); 
     }
     
     harness.shutdown().await;
@@ -207,7 +210,7 @@ async fn e2e_conversation_with_tool_errors() -> color_eyre::Result<()> {
 ///     - 4 total generation requests
 #[tokio::test]
 async fn e2e_conversation_state_persistence() -> Result<()> {
-    let _g = init_tracing_tests(Level::DEBUG);
+    let _g = init_tracing_to_file_ai("e2e_conversation_state_persistence");
     let harness = AppHarness::spawn().await?;
     
     // Add multiple messages to build conversation context
@@ -299,6 +302,7 @@ async fn e2e_tool_result_conversation_integration() -> color_eyre::Result<()> {
 /// Test conversation context building for tool calls
 #[tokio::test]
 async fn e2e_conversation_context_for_tools() -> color_eyre::Result<()> {
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
     
     // Build up a conversation with context
@@ -312,7 +316,7 @@ async fn e2e_conversation_context_for_tools() -> color_eyre::Result<()> {
     for msg in &context_msgs {
         let id = harness.add_user_msg(*msg).await;
         msg_ids.push(id);
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
     
     // Verify conversation context is properly maintained

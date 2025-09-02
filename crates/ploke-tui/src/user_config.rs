@@ -268,7 +268,7 @@ pub struct ModelConfig {
     pub llm_params: Option<crate::llm::LLMParameters>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 /// Provider type used for request formatting and env-var resolution.
 pub enum ProviderType {
     #[default]
@@ -472,6 +472,16 @@ impl ModelRegistry {
     pub fn load_api_keys(&mut self) {
         for provider in &mut self.providers {
             provider.api_key = provider.resolve_api_key();
+        }
+    }
+
+    /// Ensure all providers have their API keys loaded from environment variables
+    pub fn set_openrouter_key(&mut self, api_key: &str) {
+        // All Openrouter keys are 73 chars long (including dashes), e.g.
+        // xx-xx-xx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        assert_eq!(api_key.chars().count(), 73);
+        for provider in self.providers.iter_mut().filter(|p| p.provider_type == ProviderType::OpenRouter) {
+            provider.api_key = api_key.to_owned();
         }
     }
 

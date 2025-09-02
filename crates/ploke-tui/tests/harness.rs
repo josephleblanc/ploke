@@ -4,6 +4,7 @@
 
 use lazy_static::lazy_static;
 use ploke_tui::app_state::SystemStatus;
+use ploke_tui::test_harness::openrouter_env;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -60,6 +61,9 @@ impl AppHarness {
         let mut config = UserConfig::default();
         config.registry = config.registry.with_defaults();
         config.registry.load_api_keys();
+        if let Some(openrouter_env) = openrouter_env() {
+            config.registry.set_openrouter_key(&openrouter_env.key)
+        }
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
         // DB from shared fixture
