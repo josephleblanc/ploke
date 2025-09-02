@@ -16,8 +16,8 @@ use ploke_tui::rag::utils::ToolCallParams;
 
 /// Basic test that validates tool execution works
 #[tokio::test]
-async fn e2e_minimal_get_file_metadata() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_minimal_get_file_metadata() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Create a test file
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
@@ -88,4 +88,5 @@ async fn e2e_minimal_get_file_metadata() {
     println!("✓ Basic tool execution test passed");
     
     harness.shutdown().await;
+    Ok(())
 }

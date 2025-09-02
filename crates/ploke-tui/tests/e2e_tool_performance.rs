@@ -13,44 +13,52 @@ use harness::AppHarness;
 
 /// Test placeholder for tool execution latency benchmarks
 #[tokio::test]
-async fn e2e_tool_execution_latency() {
-    let harness = AppHarness::spawn().await;
+#[ignore = "Tool execution latency test placeholder"]
+async fn e2e_tool_execution_latency() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Tool execution latency test placeholder");
     
     harness.shutdown().await;
+    Ok(())
 }
 
 /// Test placeholder for concurrent tool execution performance
 #[tokio::test]
-async fn e2e_concurrent_tool_performance() {
-    let harness = AppHarness::spawn().await;
+#[ignore = "Concurrent tool performance test placeholder"]
+async fn e2e_concurrent_tool_performance() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Concurrent tool performance test placeholder");
     
     harness.shutdown().await;
+    Ok(())
 }
 
 /// Test placeholder for memory usage validation
 #[tokio::test]
-async fn e2e_memory_usage_validation() {
-    let harness = AppHarness::spawn().await;
+#[ignore = "Memory usage validation test placeholder"]
+async fn e2e_memory_usage_validation() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Memory usage validation test placeholder");
     
     harness.shutdown().await;
+    Ok(())
 }
 
 /// Test placeholder for resource cleanup verification
 #[tokio::test]
-async fn e2e_resource_cleanup_verification() {
-    let harness = AppHarness::spawn().await;
+#[ignore = "Resource cleanup verification test placeholder"]
+async fn e2e_resource_cleanup_verification() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Resource cleanup verification test placeholder");
     
     harness.shutdown().await;
+    Ok(())
 }

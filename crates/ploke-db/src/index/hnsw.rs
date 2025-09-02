@@ -28,63 +28,6 @@ pub fn hnsw_all_types(
         results.extend(ty_ret);
     }
     Ok(results)
-    // let mut script = String::from(
-    //     r#"
-    //         ?[id, name, distance] := "#,
-    // );
-    //
-    // let mut rel_params = std::collections::BTreeMap::new();
-    // for (i, ty) in NodeType::primary_nodes().iter().enumerate() {
-    //     let rel = ty.relation_str();
-    //     let k_for_ty = format!("{}{}", rel, k);
-    //     let ef_for_ty = format!("{}{}", rel, ef);
-    //     rel_params.insert(k_for_ty.clone(), DataValue::from(k as i64));
-    //     rel_params.insert(ef_for_ty.clone(), DataValue::from(ef as i64));
-    //     rel_params.insert(rel.to_string(), DataValue::from(rel));
-    //
-    //     let rel_rhs = [
-    //         rel,
-    //         r#"{
-    //                 id,
-    //                 name,
-    //                 embedding: v
-    //             },
-    //             ~"#,
-    //         rel,
-    //         HNSW_SUFFIX,
-    //         r#"{id, name|
-    //                 query: v,
-    //                 k: $"#,
-    //         k_for_ty.as_str(),
-    //         r#",
-    //                 ef: $ef,
-    //                 bind_distance: distance
-    //             }
-    //         "#,
-    //     ]
-    //     .into_iter();
-    //     script.extend(rel_rhs);
-    //     if !i > NodeType::primary_nodes().len() {
-    //         script.push_str(" or ");
-    //     }
-    // }
-    //
-    // let result = run_script_warn(db, &script, rel_params, ScriptMutability::Immutable)?;
-    // let mut results = Vec::new();
-    // use cozo::Vector;
-    // for row in result.rows.into_iter() {
-    //     tracing::trace!("{:?}", row);
-    //     let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-    //         tracing::trace!("{:?}", id);
-    //         id
-    //     } else {
-    //         uuid::Uuid::max()
-    //     };
-    //     let content = row[1].get_str().unwrap().to_string();
-    //     results.push((id, content, row[2].to_owned()));
-    // }
-    //
-    // Ok(results)
 }
 
 pub fn run_script_warn(

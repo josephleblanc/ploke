@@ -12,15 +12,19 @@
 //! Tests multi-turn conversations with tool usage
 
 use std::time::Duration;
+use ploke_tui::tracing_setup::init_tracing_tests;
+use tracing::Level;
 use uuid::Uuid;
 
 mod harness;
 use harness::AppHarness;
 
+use color_eyre::Result;
+
 /// Test basic message addition to chat history
 #[tokio::test]
-async fn e2e_basic_message_addition() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_basic_message_addition() -> Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Check initial state
     {
@@ -58,12 +62,13 @@ async fn e2e_basic_message_addition() {
     
     harness.shutdown().await;
     println!("✓ Basic message addition validated");
+    Ok(())
 }
 
 /// Test a complete conversation cycle with tool usage and response
 #[tokio::test]
-async fn e2e_complete_get_metadata_conversation() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_complete_get_metadata_conversation() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Simulate user asking for file metadata
     let user_message = "Please get the metadata for the file 'Cargo.toml' and tell me about it.";
@@ -91,12 +96,13 @@ async fn e2e_complete_get_metadata_conversation() {
     
     harness.shutdown().await;
     println!("✓ Complete conversation cycle structure validated");
+    Ok(())
 }
 
 /// Test tool execution event flow in conversation context
 #[tokio::test]  
-async fn e2e_tool_execution_event_flow() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_tool_execution_event_flow() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Create a simulated tool call scenario
     let tool_call_id = "test_call_123";
@@ -121,12 +127,13 @@ async fn e2e_tool_execution_event_flow() {
     
     harness.shutdown().await;
     println!("✓ Tool execution event flow validated");
+    Ok(())
 }
 
 /// Test multi-step conversation with sequential tool calls
 #[tokio::test]
-async fn e2e_multi_step_tool_conversation() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_multi_step_tool_conversation() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Step 1: User asks for file metadata
     let msg1_id = harness.add_user_msg("Get metadata for Cargo.toml").await;
@@ -154,12 +161,13 @@ async fn e2e_multi_step_tool_conversation() {
     
     harness.shutdown().await;
     println!("✓ Multi-step conversation structure validated");
+    Ok(())
 }
 
 /// Test conversation with tool error handling
 #[tokio::test]
-async fn e2e_conversation_with_tool_errors() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_conversation_with_tool_errors() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Add a message that would trigger a tool call to a non-existent file
     let msg_id = harness.add_user_msg("Get metadata for /nonexistent/file.txt").await;
@@ -186,12 +194,14 @@ async fn e2e_conversation_with_tool_errors() {
     
     harness.shutdown().await;
     println!("✓ Conversation error handling validated");
+    Ok(())
 }
 
 /// Test conversation state persistence across tool calls
 #[tokio::test]
-async fn e2e_conversation_state_persistence() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_conversation_state_persistence() -> Result<()> {
+    let _g = init_tracing_tests(Level::DEBUG);
+    let harness = AppHarness::spawn().await?;
     
     // Add multiple messages to build conversation context
     let msgs = vec![
@@ -205,7 +215,7 @@ async fn e2e_conversation_state_persistence() {
     for msg in &msgs {
         let id = harness.add_user_msg(*msg).await;
         msg_ids.push(id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
     
     // Verify all messages are preserved in conversation state
@@ -229,12 +239,13 @@ async fn e2e_conversation_state_persistence() {
     
     harness.shutdown().await;
     println!("✓ Conversation state persistence validated");
+    Ok(())
 }
 
 /// Test tool result integration into conversation flow
 #[tokio::test]
-async fn e2e_tool_result_conversation_integration() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_tool_result_conversation_integration() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Create a realistic tool call scenario
     let user_msg_id = harness.add_user_msg("Check the size of Cargo.toml").await;
@@ -275,12 +286,13 @@ async fn e2e_tool_result_conversation_integration() {
     
     harness.shutdown().await;
     println!("✓ Tool result conversation integration validated");
+    Ok(())
 }
 
 /// Test conversation context building for tool calls
 #[tokio::test]
-async fn e2e_conversation_context_for_tools() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_conversation_context_for_tools() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Build up a conversation with context
     let context_msgs = vec![
@@ -318,4 +330,5 @@ async fn e2e_conversation_context_for_tools() {
     
     harness.shutdown().await;
     println!("✓ Conversation context building validated");
+    Ok(())
 }

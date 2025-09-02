@@ -18,8 +18,8 @@ use harness::AppHarness;
 
 /// Test basic harness setup and teardown
 #[tokio::test]
-async fn e2e_basic_harness_validation() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_basic_harness_validation() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Basic validation that harness components are working  
     {
@@ -30,15 +30,17 @@ async fn e2e_basic_harness_validation() {
     
     harness.shutdown().await;
     println!("✓ Basic harness validation passed");
+    Ok(())
 }
 
 /// Simple tool execution test placeholder
 #[tokio::test]
-async fn e2e_simple_tool_execution() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_simple_tool_execution() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // This test will be expanded as part of the comprehensive E2E testing plan
     println!("✓ Simple tool execution test placeholder");
     
     harness.shutdown().await;
+    Ok(())
 }

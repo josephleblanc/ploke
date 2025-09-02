@@ -191,7 +191,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
     fs::create_dir_all(&out_dir).ok();
     println!("[E2E] Diagnostics directory: {}", out_dir.display());
     // Spawn headless App and subsystems via test harness
-    let h = AppHarness::spawn().await;
+    let h = AppHarness::spawn().await?;
     // Best-effort capability refresh so tools are considered for models that advertise them.
     {
         let mut cfg = h.state.config.write().await;

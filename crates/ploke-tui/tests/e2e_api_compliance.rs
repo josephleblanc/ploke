@@ -110,8 +110,8 @@ async fn e2e_tool_definition_serialization_compliance() {
 
 /// Test CompReq (CompletionRequest) serialization matches OpenRouter specification
 #[tokio::test]
-async fn e2e_completion_request_serialization_compliance() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_completion_request_serialization_compliance() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Create a realistic CompReq with tools
     let messages = vec![
@@ -193,14 +193,15 @@ async fn e2e_completion_request_serialization_compliance() {
     
     harness.shutdown().await;
     println!("✓ CompReq serialization matches OpenRouter specification");
+    Ok(())
 }
 
 /// Test live API request/response cycle with type validation
 #[tokio::test]
-async fn e2e_live_api_request_response_types() {
+async fn e2e_live_api_request_response_types() -> color_eyre::Result<()> {
     let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
-    let harness = AppHarness::spawn().await;
+    let harness = AppHarness::spawn().await?;
     
     // Create a simple request without tools first
     let messages = vec![
@@ -280,15 +281,16 @@ async fn e2e_live_api_request_response_types() {
     
     harness.shutdown().await;
     println!("✓ Live API request/response types validated successfully");
+    Ok(())
 }
 
 /// Test live API tool call request/response cycle with type validation
 #[tokio::test]
-async fn e2e_live_api_tool_call_types() {
+async fn e2e_live_api_tool_call_types() -> color_eyre::Result<()> {
     let _t = init_tracing_tests(Level::DEBUG);
     let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
-    let harness = AppHarness::spawn().await;
+    let harness = AppHarness::spawn().await?;
     
     // Create a request that should trigger tool use
     let messages = vec![
@@ -387,4 +389,5 @@ async fn e2e_live_api_tool_call_types() {
     }
     
     harness.shutdown().await;
+    Ok(())
 }

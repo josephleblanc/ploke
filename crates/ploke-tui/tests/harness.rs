@@ -55,7 +55,7 @@ pub struct AppHarness {
 
 impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
-    pub async fn spawn() -> Self {
+    pub async fn spawn() -> color_eyre::Result<Self> {
         // Config + registry
         let mut config = UserConfig::default();
         config.registry = config.registry.with_defaults();
@@ -172,13 +172,14 @@ impl AppHarness {
                 .await;
         });
 
-        AppHarness {
+        let harness = AppHarness {
             state,
             event_bus,
             cmd_tx,
             input_tx,
             app_task,
-        }
+        };
+        Ok(harness)
     }
 
     /// Submit a realistic user message and kick the RAG pipeline, returning the new message id.

@@ -35,8 +35,8 @@ fn create_test_artifact_dir(test_name: &str) -> PathBuf {
 
 /// Test GAT zero-copy deserialization for GetFileMetadata tool
 #[tokio::test]
-async fn e2e_gat_get_file_metadata_zero_copy() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_gat_get_file_metadata_zero_copy() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Test zero-copy deserialization with borrowed string
     let json_args = r#"{"file_path": "/home/test/README.md"}"#;
@@ -57,12 +57,13 @@ async fn e2e_gat_get_file_metadata_zero_copy() {
     
     harness.shutdown().await;
     println!("✓ GAT zero-copy deserialization validated for GetFileMetadata");
+    Ok(())
 }
 
 /// Test GAT system for RequestCodeContext tool with complex parameters
 #[tokio::test]
-async fn e2e_gat_request_code_context_complex() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_gat_request_code_context_complex() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Test parameter structure (note: RequestCodeContext uses hint, not search_term)
     let json_args = json!({
@@ -105,12 +106,13 @@ async fn e2e_gat_request_code_context_complex() {
     
     harness.shutdown().await;
     println!("✓ GAT system validated for RequestCodeContext with complex parameters");
+    Ok(())
 }
 
 /// Test ApplyCodeEdit GAT system with edit validation
 #[tokio::test]
-async fn e2e_gat_apply_code_edit_validation() {
-    let harness = AppHarness::spawn().await;
+async fn e2e_gat_apply_code_edit_validation() -> color_eyre::Result<()> {
+    let harness = AppHarness::spawn().await?;
     
     // Test complex edit structure
     let json_args = json!({
@@ -143,14 +145,15 @@ async fn e2e_gat_apply_code_edit_validation() {
     
     harness.shutdown().await;
     println!("✓ GAT system validated for CodeEdit with complex nested structures");
+    Ok(())
 }
 
 /// Test live API tool call with JSON persistence for verification
 #[cfg(feature = "live_api_tests")]
 #[tokio::test]
-async fn e2e_live_gat_tool_call_with_persistence() {
+async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
     let env = openrouter_env().expect("OPENROUTER_API_KEY required for live GAT validation");
-    let harness = AppHarness::spawn().await;
+    let harness = AppHarness::spawn().await?;
     
     // Create artifact directory for this test
     let artifact_dir = create_test_artifact_dir("live_gat_tool_call");
@@ -374,6 +377,7 @@ async fn e2e_live_gat_tool_call_with_persistence() {
     }
     
     harness.shutdown().await;
+    Ok(())
 }
 
 /// Test GAT deserialization with various JSON inputs
