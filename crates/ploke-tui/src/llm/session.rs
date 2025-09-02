@@ -425,49 +425,46 @@ pub async fn await_tool_result(
     let _enter = span.enter();
     tracing::debug!("Awaiting tool result");
     let wait = async {
-        // AI: change this to a while let AI!
-        loop {
-            match rx.recv().await {
-                Ok(AppEvent::LlmTool(ToolEvent::Completed {
+        while let Ok(event) = rx.recv().await {
+            match event {
+                AppEvent::LlmTool(ToolEvent::Completed {
                     request_id: rid,
                     call_id: cid,
                     content,
                     ..
-                })) if rid == request_id && cid == call_id => {
+                }) if rid == request_id && cid == call_id => {
                     break Ok(content);
                 }
-                Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id: rid,
                     call_id: cid,
                     content,
                     ..
-                })) if rid == request_id && cid == call_id => {
+                }) if rid == request_id && cid == call_id => {
                     break Ok(content);
                 }
-                Ok(AppEvent::LlmTool(ToolEvent::Failed {
+                AppEvent::LlmTool(ToolEvent::Failed {
                     request_id: rid,
                     call_id: cid,
                     error,
                     ..
-                })) if rid == request_id && cid == call_id => {
+                }) if rid == request_id && cid == call_id => {
                     break Err(error);
                 }
-                Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,
                     call_id: cid,
                     error,
                     ..
-                })) if rid == request_id && cid == call_id => {
+                }) if rid == request_id && cid == call_id => {
                     break Err(error);
                 }
-                Ok(_) => {
+                _ => {
                     // unrelated event; keep waiting
-                }
-                Err(e) => {
-                    break Err(format!("Event channel error: {}", e));
                 }
             }
         }
+        Err(format!("Event channel error: channel closed"))
     };
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), wait).await {
