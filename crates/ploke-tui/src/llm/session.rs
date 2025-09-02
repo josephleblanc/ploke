@@ -132,7 +132,7 @@ impl<'a> RequestSession<'a> {
                 .text()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
-            tracing::debug!("raw body: {}", body);
+            tracing::trace!("raw body: {}", body);
 
             // Providers sometimes put errors inside a 200 body
             if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -148,8 +148,6 @@ impl<'a> RequestSession<'a> {
                     });
                 }
             }
-
-            tracing::trace!("raw body response to request: {:#?}", body);
 
             // Emit API response for test harness validation BEFORE deserialization
             #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
@@ -178,7 +176,8 @@ impl<'a> RequestSession<'a> {
                         // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
                         for call in tool_calls {
                             let call_id = ArcStr::from(call.call_id.as_ref()); // first and only byte copy
-                            let name = call.function.name.as_str().to_string();
+                            // Avoid unnecessary String allocation - keep as &str until needed
+                            let name_str = call.function.name.as_str();
                             let arguments = serde_json::from_str::<Value>(&call.function.arguments)
                                 .unwrap_or(json!({ "raw": call.function.arguments }));
 
@@ -188,8 +187,8 @@ impl<'a> RequestSession<'a> {
                             self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
                                 request_id,
                                 parent_id: self.parent_id,
-                                name: name.clone(),
-                                arguments: arguments.clone(),
+                                name: name_str.to_string(), // Only allocate here when needed
+                                arguments, // transfer ownership
                                 call_id: call_id.clone(),
                             }));
 

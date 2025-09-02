@@ -189,6 +189,120 @@ Our approach prioritizes **extensible, maintainable, and highly performant code*
   - Stack allocation over heap where possible
   - Consider `SmallVec` for small, variable-sized collections
 
+## Performance Optimization Methodology
+
+When optimizing hot paths or addressing allocation issues, follow this systematic methodology to avoid regressions and ensure meaningful improvements.
+
+### Systematic Performance Analysis Process
+
+1. **Map the Complete Data Flow**
+   - Trace values from initial deserialization through final consumption
+   - Document every type conversion: `Type A → method() → Type B → method() → Type C`
+   - Identify where data crosses async boundaries or thread boundaries
+   - Note every allocation, clone, and ownership transfer
+
+2. **Question All Design Constraints**
+   - Don't accept existing APIs as immutable when optimizing
+   - Ask "Why does this structure need `String` when we have an enum?"
+   - Consider whether intermediate representations are necessary
+   - Evaluate if event/message structures can be made more efficient
+
+3. **Follow Ownership Patterns End-to-End**
+   - Track every `.clone()`, especially in loops or hot paths
+   - Identify unnecessary moves vs borrows
+   - Look for places where data is parsed then immediately re-serialized
+   - Check for values that are moved then immediately cloned elsewhere
+
+4. **Holistic vs Incremental Optimization**
+   - Start with end-to-end data flow analysis before making changes
+   - Consider architectural changes alongside micro-optimizations
+   - Don't optimize individual allocations without understanding the larger context
+   - Look for systemic patterns (e.g., "we're converting enums to strings everywhere")
+
+### Performance Anti-Patterns to Avoid
+
+- **Surface-Level Analysis**: Only looking at immediate allocations without tracing data flow
+- **API Constraint Acceptance**: Treating existing structures as unchangeable during optimization
+- **Clone Blindness**: Missing obvious `.clone()` calls while focusing on other allocations
+- **Boundary Ignorance**: Not understanding where data crosses async/thread boundaries
+- **Type Conversion Chains**: Allowing `A → B → C → D` conversions when `A → D` might be possible
+
+### Safe Design Constraint Evolution
+
+**Risk Assessment Framework** - Before considering structural changes, evaluate:
+
+1. **Blast Radius Analysis**
+   ```bash
+   # Find all usages of the structure
+   rg "StructName" --type rust
+   rg "\.field_name" --type rust -A 2 -B 2  # Field access patterns
+   ```
+   - Map every consumer of the data structure
+   - Identify which are hot paths vs cold paths
+   - Note any serialization boundaries (JSON, database, network)
+
+2. **Change Compatibility Assessment**
+   - **Backward Compatible**: Adding optional fields, widening types
+   - **Forward Compatible**: Changing internal representation while preserving interface
+   - **Breaking Changes**: Removing fields, narrowing types, changing semantics
+
+**Safe Change Strategies:**
+
+1. **Gradual Migration Pattern**
+   ```rust
+   // Phase 1: Add new field alongside old
+   pub struct Event {
+       pub name: String,           // Legacy
+       pub name_typed: Option<ToolName>,  // New
+   }
+   
+   // Phase 2: Populate both during transition
+   // Phase 3: Update consumers to use new field
+   // Phase 4: Remove legacy field
+   ```
+
+2. **Feature Flag Protection**
+   ```rust
+   #[cfg(feature = "optimized_events")]
+   pub struct Event { pub name: ToolName }  // New optimized version
+   
+   #[cfg(not(feature = "optimized_events"))]
+   pub struct Event { pub name: String }    // Existing version
+   ```
+
+**Decision Framework** - Make structural changes when:
+- ✅ Performance improvement is measurable (>10% in hot paths)
+- ✅ Change eliminates entire classes of bugs (e.g., invalid state representations)
+- ✅ You have comprehensive test coverage for all consumers
+- ✅ Migration path is clear and reversible
+
+**Avoid structural changes when:**
+- ❌ Improvement is theoretical without measurement
+- ❌ Change affects serialization boundaries without compatibility plan
+- ❌ Consumer code is spread across many modules without clear ownership
+- ❌ No rollback strategy exists
+
+### Optimization Validation
+
+- **Before/After Measurement**: Always benchmark before implementing changes
+- **Correctness First**: Ensure optimizations don't break async boundaries or event semantics
+- **Incremental Changes**: Make one optimization at a time to isolate impact
+- **Test Integration**: Verify that optimizations work across the entire pipeline, not just in isolation
+
+### Code Review Questions for Performance
+
+When reviewing performance-sensitive code, ask:
+- "Can we eliminate this type conversion entirely?"
+- "Why are we cloning this value instead of moving it?"
+- "Does this data structure match how we actually use the data?"
+- "Are we parsing data just to re-serialize it later?"
+- "Could we use static lifetime strings or enums instead of allocated strings?"
+- **Impact Analysis**: All consumers identified and migration planned?
+- **Backwards Compatibility**: Can old code continue working during transition?
+- **Serialization Safety**: JSON/DB schemas remain compatible?
+- **Performance Evidence**: Benchmarks show actual improvement?
+- **Rollback Plan**: Can change be reverted safely if issues arise?
+
 ### Code Style Guidelines
 - Follow standard Rust idioms and conventions
 - Use `Result<T, E>` for error handling, avoid `unwrap()` in production code
@@ -261,3 +375,4 @@ Test fixtures are located in `tests/fixture_crates/` for realistic parsing scena
 **M9: Reliability & ops** - Checkpointing, metrics, resilience  
 **M10: Packaging & docs** - Templates and onboarding
 - Use ArcStr over Arc<str> or String across threads, defined in ploke_core::ArcStr
+- Do not prefer ArcStr over &'static str
