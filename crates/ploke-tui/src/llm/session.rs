@@ -148,97 +148,104 @@ impl<'a> RequestSession<'a> {
                 }
             }
 
-            let response_body: super::OpenAiResponse = serde_json::from_str(&body)
-                .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
             tracing::trace!("raw body response to request: {:#?}", body);
 
+            // Emit API response for test harness validation BEFORE deserialization
+            #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+            {
+                let request_id = uuid::Uuid::new_v4();
+                let _ = self.event_bus.realtime_tx.send(crate::AppEvent::System(
+                    crate::system::SystemEvent::TestHarnessApiResponse {
+                        request_id,
+                        response_body: body.clone(),
+                        model: self.provider.model.clone(),
+                        use_tools,
+                    },
+                ));
+            }
+
+            let response_body: super::OpenAiResponse = serde_json::from_str(&body)
+                .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
+
             if let Some(choice) = response_body.choices.into_iter().next() {
-                match choice {
-                    Choices::NonStreamingChoice {
-                        finish_reason,
-                        native_finish_reason,
-                        message,
-                        error,
-                    } => {
-                        let resp_msg = message;
+                // Handle message-based response (most common)
+                if let Some(resp_msg) = choice.message {
+                    if let Some(tool_calls) = resp_msg.tool_calls {
+                        self.attempts += 1;
 
-                        if let Some(tool_calls) = resp_msg.tool_calls {
-                            self.attempts += 1;
+                        // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
+                        // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
+                        for call in tool_calls {
+                            let call_id = Arc::<str>::from(call.call_id.as_ref()); // first and only byte copy
+                            let name = call.function.name.as_str().to_string();
+                            let arguments = serde_json::from_str::<Value>(&call.function.arguments)
+                                .unwrap_or(json!({ "raw": call.function.arguments }));
 
-                            // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                            // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
-                            for call in tool_calls {
-                                let call_id = call.call_id.to_string();
-                                let name = call.function.name.as_str().to_string();
-                                let arguments =
-                                    serde_json::from_str::<Value>(call.function.arguments)
-                                        .unwrap_or(json!({ "raw": call.function.arguments }));
+                            // Subscribe before sending
+                            let rx = self.event_bus.realtime_tx.subscribe();
+                            let request_id = Uuid::new_v4();
+                            self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
+                                request_id,
+                                parent_id: self.parent_id,
+                                name: name.clone(),
+                                arguments: arguments.clone(),
+                                call_id: call_id.clone(),
+                            }));
 
-                                // Subscribe before sending
-                                let rx = self.event_bus.realtime_tx.subscribe();
-                                let request_id = Uuid::new_v4();
-                                self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
-                                    request_id,
-                                    parent_id: self.parent_id,
-                                    name: name.clone(),
-                                    arguments: arguments.clone(),
-                                    call_id: call_id.clone(),
-                                }));
-
-                                match await_tool_result(
-                                    rx,
-                                    request_id,
-                                    &call_id,
-                                    self.params.tool_timeout_secs.unwrap_or(30),
-                                )
-                                .await
-                                {
-                                    Ok(content) => {
-                                        // Add proper tool message with the required tool_call_id
-                                        self.messages.push(RequestMessage::new_tool(
-                                            content,
-                                            call_id.clone(),
-                                        ));
-                                    }
-                                    Err(err) => {
-                                        // For tool errors, we still use a tool message but with error content
-                                        let error_content =
-                                            json!({"ok": false, "error": err}).to_string();
-                                        self.messages.push(RequestMessage::new_tool(
-                                            error_content,
-                                            call_id.clone(),
-                                        ));
-                                    }
+                            match await_tool_result(
+                                rx,
+                                request_id,
+                                call_id.clone(),
+                                self.params.tool_timeout_secs.unwrap_or(30),
+                            )
+                            .await
+                            {
+                                Ok(content) => {
+                                    // Add proper tool message with the required tool_call_id
+                                    self.messages
+                                        .push(RequestMessage::new_tool(content, call_id.clone()));
+                                }
+                                Err(err) => {
+                                    // For tool errors, we still use a tool message but with error content
+                                    let error_content =
+                                        json!({"ok": false, "error": err}).to_string();
+                                    self.messages.push(RequestMessage::new_tool(
+                                        error_content,
+                                        call_id.clone(),
+                                    ));
                                 }
                             }
-                            if self.attempts > max_retries {
-                                return Err(LlmError::Unknown(format!(
-                                    "Tool call retries exhausted after {} attempt(s)",
-                                    self.attempts
-                                )));
-                            }
-
-                            // Continue loop to let the model observe tool outputs and respond
-                            continue;
+                        }
+                        if self.attempts > max_retries {
+                            return Err(LlmError::Unknown(format!(
+                                "Tool call retries exhausted after {} attempt(s)",
+                                self.attempts
+                            )));
                         }
 
-                        // No tool calls; finalize content
-                        let content = resp_msg
-                            .content
-                            .unwrap_or_else(|| "No content received from API.".to_string());
-                        return Ok(content);
+                        // Continue loop to let the model observe tool outputs and respond
+                        continue;
                     }
-                    Choices::NonChatChoice {
-                        finish_reason,
-                        text,
-                        error,
-                    } => todo!(),
-                    Choices::StreamingChoice {
-                        finish_reason,
-                        native_finish_reason,
-                        delta,
-                        error,
-                    } => todo!(),
+
+                    // No tool calls; finalize content
+                    let content = resp_msg
+                        .content
+                        .unwrap_or_else(|| "No content received from API.".to_string());
+                    return Ok(content);
+                }
+                // Handle text-based response (for non-chat models)
+                else if let Some(text) = choice.text {
+                    return Ok(text);
+                }
+                // Handle streaming delta (shouldn't happen in this context)
+                else if let Some(_delta) = choice.delta {
+                    return Err(LlmError::Deserialization(
+                        "Unexpected streaming response in non-streaming context".to_string(),
+                    ));
+                } else {
+                    return Err(LlmError::Deserialization(
+                        "Choice has no message, text, or delta".to_string(),
+                    ));
                 }
             } else {
                 return Err(LlmError::Deserialization(
@@ -410,7 +417,7 @@ pub fn build_openai_request<'a>(
 pub async fn await_tool_result(
     mut rx: broadcast::Receiver<AppEvent>,
     request_id: Uuid,
-    call_id: &str,
+    call_id: Arc<str>,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let span =
@@ -418,6 +425,7 @@ pub async fn await_tool_result(
     let _enter = span.enter();
     tracing::debug!("Awaiting tool result");
     let wait = async {
+        // AI: change this to a while let AI!
         loop {
             match rx.recv().await {
                 Ok(AppEvent::LlmTool(ToolEvent::Completed {
@@ -476,11 +484,11 @@ mod tests {
 
     use tokio::time::sleep;
 
-    use crate::llm::providers::ProviderSlug;
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
     use crate::llm::Role;
+    use crate::llm::providers::ProviderSlug;
     use crate::system::SystemEvent;
     use crate::tools::{
         FunctionMarker as StrongFunctionMarker, ToolDefinition as StrongToolDefinition, ToolDescr,
@@ -550,7 +558,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = "call-123".to_string();
+        let call_id = Arc::<str>::from("call-123");
         let content = "tool response".to_string();
         let eb = event_bus.clone();
 
@@ -567,7 +575,7 @@ mod tests {
             }));
         });
 
-        let res = await_tool_result(rx, request_id, &call_id, 5).await;
+        let res = await_tool_result(rx, request_id, call_id, 5).await;
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), content);
     }
@@ -577,7 +585,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = "call-err".to_string();
+        let call_id = Arc::<str>::from( "call-err" );
         let error_msg = "something went wrong".to_string();
         let eb = event_bus.clone();
 
@@ -593,7 +601,7 @@ mod tests {
             }));
         });
 
-        let res = await_tool_result(rx, request_id, &call_id, 5).await;
+        let res = await_tool_result(rx, request_id, call_id, 5).await;
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), error_msg);
     }
