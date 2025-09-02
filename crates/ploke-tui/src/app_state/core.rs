@@ -1,4 +1,4 @@
-use ploke_core::TrackingHash;
+use ploke_core::{ArcStr, TrackingHash};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -208,7 +208,7 @@ pub enum DiffPreview {
 pub struct EditProposal {
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
     pub proposed_at_ms: i64,
     pub edits: Vec<ploke_core::WriteSnippetData>,
     pub files: Vec<PathBuf>,

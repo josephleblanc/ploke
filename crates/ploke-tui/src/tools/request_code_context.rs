@@ -215,7 +215,7 @@ mod gat_tests {
             event_bus,
             request_id: Uuid::new_v4(),
             parent_id: Uuid::new_v4(),
-            call_id: Arc::<str>::from("rcctx-test"),
+            call_id: ArcStr::from("rcctx-test"),
         };
         let params = RequestCodeContextParams {
             token_budget: 256,

@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use std::sync::Arc;
+use ploke_core::ArcStr;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -14,7 +15,7 @@ async fn tool_dispatch_malformed_args_emits_failed() {
     let state = ploke_tui::test_harness::get_state().await;
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
     let request_id = Uuid::new_v4();
-    let call_id = Uuid::new_v4().to_string();
+    let call_id = ArcStr::from("test_tool_call:0");
     let mut rx = event_bus.realtime_tx.subscribe();
 
     // Malformed args for get_file_metadata (expects { file_path: string })

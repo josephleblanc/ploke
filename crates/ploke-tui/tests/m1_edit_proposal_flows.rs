@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash};
+use ploke_core::{ArcStr, TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_tui::{
     EventBus,
     app_state::{
@@ -97,7 +97,7 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
 
     let request_id = Uuid::new_v4();
     let parent_id = Uuid::new_v4();
-    let call_id = Uuid::new_v4().to_string();
+    let call_id = ArcStr::from("test_tool_call:0");
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: state.clone(),
@@ -153,7 +153,7 @@ async fn approve_applies_edits_and_updates_status() {
 
     let request_id = Uuid::new_v4();
     let parent_id = Uuid::new_v4();
-    let call_id = Uuid::new_v4().to_string();
+    let call_id = ArcStr::from("test_tool_call:0");
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: state.clone(),
@@ -212,7 +212,7 @@ async fn deny_marks_denied_and_does_not_change_file() {
 
     let request_id = Uuid::new_v4();
     let parent_id = Uuid::new_v4();
-    let call_id = Uuid::new_v4().to_string();
+    let call_id = ArcStr::from("test_tool_call:0");
 
     timeout(Duration::from_secs(30), handle_tool_call_requested(ToolCallParams {
         state: state.clone(),

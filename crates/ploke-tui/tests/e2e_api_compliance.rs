@@ -6,6 +6,7 @@
 //! the OpenRouter API specification as documented in:
 //! crates/ploke-tui/docs/openrouter/request_structure.md
 
+use ploke_core::ArcStr;
 use ploke_tui::llm::providers::ProviderSlug;
 use ploke_tui::tracing_setup::init_tracing_tests;
 use serde_json::{json, Value};
@@ -59,7 +60,7 @@ async fn e2e_request_message_serialization_compliance() {
     // Tool message with required tool_call_id
     let tool_msg = RequestMessage::new_tool(
         json!({"ok": true, "result": "test data"}).to_string(),
-        "call_123".to_string()
+        ArcStr::from( "call_123" )
     );
     let tool_json = serde_json::to_value(&tool_msg).expect("Failed to serialize tool message");
     assert_eq!(tool_json["role"], "tool");

@@ -1,3 +1,4 @@
+use ploke_core::ArcStr;
 use ploke_db::observability::{ObservabilityStore, ToolCallReq, Validity};
 use uuid::Uuid;
 
@@ -6,7 +7,7 @@ fn debug_record_tool_call_requested() {
     let db = ploke_db::Database::init_with_schema().expect("init db schema");
     let req = ToolCallReq {
         request_id: Uuid::new_v4(),
-        call_id: "call-xyz".to_string(),
+        call_id: ArcStr::from( "call-xyz" ),
         parent_id: Uuid::new_v4(),
         model: "gpt-x".to_string(),
         provider_slug: Some("openai".to_string()),

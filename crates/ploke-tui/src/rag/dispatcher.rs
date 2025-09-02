@@ -13,7 +13,7 @@ pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
     tracing::info!(
         request_id = %request_id,
         parent_id = %parent_id,
-        call_id = %call_id,
+        call_id = ?call_id,
         name = %name,
         "handle_tool_call_requested"
     );

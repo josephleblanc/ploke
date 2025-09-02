@@ -1,5 +1,41 @@
 [
   {
+    "id": "deepcogito/cogito-v2-preview-llama-109b-moe",
+    "name": "Cogito V2 Preview Llama 109B",
+    "context_length": 32767,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32767,
+      "max_completion_tokens": null
+    },
+    "pricing": {
+      "completion": 5.9e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1.8e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
     "id": "qwen/qwen3-30b-a3b-thinking-2507",
     "name": "Qwen: Qwen3 30B A3B Thinking 2507",
     "context_length": 262144,
@@ -4259,8 +4295,8 @@
     "providers": null
   },
   {
-    "id": "cohere/command-r-plus-08-2024",
-    "name": "Cohere: Command R+ (08-2024)",
+    "id": "cohere/command-r-08-2024",
+    "name": "Cohere: Command R (08-2024)",
     "context_length": 128000,
     "top_provider": {
       "is_moderated": true,
@@ -4268,10 +4304,10 @@
       "max_completion_tokens": 4000
     },
     "pricing": {
-      "completion": 0.00001,
+      "completion": 6e-7,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 2.5e-6,
+      "prompt": 1.5e-7,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -4292,8 +4328,8 @@
     "providers": null
   },
   {
-    "id": "cohere/command-r-08-2024",
-    "name": "Cohere: Command R (08-2024)",
+    "id": "cohere/command-r-plus-08-2024",
+    "name": "Cohere: Command R+ (08-2024)",
     "context_length": 128000,
     "top_provider": {
       "is_moderated": true,
@@ -4301,10 +4337,10 @@
       "max_completion_tokens": 4000
     },
     "pricing": {
-      "completion": 6e-7,
+      "completion": 0.00001,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 1.5e-7,
+      "prompt": 2.5e-6,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -4429,6 +4465,45 @@
     "providers": null
   },
   {
+    "id": "meta-llama/llama-3.1-405b-instruct",
+    "name": "Meta: Llama 3.1 405B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 8e-7,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 8e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
     "id": "meta-llama/llama-3.1-8b-instruct",
     "name": "Meta: Llama 3.1 8B Instruct",
     "context_length": 131072,
@@ -4507,45 +4582,6 @@
     "providers": null
   },
   {
-    "id": "meta-llama/llama-3.1-405b-instruct",
-    "name": "Meta: Llama 3.1 405B Instruct",
-    "context_length": 32768,
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 32768,
-      "max_completion_tokens": 16384
-    },
-    "pricing": {
-      "completion": 8e-7,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "prompt": 8e-7,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "capabilities": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "min_p",
-      "presence_penalty",
-      "repetition_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_logprobs",
-      "top_p"
-    ],
-    "providers": null
-  },
-  {
     "id": "mistralai/mistral-nemo",
     "name": "Mistral: Mistral Nemo",
     "context_length": 32000,
@@ -4585,8 +4621,8 @@
     "providers": null
   },
   {
-    "id": "openai/gpt-4o-mini",
-    "name": "OpenAI: GPT-4o-mini",
+    "id": "openai/gpt-4o-mini-2024-07-18",
+    "name": "OpenAI: GPT-4o-mini (2024-07-18)",
     "context_length": 128000,
     "top_provider": {
       "is_moderated": true,
@@ -4595,7 +4631,7 @@
     },
     "pricing": {
       "completion": 6e-7,
-      "image": 0.000217,
+      "image": 0.007225,
       "input_cache_read": 7.5e-8,
       "internal_reasoning": 0.0,
       "prompt": 1.5e-7,
@@ -4623,8 +4659,8 @@
     "providers": null
   },
   {
-    "id": "openai/gpt-4o-mini-2024-07-18",
-    "name": "OpenAI: GPT-4o-mini (2024-07-18)",
+    "id": "openai/gpt-4o-mini",
+    "name": "OpenAI: GPT-4o-mini",
     "context_length": 128000,
     "top_provider": {
       "is_moderated": true,
@@ -4633,7 +4669,7 @@
     },
     "pricing": {
       "completion": 6e-7,
-      "image": 0.007225,
+      "image": 0.000217,
       "input_cache_read": 7.5e-8,
       "internal_reasoning": 0.0,
       "prompt": 1.5e-7,
@@ -4692,42 +4728,6 @@
     "providers": null
   },
   {
-    "id": "mistralai/mistral-7b-instruct-v0.3",
-    "name": "Mistral: Mistral 7B Instruct v0.3",
-    "context_length": 32768,
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 32768,
-      "max_completion_tokens": 16384
-    },
-    "pricing": {
-      "completion": 5.4e-8,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "prompt": 2.8e-8,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "capabilities": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "max_tokens",
-      "min_p",
-      "presence_penalty",
-      "repetition_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_p"
-    ],
-    "providers": null
-  },
-  {
     "id": "mistralai/mistral-7b-instruct:free",
     "name": "Mistral: Mistral 7B Instruct (free)",
     "context_length": 32768,
@@ -4765,6 +4765,42 @@
   {
     "id": "mistralai/mistral-7b-instruct",
     "name": "Mistral: Mistral 7B Instruct",
+    "context_length": 32768,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 32768,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "completion": 5.4e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 2.8e-8,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-7b-instruct-v0.3",
+    "name": "Mistral: Mistral 7B Instruct v0.3",
     "context_length": 32768,
     "top_provider": {
       "is_moderated": false,
@@ -4888,6 +4924,43 @@
     "providers": null
   },
   {
+    "id": "openai/gpt-4o-2024-05-13",
+    "name": "OpenAI: GPT-4o (2024-05-13)",
+    "context_length": 128000,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.000015,
+      "image": 0.007225,
+      "internal_reasoning": 0.0,
+      "prompt": 5e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ],
+    "providers": null
+  },
+  {
     "id": "openai/gpt-4o",
     "name": "OpenAI: GPT-4o",
     "context_length": 128000,
@@ -4939,43 +5012,6 @@
       "image": 0.007225,
       "internal_reasoning": 0.0,
       "prompt": 6e-6,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "capabilities": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_logprobs",
-      "top_p",
-      "web_search_options"
-    ],
-    "providers": null
-  },
-  {
-    "id": "openai/gpt-4o-2024-05-13",
-    "name": "OpenAI: GPT-4o (2024-05-13)",
-    "context_length": 128000,
-    "top_provider": {
-      "is_moderated": true,
-      "context_length": 128000,
-      "max_completion_tokens": 4096
-    },
-    "pricing": {
-      "completion": 0.000015,
-      "image": 0.007225,
-      "internal_reasoning": 0.0,
-      "prompt": 5e-6,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -5408,42 +5444,6 @@
     "providers": null
   },
   {
-    "id": "openai/gpt-3.5-turbo-0613",
-    "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
-    "context_length": 4095,
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 4095,
-      "max_completion_tokens": 4096
-    },
-    "pricing": {
-      "completion": 2e-6,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "prompt": 1e-6,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "capabilities": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_logprobs",
-      "top_p"
-    ],
-    "providers": null
-  },
-  {
     "id": "openai/gpt-4-turbo-preview",
     "name": "OpenAI: GPT-4 Turbo Preview",
     "context_length": 128000,
@@ -5480,8 +5480,44 @@
     "providers": null
   },
   {
-    "id": "mistralai/mistral-tiny",
-    "name": "Mistral Tiny",
+    "id": "openai/gpt-3.5-turbo-0613",
+    "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
+    "context_length": 4095,
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 4095,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 1e-6,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "mistralai/mistral-small",
+    "name": "Mistral Small",
     "context_length": 32768,
     "top_provider": {
       "is_moderated": false,
@@ -5489,10 +5525,10 @@
       "max_completion_tokens": null
     },
     "pricing": {
-      "completion": 2.5e-7,
+      "completion": 6e-7,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 2.5e-7,
+      "prompt": 2e-7,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -5513,8 +5549,8 @@
     "providers": null
   },
   {
-    "id": "mistralai/mistral-small",
-    "name": "Mistral Small",
+    "id": "mistralai/mistral-tiny",
+    "name": "Mistral Tiny",
     "context_length": 32768,
     "top_provider": {
       "is_moderated": false,
@@ -5522,10 +5558,10 @@
       "max_completion_tokens": null
     },
     "pricing": {
-      "completion": 6e-7,
+      "completion": 2.5e-7,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 2e-7,
+      "prompt": 2.5e-7,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -5689,42 +5725,6 @@
     "providers": null
   },
   {
-    "id": "openai/gpt-4",
-    "name": "OpenAI: GPT-4",
-    "context_length": 8191,
-    "top_provider": {
-      "is_moderated": true,
-      "context_length": 8191,
-      "max_completion_tokens": 4096
-    },
-    "pricing": {
-      "completion": 0.00006,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "prompt": 0.00003,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "capabilities": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_logprobs",
-      "top_p"
-    ],
-    "providers": null
-  },
-  {
     "id": "openai/gpt-4-0314",
     "name": "OpenAI: GPT-4 (older v0314)",
     "context_length": 8191,
@@ -5774,6 +5774,42 @@
       "image": 0.0,
       "internal_reasoning": 0.0,
       "prompt": 5e-7,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "capabilities": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ],
+    "providers": null
+  },
+  {
+    "id": "openai/gpt-4",
+    "name": "OpenAI: GPT-4",
+    "context_length": 8191,
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 8191,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "completion": 0.00006,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "prompt": 0.00003,
       "request": 0.0,
       "web_search": 0.0
     },

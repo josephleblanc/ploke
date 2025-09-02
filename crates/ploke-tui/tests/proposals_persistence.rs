@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use ploke_core::ArcStr;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig, SystemState};
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
@@ -51,7 +52,7 @@ async fn proposals_save_and_load_roundtrip() {
     let proposal = EditProposal {
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: uuid::Uuid::new_v4().to_string(),
+        call_id: ArcStr::from("test_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],

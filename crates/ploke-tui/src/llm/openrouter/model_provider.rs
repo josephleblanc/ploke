@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::tools::{FunctionMarker, ToolDefinition};
@@ -107,7 +108,7 @@ impl CanonicalSlug {
         let (author, model) = s.split_once('/')?;
         // Validate author via enum mapping, but store as slug string for routing stability.
         let _ = ProviderSlug::from_str(author).ok()?;
-        Some(ProvEnd { author: Arc::<str>::from(author), model: Arc::<str>::from(model) })
+        Some(ProvEnd { author: ArcStr::from(author), model: ArcStr::from(model) })
     }
 }
 
@@ -692,7 +693,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_fetch_smoke() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: Arc::<str>::from("deepseek"), model: Arc::<str>::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
         let v = pe.call_endpoint_raw().await?;
         assert!(v.get("data").is_some(), "response missing 'data' key");
         Ok(())
@@ -702,7 +703,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: Arc::<str>::from("deepseek"), model: Arc::<str>::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
         let v = pe.call_endpoint_raw().await?;
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned");
@@ -718,7 +719,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_qwen() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: Arc::<str>::from("deepseek"), model: Arc::<str>::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
         let v = pe.call_endpoint_raw().await?;
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned for qwen");
@@ -741,7 +742,7 @@ mod tests {
         ];
         let mut successes = 0usize;
         for (author, model) in candidates {
-            let pe = ProvEnd { author: Arc::<str>::from(*author), model: Arc::<str>::from(*model) };
+            let pe = ProvEnd { author: ArcStr::from(*author), model: ArcStr::from(*model) };
             match pe.call_endpoint_raw().await {
                 Ok(v) => {
                     if v.get("data").is_some() {
@@ -766,7 +767,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: Arc::<str>::from("deepseek"), model: Arc::<str>::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
         let raw = pe.call_endpoint_raw().await?;
 
         let typed: EndpointsResponse = serde_json::from_value(raw.clone())?;

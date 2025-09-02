@@ -33,6 +33,8 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 pub use test_utils::mock;
 
+use ploke_core::ArcStr;
+
 pub mod test_harness;
 
 use app::App;
@@ -307,7 +309,7 @@ pub mod system {
     use serde_json::Value;
     use uuid::Uuid;
 
-    use crate::UiError;
+    use crate::{ArcStr, UiError};
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub enum SystemEvent {
@@ -325,18 +327,18 @@ pub mod system {
             parent_id: Uuid,
             name: String,
             arguments: Value,
-            call_id: Arc<str>,
+            call_id: ArcStr,
         },
         ToolCallCompleted {
             request_id: Uuid,
             parent_id: Uuid,
-            call_id: Arc<str>,
+            call_id: ArcStr,
             content: String,
         },
         ToolCallFailed {
             request_id: Uuid,
             parent_id: Uuid,
-            call_id: Arc<str>,
+            call_id: ArcStr,
             error: String,
         },
         ReadQuery {

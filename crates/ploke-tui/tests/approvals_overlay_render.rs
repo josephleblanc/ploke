@@ -25,6 +25,7 @@
 
 use std::sync::Arc;
 
+use ploke_core::ArcStr;
 use ratatui::{backend::TestBackend, Terminal};
 use ratatui::layout::Rect;
 
@@ -95,7 +96,7 @@ async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<A
             guard.insert(id, EditProposal {
                 request_id: id,
                 parent_id: uuid::Uuid::new_v4(),
-                call_id: format!("call-{i}"),
+                call_id: ArcStr::from( format!("call-{i}") ),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
                 files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],

@@ -15,7 +15,7 @@ use crate::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use ploke_core::rag_types::{ContextPart, ContextPartKind, Modality};
+use ploke_core::{rag_types::{ContextPart, ContextPartKind, Modality}, ArcStr};
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -146,7 +146,7 @@ pub struct Ctx {
     pub event_bus: Arc<crate::EventBus>,
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
 }
 
 impl Clone for Ctx {
@@ -166,7 +166,7 @@ pub struct ToolCallRecord {
     pub name: ToolName,
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
     pub params_json: Arc<String>,
     pub output_json: Arc<String>,
     pub created_at_ms: i64,
@@ -478,7 +478,7 @@ mod tests {
         // Prepare ctx
         let state = Arc::new(create_mock_app_state());
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let call_id = Arc::<str>::from("test-call");
+        let call_id = ArcStr::from("test-call");
         let ctx = Ctx {
             state: Arc::clone(&state),
             event_bus: Arc::clone(&event_bus),

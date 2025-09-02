@@ -5,6 +5,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -32,7 +33,7 @@ pub struct ConversationTurn {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct ToolCallReq {
     pub request_id: uuid::Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
     pub parent_id: uuid::Uuid,
     pub model: String,
     pub provider_slug: Option<String>,
@@ -73,7 +74,7 @@ impl ToolStatus {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct ToolCallDone {
     pub request_id: uuid::Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
     pub ended_at: Validity,
     pub latency_ms: i64,
     pub outcome_json: Option<String>, // on completed
@@ -599,7 +600,7 @@ impl ObservabilityStore for Database {
 
         let req = ToolCallReq {
             request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-            call_id: Arc::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
+            call_id: ArcStr::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
             parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
 
             model: to_string(&row[*hid.get("model").unwrap()])?,
@@ -694,7 +695,7 @@ impl ObservabilityStore for Database {
         for row in rows.rows {
             let req = ToolCallReq {
                 request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-                call_id: Arc::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
+                call_id: ArcStr::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
                 parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
 
                 model: to_string(&row[*hid.get("model").unwrap()])?,

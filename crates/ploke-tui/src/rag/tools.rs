@@ -8,7 +8,7 @@ crate, when we will have a real namespace uuid. */
 use ploke_core::rag_types::{
     ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
 };
-use ploke_core::{PROJECT_NAMESPACE_UUID, WriteSnippetData};
+use ploke_core::{ArcStr, WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
@@ -77,7 +77,7 @@ impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
 pub struct GetContextInput {
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
 
     pub arguments: serde_json::Value,
 }
@@ -581,7 +581,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
 
     // Emit SysInfo summary with how to approve/deny
     let summary = format!(
-        r#"Staged code edits (request_id: {request_id}, call_id: {call_id}).
+        r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
 Files:
     {0}
 
@@ -651,7 +651,7 @@ pub async fn handle_request_context(tool_call_params: ToolCallParams) -> SystemE
         call_id,
     } = tool_call_params.clone();
 
-    let span = tracing::info_span!("handle_request_context", request_id = %request_id, parent_id = %parent_id, call_id = %call_id);
+    let span = tracing::info_span!("handle_request_context", request_id = %request_id, parent_id = %parent_id, call_id = ?call_id);
     let _enter = span.enter();
     tracing::debug!(arguments = ?arguments, "handle_request_context called");
 

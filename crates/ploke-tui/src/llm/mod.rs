@@ -75,7 +75,7 @@ pub struct RequestMessage {
     pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<Arc<str>>,
+    pub tool_call_id: Option<ArcStr>,
 }
 
 // TODO: Add Role::Tool
@@ -119,7 +119,7 @@ impl RequestMessage {
         }
     }
 
-    pub fn new_tool(content: String, tool_call_id: Arc<str>) -> Self {
+    pub fn new_tool(content: String, tool_call_id: ArcStr) -> Self {
         Self {
             role: Role::Tool,
             content,
@@ -417,7 +417,7 @@ pub async fn llm_manager(
                     parent_id,
                     name,
                     arguments,
-                    call_id: Arc::from(call_id),
+                    call_id: ArcStr::from(call_id),
                 }));
             }
             AppEvent::LlmTool(ToolEvent::Requested {
@@ -430,7 +430,7 @@ pub async fn llm_manager(
                 tracing::info!(
                     request_id = %request_id,
                     parent_id = %parent_id,
-                    call_id = %call_id,
+                    call_id = ?call_id,
                     tool = %name,
                     "Dispatching ToolEvent::Requested in LLM manager"
                 );
@@ -965,18 +965,18 @@ pub enum ToolEvent {
         parent_id: Uuid,
         name: String,
         arguments: Value,
-        call_id: Arc<str>,
+        call_id: ArcStr,
     },
     Completed {
         request_id: Uuid,
         parent_id: Uuid,
-        call_id: Arc<str>,
+        call_id: ArcStr,
         content: String,
     },
     Failed {
         request_id: Uuid,
         parent_id: Uuid,
-        call_id: Arc<str>,
+        call_id: ArcStr,
         error: String,
     },
 }
@@ -988,7 +988,7 @@ async fn spawn_tool_call(
     parent_id: Uuid,
     name: String,
     arguments: Value,
-    call_id: Arc<str>,
+    call_id: ArcStr,
 ) {
     let params = ToolCallParams {
         state,
@@ -1051,7 +1051,7 @@ pub enum Event {
         parent_id: Uuid,
         name: String,
         arguments: Value,
-        // TODO: Change to Option<Arc<str>> and propogate through tool returns
+        // TODO: Change to Option<ArcStr> and propogate through tool returns
         call_id: Option<String>,
     },
 
@@ -1416,7 +1416,7 @@ mod tests {
     #[test]
     fn test_tool_message_constructors() {
         // Test new_tool constructor
-        let call_123 = Arc::<str>::from("call_123");
+        let call_123 = ArcStr::from("call_123");
         let tool_msg = RequestMessage::new_tool("result content".to_string(), call_123.clone());
         assert_eq!(tool_msg.role, Role::Tool);
         assert_eq!(tool_msg.content, "result content");
@@ -1435,7 +1435,7 @@ mod tests {
     #[test]
     fn test_tool_message_validation() {
         // Valid tool message
-        let call_id = Arc::<str>::from("call_id");
+        let call_id = ArcStr::from("call_id");
         let valid_tool = RequestMessage::new_tool("content".to_string(), call_id.clone());
         assert!(valid_tool.validate().is_ok());
         
@@ -1451,7 +1451,7 @@ mod tests {
 
     #[test]
     fn test_tool_message_serialization() {
-        let call_id = Arc::<str>::from("call_abc");
+        let call_id = ArcStr::from("call_abc");
         let tool_msg = RequestMessage::new_tool("test result".to_string(), call_id);
         let serialized = serde_json::to_string(&tool_msg).unwrap();
         

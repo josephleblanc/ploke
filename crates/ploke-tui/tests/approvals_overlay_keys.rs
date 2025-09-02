@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ploke_core::ArcStr;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig, SystemState};
@@ -45,7 +46,7 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
     let proposal = EditProposal {
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: Arc::<str>::from("example_tool_call:0"),
+        call_id: ArcStr::from("example_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
@@ -106,7 +107,7 @@ async fn make_app_with_proposals_and_editor(editor: Option<&str>) -> (App, mpsc:
     let proposal = EditProposal {
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: uuid::Uuid::new_v4().to_string(),
+        call_id: ArcStr::from("example_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],

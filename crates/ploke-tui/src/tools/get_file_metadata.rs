@@ -198,7 +198,7 @@ mod gat_tests {
             event_bus,
             request_id: Uuid::new_v4(),
             parent_id: Uuid::new_v4(),
-            call_id: Arc::<str>::from("get-meta-test"),
+            call_id: ArcStr::from("get-meta-test"),
         };
 
         let tmp = std::env::temp_dir().join(format!("get_meta_gat_{}.txt", Uuid::new_v4()));
@@ -226,7 +226,7 @@ mod gat_tests {
             event_bus,
             request_id: Uuid::new_v4(),
             parent_id: Uuid::new_v4(),
-            call_id: Arc::<str>::from("get-meta-test-missing"),
+            call_id: ArcStr::from("get-meta-test-missing"),
         };
         let params = GetFileMetadataParams {
             file_path: Cow::Borrowed("/no/such/file/and/path.txt"),

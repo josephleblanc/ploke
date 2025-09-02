@@ -7,6 +7,7 @@ use crate::utils::consts::OPENROUTER_ENDPOINT_STR;
 use crate::utils::de::string_or_f64;
 use crate::utils::de::string_or_f64_opt;
 use lazy_static::lazy_static;
+use ploke_core::ArcStr;
 use ploke_test_utils::workspace_root;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -101,12 +102,12 @@ use std::convert::TryFrom;
 // deserialize the `canonical_slug` from the json files into `ProvEnd`.
 #[derive(Debug, Clone)]
 pub struct ProvEnd {
-    pub author: Arc<str>,
-    pub model: Arc<str>,
+    pub author: ArcStr,
+    pub model: ArcStr,
 }
 
 impl ProvEnd {
-    #[tracing::instrument(level = "debug", skip_all, fields(author = %self.author, model = %self.model))]
+    #[tracing::instrument(level = "debug", skip_all, fields(author = ?self.author, model = ?self.model))]
     pub(crate) async fn call_endpoint_raw(&self) -> color_eyre::Result<serde_json::Value> {
         // Use test harness/env helper to obtain URL and API key (dotenv fallback allowed)
         let op = crate::test_harness::openrouter_env()
@@ -118,7 +119,7 @@ impl ProvEnd {
 
         let url = op
             .url
-            .join(&format!("models/{}/{}/endpoints", self.author, self.model))
+            .join(&format!("models/{}/{}/endpoints", self.author.as_ref(), self.model.as_ref()))
             .map_err(|e| color_eyre::eyre::eyre!("Malformed URL: {}", e))?;
 
         let resp = client
@@ -132,7 +133,7 @@ impl ProvEnd {
         Ok(v)
     }
 
-    #[tracing::instrument(level = "debug", skip_all, fields(author = %self.author, model = %self.model))]
+    #[tracing::instrument(level = "debug", skip_all, fields(author = ?self.author, model = ?self.model))]
     async fn persist_resp_raw(&self) -> color_eyre::Result<()> {
         use std::fs;
         use std::io::Write;
@@ -147,7 +148,7 @@ impl ProvEnd {
         // Timestamp suffix for filename
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let mut path = dir.clone();
-        path.push(format!("{}-{}.json", &self.model, ts));
+        path.push(format!("{}-{}.json", self.model.as_ref(), ts));
 
         let v = self.call_endpoint_raw().await?;
         let mut f = fs::File::create(&path)?;
@@ -183,7 +184,7 @@ impl<'de> Deserialize<'de> for ProvEnd {
         let model_str = parts
             .next()
             .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
-        Ok(ProvEnd { author: Arc::<str>::from(author_str), model: Arc::<str>::from(model_str) })
+        Ok(ProvEnd { author: ArcStr::from(author_str), model: ArcStr::from(model_str) })
     }
 }
 
@@ -193,14 +194,14 @@ impl Serialize for ProvEnd {
         S: serde::Serializer,
     {
         // Serialize back to canonical slug form "author/model"
-        let s = format!("{}/{}", self.author, &self.model);
+        let s = format!("{}/{}", self.author.as_ref(), &self.model.as_ref());
         serializer.serialize_str(&s)
     }
 }
 
 impl std::fmt::Display for ProvEnd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.author, &self.model)
+        write!(f, "{}/{}", self.author.as_ref(), &self.model.as_ref())
     }
 }
 
@@ -246,7 +247,7 @@ impl TryFrom<&Url> for ProvEnd {
 
         // {model}
         let model_str: &str = segs.next().ok_or(ProvEndParseError::MissingModel)?;
-        let model_arc: Arc<str> = Arc::<str>::from(model_str);
+        let model_arc: ArcStr = ArcStr::from(model_str);
 
         // suffix must be "endpoints"
         match segs.next() {
@@ -259,7 +260,7 @@ impl TryFrom<&Url> for ProvEnd {
             return Err(ProvEndParseError::TrailingSegments);
         }
 
-        Ok(ProvEnd { author: Arc::<str>::from(author_str), model: model_arc })
+        Ok(ProvEnd { author: ArcStr::from(author_str), model: model_arc })
     }
 }
 
@@ -531,7 +532,7 @@ mod tests {
     //         eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
     //         return Ok(());
     //     };
-    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: ArcStr::from("qwen3-30b-a3b-thinking-2507") };
     //     let v = prov.call_endpoint_raw().await?;
     //     assert!(v.get("data").is_some(), "live response missing data");
     //     Ok(())
@@ -544,7 +545,7 @@ mod tests {
     //         eprintln!("Skipping live test: OPENROUTER_API_KEY not set");
     //         return Ok(());
     //     };
-    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: std::sync::Arc::<str>::from("qwen3-30b-a3b-thinking-2507") };
+    //     let prov = ProvEnd { author: crate::llm::providers::ProviderSlug::qwen, model: ArcStr::from("qwen3-30b-a3b-thinking-2507") };
     //     prov.persist_resp_raw().await?;
     //     let mut dir = ploke_test_utils::workspace_root();
     //     dir.push(MODEL_ENDPOINT_RESP_DIR);

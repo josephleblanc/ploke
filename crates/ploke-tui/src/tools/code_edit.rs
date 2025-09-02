@@ -303,7 +303,7 @@ mod gat_tests {
             event_bus,
             request_id: Uuid::new_v4(),
             parent_id: Uuid::new_v4(),
-            call_id: Arc::<str>::from("code-edit-test"),
+            call_id: ArcStr::from("code-edit-test"),
         };
         let params = CodeEditParams {
             edits: vec![CanonicalEditBorrowed {

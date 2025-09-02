@@ -1,6 +1,7 @@
 
 use std::sync::Arc;
 use chrono::Utc;
+use ploke_core::ArcStr;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::select;
@@ -29,7 +30,7 @@ struct ToolRequestPersistParams {
     parent_id: Uuid,
     tool_name: String,
     arguments: Value,
-    call_id: Arc<str>,
+    call_id: ArcStr,
 }
 
 /// Parameter bundle for persisting a tool-call terminal lifecycle event.
@@ -38,7 +39,7 @@ struct ToolRequestPersistParams {
 struct ToolDonePersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    call_id: Arc<str>,
+    call_id: ArcStr,
     outcome: Option<Value>,
     error: Option<String>,
     status: ToolStatus,

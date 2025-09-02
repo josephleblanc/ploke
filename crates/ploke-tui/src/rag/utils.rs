@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::PROJECT_NAMESPACE_UUID;
+use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
 use ploke_db::NodeType;
 
 pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
@@ -103,7 +103,7 @@ pub struct ToolCallParams {
     pub parent_id: Uuid,
     pub name: String,
     pub arguments: serde_json::Value,
-    pub call_id: Arc<str>,
+    pub call_id: ArcStr,
 }
 
 impl ToolCallParams {

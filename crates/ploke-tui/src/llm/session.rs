@@ -1,6 +1,7 @@
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use ploke_core::ArcStr;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -176,7 +177,7 @@ impl<'a> RequestSession<'a> {
                         // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
                         // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
                         for call in tool_calls {
-                            let call_id = Arc::<str>::from(call.call_id.as_ref()); // first and only byte copy
+                            let call_id = ArcStr::from(call.call_id.as_ref()); // first and only byte copy
                             let name = call.function.name.as_str().to_string();
                             let arguments = serde_json::from_str::<Value>(&call.function.arguments)
                                 .unwrap_or(json!({ "raw": call.function.arguments }));
@@ -417,11 +418,11 @@ pub fn build_openai_request<'a>(
 pub async fn await_tool_result(
     mut rx: broadcast::Receiver<AppEvent>,
     request_id: Uuid,
-    call_id: Arc<str>,
+    call_id: ArcStr,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let span =
-        tracing::info_span!("await_tool_result", request_id = %request_id, call_id = %call_id);
+        tracing::info_span!("await_tool_result", request_id = %request_id, call_id = ?call_id);
     let _enter = span.enter();
     tracing::debug!("Awaiting tool result");
     let wait = async {
@@ -479,6 +480,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use ploke_core::ArcStr;
     use tokio::time::sleep;
 
     use crate::AppEvent;
@@ -555,7 +557,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = Arc::<str>::from("call-123");
+        let call_id = ArcStr::from("call-123");
         let content = "tool response".to_string();
         let eb = event_bus.clone();
 
@@ -582,7 +584,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = Arc::<str>::from( "call-err" );
+        let call_id = ArcStr::from( "call-err" );
         let error_msg = "something went wrong".to_string();
         let eb = event_bus.clone();
 

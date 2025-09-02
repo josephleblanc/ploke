@@ -470,6 +470,8 @@ use std::path::PathBuf;
     #[test]
     #[cfg(feature = "live_api_tests")]
     fn ai_temp_endpoint_dump_and_stats() -> color_eyre::Result<()> {
+        use ploke_core::ArcStr;
+
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
         use std::time::{SystemTime, UNIX_EPOCH};
         if std::env::var("PLOKE_AI_TMP").is_err() {
@@ -480,7 +482,7 @@ use std::path::PathBuf;
         use crate::llm::openrouter::providers::ProviderSlug;
         let rt = Runtime::new().unwrap();
         let v = rt.block_on(async move {
-            let pe = ProvEnd { author: std::sync::Arc::<str>::from("deepseek"), model: std::sync::Arc::<str>::from("deepseek-chat-v3.1") };
+            let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
             pe.call_endpoint_raw().await
         })?;
 

@@ -3,6 +3,7 @@
 //! shared fixture database.
 
 use lazy_static::lazy_static;
+use ploke_core::ArcStr;
 use ploke_tui::app_state::SystemStatus;
 use ploke_tui::test_harness::openrouter_env;
 use std::path::PathBuf;
@@ -219,14 +220,14 @@ impl AppHarness {
         &self,
         request_id: Uuid,
         parent_id: Uuid,
-        call_id: impl Into<String>,
+        call_id: ArcStr,
         content: impl Into<String>,
     ) {
         self.event_bus
             .send(AppEvent::LlmTool(tui::llm::ToolEvent::Completed {
                 request_id,
                 parent_id,
-                call_id: call_id.into(),
+                call_id,
                 content: content.into(),
             }));
     }

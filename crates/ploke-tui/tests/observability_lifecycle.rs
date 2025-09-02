@@ -1,4 +1,5 @@
 use chrono::Utc;
+use ploke_core::ArcStr;
 use ploke_db::observability::{
     ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus, Validity,
 };
@@ -10,7 +11,7 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
     let db = ploke_db::Database::init_with_schema().expect("init db schema");
 
     let request_id = Uuid::new_v4();
-    let call_id = "call-abc".to_string();
+    let call_id = ArcStr::from("call-abc");
     let parent_id = Uuid::new_v4();
 
     // Prepare a simple JSON payload
@@ -27,7 +28,7 @@ async fn tool_call_requested_then_completed_persists_latency_and_outcome() {
         request_id,
         call_id: call_id.clone(),
         parent_id,
- 
+
         tool_name: "dummy".into(),
         args_sha256,
         arguments_json: Some(args_json),
@@ -86,7 +87,7 @@ async fn tool_call_terminal_status_is_immutable() {
     let db = ploke_db::Database::init_with_schema().expect("init db schema");
 
     let request_id = Uuid::new_v4();
-    let call_id = "call-immutable".to_string();
+    let call_id = ArcStr::from("call-immutable");
     let parent_id = Uuid::new_v4();
 
     // requested
@@ -94,7 +95,7 @@ async fn tool_call_terminal_status_is_immutable() {
         request_id,
         call_id: call_id.clone(),
         parent_id,
- 
+
         tool_name: "dummy".into(),
         args_sha256: "sha256:deadbeef".into(),
         arguments_json: Some("{}".into()),

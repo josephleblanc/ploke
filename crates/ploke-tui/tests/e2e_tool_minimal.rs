@@ -3,6 +3,7 @@
 //! Minimal end-to-end tool test to validate basic functionality
 
 use std::time::Duration;
+use ploke_core::ArcStr;
 use tokio::time::timeout;
 use uuid::Uuid;
 use serde_json::json;
@@ -26,7 +27,7 @@ async fn e2e_minimal_get_file_metadata() -> color_eyre::Result<()> {
         .expect("Failed to write test file");
 
     let request_id = Uuid::new_v4();
-    let call_id = Uuid::new_v4().to_string();
+    let call_id = ArcStr::from("test_tool_call:0");
     
     // Subscribe to events
     let mut event_rx = harness.event_bus.realtime_tx.subscribe();
