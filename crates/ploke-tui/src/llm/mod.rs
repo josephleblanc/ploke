@@ -75,7 +75,7 @@ pub struct RequestMessage {
     pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
+    pub tool_call_id: Option<Arc<str>>,
 }
 
 // TODO: Add Role::Tool
@@ -119,7 +119,7 @@ impl RequestMessage {
         }
     }
 
-    pub fn new_tool(content: String, tool_call_id: String) -> Self {
+    pub fn new_tool(content: String, tool_call_id: Arc<str>) -> Self {
         Self {
             role: Role::Tool,
             content,
@@ -173,9 +173,9 @@ impl From<MessageKind> for Role {
 }
 
 #[derive(Deserialize, Debug)]
-pub(super) struct OpenAiResponse<'a> {
+pub struct OpenAiResponse<'a> {
     #[serde(default)]
-    id: Uuid,
+    id: String,
     #[serde(borrow, default)]
     choices: Vec<Choices<'a>>,
     #[serde(default)]
@@ -185,9 +185,11 @@ pub(super) struct OpenAiResponse<'a> {
     #[serde(default)]
     object: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system_fingerprint: String,
+    system_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<TokenUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
@@ -209,33 +211,29 @@ pub(super) struct ResponseUsage {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[allow(clippy::enum_variant_names)]
-pub(super) enum Choices<'a> {
-    NonChatChoice {
-        finish_reason: Option<String>,
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<ErrorResponse>,
-    },
-    NonStreamingChoice {
-        finish_reason: Option<String>,
-        native_finish_reason: Option<String>,
-        #[serde(borrow)]
-        message: ResponseMessage<'a>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<ErrorResponse>,
-    },
-    StreamingChoice {
-        finish_reason: Option<String>,
-        native_finish_reason: Option<String>,
-        delta: StreamingDelta<'a>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<ErrorResponse>,
-    },
+pub struct Choices<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
+    pub message: Option<ResponseMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorResponse>,
+    // For non-streaming choices that might have text instead of message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    // For streaming choices
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<StreamingDelta<'a>>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialOrd, PartialEq, Debug)]
-pub(super) struct StreamingDelta<'a> {
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct StreamingDelta<'a> {
     // May be null or string
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,7 +245,7 @@ pub(super) struct StreamingDelta<'a> {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub(super) struct ErrorResponse {
+pub struct ErrorResponse {
     code: i64,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,14 +256,14 @@ pub(super) struct ErrorResponse {
 
 // Use OpenAI-style normalized tool call shape per OpenRouter docs
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(super) struct Choice<'a> {
     #[serde(borrow)]
     message: ResponseMessage<'a>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(super) struct ResponseMessage<'a> {
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct ResponseMessage<'a> {
     // When tool_calls are present, role may be null/absent
     role: Option<String>,
     // When tool_calls are present, content may be null/absent
@@ -273,6 +271,12 @@ pub(super) struct ResponseMessage<'a> {
     content: Option<String>,
     #[serde(borrow, skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ToolCall<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
 }
 
 // Removed legacy OpenAiToolCall and OpenAiToolFunctionCall in favor of tools::ToolCall<'a>
@@ -413,7 +417,7 @@ pub async fn llm_manager(
                     parent_id,
                     name,
                     arguments,
-                    call_id,
+                    call_id: Arc::from(call_id),
                 }));
             }
             AppEvent::LlmTool(ToolEvent::Requested {
@@ -961,18 +965,18 @@ pub enum ToolEvent {
         parent_id: Uuid,
         name: String,
         arguments: Value,
-        call_id: String,
+        call_id: Arc<str>,
     },
     Completed {
         request_id: Uuid,
         parent_id: Uuid,
-        call_id: String,
+        call_id: Arc<str>,
         content: String,
     },
     Failed {
         request_id: Uuid,
         parent_id: Uuid,
-        call_id: String,
+        call_id: Arc<str>,
         error: String,
     },
 }
@@ -984,7 +988,7 @@ async fn spawn_tool_call(
     parent_id: Uuid,
     name: String,
     arguments: Value,
-    call_id: String,
+    call_id: Arc<str>,
 ) {
     let params = ToolCallParams {
         state,
@@ -1047,6 +1051,7 @@ pub enum Event {
         parent_id: Uuid,
         name: String,
         arguments: Value,
+        // TODO: Change to Option<Arc<str>> and propogate through tool returns
         call_id: Option<String>,
     },
 
@@ -1367,25 +1372,27 @@ pub fn test_parse_response_summary(body: &str) -> Result<ResponseParseSummary, S
     let mut has_message = false;
     let mut has_content = false;
     for ch in parsed.choices.iter() {
-        match ch {
-            Choices::NonStreamingChoice { message, .. } => {
-                choices_cnt += 1;
-                has_message = true;
-                if message.content.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
-                    has_content = true;
-                }
-                if let Some(tcs) = &message.tool_calls {
-                    tool_calls_total += tcs.len();
-                }
+        choices_cnt += 1;
+        
+        // Check for message-based response
+        if let Some(message) = &ch.message {
+            has_message = true;
+            if message.content.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+                has_content = true;
             }
-            Choices::NonChatChoice { text, .. } => {
-                choices_cnt += 1;
-                if !text.is_empty() { has_content = true; }
-            }
-            Choices::StreamingChoice { .. } => {
-                choices_cnt += 1;
+            if let Some(tcs) = &message.tool_calls {
+                tool_calls_total += tcs.len();
             }
         }
+        
+        // Check for text-based response
+        if let Some(text) = &ch.text {
+            if !text.is_empty() { 
+                has_content = true; 
+            }
+        }
+        
+        // Streaming delta responses would be handled here if needed
     }
     Ok(ResponseParseSummary { choices: choices_cnt, tool_calls_total, has_message, has_content })
 }
@@ -1409,10 +1416,11 @@ mod tests {
     #[test]
     fn test_tool_message_constructors() {
         // Test new_tool constructor
-        let tool_msg = RequestMessage::new_tool("result content".to_string(), "call_123".to_string());
+        let call_123 = Arc::<str>::from("call_123");
+        let tool_msg = RequestMessage::new_tool("result content".to_string(), call_123.clone());
         assert_eq!(tool_msg.role, Role::Tool);
         assert_eq!(tool_msg.content, "result content");
-        assert_eq!(tool_msg.tool_call_id, Some("call_123".to_string()));
+        assert_eq!(tool_msg.tool_call_id, Some(call_123));
         
         // Test validation passes for valid tool message
         assert!(tool_msg.validate().is_ok());
@@ -1427,7 +1435,8 @@ mod tests {
     #[test]
     fn test_tool_message_validation() {
         // Valid tool message
-        let valid_tool = RequestMessage::new_tool("content".to_string(), "call_id".to_string());
+        let call_id = Arc::<str>::from("call_id");
+        let valid_tool = RequestMessage::new_tool("content".to_string(), call_id.clone());
         assert!(valid_tool.validate().is_ok());
         
         // Invalid tool message (missing tool_call_id)
@@ -1442,7 +1451,8 @@ mod tests {
 
     #[test]
     fn test_tool_message_serialization() {
-        let tool_msg = RequestMessage::new_tool("test result".to_string(), "call_abc".to_string());
+        let call_id = Arc::<str>::from("call_abc");
+        let tool_msg = RequestMessage::new_tool("test result".to_string(), call_id);
         let serialized = serde_json::to_string(&tool_msg).unwrap();
         
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();

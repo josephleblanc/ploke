@@ -208,7 +208,7 @@ pub enum DiffPreview {
 pub struct EditProposal {
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: String,
+    pub call_id: Arc<str>,
     pub proposed_at_ms: i64,
     pub edits: Vec<ploke_core::WriteSnippetData>,
     pub files: Vec<PathBuf>,

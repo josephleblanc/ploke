@@ -253,6 +253,11 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         needs_parse: false,
                     });
                 }
+                #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+                system::SystemEvent::TestHarnessApiResponse { .. } => {
+                    // Test harness API response - handled by test subscribers, no UI action needed
+                    tracing::debug!("Test harness API response event received");
+                }
                 other => {
                     tracing::warn!("Unused system event in main app loop: {:?}", other)
                 }

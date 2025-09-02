@@ -103,7 +103,7 @@ pub struct ToolCallParams {
     pub parent_id: Uuid,
     pub name: String,
     pub arguments: serde_json::Value,
-    pub call_id: String,
+    pub call_id: Arc<str>,
 }
 
 impl ToolCallParams {

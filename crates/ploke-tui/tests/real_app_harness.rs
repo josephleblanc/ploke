@@ -33,6 +33,13 @@ pub struct MessageTracker {
     pub events: Arc<Mutex<Vec<AppEvent>>>,
 }
 
+/// User message with pre-assigned ID for tracking
+#[derive(Debug)]
+pub struct UserMessageInput {
+    pub id: Uuid,
+    pub content: String,
+}
+
 /// Complete assistant response with tool execution details
 #[derive(Debug)]
 pub struct AssistantResponse {
@@ -53,7 +60,7 @@ pub struct RealAppHarness {
     pub event_bus: Arc<EventBus>,
     
     /// Communication with running app
-    user_input_tx: mpsc::Sender<String>,
+    user_input_tx: mpsc::Sender<UserMessageInput>,
     app_events_rx: broadcast::Receiver<AppEvent>,
     
     /// Control and synchronization
@@ -65,7 +72,7 @@ impl RealAppHarness {
     /// Spawn a new app instance with the fixture database loaded
     pub async fn spawn_with_fixture() -> color_eyre::Result<Self> {
         // Create communication channels
-        let (user_input_tx, mut user_input_rx) = mpsc::channel::<String>(32);
+        let (user_input_tx, mut user_input_rx) = mpsc::channel::<UserMessageInput>(32);
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
         
         // Initialize app with fixture database (similar to test_harness.rs)
@@ -185,6 +192,21 @@ impl RealAppHarness {
                 state_clone.clone(),
             ));
             
+            // Event monitoring task for tracking message lifecycle
+            let trackers_clone_for_events = trackers_clone.clone();
+            let event_bus_clone_for_events = event_bus_clone.clone();
+            let _event_monitor_handle = tokio::spawn(async move {
+                let mut event_rx = event_bus_clone_for_events.subscribe(ploke_tui::EventPriority::Realtime);
+                
+                while let Ok(event) = event_rx.recv().await {
+                    // Update all active trackers with this event
+                    let mut trackers = trackers_clone_for_events.write().await;
+                    for tracker in trackers.values_mut() {
+                        tracker.events.lock().await.push(event.clone());
+                    }
+                }
+            });
+            
             // Handle user input messages
             let mut user_input_interval = tokio::time::interval(Duration::from_millis(10));
             
@@ -197,18 +219,21 @@ impl RealAppHarness {
                     },
                     
                     // Process user input
-                    Some(user_message) = user_input_rx.recv() => {
-                        let msg_id = Uuid::new_v4();
+                    Some(user_input) = user_input_rx.recv() => {
+                        // Use the pre-assigned message ID from the input
+                        let msg_id = user_input.id;
                         
-                        // Create tracker for this message
-                        let tracker = MessageTracker {
-                            user_message_id: msg_id,
-                            start_time: Instant::now(),
-                            completion_notifier: Arc::new(Notify::new()),
-                            events: Arc::new(Mutex::new(Vec::new())),
-                        };
-                        
-                        trackers_clone.write().await.insert(msg_id, tracker);
+                        // Create tracker for this message (if one doesn't already exist)
+                        if !trackers_clone.read().await.contains_key(&msg_id) {
+                            let tracker = MessageTracker {
+                                user_message_id: msg_id,
+                                start_time: Instant::now(),
+                                completion_notifier: Arc::new(Notify::new()),
+                                events: Arc::new(Mutex::new(Vec::new())),
+                            };
+                            
+                            trackers_clone.write().await.insert(msg_id, tracker);
+                        }
                         
                         // Send the complete message lifecycle commands
                         let (completion_tx, completion_rx) = oneshot::channel();
@@ -216,7 +241,7 @@ impl RealAppHarness {
                         
                         // AddUserMessage
                         let _ = cmd_tx_clone.send(StateCommand::AddUserMessage {
-                            content: user_message,
+                            content: user_input.content,
                             new_msg_id: msg_id,
                             completion_tx,
                         }).await;
@@ -272,9 +297,11 @@ impl RealAppHarness {
         // Store tracker for monitoring
         self.message_trackers.write().await.insert(msg_id, tracker.clone());
         
-        // Send message to app
-        self.user_input_tx.send(content.to_string()).await
-            .expect("Failed to send user message to app");
+        // Send message to app with pre-assigned ID
+        self.user_input_tx.send(UserMessageInput {
+            id: msg_id,
+            content: content.to_string(),
+        }).await.expect("Failed to send user message to app");
         
         tracker
     }
@@ -293,20 +320,38 @@ impl RealAppHarness {
                     // Look for assistant message in the conversation path
                     for message in chat.iter_path() {
                         if message.kind == MessageKind::Assistant && 
-                           message.parent.is_some() {
+                           message.parent.is_some() &&
+                           !message.content.trim().is_empty() &&
+                           message.content != "Pending..." {
                             
                             // Check if this assistant message follows our user message
                             let mut current = Some(message.id);
                             while let Some(msg_id) = current {
                                 if let Some(msg) = chat.messages.get(&msg_id) {
                                     if msg.id == tracker.user_message_id {
+                                        // Extract tool calls from events
+                                        let events = tracker.events.lock().await;
+                                        let tool_calls: Vec<ToolCallRecord> = events
+                                            .iter()
+                                            .filter_map(|event| {
+                                                match event {
+                                                    AppEvent::LlmTool(_tool_event) => {
+                                                        // Convert tool event to ToolCallRecord if needed
+                                                        // For now, return empty record since extraction is complex
+                                                        None // TODO: Implement proper conversion from tool event
+                                                    },
+                                                    _ => None,
+                                                }
+                                            })
+                                            .collect();
+                                        
                                         // Found the assistant response to our message
                                         return Ok(AssistantResponse {
                                             id: message.id,
                                             content: message.content.clone(),
-                                            tool_calls_made: Vec::new(), // TODO: Extract from events
+                                            tool_calls_made: tool_calls,
                                             processing_time: start_time.elapsed(),
-                                            events_observed: tracker.events.lock().await.clone(),
+                                            events_observed: events.clone(),
                                         });
                                     }
                                     current = msg.parent;

@@ -67,7 +67,7 @@ impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
             parent_id: tool_input.parent_id,
             name: "request_code_context".to_string(),
             arguments: tool_input.arguments,
-            call_id: Uuid::new_v4().to_string(),
+            call_id: tool_input.call_id,
         };
         handle_request_context(tool_call_params).await
     }
@@ -77,7 +77,7 @@ impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
 pub struct GetContextInput {
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: Uuid,
+    pub call_id: Arc<str>,
 
     pub arguments: serde_json::Value,
 }

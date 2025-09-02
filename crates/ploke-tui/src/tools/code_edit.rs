@@ -113,7 +113,7 @@ impl super::Tool for GatCodeEdit {
         })?;
         // Execute legacy staging path; rely on proposal store for result
         let request_id = ctx.request_id;
-        let call_id = ctx.call_id.to_string();
+        let call_id = ctx.call_id;
         let params_env = ToolCallParams {
             state: Arc::clone(&ctx.state),
             event_bus: Arc::clone(&ctx.event_bus),

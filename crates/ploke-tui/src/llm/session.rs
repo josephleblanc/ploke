@@ -433,7 +433,7 @@ pub async fn await_tool_result(
                     content,
                     ..
                 }) if rid == request_id && cid == call_id => {
-                    break Ok(content);
+                    return Ok(content)
                 }
                 AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id: rid,
@@ -441,7 +441,7 @@ pub async fn await_tool_result(
                     content,
                     ..
                 }) if rid == request_id && cid == call_id => {
-                    break Ok(content);
+                    return Ok(content)
                 }
                 AppEvent::LlmTool(ToolEvent::Failed {
                     request_id: rid,
@@ -449,7 +449,7 @@ pub async fn await_tool_result(
                     error,
                     ..
                 }) if rid == request_id && cid == call_id => {
-                    break Err(error);
+                    return Err(error)
                 }
                 AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,
@@ -457,7 +457,7 @@ pub async fn await_tool_result(
                     error,
                     ..
                 }) if rid == request_id && cid == call_id => {
-                    break Err(error);
+                    return Err(error)
                 }
                 _ => {
                     // unrelated event; keep waiting

@@ -325,18 +325,18 @@ pub mod system {
             parent_id: Uuid,
             name: String,
             arguments: Value,
-            call_id: String,
+            call_id: Arc<str>,
         },
         ToolCallCompleted {
             request_id: Uuid,
             parent_id: Uuid,
-            call_id: String,
+            call_id: Arc<str>,
             content: String,
         },
         ToolCallFailed {
             request_id: Uuid,
             parent_id: Uuid,
-            call_id: String,
+            call_id: Arc<str>,
             error: String,
         },
         ReadQuery {
@@ -361,6 +361,13 @@ pub mod system {
         },
         ReIndex {
             workspace: String,
+        },
+        #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+        TestHarnessApiResponse {
+            request_id: Uuid,
+            response_body: String,
+            model: String,
+            use_tools: bool,
         },
     }
 }

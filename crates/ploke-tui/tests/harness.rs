@@ -231,6 +231,12 @@ impl AppHarness {
             }));
     }
 
+    /// Subscribe to test harness API response events for validation.
+    #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+    pub fn subscribe_api_responses(&self) -> tokio::sync::broadcast::Receiver<AppEvent> {
+        self.event_bus.subscribe(EventPriority::Realtime)
+    }
+
     /// Gracefully shut down the app (sends Quit and waits for completion).
     pub async fn shutdown(self) {
         self.event_bus.send(AppEvent::Quit);

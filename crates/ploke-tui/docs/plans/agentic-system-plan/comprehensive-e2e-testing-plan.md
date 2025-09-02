@@ -264,6 +264,54 @@ This document outlines a comprehensive implementation plan for testing the compl
   - Type system validation results
   - Serialization/deserialization verification
 
+## Current Implementation Status (September 2, 2025)
+
+### Completed Tests
+All 8 tests in `e2e_complete_tool_conversations.rs` are passing:
+- `e2e_basic_message_addition` - Basic message addition to chat history
+- `e2e_complete_get_metadata_conversation` - Complete conversation with metadata tool
+- `e2e_tool_execution_event_flow` - Tool execution event flow validation
+- `e2e_multi_step_tool_conversation` - Multi-step tool conversation (with tracing)
+- `e2e_conversation_with_tool_errors` - Tool error handling
+- `e2e_conversation_state_persistence` - State persistence across messages (with tracing)
+- `e2e_tool_result_conversation_integration` - Tool result integration
+- `e2e_conversation_context_for_tools` - Context building for tool calls
+
+### Priority Implementation Tasks (Sept 2)
+
+#### Enhanced Testing Requirements
+The following tests need to be added to verify the complete tool-calling pipeline:
+
+1. **Message Receipt and Deserialization Test**
+   - Verify messages are correctly received from API
+   - Validate deserialization into strongly-typed structures
+   - Check all fields are properly parsed without type errors
+   - Ensure no data loss in deserialization process
+
+2. **Tool Call and Return Test**
+   - Verify tools are called with correct parameters
+   - Validate tool execution and result generation
+   - Ensure tool results are properly formatted
+   - Check error handling in tool execution
+
+3. **Tool Output to API Test**
+   - Verify tool outputs are sent to API correctly
+   - Validate the shape of tool result messages
+   - Ensure proper formatting of Role::Tool messages
+   - Check that tool results are incorporated into conversation
+
+4. **Workflow Compliance Test**
+   - Verify message handling matches documented workflow
+   - Check event flow matches `message_and_tool_call_lifecycle.md`
+   - Validate StateCommand processing order
+   - Ensure proper event bus message routing
+
+### Testing Infrastructure Updates
+- Enhanced tracing with `init_tracing_to_file_ai()` for detailed logging
+- Log output written to `crates/ploke-tui/ai_temp_data/e2e_tool_logs/`
+- Live API testing enabled via `.env` file with OPENROUTER_API_KEY
+- Test harness supports multi-turn conversations with tool usage
+
 ## Development Workflow and Quality Gates
 
 ### Quality Assurance Process

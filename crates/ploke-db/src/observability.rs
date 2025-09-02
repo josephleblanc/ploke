@@ -2,7 +2,7 @@
 // - This is difficult without having a clear tool calling implementation, wait on further
 // implementation of observability until we have working tools.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use crate::{
     Database, DbError,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Deserialize)]
 pub struct Validity {
     pub at: i64,        // epoch millis
     pub is_valid: bool, // asserted or retracted
@@ -32,7 +32,7 @@ pub struct ConversationTurn {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct ToolCallReq {
     pub request_id: uuid::Uuid,
-    pub call_id: String,
+    pub call_id: Arc<str>,
     pub parent_id: uuid::Uuid,
     pub model: String,
     pub provider_slug: Option<String>,
@@ -73,7 +73,7 @@ impl ToolStatus {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct ToolCallDone {
     pub request_id: uuid::Uuid,
-    pub call_id: String,
+    pub call_id: Arc<str>,
     pub ended_at: Validity,
     pub latency_ms: i64,
     pub outcome_json: Option<String>, // on completed
@@ -252,7 +252,10 @@ impl ObservabilityStore for Database {
         match self.run_script(script, params, ScriptMutability::Mutable) {
             Ok(_) => Ok(()),
             Err(e) => {
-                eprintln!("record_tool_call_requested script error: {}\nscript:\n{}", e, script);
+                eprintln!(
+                    "record_tool_call_requested script error: {}\nscript:\n{}",
+                    e, script
+                );
                 Err(DbError::Cozo(e.to_string()))
             }
         }
@@ -366,7 +369,10 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(req.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(req.call_id.into()));
+        params.insert(
+            "call_id".into(),
+            DataValue::Str(req.call_id.as_ref().into()),
+        );
         params.insert(
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req.parent_id)),
@@ -409,7 +415,10 @@ impl ObservabilityStore for Database {
         match self.run_script(script, params, ScriptMutability::Mutable) {
             Ok(_) => Ok(()),
             Err(e) => {
-                eprintln!("record_tool_call_done script error: {}\nscript:\n{}", e, script);
+                eprintln!(
+                    "record_tool_call_done script error: {}\nscript:\n{}",
+                    e, script
+                );
                 Err(DbError::Cozo(e.to_string()))
             }
         }
@@ -453,7 +462,10 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(done.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(done.call_id.into()));
+        params.insert(
+            "call_id".into(),
+            DataValue::Str(done.call_id.as_ref().into()),
+        );
         params.insert("ended_at_ms".into(), DataValue::from(done.ended_at.at));
         params.insert("latency_ms".into(), DataValue::from(done.latency_ms));
         params.insert("status".into(), DataValue::Str(done.status.as_str().into()));
@@ -587,9 +599,9 @@ impl ObservabilityStore for Database {
 
         let req = ToolCallReq {
             request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-            call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
+            call_id: Arc::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
             parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
- 
+
             model: to_string(&row[*hid.get("model").unwrap()])?,
             provider_slug: row[*hid.get("provider_slug").unwrap()]
                 .get_str()
@@ -682,9 +694,9 @@ impl ObservabilityStore for Database {
         for row in rows.rows {
             let req = ToolCallReq {
                 request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-                call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
+                call_id: Arc::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
                 parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
- 
+
                 model: to_string(&row[*hid.get("model").unwrap()])?,
                 provider_slug: row[*hid.get("provider_slug").unwrap()]
                     .get_str()
@@ -936,10 +948,8 @@ impl ObservabilityStore for Database {
             });
 
         let status = to_string(&row[*hid.get("status").unwrap()])?;
-        let decided_at_ms: Option<i64> = row[*hid.get("decided_at_ms").unwrap()]
-            .get_int();
-        let applied_at_ms: Option<i64> = row[*hid.get("applied_at_ms").unwrap()]
-            .get_int();
+        let decided_at_ms: Option<i64> = row[*hid.get("decided_at_ms").unwrap()].get_int();
+        let applied_at_ms: Option<i64> = row[*hid.get("applied_at_ms").unwrap()].get_int();
         let commit_hash: Option<String> = row[*hid.get("commit_hash").unwrap()]
             .get_str()
             .map(|s| s.to_string());

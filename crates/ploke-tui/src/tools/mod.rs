@@ -13,12 +13,10 @@ use crate::{
     },
     system::SystemEvent,
 };
-use code_edit::GatCodeEdit;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use ploke_core::rag_types::{ContextPart, ContextPartKind, Modality};
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
-use request_code_context::RequestCodeContextGat;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 use syn_parser::parser::nodes::NodePath;
@@ -26,9 +24,9 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub mod request_code_context;
-pub use request_code_context::{RequestCodeContext, RequestCodeContextInput};
+pub use request_code_context::{RequestCodeContext, RequestCodeContextInput, RequestCodeContextGat};
 pub mod code_edit;
-pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput};
+pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod get_file_metadata;
 pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadata};
 
@@ -168,7 +166,7 @@ pub struct ToolCallRecord {
     pub name: ToolName,
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub call_id: String,
+    pub call_id: Arc<str>,
     pub params_json: Arc<String>,
     pub output_json: Arc<String>,
     pub created_at_ms: i64,
@@ -180,16 +178,14 @@ pub(crate) struct ToolCall<'a> {
     pub call_id: Cow<'a, str>,
     #[serde(rename = "type")]
     pub call_type: FunctionMarker,
-    #[serde(borrow)]
-    pub function: FunctionCall<'a>,
+    pub function: FunctionCall,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(crate) struct FunctionCall<'a> {
+pub(crate) struct FunctionCall {
     pub name: ToolName,
-    // Store raw JSON to avoid allocating
-    #[serde(borrow)]
-    pub arguments: &'a str,
+    // Store raw JSON arguments - needs to be owned String for deserialization from OpenRouter
+    pub arguments: String,
 }
 
 // Tool result structure
@@ -235,23 +231,23 @@ async fn process_tool<'a>(tool_call: ToolCall<'a>, ctx: &Ctx) -> color_eyre::Res
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
             let args = tool_call.function.arguments;
-            let params = RequestCodeContextGat::deserialize_params(args)?;
-            let ToolResult { content } = RequestCodeContextGat::execute(params, new_ctx).await?;
-            RequestCodeContextGat::emit_completed(ctx, content);
+            let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)?;
+            let ToolResult { content } = request_code_context::RequestCodeContextGat::execute(params, new_ctx).await?;
+            request_code_context::RequestCodeContextGat::emit_completed(ctx, content);
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
             let args = tool_call.function.arguments;
-            let params = GatCodeEdit::deserialize_params(args)?;
-            let ToolResult { content } = GatCodeEdit::execute(params, new_ctx).await?;
-            GatCodeEdit::emit_completed(ctx, content);
+            let params = code_edit::GatCodeEdit::deserialize_params(&args)?;
+            let ToolResult { content } = code_edit::GatCodeEdit::execute(params, new_ctx).await?;
+            code_edit::GatCodeEdit::emit_completed(ctx, content);
             Ok(())
         }
         ToolName::GetFileMetadata => {
             let args = tool_call.function.arguments;
-            let params = GetFileMetadata::deserialize_params(args)?;
-            let ToolResult { content } = GetFileMetadata::execute(params, new_ctx).await?;
-            GetFileMetadata::emit_completed(ctx, content);
+            let params = get_file_metadata::GetFileMetadata::deserialize_params(&args)?;
+            let ToolResult { content } = get_file_metadata::GetFileMetadata::execute(params, new_ctx).await?;
+            get_file_metadata::GetFileMetadata::emit_completed(ctx, content);
             Ok(())
         }
         // more here
@@ -295,7 +291,7 @@ pub trait Tool {
             crate::system::SystemEvent::ToolCallCompleted {
                 request_id: ctx.request_id,
                 parent_id: ctx.parent_id,
-                call_id: ctx.call_id.to_string(),
+                call_id: ctx.call_id.clone(),
                 content: output_json,
             },
         ));
@@ -332,20 +328,20 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
         event_bus,
         request_id,
         parent_id,
-        call_id: Arc::<str>::from(call_id.as_str()),
+        call_id: call_id.clone(), // Arc
     };
     let args_str = arguments.to_string();
 
     match name.as_str() {
-        "request_code_context" => match RequestCodeContextGat::deserialize_params(&args_str) {
-            Ok(params) => match RequestCodeContextGat::execute(params, ctx.clone()).await {
-                Ok(ToolResult { content }) => RequestCodeContextGat::emit_completed(&ctx, content),
+        "request_code_context" => match request_code_context::RequestCodeContextGat::deserialize_params(&args_str) {
+            Ok(params) => match request_code_context::RequestCodeContextGat::execute(params, ctx.clone()).await {
+                Ok(ToolResult { content }) => request_code_context::RequestCodeContextGat::emit_completed(&ctx, content),
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                         crate::system::SystemEvent::ToolCallFailed {
                             request_id: ctx.request_id,
                             parent_id: ctx.parent_id,
-                            call_id: ctx.call_id.to_string(),
+                            call_id: ctx.call_id,
                             error: e.to_string(),
                         },
                     ));
@@ -356,22 +352,22 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                     crate::system::SystemEvent::ToolCallFailed {
                         request_id: ctx.request_id,
                         parent_id: ctx.parent_id,
-                        call_id: ctx.call_id.to_string(),
+                        call_id: ctx.call_id,
                         error: e.to_string(),
                     },
                 ));
             }
         },
         "apply_code_edit" => {
-            match GatCodeEdit::deserialize_params(&args_str) {
-                Ok(params) => match GatCodeEdit::execute(params, ctx.clone()).await {
-                    Ok(ToolResult { content }) => GatCodeEdit::emit_completed(&ctx, content),
+            match code_edit::GatCodeEdit::deserialize_params(&args_str) {
+                Ok(params) => match code_edit::GatCodeEdit::execute(params, ctx.clone()).await {
+                    Ok(ToolResult { content }) => code_edit::GatCodeEdit::emit_completed(&ctx, content),
                     Err(e) => {
                         let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                             crate::system::SystemEvent::ToolCallFailed {
                                 request_id: ctx.request_id,
                                 parent_id: ctx.parent_id,
-                                call_id: ctx.call_id.to_string(),
+                                call_id: ctx.call_id,
                                 error: e.to_string(),
                             },
                         ));
@@ -391,7 +387,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                         crate::system::SystemEvent::ToolCallFailed {
                             request_id: ctx.request_id,
                             parent_id: ctx.parent_id,
-                            call_id: ctx.call_id.to_string(),
+                            call_id: ctx.call_id,
                             error: e.to_string(),
                         },
                     ));
@@ -402,7 +398,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                     crate::system::SystemEvent::ToolCallFailed {
                         request_id: ctx.request_id,
                         parent_id: ctx.parent_id,
-                        call_id: ctx.call_id.to_string(),
+                        call_id: ctx.call_id,
                         error: e.to_string(),
                     },
                 ));
@@ -413,7 +409,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                 crate::system::SystemEvent::ToolCallFailed {
                     request_id: ctx.request_id,
                     parent_id: ctx.parent_id,
-                    call_id: ctx.call_id.to_string(),
+                    call_id: ctx.call_id,
                     error: format!("Unsupported tool: {}", other),
                 },
             ));
@@ -502,7 +498,7 @@ mod tests {
             call_type: FunctionMarker,
             function: FunctionCall {
                 name: ToolName::GetFileMetadata,
-                arguments: &args,
+                arguments: args,
             },
         };
 
@@ -518,7 +514,7 @@ mod tests {
                         content,
                         ..
                     })) => {
-                        if call_id == ctx.call_id.to_string() {
+                        if call_id == ctx.call_id {
                             break Some(content);
                         }
                     }

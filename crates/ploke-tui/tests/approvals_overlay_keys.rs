@@ -45,7 +45,7 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
     let proposal = EditProposal {
         request_id: req_id,
         parent_id: uuid::Uuid::new_v4(),
-        call_id: uuid::Uuid::new_v4().to_string(),
+        call_id: Arc::<str>::from("example_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],

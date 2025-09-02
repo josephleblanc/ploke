@@ -29,7 +29,7 @@ struct ToolRequestPersistParams {
     parent_id: Uuid,
     tool_name: String,
     arguments: Value,
-    call_id: String,
+    call_id: Arc<str>,
 }
 
 /// Parameter bundle for persisting a tool-call terminal lifecycle event.
@@ -38,7 +38,7 @@ struct ToolRequestPersistParams {
 struct ToolDonePersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    call_id: String,
+    call_id: Arc<str>,
     outcome: Option<Value>,
     error: Option<String>,
     status: ToolStatus,
