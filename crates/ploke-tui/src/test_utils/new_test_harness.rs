@@ -57,7 +57,10 @@ pub struct AppHarness {
     app_task: tokio::task::JoinHandle<()>,
 }
 
-// AI: create an arc mutex lazy_static! so we can re-use this harness across different tests AI!
+lazy_static! {
+    /// Shared AppHarness instance that can be reused across tests
+    pub static ref SHARED_HARNESS: Arc<Mutex<Option<AppHarness>>> = Arc::new(Mutex::new(None));
+}
 
 impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
