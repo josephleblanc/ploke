@@ -30,6 +30,9 @@ pub mod search;
 pub mod tools;
 pub mod utils;
 
+#[cfg(test)]
+mod tests;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

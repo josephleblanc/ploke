@@ -1,9 +1,7 @@
 // Sample with various struct types
 
 // Regular struct
-pub struct SampleStruct {
-    pub field: String,
-}
+pub struct SampleStruct { pub field: String, }
 
 // Tuple struct
 pub struct TupleStruct(pub i32, pub i32);
