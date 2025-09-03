@@ -142,6 +142,10 @@ async fn test_empty_edits_validation() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
 
+    // Set up event listener to capture tool call failures
+    use crate::{EventPriority, AppEvent};
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
     let empty_request = ApplyCodeEditRequest {
         confidence: Some(0.5),
         edits: vec![], // Empty edits vector
@@ -152,6 +156,23 @@ async fn test_empty_edits_validation() {
 
     // Call should complete but not create proposal due to empty edits
     apply_code_edit_tool(params).await;
+    
+    // Allow time for events to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Verify that a failure event was emitted with "No edits provided" message
+    let mut found_no_edits_error = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AppEvent::System(system_event) = event {
+            let event_str = format!("{:?}", system_event);
+            if event_str.contains("ToolCallFailed") && event_str.contains("No edits provided") {
+                found_no_edits_error = true;
+                break;
+            }
+        }
+    }
+
+    assert!(found_no_edits_error, "Empty edits should emit 'No edits provided' ToolCallFailed event");
 
     // Should not create any proposals
     {
@@ -168,6 +189,10 @@ async fn test_malformed_json_handling() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
 
+    // Set up event listener to capture tool call failures
+    use crate::{EventPriority, AppEvent};
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
     // Invalid JSON structure - missing required fields
     let malformed_json = json!({
         "confidence": 0.5,
@@ -178,6 +203,23 @@ async fn test_malformed_json_handling() {
 
     // Should handle gracefully without creating proposal
     apply_code_edit_tool(params).await;
+    
+    // Allow time for events to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Verify that a failure event was emitted (stronger validation)
+    let mut found_failure = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AppEvent::System(system_event) = event {
+            println!("DEBUG: System event: {:?}", system_event);
+            if format!("{:?}", system_event).contains("ToolCallFailed") {
+                found_failure = true;
+                break;
+            }
+        }
+    }
+
+    assert!(found_failure, "Malformed JSON should emit ToolCallFailed event");
 
     {
         let proposals = harness.state.proposals.read().await;
@@ -473,12 +515,23 @@ Some(0.9f32),
                 let before_after = &per_file[0];
                 println!("DEBUG: CodeBlocks after: {:?}", before_after.after);
                 println!("DEBUG: Line count: {}", before_after.after.lines().count());
-                // TODO: Fix truncation logic - currently shows full file content instead of respecting max_preview_lines
-                // For now, just verify that we get some reasonable content back
+                // CRITICAL: This test must verify that truncation actually works
+                // If max_preview_lines = 3, then either:
+                // 1. Preview contains truncation marker, OR
+                // 2. Preview respects the 3-line limit (not 50!)
+                let line_count = before_after.after.lines().count();
+                let has_truncation = before_after.after.contains("... [truncated]");
+                
+                println!("DEBUG: max_preview_lines was set to 3");
+                println!("DEBUG: Actual line count: {}", line_count);
+                println!("DEBUG: Has truncation marker: {}", has_truncation);
+                
+                // This test should FAIL if truncation is broken - that's the point!
                 assert!(
-                    before_after.after.contains("... [truncated]")
-                        || before_after.after.lines().count() <= 50, // More lenient for now
-                    "Code block preview should be truncated or reasonably bounded"
+                    has_truncation || line_count <= 5, // Allow small buffer for context
+                    "Preview truncation is broken! Expected ≤5 lines or truncation marker, got {} lines. \
+                     This test SHOULD fail to highlight the truncation bug that needs fixing.", 
+                    line_count
                 );
             }
         }
@@ -708,6 +761,10 @@ async fn test_unsupported_node_type() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
 
+    // Set up event listener to capture tool call failures
+    use crate::{EventPriority, AppEvent};
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
     // Use a non-primary node type (should be rejected)
     let edit_request = ApplyCodeEditRequest {
         confidence: Some(0.9),
@@ -723,6 +780,25 @@ async fn test_unsupported_node_type() {
     let params = create_test_tool_params(&harness, request_id, arguments).await;
 
     apply_code_edit_tool(params).await;
+    
+    // Allow time for events to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Verify that a failure event was emitted mentioning node type restriction
+    let mut found_node_type_error = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AppEvent::System(system_event) = event {
+            let event_str = format!("{:?}", system_event);
+            if event_str.contains("ToolCallFailed") && 
+               (event_str.contains("primary_nodes") || event_str.contains("node type")) {
+                found_node_type_error = true;
+                println!("DEBUG: Found expected node type error: {:?}", system_event);
+                break;
+            }
+        }
+    }
+
+    assert!(found_node_type_error, "Unsupported node type should emit ToolCallFailed event mentioning node type restriction");
 
     // Should not create proposal due to unsupported node type
     {
