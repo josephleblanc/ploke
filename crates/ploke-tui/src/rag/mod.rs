@@ -25,7 +25,6 @@
 //!   background loops itself. It relies on the EventBus for communicating with the UI and LLM manager.
 
 pub mod context;
-pub mod dispatcher;
 pub mod editing;
 pub mod search;
 pub mod tools;

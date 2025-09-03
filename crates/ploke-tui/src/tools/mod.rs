@@ -8,10 +8,7 @@ use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Ar
 use crate::{
     AppEvent,
     app_state::{AppState, events::SystemEvent},
-    rag::{
-        tools::{apply_code_edit_tool, get_file_metadata_tool, handle_request_context},
-        utils::ToolCallParams,
-    },
+    rag::utils::ToolCallParams,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -176,7 +173,7 @@ pub struct ToolCallRecord {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(crate) struct ToolCall {
+pub struct ToolCall {
     #[serde(deserialize_with = "de_arc_str", serialize_with="se_arc_str", rename = "id")]
     pub call_id: ArcStr,
 
@@ -186,7 +183,7 @@ pub(crate) struct ToolCall {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(crate) struct FunctionCall {
+pub struct FunctionCall {
     pub name: ToolName,
     // Store raw JSON arguments - needs to be owned String for deserialization from OpenRouter
     pub arguments: String,
@@ -328,127 +325,6 @@ pub trait Tool {
         params: Self::Params<'de>,
         ctx: Ctx,
     ) -> impl std::future::Future<Output = Result<ToolResult, ploke_error::Error>> + Send;
-}
-
-/// Unified dispatcher for GAT-based tools using the existing ToolCallParams envelope.
-/// Converts the legacy name/value envelope into borrowed JSON args and routes to the
-/// appropriate Tool implementation, emitting ToolCallCompleted/Failed.
-pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallParams) {
-    use crate::rag::utils::ToolCallParams as Params;
-
-    let Params {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-    let ctx = Ctx {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        call_id: call_id.clone(), // Arc
-    };
-    let args_str = arguments.to_string();
-
-    match name.as_str() {
-        "request_code_context" => {
-            match request_code_context::RequestCodeContextGat::deserialize_params(&args_str) {
-                Ok(params) => {
-                    match request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
-                        .await
-                    {
-                        Ok(ToolResult { content }) => {
-                            request_code_context::RequestCodeContextGat::emit_completed(
-                                &ctx, content,
-                            )
-                        }
-                        Err(e) => {
-                            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                                SystemEvent::ToolCallFailed {
-                                    request_id: ctx.request_id,
-                                    parent_id: ctx.parent_id,
-                                    call_id: ctx.call_id,
-                                    error: e.to_string(),
-                                },
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                        SystemEvent::ToolCallFailed {
-                            request_id: ctx.request_id,
-                            parent_id: ctx.parent_id,
-                            call_id: ctx.call_id,
-                            error: e.to_string(),
-                        },
-                    ));
-                }
-            }
-        }
-        "apply_code_edit" => {
-            match code_edit::GatCodeEdit::deserialize_params(&args_str) {
-                Ok(params) => match code_edit::GatCodeEdit::execute(params, ctx.clone()).await {
-                    Ok(ToolResult { content }) => {
-                        code_edit::GatCodeEdit::emit_completed(&ctx, content)
-                    }
-                    Err(e) => {
-                        let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                            SystemEvent::ToolCallFailed {
-                                request_id: ctx.request_id,
-                                parent_id: ctx.parent_id,
-                                call_id: ctx.call_id,
-                                error: e.to_string(),
-                            },
-                        ));
-                    }
-                },
-                Err(_e) => {
-                    // Fallback to legacy handler for splice-style payloads
-                    crate::rag::tools::apply_code_edit_tool(tool_call_params.clone()).await;
-                }
-            }
-        }
-        "get_file_metadata" => match GetFileMetadata::deserialize_params(&args_str) {
-            Ok(params) => match GetFileMetadata::execute(params, ctx.clone()).await {
-                Ok(ToolResult { content }) => GetFileMetadata::emit_completed(&ctx, content),
-                Err(e) => {
-                    let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                        SystemEvent::ToolCallFailed {
-                            request_id: ctx.request_id,
-                            parent_id: ctx.parent_id,
-                            call_id: ctx.call_id,
-                            error: e.to_string(),
-                        },
-                    ));
-                }
-            },
-            Err(e) => {
-                let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                    SystemEvent::ToolCallFailed {
-                        request_id: ctx.request_id,
-                        parent_id: ctx.parent_id,
-                        call_id: ctx.call_id,
-                        error: e.to_string(),
-                    },
-                ));
-            }
-        },
-        other => {
-            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                SystemEvent::ToolCallFailed {
-                    request_id: ctx.request_id,
-                    parent_id: ctx.parent_id,
-                    call_id: ctx.call_id,
-                    error: format!("Unsupported tool: {}", other),
-                },
-            ));
-        }
-    }
 }
 
 #[cfg(test)]

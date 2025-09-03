@@ -27,6 +27,8 @@ pub mod utils;
 pub use event_bus::*;
 pub mod rag;
 pub mod tools;
+#[cfg(test)]
+mod tests;
 
 pub mod test_utils;
 use lazy_static::lazy_static;

@@ -377,48 +377,6 @@ pub async fn llm_manager(
                     }
                 });
             }
-            AppEvent::Llm(Event::ToolCall {
-                request_id,
-                parent_id,
-                name,
-                arguments,
-                call_id,
-            }) => {
-                let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
-                // tracing::info!(
-                //     request_id = %request_id,
-                //     parent_id = %parent_id,
-                //     call_id = %call_id,
-                //     tool = ?name,
-                //     "Dispatching ToolEvent::Requested (unified path)"
-                // );
-                //
-                // // Persist observed tool-call for offline inspection
-                // if let Some(dir) = diag_dir() {
-                //     let fname = format!("{}-{}-toolcall.json", now_ts(), parent_id);
-                //     let rec = json!({
-                //         "phase": "tool_call_observed",
-                //         "request_id": request_id,
-                //         "parent_id": parent_id,
-                //         "call_id": call_id,
-                //         "name": name,
-                //         "arguments": arguments
-                //     });
-                //     let _ = fs::write(
-                //         dir.join(fname),
-                //         serde_json::to_string_pretty(&rec).unwrap_or_default(),
-                //     );
-                // }
-                //
-                // event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                //     tool_call
-                    // request_id,
-                    // parent_id,
-                    // name,
-                    // arguments,
-                    // call_id: ArcStr::from(call_id),
-                // }));
-            }
             AppEvent::System(SystemEvent::ToolCallRequested {
                 tool_call,
                 request_id,
@@ -445,7 +403,6 @@ pub async fn llm_manager(
                     call_id: tool_call.call_id.clone()
                 };
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
-                // tokio::spawn(spawn_tool_call(state, event_bus, request_id, parent_id, name, arguments, call_id));
             }
             AppEvent::ModelEndpointsRequest { model_id } => {
                 let state = Arc::clone(&state);
@@ -990,26 +947,6 @@ pub enum ToolEvent {
     },
 }
 
-async fn spawn_tool_call(
-    state: Arc<AppState>,
-    event_bus: Arc<EventBus>,
-    request_id: Uuid,
-    parent_id: Uuid,
-    name: ToolName,
-    arguments: Value,
-    call_id: ArcStr,
-) {
-    let params = ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    };
-    rag::dispatcher::handle_tool_call_requested(params).await;
-}
 #[derive(Clone, Debug)]
 pub enum Event {
     /// Request to generate content from an LLM

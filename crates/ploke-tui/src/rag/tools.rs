@@ -8,7 +8,7 @@ crate, when we will have a real namespace uuid. */
 use ploke_core::rag_types::{
     ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
 };
-use ploke_core::{ArcStr, WriteSnippetData, PROJECT_NAMESPACE_UUID};
+use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
 use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
@@ -167,42 +167,34 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 request_id
             );
             tool_call_params.tool_call_failed(msg.clone());
-            chat::add_msg_immediate(&state, &event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo)
-                .await;
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
             return;
         }
     }
 
-    // Parse args (strongly typed). Prefer tagged enum request; fall back to legacy direct splice mapping.
+    // Parse args (strongly typed). Prefer tagged enum request; 
+    // Old fall back to legacy direct splice mapping has been removed.
     let typed_req: ApplyCodeEditRequest = match serde_json::from_value(arguments.clone()) {
         Ok(v) => v,
-        Err(_) => match serde_json::from_value::<LegacyApplyDirect>(arguments.clone()) {
-            Ok(legacy) => ApplyCodeEditRequest {
-                confidence: legacy.confidence,
-                edits: legacy
-                    .edits
-                    .into_iter()
-                    .map(|le| Edit::Splice {
-                        file_path: le.file_path,
-                        expected_file_hash: le.expected_file_hash,
-                        start_byte: le.start_byte as u32,
-                        end_byte: le.end_byte as u32,
-                        replacement: le.replacement,
-                        namespace: le.namespace.unwrap_or(PROJECT_NAMESPACE_UUID),
-                    })
-                    .collect(),
-            },
-            Err(e2) => {
-                let err = format!("Invalid apply_code_edit payload: {}", e2);
-                tool_call_params.tool_call_failed(err);
-                return;
-            }
-        },
+        Err(e) => {
+            let err = format!("Invalid apply_code_edit payload: {}", e);
+            tool_call_params.tool_call_failed(err);
+            return;
+        } 
     };
 
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
-        chat::add_msg_immediate(&state, &event_bus,
+        chat::add_msg_immediate(
+            &state,
+            &event_bus,
             Uuid::new_v4(),
             "apply_code_edit: No edits provided".to_string(),
             MessageKind::SysInfo,
@@ -345,9 +337,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                             if ed.file_path == abs_path {
                                 true
                             } else if file_is_relative {
-                                ed.file_path
-                                    .to_string_lossy()
-                                    .ends_with(file)
+                                ed.file_path.to_string_lossy().ends_with(file)
                             } else {
                                 false
                             }
@@ -576,7 +566,9 @@ Deny:     edit deny {request_id}{2}"#,
             ""
         },
     );
-    chat::add_msg_immediate(&state, &event_bus,
+    chat::add_msg_immediate(
+        &state,
+        &event_bus,
         Uuid::new_v4(),
         summary,
         MessageKind::SysInfo,
@@ -615,101 +607,5 @@ Deny:     edit deny {request_id}{2}"#,
         tokio::spawn(async move {
             approve_edits(&state2, &event_bus2, request_id).await;
         });
-    }
-}
-
-pub async fn handle_request_context(tool_call_params: ToolCallParams) -> SystemEvent {
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-
-    let span = tracing::info_span!("handle_request_context", request_id = %request_id, parent_id = %parent_id, call_id = ?call_id);
-    let _enter = span.enter();
-    tracing::debug!(arguments = ?arguments, "handle_request_context called");
-
-    // Parse typed arguments
-    let args: RequestCodeContextArgs = match serde_json::from_value(arguments.clone()) {
-        Ok(v) => v,
-        Err(e) => {
-            let msg = format!("Invalid request_code_context payload: {}", e);
-            return tool_call_params.tool_call_err(msg);
-        }
-    };
-    if args.token_budget == 0 {
-        return tool_call_params.tool_call_err("Invalid or missing token_budget".to_string());
-    }
-
-    // Determine query: prefer hint, otherwise last user message
-    let query = if let Some(h) = args.search_term.as_ref().filter(|s| !s.trim().is_empty()) {
-        h.clone()
-    } else {
-        let guard = state.chat.read().await;
-        match guard.last_user_msg() {
-            Ok(Some((_id, content))) => content,
-            _ => String::new(),
-        }
-    };
-
-    if query.trim().is_empty() {
-        let msg = "No query available (no hint provided and no recent user message)".to_string();
-        return tool_call_params.tool_call_err(msg);
-    }
-
-    let top_k = calc_top_k_for_budget(args.token_budget);
-
-    // Build token budget for RAG
-    let budget = TokenBudget {
-        max_total: args.token_budget as usize,
-        ..Default::default()
-    };
-    if let Some(rag) = &state.rag {
-        match rag
-            .get_context(
-                &query,
-                top_k,
-                &budget,
-                &RetrievalStrategy::Hybrid {
-                    rrf: RrfConfig::default(),
-                    mmr: None,
-                },
-            )
-            .await
-        {
-            Ok(context) => {
-                let result = RequestCodeContextResult {
-                    ok: true,
-                    query,
-                    top_k,
-                    context,
-                };
-                match serde_json::to_string(&result) {
-                    Ok(content) => SystemEvent::ToolCallCompleted {
-                        request_id,
-                        parent_id,
-                        call_id: call_id.clone(),
-                        content,
-                    },
-                    Err(e) => {
-                        let msg = format!("Failed to serialize RequestCodeContextResult: {}", e);
-                        tool_call_params.tool_call_err(msg)
-                    }
-                }
-            }
-            Err(e) => {
-                let msg = format!("RAG get_context failed: {}", e);
-                tracing::warn!("{}", msg);
-                tool_call_params.tool_call_err(msg)
-            }
-        }
-    } else {
-        let msg = "RAG service unavailable".to_string();
-        tracing::warn!("{}", msg);
-        tool_call_params.tool_call_err(msg)
     }
 }

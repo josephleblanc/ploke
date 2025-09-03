@@ -288,7 +288,7 @@ async fn e2e_live_api_request_response_types() -> color_eyre::Result<()> {
 /// Test live API tool call request/response cycle with type validation
 #[tokio::test]
 async fn e2e_live_api_tool_call_types() -> color_eyre::Result<()> {
-    let _t = init_tracing_tests(Level::DEBUG);
+    let _t = init_tracing_tests(Level::ERROR);
     let env = openrouter_env().expect("Skipping live API tool test: OPENROUTER_API_KEY not set");
     
     let harness = AppHarness::spawn().await?;

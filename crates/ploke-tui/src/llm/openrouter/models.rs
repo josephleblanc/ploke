@@ -414,6 +414,8 @@ use std::path::PathBuf;
     }
 
     #[test]
+    #[cfg(feature = "live_api_tests")]
+    #[cfg(feature = "json_visitor")]
     fn flakey_models_all_raw() -> color_eyre::Result<()> {
         let models_resp = {
             let rt = Runtime::new().unwrap();
@@ -469,6 +471,7 @@ use std::path::PathBuf;
 
     #[test]
     #[cfg(feature = "live_api_tests")]
+    #[cfg(feature = "json_visitor")]
     fn ai_temp_endpoint_dump_and_stats() -> color_eyre::Result<()> {
         use ploke_core::ArcStr;
 

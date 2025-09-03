@@ -178,19 +178,6 @@ impl<'a> RequestSession<'a> {
                         let tool_tasks: Vec<_> = tool_calls
                             .into_iter()
                             .map(|call| {
-                                // let new_ctx = Ctx {
-                                //     state: ctx.state.clone(),
-                                //     event_bus: ctx.event_bus.clone(),
-                                //     request_id: ctx.request_id,
-                                //     parent_id: ctx.parent_id,
-                                //     call_id: ctx.call_id.clone(),
-                                // };
-                                // process_tool(call, ctx);
-                                // let call_id = ArcStr::from(call.call_id.as_ref());
-                                // let name= call.function.name;
-                                // let arguments: ToolCall = serde_json::from_str(&call.function.arguments)
-                                //     .unwrap_or(json!({ "raw": call.function.arguments }));
-                                //
                                 let event_bus = self.event_bus.clone();
                                 let parent_id = self.parent_id;
                                 let timeout_secs = self.params.tool_timeout_secs.unwrap_or(30);
@@ -205,9 +192,6 @@ impl<'a> RequestSession<'a> {
                                             tool_call: call,
                                             request_id,
                                             parent_id,
-                                            // name,
-                                            // arguments,
-                                            // call_id: call_id.clone(),
                                         },
                                     ));
 
