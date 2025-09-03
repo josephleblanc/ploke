@@ -59,6 +59,7 @@ pub struct AppHarness {
 
 lazy_static! {
     /// Shared AppHarness instance that can be reused across tests
+    // AI: The shared harness should already be populated below by using `AppHarness::spawn()` AI!
     pub static ref SHARED_HARNESS: Arc<Mutex<Option<AppHarness>>> = Arc::new(Mutex::new(None));
 }
 
