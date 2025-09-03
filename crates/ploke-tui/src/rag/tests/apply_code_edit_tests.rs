@@ -27,7 +27,18 @@ const BACKUP_FIXTURE: &str = "tests/fixture_crates/fixture_nodes_copy/src/struct
 
 /// Restores the fixture in ORIGINAL_FIXTURE from the backup copy in BACKUP_FIXTURE
 fn restore_fixture() {
-    // AI: Fill out this function AI!
+    use std::fs;
+    
+    let original_path = ORIGINAL_FIXTURE;
+    let backup_path = BACKUP_FIXTURE;
+    
+    // Read the backup file content
+    let backup_content = fs::read_to_string(backup_path)
+        .unwrap_or_else(|e| panic!("Failed to read backup fixture at {}: {}", backup_path, e));
+    
+    // Write the backup content to the original file
+    fs::write(original_path, backup_content)
+        .unwrap_or_else(|e| panic!("Failed to restore fixture to {}: {}", original_path, e));
 }
 
 // Helper functions for test setup
