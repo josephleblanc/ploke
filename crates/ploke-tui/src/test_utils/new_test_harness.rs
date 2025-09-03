@@ -59,8 +59,16 @@ pub struct AppHarness {
 
 lazy_static! {
     /// Shared AppHarness instance that can be reused across tests
-    // AI: The shared harness should already be populated below by using `AppHarness::spawn()` AI!
-    pub static ref SHARED_HARNESS: Arc<Mutex<Option<AppHarness>>> = Arc::new(Mutex::new(None));
+    pub static ref SHARED_HARNESS: Arc<Mutex<Option<AppHarness>>> = {
+        let harness = Arc::new(Mutex::new(None));
+        let rt = Runtime::new().expect("Failed to create runtime");
+        let _guard = rt.enter();
+        {
+            let mut h = harness.blocking_lock();
+            *h = Some(rt.block_on(AppHarness::spawn()).expect("Failed to spawn harness"));
+        }
+        harness
+    };
 }
 
 impl AppHarness {
