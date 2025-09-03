@@ -31,7 +31,7 @@ pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
         event_bus,
         request_id,
         parent_id,
-        name: name.clone(),
+        name,
         arguments: arguments.clone(),
         call_id: call_id.clone(),
     };

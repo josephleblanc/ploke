@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::utils::consts::OPENROUTER_BASE_STR;
 use crate::utils::consts::OPENROUTER_ENDPOINT_STR;
-use crate::utils::de::string_or_f64;
-use crate::utils::de::string_or_f64_opt;
+use crate::utils::se_de::string_or_f64;
+use crate::utils::se_de::string_or_f64_opt;
 use lazy_static::lazy_static;
 use ploke_core::ArcStr;
 use ploke_test_utils::workspace_root;

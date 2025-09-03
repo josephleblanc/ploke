@@ -144,16 +144,14 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
         AppEvent::System(SystemEvent::ToolCallRequested {
             request_id,
             parent_id,
-            name,
-            arguments,
-            call_id,
+            tool_call,
         }) => {
             let params = ToolRequestPersistParams {
                 request_id,
                 parent_id,
-                tool_name: name,
-                arguments,
-                call_id,
+                tool_name: tool_call.function.name,
+                arguments: serde_json::Value::String(tool_call.function.arguments),
+                call_id: tool_call.call_id,
             };
             if let Err(e) = persist_tool_requested(state, &params).await {
                 tracing::warn!(

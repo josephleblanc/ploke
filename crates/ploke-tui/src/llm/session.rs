@@ -6,8 +6,8 @@ use ploke_core::ArcStr;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::app_state::events::SystemEvent;
 use crate::AppEvent;
+use crate::app_state::events::SystemEvent;
 use crate::llm::{Choices, ToolEvent};
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
@@ -20,7 +20,7 @@ use super::{
     LLMParameters, LlmError, RequestMessage, cap_messages_by_chars, cap_messages_by_tokens,
 };
 use crate::EventBus;
-use crate::tools::ToolDefinition;
+use crate::tools::{Ctx, ToolCall, ToolDefinition, process_tool};
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
 pub struct RequestSession<'a> {
@@ -133,7 +133,6 @@ impl<'a> RequestSession<'a> {
                 .text()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
-            tracing::trace!("raw body: {}", body);
 
             // Providers sometimes put errors inside a 200 body
             if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -153,6 +152,7 @@ impl<'a> RequestSession<'a> {
             // Emit API response for test harness validation BEFORE deserialization
             #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
             {
+                tracing::trace!("raw body: {}", body);
                 let request_id = uuid::Uuid::new_v4();
                 let _ = self.event_bus.realtime_tx.send(crate::AppEvent::System(
                     SystemEvent::TestHarnessApiResponse {
@@ -175,30 +175,49 @@ impl<'a> RequestSession<'a> {
 
                         // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
                         // Dispatch all tool calls concurrently using tokio::task::spawn and join all futures
-                        let tool_tasks: Vec<_> = tool_calls.into_iter()
+                        let tool_tasks: Vec<_> = tool_calls
+                            .into_iter()
                             .map(|call| {
-                                let call_id = ArcStr::from(call.call_id.as_ref());
-                                let name= call.function.name;
-                                let arguments = serde_json::from_str::<Value>(&call.function.arguments)
-                                    .unwrap_or(json!({ "raw": call.function.arguments }));
-                                
+                                // let new_ctx = Ctx {
+                                //     state: ctx.state.clone(),
+                                //     event_bus: ctx.event_bus.clone(),
+                                //     request_id: ctx.request_id,
+                                //     parent_id: ctx.parent_id,
+                                //     call_id: ctx.call_id.clone(),
+                                // };
+                                // process_tool(call, ctx);
+                                // let call_id = ArcStr::from(call.call_id.as_ref());
+                                // let name= call.function.name;
+                                // let arguments: ToolCall = serde_json::from_str(&call.function.arguments)
+                                //     .unwrap_or(json!({ "raw": call.function.arguments }));
+                                //
                                 let event_bus = self.event_bus.clone();
                                 let parent_id = self.parent_id;
                                 let timeout_secs = self.params.tool_timeout_secs.unwrap_or(30);
-                                
+
                                 tokio::task::spawn(async move {
                                     // Subscribe before sending
                                     let rx = event_bus.realtime_tx.subscribe();
                                     let request_id = Uuid::new_v4();
-                                    event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                                        request_id,
-                                        parent_id,
-                                        name,
-                                        arguments,
-                                        call_id: call_id.clone(),
-                                    }));
+                                    let call_id = call.call_id.clone();
+                                    event_bus.send(AppEvent::System(
+                                        SystemEvent::ToolCallRequested {
+                                            tool_call: call,
+                                            request_id,
+                                            parent_id,
+                                            // name,
+                                            // arguments,
+                                            // call_id: call_id.clone(),
+                                        },
+                                    ));
 
-                                    let result = await_tool_result(rx, request_id, call_id.clone(), timeout_secs).await;
+                                    let result = await_tool_result(
+                                        rx,
+                                        request_id,
+                                        call_id.clone(),
+                                        timeout_secs,
+                                    )
+                                    .await;
                                     (call_id, result)
                                 })
                             })
@@ -219,12 +238,10 @@ impl<'a> RequestSession<'a> {
                                         // For tool errors, we still use a tool message but with error content
                                         let error_content =
                                             json!({"ok": false, "error": err}).to_string();
-                                        self.messages.push(RequestMessage::new_tool(
-                                            error_content,
-                                            call_id,
-                                        ));
+                                        self.messages
+                                            .push(RequestMessage::new_tool(error_content, call_id));
                                     }
-                                }
+                                },
                                 Err(join_err) => {
                                     // Handle tokio task join errors - we don't have call_id here, use a placeholder
                                     let error_content = json!({"ok": false, "error": format!("Task join error: {}", join_err)}).to_string();
@@ -451,23 +468,21 @@ pub async fn await_tool_result(
                     call_id: cid,
                     content,
                     ..
-                }) if rid == request_id && cid == call_id => {
-                    return Ok(content)
-                }
+                }) if rid == request_id && cid == call_id => return Ok(content),
                 AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,
                     call_id: cid,
                     error,
                     ..
-                }) if rid == request_id && cid == call_id => {
-                    return Err(error)
-                }
+                }) if rid == request_id && cid == call_id => return Err(error),
                 _ => {
                     // unrelated event; keep waiting
                 }
             }
         }
-        Err(format!("Event channel error for call_id: {call_id:?}: channel closed"))
+        Err(format!(
+            "Event channel error for call_id: {call_id:?}: channel closed"
+        ))
     };
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), wait).await {
@@ -585,7 +600,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = ArcStr::from( "call-err" );
+        let call_id = ArcStr::from("call-err");
         let error_msg = "something went wrong".to_string();
         let eb = event_bus.clone();
 

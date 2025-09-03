@@ -1086,12 +1086,12 @@ async fn e2e_api_response_deserialization_and_gat_validation() -> Result<()> {
         // TODO: Use the following deserialization to test the values instead of the ugly, deeply
         // nested if-let monstrosity.
         use ploke_tui::llm::OpenAiResponse;
-        let response_de_result: Result<OpenAiResponse<'_>, _> = serde_json::from_str(response_body);
+        let response_de_result: Result<OpenAiResponse, _> = serde_json::from_str(response_body);
         assert_ok!(
             &response_de_result,
             "Should be able to deserialize to OpenAiResponse"
         );
-        let response_de: OpenAiResponse<'_> = response_de_result?;
+        let response_de: OpenAiResponse = response_de_result?;
         // TODO: check fields of deserialized response_de
 
         // Test JSON structure validation

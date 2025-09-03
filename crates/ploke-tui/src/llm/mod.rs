@@ -172,11 +172,11 @@ impl From<MessageKind> for Role {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAiResponse<'a> {
+pub struct OpenAiResponse {
     #[serde(default)]
     id: String,
-    #[serde(borrow, default)]
-    choices: Vec<Choices<'a>>,
+    #[serde( default)]
+    choices: Vec<Choices>,
     #[serde(default)]
     created: i64,
     #[serde(default)]
@@ -210,7 +210,7 @@ pub(super) struct ResponseUsage {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Choices<'a> {
+pub struct Choices {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logprobs: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,8 +219,8 @@ pub struct Choices<'a> {
     pub native_finish_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
-    #[serde(borrow, skip_serializing_if = "Option::is_none")]
-    pub message: Option<ResponseMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<ResponseMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorResponse>,
     // For non-streaming choices that might have text instead of message
@@ -228,19 +228,19 @@ pub struct Choices<'a> {
     pub text: Option<String>,
     // For streaming choices
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub delta: Option<StreamingDelta<'a>>,
+    pub delta: Option<StreamingDelta>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingDelta<'a> {
+pub struct StreamingDelta {
     // May be null or string
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     // May or may not be present
     role: Option<Role>,
-    #[serde(borrow, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     // May or may not be present
-    tool_calls: Option<Vec<ToolCall<'a>>>,
+    tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -256,20 +256,19 @@ pub struct ErrorResponse {
 // Use OpenAI-style normalized tool call shape per OpenRouter docs
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub(super) struct Choice<'a> {
-    #[serde(borrow)]
-    message: ResponseMessage<'a>,
+pub(super) struct Choice {
+    message: ResponseMessage,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct ResponseMessage<'a> {
+pub struct ResponseMessage {
     // When tool_calls are present, role may be null/absent
     role: Option<String>,
     // When tool_calls are present, content may be null/absent
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
-    #[serde(borrow, skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ToolCall<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     logprobs: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -386,56 +385,67 @@ pub async fn llm_manager(
                 call_id,
             }) => {
                 let call_id = call_id.unwrap_or_else(|| "unknown".to_string());
-                tracing::info!(
-                    request_id = %request_id,
-                    parent_id = %parent_id,
-                    call_id = %call_id,
-                    tool = ?name,
-                    "Dispatching ToolEvent::Requested (unified path)"
-                );
-
-                // Persist observed tool-call for offline inspection
-                if let Some(dir) = diag_dir() {
-                    let fname = format!("{}-{}-toolcall.json", now_ts(), parent_id);
-                    let rec = json!({
-                        "phase": "tool_call_observed",
-                        "request_id": request_id,
-                        "parent_id": parent_id,
-                        "call_id": call_id,
-                        "name": name,
-                        "arguments": arguments
-                    });
-                    let _ = fs::write(
-                        dir.join(fname),
-                        serde_json::to_string_pretty(&rec).unwrap_or_default(),
-                    );
-                }
-
-                event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                    request_id,
-                    parent_id,
-                    name,
-                    arguments,
-                    call_id: ArcStr::from(call_id),
-                }));
+                // tracing::info!(
+                //     request_id = %request_id,
+                //     parent_id = %parent_id,
+                //     call_id = %call_id,
+                //     tool = ?name,
+                //     "Dispatching ToolEvent::Requested (unified path)"
+                // );
+                //
+                // // Persist observed tool-call for offline inspection
+                // if let Some(dir) = diag_dir() {
+                //     let fname = format!("{}-{}-toolcall.json", now_ts(), parent_id);
+                //     let rec = json!({
+                //         "phase": "tool_call_observed",
+                //         "request_id": request_id,
+                //         "parent_id": parent_id,
+                //         "call_id": call_id,
+                //         "name": name,
+                //         "arguments": arguments
+                //     });
+                //     let _ = fs::write(
+                //         dir.join(fname),
+                //         serde_json::to_string_pretty(&rec).unwrap_or_default(),
+                //     );
+                // }
+                //
+                // event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                //     tool_call
+                    // request_id,
+                    // parent_id,
+                    // name,
+                    // arguments,
+                    // call_id: ArcStr::from(call_id),
+                // }));
             }
             AppEvent::System(SystemEvent::ToolCallRequested {
+                tool_call,
                 request_id,
                 parent_id,
-                name,
-                arguments,
-                call_id,
+                // name,
+                // arguments,
+                // call_id,
             }) => {
                 tracing::info!(
                     request_id = %request_id,
                     parent_id = %parent_id,
-                    call_id = ?call_id,
-                    tool = ?name,
+                    call_id = ?tool_call.call_id,
+                    tool = ?tool_call.function.name,
                     "Dispatching ToolEvent::Requested in LLM manager"
                 );
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
-                tokio::spawn(spawn_tool_call(state, event_bus, request_id, parent_id, name, arguments, call_id));
+
+                let ctx = crate::tools::Ctx {
+                    state,
+                    event_bus,
+                    request_id,
+                    parent_id,
+                    call_id: tool_call.call_id.clone()
+                };
+                tokio::task::spawn(tools::process_tool(tool_call, ctx));
+                // tokio::spawn(spawn_tool_call(state, event_bus, request_id, parent_id, name, arguments, call_id));
             }
             AppEvent::ModelEndpointsRequest { model_id } => {
                 let state = Arc::clone(&state);
@@ -1364,7 +1374,7 @@ pub struct ResponseParseSummary {
 /// Attempt to parse a provider response body into our OpenAI-compatible types and summarize.
 #[cfg(feature = "test_harness")]
 pub fn test_parse_response_summary(body: &str) -> Result<ResponseParseSummary, String> {
-    let parsed: OpenAiResponse<'_> = serde_json::from_str(body)
+    let parsed: OpenAiResponse = serde_json::from_str(body)
         .map_err(|e| format!("typed parse failed: {}", e))?;
     let mut choices_cnt = 0usize;
     let mut tool_calls_total = 0usize;

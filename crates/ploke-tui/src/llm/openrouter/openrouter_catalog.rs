@@ -12,8 +12,8 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use crate::utils::de::string_or_f64_opt;
-use crate::utils::de::string_or_f64;
+use crate::utils::se_de::string_or_f64_opt;
+use crate::utils::se_de::string_or_f64;
 
 use super::provider_endpoints::SupportedParameters;
 use super::model_provider as or_ep;

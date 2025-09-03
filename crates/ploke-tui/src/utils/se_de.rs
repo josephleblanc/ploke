@@ -1,6 +1,22 @@
-use serde::{Deserialize as _, Deserializer};
+use ploke_core::ArcStr;
+use serde::{Deserialize as _, Deserializer, Serializer};
 use serde_json::Value;
 
+pub(crate) fn de_arc_str<'de, D>(deserializer: D) -> Result<ArcStr, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?; // allocate a String
+    Ok(ArcStr::from(s)) // convert into Arc<str> without another copy
+}
+
+/// Serialize an `Arc<str>` as a JSON string without copying the contents.
+pub(crate) fn se_arc_str<S>(value: &ArcStr, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(value)
+}
 
 pub(crate) fn string_or_f64_opt<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where

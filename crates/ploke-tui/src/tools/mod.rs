@@ -2,17 +2,23 @@
 
 // For any db-related issues, check cross-crate contract with db in:
 //  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
+use crate::utils::se_de::{ de_arc_str, se_arc_str };
 use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{
-    app_state::{events::SystemEvent, AppState}, rag::{
+    AppEvent,
+    app_state::{AppState, events::SystemEvent},
+    rag::{
         tools::{apply_code_edit_tool, get_file_metadata_tool, handle_request_context},
         utils::ToolCallParams,
-    }, AppEvent
+    },
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use ploke_core::{rag_types::{ContextPart, ContextPartKind, Modality}, ArcStr};
+use ploke_core::{
+    ArcStr,
+    rag_types::{ContextPart, ContextPartKind, Modality},
+};
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -21,13 +27,13 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub mod request_code_context;
-pub use request_code_context::{RequestCodeContext, RequestCodeContextInput, RequestCodeContextGat};
+pub use request_code_context::{
+    RequestCodeContext, RequestCodeContextGat, RequestCodeContextInput,
+};
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod get_file_metadata;
-pub use get_file_metadata::{GetFileMetadataInput, GetFileMetadata};
-
-
+pub use get_file_metadata::{GetFileMetadata, GetFileMetadataInput};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -170,9 +176,10 @@ pub struct ToolCallRecord {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
-pub(crate) struct ToolCall<'a> {
-    #[serde(borrow, rename = "id")]
-    pub call_id: Cow<'a, str>,
+pub(crate) struct ToolCall {
+    #[serde(deserialize_with = "de_arc_str", serialize_with="se_arc_str", rename = "id")]
+    pub call_id: ArcStr,
+
     #[serde(rename = "type")]
     pub call_type: FunctionMarker,
     pub function: FunctionCall,
@@ -216,38 +223,44 @@ impl Into<ploke_error::Error> for ToolError {
 }
 
 // potential alternative for static dispatch, might be helpful for macro
-async fn process_tool<'a>(tool_call: ToolCall<'a>, ctx: &Ctx) -> color_eyre::Result<()> {
+pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::Result<()> {
     // TODO: Implement this as the Clone method for Ctx
-    let new_ctx = Ctx {
-        state: ctx.state.clone(),
-        event_bus: ctx.event_bus.clone(),
-        request_id: ctx.request_id,
-        parent_id: ctx.parent_id,
-        call_id: ctx.call_id.clone(),
-    };
+    // let new_ctx = Ctx {
+    //     state: ctx.state.clone(),
+    //     event_bus: ctx.event_bus.clone(),
+    //     request_id: ctx.request_id,
+    //     parent_id: ctx.parent_id,
+    //     call_id: ctx.call_id.clone(),
+    // };
+    let name = tool_call.function.name;
+    let args = tool_call.function.arguments;
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
-            let args = tool_call.function.arguments;
             let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)?;
-            let ToolResult { content } = request_code_context::RequestCodeContextGat::execute(params, new_ctx).await?;
-            request_code_context::RequestCodeContextGat::emit_completed(ctx, content);
+            let ToolResult { content } =
+                request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
+                    .await
+                    .inspect_err(|e| RequestCodeContextGat::emit_err(&ctx, e.to_string()))?;
+            request_code_context::RequestCodeContextGat::emit_completed(&ctx, content);
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
-            let args = tool_call.function.arguments;
             let params = code_edit::GatCodeEdit::deserialize_params(&args)?;
-            let ToolResult { content } = code_edit::GatCodeEdit::execute(params, new_ctx).await?;
-            code_edit::GatCodeEdit::emit_completed(ctx, content);
+            let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
+                .await
+                .inspect_err(|e| GatCodeEdit::emit_err(&ctx, e.to_string()))?;
+            code_edit::GatCodeEdit::emit_completed(&ctx, content);
             Ok(())
         }
         ToolName::GetFileMetadata => {
-            let args = tool_call.function.arguments;
             let params = get_file_metadata::GetFileMetadata::deserialize_params(&args)?;
-            let ToolResult { content } = get_file_metadata::GetFileMetadata::execute(params, new_ctx).await?;
-            get_file_metadata::GetFileMetadata::emit_completed(ctx, content);
+            let ToolResult { content } =
+                get_file_metadata::GetFileMetadata::execute(params, ctx.clone())
+                    .await
+                    .inspect_err(|e| GetFileMetadata::emit_err(&ctx, e.to_string()))?;
+            get_file_metadata::GetFileMetadata::emit_completed(&ctx, content);
             Ok(())
-        }
-        // more here
+        } // more here
     }
 }
 
@@ -294,6 +307,18 @@ pub trait Tool {
         ));
     }
 
+    fn emit_err(ctx: &Ctx, error: String) {
+        let _ =
+            ctx.event_bus
+                .realtime_tx
+                .send(crate::AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id: ctx.request_id,
+                    parent_id: ctx.parent_id,
+                    call_id: ctx.call_id.clone(),
+                    error,
+                }));
+    }
+
     // Helper for deserializing the arguments JSON string
     fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolError> {
         serde_json::from_str(json).map_err(|e| ToolError::DeserializationError(e.to_string()))
@@ -330,9 +355,29 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
     let args_str = arguments.to_string();
 
     match name.as_str() {
-        "request_code_context" => match request_code_context::RequestCodeContextGat::deserialize_params(&args_str) {
-            Ok(params) => match request_code_context::RequestCodeContextGat::execute(params, ctx.clone()).await {
-                Ok(ToolResult { content }) => request_code_context::RequestCodeContextGat::emit_completed(&ctx, content),
+        "request_code_context" => {
+            match request_code_context::RequestCodeContextGat::deserialize_params(&args_str) {
+                Ok(params) => {
+                    match request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
+                        .await
+                    {
+                        Ok(ToolResult { content }) => {
+                            request_code_context::RequestCodeContextGat::emit_completed(
+                                &ctx, content,
+                            )
+                        }
+                        Err(e) => {
+                            let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
+                                SystemEvent::ToolCallFailed {
+                                    request_id: ctx.request_id,
+                                    parent_id: ctx.parent_id,
+                                    call_id: ctx.call_id,
+                                    error: e.to_string(),
+                                },
+                            ));
+                        }
+                    }
+                }
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                         SystemEvent::ToolCallFailed {
@@ -343,22 +388,14 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                         },
                     ));
                 }
-            },
-            Err(e) => {
-                let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                    SystemEvent::ToolCallFailed {
-                        request_id: ctx.request_id,
-                        parent_id: ctx.parent_id,
-                        call_id: ctx.call_id,
-                        error: e.to_string(),
-                    },
-                ));
             }
-        },
+        }
         "apply_code_edit" => {
             match code_edit::GatCodeEdit::deserialize_params(&args_str) {
                 Ok(params) => match code_edit::GatCodeEdit::execute(params, ctx.clone()).await {
-                    Ok(ToolResult { content }) => code_edit::GatCodeEdit::emit_completed(&ctx, content),
+                    Ok(ToolResult { content }) => {
+                        code_edit::GatCodeEdit::emit_completed(&ctx, content)
+                    }
                     Err(e) => {
                         let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
                             SystemEvent::ToolCallFailed {
@@ -491,7 +528,7 @@ mod tests {
         // Build ToolCall
         let args = json!({"file_path": tmp.display().to_string()}).to_string();
         let tc = ToolCall {
-            call_id: Cow::Borrowed("test-call"),
+            call_id: ArcStr::from("test-call"),
             call_type: FunctionMarker,
             function: FunctionCall {
                 name: ToolName::GetFileMetadata,
@@ -500,7 +537,7 @@ mod tests {
         };
 
         let mut rx = event_bus.realtime_tx.subscribe();
-        process_tool(tc, &ctx).await.expect("process ok");
+        process_tool(tc, ctx.clone()).await.expect("process ok");
 
         // Expect a ToolCallCompleted with matching call_id
         let got = timeout(Duration::from_secs(1), async move {
