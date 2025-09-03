@@ -6,4 +6,8 @@
 // providing public-visibility functions to other applications.
 // In short, we are a binary, not a lib.
 
-// Stub for tests
+// Note: UI tests that require full AppState are better as integration tests
+// using the AppHarness. See tests/ui_approvals_integration.rs for the main
+// deadlock fix validation tests.
+
+pub mod ui_approvals_simple;

@@ -40,7 +40,13 @@ pub fn render_approvals_overlay(
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(inner);
 
-    let proposals_guard = state.proposals.blocking_read();
+    // Use the established pattern for accessing async data from sync context
+    let proposals_guard = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            state.proposals.read().await
+        })
+    });
+    
     let mut items: Vec<(uuid::Uuid, String)> = proposals_guard
         .iter()
         .map(|(id, p)| {
