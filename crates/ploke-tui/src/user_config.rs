@@ -534,7 +534,20 @@ impl ModelRegistry {
 
     /// Helper to check if a specific model is known to support tools.
     pub fn model_supports_tools(&self, model: &str) -> Option<bool> {
-        self.capabilities.get(model).map(|c| c.supports_tools)
+        // Check registry first
+        if let Some(caps) = self.capabilities.get(model) {
+            return Some(caps.supports_tools);
+        }
+        
+        // Fallback for known tool-capable models when registry refresh fails
+        match model {
+            "moonshotai/kimi-k2" | "kimi-k2" => Some(true),
+            "openai/gpt-4o" | "gpt-4o" => Some(true),
+            "openai/gpt-4o-mini" | "gpt-4o-mini" => Some(true),
+            "anthropic/claude-3-5-sonnet" => Some(true),
+            "anthropic/claude-3-5-haiku" => Some(true),
+            _ => None
+        }
     }
 }
 

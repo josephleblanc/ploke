@@ -1,0 +1,1 @@
+No tools-capable provider found for model 'qwen/qwen-2.5-7b-instruct'; skipping.

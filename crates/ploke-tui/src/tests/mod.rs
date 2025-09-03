@@ -11,3 +11,5 @@
 // deadlock fix validation tests.
 
 pub mod ui_approvals_simple;
+pub mod ui_performance_comprehensive;
+pub mod ui_approvals_truncation;

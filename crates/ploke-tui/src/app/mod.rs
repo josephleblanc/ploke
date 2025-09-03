@@ -592,6 +592,30 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => { if let Some(st) = &mut self.approvals { st.select_next(); } }
             KeyCode::Enter | KeyCode::Char('y') => { approve = true; }
             KeyCode::Char('n') | KeyCode::Char('d') => { deny = true; }
+            KeyCode::Char('?') => {
+                if let Some(st) = &mut self.approvals {
+                    st.help_visible = !st.help_visible;
+                }
+                return true;
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                if let Some(st) = &mut self.approvals {
+                    st.increase_view_lines();
+                }
+                return true;
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                if let Some(st) = &mut self.approvals {
+                    st.decrease_view_lines();
+                }
+                return true;
+            }
+            KeyCode::Char('u') => {
+                if let Some(st) = &mut self.approvals {
+                    st.toggle_unlimited();
+                }
+                return true;
+            }
             KeyCode::Char('o') => {
                 // Open-in-editor for the first file of selected proposal
                 if let Some(st) = &self.approvals {

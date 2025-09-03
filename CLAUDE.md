@@ -386,3 +386,5 @@ Instead, we can run our integration tests here. Since we are a user-facing appli
 more concerned with running tests that ensure our application works and is correct than
 providing public-visibility functions to other applications.
 In short, `ploke-tui` is a binary, first, not a lib.
+- If you have an "Error editing file", check your spelling on "openai-codx", it should be "openai-codex"
+- If you have an "Error reading file", check your spelling on "openai-codx", it should be "openai-codex"

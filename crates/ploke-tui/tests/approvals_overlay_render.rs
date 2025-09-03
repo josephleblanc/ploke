@@ -110,130 +110,133 @@ async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<A
 
 #[test]
 fn approvals_overlay_renders_empty_list() {
-    let backend = TestBackend::new(60, 20);
-    let mut term = Terminal::new(backend).expect("terminal");
-    let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
-    let io_handle = ploke_io::IoManagerHandle::new();
-    let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
-    let state = Arc::new(AppState {
-        chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
-        config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
-        system: SystemState::default(),
-        indexing_state: RwLock::new(None),
-        indexer_task: None,
-        indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
-        db,
-        embedder,
-        io_handle,
-        rag: None,
-        budget: ploke_rag::TokenBudget::default(),
-        proposals: RwLock::new(std::collections::HashMap::new()),
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let backend = TestBackend::new(60, 20);
+        let mut term = Terminal::new(backend).expect("terminal");
+        let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        let io_handle = ploke_io::IoManagerHandle::new();
+        let cfg = ploke_tui::user_config::UserConfig::default();
+        let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+        let state = Arc::new(AppState {
+            chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
+            config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
+            system: SystemState::default(),
+            indexing_state: RwLock::new(None),
+            indexer_task: None,
+            indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+            db,
+            embedder,
+            io_handle,
+            rag: None,
+            budget: ploke_rag::TokenBudget::default(),
+            proposals: RwLock::new(std::collections::HashMap::new()),
+        });
+        let ui = ApprovalsState::default();
+
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 60, 20);
+            let _ = render_approvals_overlay(f, area, &state, &ui);
+        }).expect("draw");
+
+        let text = buffer_to_lines(&term).join("\n");
+        assert!(text.contains(" Approvals "));
+        assert!(text.contains(" Pending Proposals "));
+        assert!(text.contains(" Details "));
+        let red = redact(&text);
+        insta::assert_snapshot!("approvals_empty_60x20", red);
     });
-    let ui = ApprovalsState::default();
-
-    term.draw(|f| {
-        let area = Rect::new(0, 0, 60, 20);
-        let _ = render_approvals_overlay(f, area, &state, &ui);
-    }).expect("draw");
-
-    let text = buffer_to_lines(&term).join("\n");
-    assert!(text.contains(" Approvals "));
-    assert!(text.contains(" Pending Proposals "));
-    assert!(text.contains(" Details "));
-    let red = redact(&text);
-    insta::assert_snapshot!("approvals_empty_60x20", red);
 }
 
 #[test]
 fn approvals_overlay_renders_single_proposal_unified_diff() {
-    let backend = TestBackend::new(80, 24);
-    let mut term = Terminal::new(backend).expect("terminal");
-    let (state, ids) = {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let backend = TestBackend::new(80, 24);
+        let mut term = Terminal::new(backend).expect("terminal");
         let id = uuid::Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
-        rt.block_on(make_state_with_ids(vec![(id, DiffPreview::UnifiedDiff { text: "diff --git a/src b/src\n- old\n+ new\n".into() })]))
-    };
-    let ui = ApprovalsState::default();
+        let (state, ids) = make_state_with_ids(vec![(id, DiffPreview::UnifiedDiff { text: "diff --git a/src b/src\n- old\n+ new\n".into() })]).await;
+        let ui = ApprovalsState::default();
 
-    term.draw(|f| {
-        let area = Rect::new(0, 0, 80, 24);
-        let _ = render_approvals_overlay(f, area, &state, &ui);
-    }).expect("draw");
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 80, 24);
+            let _ = render_approvals_overlay(f, area, &state, &ui);
+        }).expect("draw");
 
-    let text = buffer_to_lines(&term).join("\n");
-    assert!(text.contains(" Approvals "));
-    assert!(text.contains(" Pending Proposals "));
-    let short = ploke_tui::app::utils::truncate_uuid(ids[0]);
-    assert!(text.contains(&short));
-    assert!(text.contains("files:1"));
-    assert!(text.contains("Unified Diff:"));
-    assert!(text.contains("- old"));
-    assert!(text.contains("+ new"));
-    let red = redact(&text);
-    insta::assert_snapshot!("approvals_unified_80x24", red);
+        let text = buffer_to_lines(&term).join("\n");
+        assert!(text.contains(" Approvals "));
+        assert!(text.contains(" Pending Proposals "));
+        let short = ploke_tui::app::utils::truncate_uuid(ids[0]);
+        assert!(text.contains(&short));
+        assert!(text.contains("files:1"));
+        assert!(text.contains("Unified Diff:"));
+        assert!(text.contains("- old"));
+        assert!(text.contains("+ new"));
+        let red = redact(&text);
+        insta::assert_snapshot!("approvals_unified_80x24", red);
+    });
 }
 
 #[test]
 fn approvals_overlay_renders_codeblocks_preview_and_selection() {
-    let backend = TestBackend::new(90, 28);
-    let mut term = Terminal::new(backend).expect("terminal");
-    let (state, _ids) = {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let backend = TestBackend::new(90, 28);
+        let mut term = Terminal::new(backend).expect("terminal");
         let id = uuid::Uuid::from_u128(0x87654321_4321_8765_4321_876543218765);
-        rt.block_on(make_state_with_ids(vec![(id, DiffPreview::CodeBlocks {
+        let (state, _ids) = make_state_with_ids(vec![(id, DiffPreview::CodeBlocks {
             per_file: vec![ploke_tui::app_state::core::BeforeAfter {
                 file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
                 before: "fn a() {}\nfn b() {}".into(),
                 after: "fn a() {}\nfn c() {}".into(),
             }],
-        })]))
-    };
-    let ui = ApprovalsState::default();
+        })]).await;
+        let ui = ApprovalsState::default();
 
-    term.draw(|f| {
-        let area = Rect::new(0, 0, 90, 28);
-        let _ = render_approvals_overlay(f, area, &state, &ui);
-    }).expect("draw");
-    let text = buffer_to_lines(&term).join("\n");
-    assert!(text.contains("Before/After:"));
-    assert!(text.contains("- fn a() {}"));
-    assert!(text.contains("+ fn a() {}"));
-    let red = redact(&text);
-    insta::assert_snapshot!("approvals_codeblocks_90x28", red);
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 90, 28);
+            let _ = render_approvals_overlay(f, area, &state, &ui);
+        }).expect("draw");
+        let text = buffer_to_lines(&term).join("\n");
+        assert!(text.contains("Before/After:"));
+        assert!(text.contains("- fn a() {}"));
+        assert!(text.contains("+ fn a() {}"));
+        let red = redact(&text);
+        insta::assert_snapshot!("approvals_codeblocks_90x28", red);
+    });
 }
 
 #[test]
 fn approvals_overlay_renders_multiple_and_moves_selection() {
-    let backend = TestBackend::new(80, 24);
-    let mut term = Terminal::new(backend).expect("terminal");
-    let (state, ids) = {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let backend = TestBackend::new(80, 24);
+        let mut term = Terminal::new(backend).expect("terminal");
         let id1 = uuid::Uuid::from_u128(0xaaaaaaaa_bbbb_cccc_dddd_eeeeeeeeeeee);
         let id2 = uuid::Uuid::from_u128(0xbbbbbbbb_cccc_dddd_eeee_ffffffffffff);
-        rt.block_on(make_state_with_ids(vec![
+        let (state, ids) = make_state_with_ids(vec![
             (id1, DiffPreview::UnifiedDiff { text: "one".into() }),
             (id2, DiffPreview::UnifiedDiff { text: "two".into() }),
-        ]))
-    };
-    let mut ui = ApprovalsState::default();
+        ]).await;
+        let mut ui = ApprovalsState::default();
 
-    term.draw(|f| {
-        let area = Rect::new(0, 0, 80, 24);
-        let _ = render_approvals_overlay(f, area, &state, &ui);
-    }).expect("draw");
-    let text1 = buffer_to_lines(&term).join("\n");
-    assert!(text1.contains(&ploke_tui::app::utils::truncate_uuid(ids[0])));
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 80, 24);
+            let _ = render_approvals_overlay(f, area, &state, &ui);
+        }).expect("draw");
+        let text1 = buffer_to_lines(&term).join("\n");
+        assert!(text1.contains(&ploke_tui::app::utils::truncate_uuid(ids[0])));
 
-    ui.selected = 1;
-    term.draw(|f| {
-        let area = Rect::new(0, 0, 80, 24);
-        let _ = render_approvals_overlay(f, area, &state, &ui);
-    }).expect("draw");
-    let text2 = buffer_to_lines(&term).join("\n");
-    assert!(text2.contains(&ploke_tui::app::utils::truncate_uuid(ids[1])));
-    let red1 = redact(&text1);
-    let red2 = redact(&text2);
-    insta::assert_snapshot!("approvals_multiple_sel0_80x24", red1);
-    insta::assert_snapshot!("approvals_multiple_sel1_80x24", red2);
+        ui.selected = 1;
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 80, 24);
+            let _ = render_approvals_overlay(f, area, &state, &ui);
+        }).expect("draw");
+        let text2 = buffer_to_lines(&term).join("\n");
+        assert!(text2.contains(&ploke_tui::app::utils::truncate_uuid(ids[1])));
+        let red1 = redact(&text1);
+        let red2 = redact(&text2);
+        insta::assert_snapshot!("approvals_multiple_sel0_80x24", red1);
+        insta::assert_snapshot!("approvals_multiple_sel1_80x24", red2);
+    });
 }

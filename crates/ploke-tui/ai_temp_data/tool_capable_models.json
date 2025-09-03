@@ -4181,17 +4181,17 @@
   {
     "id": "meta-llama/llama-3.2-3b-instruct",
     "name": "Meta: Llama 3.2 3B Instruct",
-    "context_length": 20000,
+    "context_length": 131072,
     "top_provider": {
       "is_moderated": false,
-      "context_length": 20000,
-      "max_completion_tokens": 20000
+      "context_length": 131072,
+      "max_completion_tokens": 16384
     },
     "pricing": {
-      "completion": 6e-9,
+      "completion": 2.4e-8,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 3e-9,
+      "prompt": 1.2e-8,
       "request": 0.0,
       "web_search": 0.0
     },
@@ -4584,17 +4584,17 @@
   {
     "id": "mistralai/mistral-nemo",
     "name": "Mistral: Mistral Nemo",
-    "context_length": 32000,
+    "context_length": 131072,
     "top_provider": {
       "is_moderated": false,
-      "context_length": 32000,
-      "max_completion_tokens": null
+      "context_length": 131072,
+      "max_completion_tokens": 128000
     },
     "pricing": {
-      "completion": 5e-8,
+      "completion": 4.00032e-8,
       "image": 0.0,
       "internal_reasoning": 0.0,
-      "prompt": 7.5e-9,
+      "prompt": 1e-8,
       "request": 0.0,
       "web_search": 0.0
     },

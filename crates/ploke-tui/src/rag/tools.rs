@@ -252,7 +252,10 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 code,
             } => {
                 if !NodeType::primary_nodes().contains(node_type) {
-                    let err = format!("Unsupported node_type: {}", node_type.relation_str());
+                    let err = format!(
+                        "Unsupported node type '{}': only primary_nodes() are supported for code editing", 
+                        node_type.relation_str()
+                    );
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
@@ -404,6 +407,23 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     // Build preview (reuse minimal version from prior implementation)
     let mut per_file: Vec<BeforeAfter> = Vec::new();
     let mut unified_diff = String::new();
+
+    // Define truncate function early so it can be used for stored content
+    let truncate = |s: &str| -> String {
+        let max = editing_cfg.max_preview_lines;
+        let mut out = String::new();
+        for (i, line) in s.lines().enumerate() {
+            if i >= max {
+                out.push_str("... [truncated]");
+                break;
+            }
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+        }
+        out
+    };
     for path in files_set.iter() {
         // Fetch full file content via IoManager (verified against tracking hash)
         let (file_hash, namespace) = edits
@@ -449,8 +469,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         };
         per_file.push(BeforeAfter {
             file_path: display_path.clone(),
-            before: before.clone(),
-            after: after.clone(),
+            before: truncate(&before),
+            after: truncate(&after),
         });
         if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
             let header_a = format!("a/{}", display_path.display());
@@ -484,20 +504,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         "diff"
     } else {
         "codeblock"
-    };
-
-    let truncate = |s: &str| -> String {
-        let max = editing_cfg.max_preview_lines;
-        let mut out = String::new();
-        for (i, line) in s.lines().enumerate() {
-            if i >= max {
-                out.push_str("\n... [truncated]\n");
-                break;
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-        out
     };
 
     let preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {

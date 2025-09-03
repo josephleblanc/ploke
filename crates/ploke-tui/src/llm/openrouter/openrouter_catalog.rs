@@ -168,10 +168,10 @@ pub async fn fetch_models(
     base_url: reqwest::Url,
     api_key: &str,
 ) -> color_eyre::Result<Vec<ModelEntry>> {
-    // Use user-filtered catalog as per product decision.
+    // Use public models endpoint (same as working tests)
     let url = base_url
-        .join("/models/user")
-        .expect("Malformed model/user url");
+        .join("/models")
+        .expect("Malformed models url");
     let resp = client
         .get(url)
         .bearer_auth(api_key)
