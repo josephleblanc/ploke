@@ -1,3 +1,5 @@
+use crate::tools::ToolName;
+
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
 use ploke_db::NodeType;
@@ -101,7 +103,7 @@ pub struct ToolCallParams {
     pub event_bus: Arc<EventBus>,
     pub request_id: Uuid,
     pub parent_id: Uuid,
-    pub name: String,
+    pub name: ToolName,
     pub arguments: serde_json::Value,
     pub call_id: ArcStr,
 }

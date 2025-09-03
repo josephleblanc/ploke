@@ -224,7 +224,7 @@ impl AppHarness {
         content: impl Into<String>,
     ) {
         self.event_bus
-            .send(AppEvent::LlmTool(tui::llm::ToolEvent::Completed {
+            .send(AppEvent::System(tui::system::SystemEvent::ToolCallCompleted {
                 request_id,
                 parent_id,
                 call_id,

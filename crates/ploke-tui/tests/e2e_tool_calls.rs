@@ -11,7 +11,7 @@ use ploke_tui::event_bus::EventBusCaps;
 use ploke_tui::rag::utils::ToolCallParams;
 use ploke_tui::system::SystemEvent;
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
-use ploke_tui::tools::{FunctionMarker, Tool, ToolDefinition};
+use ploke_tui::tools::{FunctionMarker, Tool, ToolDefinition, ToolName};
 use ploke_tui::{AppEvent, EventBus};
 
 #[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
@@ -23,7 +23,7 @@ use reqwest::Client;
 mod test_utils {
     use super::*;
     use ploke_core::ArcStr;
-    use ploke_tui::app_state::AppState;
+    use ploke_tui::{app_state::AppState, tools::ToolName};
     #[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
     use ploke_tui::user_config::ModelConfig;
 
@@ -39,7 +39,7 @@ mod test_utils {
         state: Arc<AppState>,
         event_bus: Arc<EventBus>,
         request_id: Uuid,
-        name: &str,
+        name: ToolName,
         arguments: serde_json::Value,
         call_id: ArcStr,
     ) -> ToolCallParams {
@@ -48,7 +48,7 @@ mod test_utils {
             event_bus,
             request_id,
             parent_id: Uuid::new_v4(),
-            name: name.to_string(),
+            name,
             arguments,
             call_id,
         }
@@ -267,7 +267,7 @@ async fn e2e_get_file_metadata_and_apply_code_edit_splice() {
         Arc::clone(&state),
         Arc::clone(&event_bus),
         request_id_meta,
-        "get_file_metadata",
+        ToolName::GetFileMetadata,
         args_meta,
         call_id_meta.clone(),
     );
@@ -323,7 +323,7 @@ async fn e2e_get_file_metadata_and_apply_code_edit_splice() {
         Arc::clone(&state),
         Arc::clone(&event_bus),
         request_id_edit,
-        "apply_code_edit",
+        ToolName::ApplyCodeEdit,
         args_edit,
         call_id_edit.clone(),
     );
@@ -387,7 +387,7 @@ async fn e2e_apply_code_edit_canonical_on_fixture() {
         Arc::clone(&state),
         Arc::clone(&event_bus),
         request_id,
-        "apply_code_edit",
+        ToolName::ApplyCodeEdit,
         args,
         call_id.clone(),
     );
@@ -519,7 +519,7 @@ async fn e2e_enhanced_tool_call_lifecycle_validation() {
         Arc::clone(&state),
         Arc::clone(&event_bus),
         request_id,
-        "get_file_metadata",
+        ToolName::GetFileMetadata,
         args_meta,
         call_id_meta.clone(),
     );
@@ -576,7 +576,7 @@ async fn e2e_enhanced_tool_call_lifecycle_validation() {
         .filter(|e| {
             matches!(
                 e,
-                AppEvent::LlmTool(ploke_tui::llm::ToolEvent::Requested { .. })
+                AppEvent::System(ploke_tui::system::SystemEvent::ToolCallRequested { .. })
             )
         })
         .count();

@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::app_state::MessageUpdatedEvent;
 use crate::chat_history::{Message, MessageKind};
+use crate::tools::ToolName;
 use crate::{AppEvent, EventBus, EventPriority};
 use crate::{llm::ToolEvent, system::SystemEvent};
 
@@ -28,7 +29,7 @@ use serde::{Deserialize, Serialize};
 struct ToolRequestPersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    tool_name: String,
+    tool_name: ToolName,
     arguments: Value,
     call_id: ArcStr,
 }
@@ -105,7 +106,7 @@ fn init_tool_persist_worker(state: &Arc<AppState>) {
             let req_params = ToolRequestPersistParams {
                 request_id: rec.request_id,
                 parent_id: rec.parent_id,
-                tool_name: format!("{:?}", rec.name).to_lowercase(),
+                tool_name: rec.name,
                 arguments,
                 call_id: rec.call_id.clone(),
             };
@@ -115,7 +116,7 @@ fn init_tool_persist_worker(state: &Arc<AppState>) {
             let done_params = ToolDonePersistParams {
                 request_id: rec.request_id,
                 parent_id: rec.parent_id,
-                call_id: rec.call_id.clone(),
+                call_id: rec.call_id,
                 outcome: Some(done_value),
                 error: None,
                 status: ploke_db::observability::ToolStatus::Completed,
@@ -138,69 +139,7 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             }
         }
 
-        // Typed tool events (preferred path)
-        AppEvent::LlmTool(ToolEvent::Requested {
-            request_id,
-            parent_id,
-            name,
-            arguments,
-            call_id,
-        }) => {
-            let params = ToolRequestPersistParams {
-                request_id,
-                parent_id,
-                tool_name: name,
-                arguments,
-                call_id,
-            };
-            if let Err(e) = persist_tool_requested(state, &params).await {
-                tracing::warn!("observability: record_tool_call_requested failed: {}", e);
-            }
-        }
-        AppEvent::LlmTool(ToolEvent::Completed {
-            request_id,
-            parent_id,
-            call_id,
-            content,
-        }) => {
-            let params = ToolDonePersistParams {
-                request_id,
-                parent_id,
-                call_id,
-                outcome: Some(Value::String(content)),
-                error: None,
-                status: ToolStatus::Completed,
-            };
-            if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!(
-                    "observability: record_tool_call_done (completed) failed: {}",
-                    e
-                );
-            }
-        }
-        AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id,
-            error,
-        }) => {
-            let params = ToolDonePersistParams {
-                request_id,
-                parent_id,
-                call_id,
-                outcome: None,
-                error: Some(error),
-                status: ToolStatus::Failed,
-            };
-            if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!(
-                    "observability: record_tool_call_done (failed) failed: {}",
-                    e
-                );
-            }
-        }
-
-        // Compatibility path during M0: System tool events
+        // System tool events (single unified path)
         AppEvent::System(SystemEvent::ToolCallRequested {
             request_id,
             parent_id,
@@ -307,7 +246,7 @@ async fn persist_tool_requested(
         parent_id: params.parent_id,
         model,
         provider_slug,
-        tool_name: params.tool_name.clone(),
+        tool_name: ArcStr::from(params.tool_name.as_str()),
         args_sha256: sha256_hex(&args_json),
         arguments_json: Some(args_json),
         started_at: Validity {

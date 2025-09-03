@@ -48,7 +48,7 @@ pub enum Modality {
 pub struct RequestCodeContextArgs {
     pub token_budget: u32,
     #[serde(default)]
-    pub hint: Option<String>,
+    pub search_term: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

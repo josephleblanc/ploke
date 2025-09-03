@@ -9,18 +9,13 @@ use std::sync::Arc;
 
 use ploke_core::{ArcStr, TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_tui::{
-    EventBus,
     app_state::{
-        RuntimeConfig,
-        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState},
-    },
-    event_bus::EventBusCaps,
-    rag::{
+        core::{AppState, ChatState, ConfigState, EditProposalStatus, SystemState}, RuntimeConfig
+    }, event_bus::EventBusCaps, rag::{
         dispatcher::handle_tool_call_requested,
         editing::{approve_edits, deny_edits},
         utils::ToolCallParams,
-    },
-    user_config::UserConfig,
+    }, tools::ToolName, user_config::UserConfig, EventBus
 };
 use quote::ToTokens;
 use tokio::sync::RwLock;
@@ -105,7 +100,7 @@ async fn stage_proposal_creates_pending_entry_and_preview() {
         request_id,
         parent_id,
  
-        name: "apply_code_edit".to_string(),
+        name: ToolName::ApplyCodeEdit,
         arguments: args,
         call_id,
     }))
@@ -161,7 +156,7 @@ async fn approve_applies_edits_and_updates_status() {
         request_id,
         parent_id,
  
-        name: "apply_code_edit".to_string(),
+        name: ToolName::ApplyCodeEdit,
         arguments: args,
         call_id,
     }))
@@ -220,7 +215,7 @@ async fn deny_marks_denied_and_does_not_change_file() {
         request_id,
         parent_id,
  
-        name: "apply_code_edit".to_string(),
+        name: ToolName::ApplyCodeEdit,
         arguments: args,
         call_id,
     }))

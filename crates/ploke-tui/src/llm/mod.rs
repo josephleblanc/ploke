@@ -19,7 +19,7 @@ use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
-use crate::tools::{FunctionCall, FunctionMarker, Tool as _, GetFileMetadata, RequestCodeContext, ToolCall, ToolDefinition, ToolFunctionDef};
+use crate::tools::{FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall, ToolDefinition, ToolFunctionDef, ToolName};
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -391,7 +391,7 @@ pub async fn llm_manager(
                     request_id = %request_id,
                     parent_id = %parent_id,
                     call_id = %call_id,
-                    tool = %name,
+                    tool = ?name,
                     "Dispatching ToolEvent::Requested (unified path)"
                 );
 
@@ -412,7 +412,7 @@ pub async fn llm_manager(
                     );
                 }
 
-                event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
+                event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                     request_id,
                     parent_id,
                     name,
@@ -420,7 +420,7 @@ pub async fn llm_manager(
                     call_id: ArcStr::from(call_id),
                 }));
             }
-            AppEvent::LlmTool(ToolEvent::Requested {
+            AppEvent::System(SystemEvent::ToolCallRequested {
                 request_id,
                 parent_id,
                 name,
@@ -431,7 +431,7 @@ pub async fn llm_manager(
                     request_id = %request_id,
                     parent_id = %parent_id,
                     call_id = ?call_id,
-                    tool = %name,
+                    tool = ?name,
                     "Dispatching ToolEvent::Requested in LLM manager"
                 );
                 let state = Arc::clone(&state);
@@ -986,7 +986,7 @@ async fn spawn_tool_call(
     event_bus: Arc<EventBus>,
     request_id: Uuid,
     parent_id: Uuid,
-    name: String,
+    name: ToolName,
     arguments: Value,
     call_id: ArcStr,
 ) {
@@ -1049,7 +1049,7 @@ pub enum Event {
     ToolCall {
         request_id: Uuid,
         parent_id: Uuid,
-        name: String,
+        name: ToolName,
         arguments: Value,
         // TODO: Change to Option<ArcStr> and propogate through tool returns
         call_id: Option<String>,

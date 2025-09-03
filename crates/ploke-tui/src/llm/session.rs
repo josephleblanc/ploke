@@ -1,6 +1,7 @@
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use futures::future;
 use ploke_core::ArcStr;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -173,45 +174,63 @@ impl<'a> RequestSession<'a> {
                         self.attempts += 1;
 
                         // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                        // Dispatch each tool call via EventBus and await results in sequence (keep it simple)
-                        for call in tool_calls {
-                            let call_id = ArcStr::from(call.call_id.as_ref()); // first and only byte copy
-                            // Avoid unnecessary String allocation - keep as &str until needed
-                            let name_str = call.function.name.as_str();
-                            let arguments = serde_json::from_str::<Value>(&call.function.arguments)
-                                .unwrap_or(json!({ "raw": call.function.arguments }));
+                        // Dispatch all tool calls concurrently using tokio::task::spawn and join all futures
+                        let tool_tasks: Vec<_> = tool_calls.into_iter()
+                            .map(|call| {
+                                let call_id = ArcStr::from(call.call_id.as_ref());
+                                let name= call.function.name;
+                                let arguments = serde_json::from_str::<Value>(&call.function.arguments)
+                                    .unwrap_or(json!({ "raw": call.function.arguments }));
+                                
+                                let event_bus = self.event_bus.clone();
+                                let parent_id = self.parent_id;
+                                let timeout_secs = self.params.tool_timeout_secs.unwrap_or(30);
+                                
+                                tokio::task::spawn(async move {
+                                    // Subscribe before sending
+                                    let rx = event_bus.realtime_tx.subscribe();
+                                    let request_id = Uuid::new_v4();
+                                    event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                                        request_id,
+                                        parent_id,
+                                        name,
+                                        arguments,
+                                        call_id: call_id.clone(),
+                                    }));
 
-                            // Subscribe before sending
-                            let rx = self.event_bus.realtime_tx.subscribe();
-                            let request_id = Uuid::new_v4();
-                            self.event_bus.send(AppEvent::LlmTool(ToolEvent::Requested {
-                                request_id,
-                                parent_id: self.parent_id,
-                                name: name_str.to_string(), // Only allocate here when needed
-                                arguments, // transfer ownership
-                                call_id: call_id.clone(),
-                            }));
+                                    let result = await_tool_result(rx, request_id, call_id.clone(), timeout_secs).await;
+                                    (call_id, result)
+                                })
+                            })
+                            .collect();
 
-                            match await_tool_result(
-                                rx,
-                                request_id,
-                                call_id.clone(),
-                                self.params.tool_timeout_secs.unwrap_or(30),
-                            )
-                            .await
-                            {
-                                Ok(content) => {
-                                    // Add proper tool message with the required tool_call_id
-                                    self.messages
-                                        .push(RequestMessage::new_tool(content, call_id.clone()));
+                        // Join all tool call futures and process results
+                        let tool_results = futures::future::join_all(tool_tasks).await;
+
+                        for task_result in tool_results {
+                            match task_result {
+                                Ok((call_id, tool_result)) => match tool_result {
+                                    Ok(content) => {
+                                        // Add proper tool message with the required tool_call_id
+                                        self.messages
+                                            .push(RequestMessage::new_tool(content, call_id));
+                                    }
+                                    Err(err) => {
+                                        // For tool errors, we still use a tool message but with error content
+                                        let error_content =
+                                            json!({"ok": false, "error": err}).to_string();
+                                        self.messages.push(RequestMessage::new_tool(
+                                            error_content,
+                                            call_id,
+                                        ));
+                                    }
                                 }
-                                Err(err) => {
-                                    // For tool errors, we still use a tool message but with error content
-                                    let error_content =
-                                        json!({"ok": false, "error": err}).to_string();
+                                Err(join_err) => {
+                                    // Handle tokio task join errors - we don't have call_id here, use a placeholder
+                                    let error_content = json!({"ok": false, "error": format!("Task join error: {}", join_err)}).to_string();
                                     self.messages.push(RequestMessage::new_tool(
                                         error_content,
-                                        call_id.clone(),
+                                        ArcStr::from("unknown_call_id".to_string()),
                                     ));
                                 }
                             }
@@ -427,14 +446,6 @@ pub async fn await_tool_result(
     let wait = async {
         while let Ok(event) = rx.recv().await {
             match event {
-                AppEvent::LlmTool(ToolEvent::Completed {
-                    request_id: rid,
-                    call_id: cid,
-                    content,
-                    ..
-                }) if rid == request_id && cid == call_id => {
-                    return Ok(content)
-                }
                 AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id: rid,
                     call_id: cid,
@@ -442,14 +453,6 @@ pub async fn await_tool_result(
                     ..
                 }) if rid == request_id && cid == call_id => {
                     return Ok(content)
-                }
-                AppEvent::LlmTool(ToolEvent::Failed {
-                    request_id: rid,
-                    call_id: cid,
-                    error,
-                    ..
-                }) if rid == request_id && cid == call_id => {
-                    return Err(error)
                 }
                 AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,

@@ -74,13 +74,13 @@ use std::borrow::Cow;
 pub struct RequestCodeContextParams<'a> {
     pub token_budget: u32,
     #[serde(borrow, default)]
-    pub hint: Option<Cow<'a, str>>,
+    pub search_term: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestCodeContextParamsOwned {
     pub token_budget: u32,
-    pub hint: Option<String>,
+    pub search_term: Option<String>,
 }
 
 /// Unit struct for GAT-based tool; uses Ctx to access RagService/state
@@ -115,7 +115,7 @@ impl super::Tool for RequestCodeContextGat {
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         RequestCodeContextParamsOwned {
             token_budget: params.token_budget,
-            hint: params.hint.clone().map(|h| h.into_owned()),
+            search_term: params.search_term.clone().map(|h| h.into_owned()),
         }
     }
 
@@ -143,11 +143,11 @@ impl super::Tool for RequestCodeContextGat {
                 ));
             }
         };
-        let hint = params.hint.as_ref().map(|h| h.as_ref()).unwrap_or("");
-        if hint.trim().is_empty() {
+        let search_term = params.search_term.as_ref().map(|h| h.as_ref()).unwrap_or("");
+        if search_term.trim().is_empty() {
             return Err(ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(
-                    "No query available (hint missing or empty)".to_string(),
+                    "No query available (search_term missing or empty)".to_string(),
                 ),
             ));
         }
@@ -160,10 +160,10 @@ impl super::Tool for RequestCodeContextGat {
             rrf: RrfConfig::default(),
             mmr: None,
         };
-        let assembled = rag.get_context(hint, top_k, &budget, &strategy).await?;
+        let assembled = rag.get_context(search_term, top_k, &budget, &strategy).await?;
         let result = ploke_core::rag_types::RequestCodeContextResult {
             ok: true,
-            query: hint.to_string(),
+            query: search_term.to_string(),
             top_k,
             context: assembled,
         };
@@ -181,13 +181,13 @@ mod gat_tests {
 
     #[test]
     fn params_deserialize_and_into_owned() {
-        let raw = r#"{"token_budget":512,"hint":"foo bar"}"#;
+        let raw = r#"{"token_budget":512,"search_term":"foo bar"}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
         assert_eq!(params.token_budget, 512);
-        assert_eq!(params.hint.as_deref(), Some("foo bar"));
+        assert_eq!(params.search_term.as_deref(), Some("foo bar"));
         let owned = RequestCodeContextGat::into_owned(&params);
         assert_eq!(owned.token_budget, 512);
-        assert_eq!(owned.hint.as_deref(), Some("foo bar"));
+        assert_eq!(owned.search_term.as_deref(), Some("foo bar"));
     }
 
     #[test]
@@ -219,7 +219,7 @@ mod gat_tests {
         };
         let params = RequestCodeContextParams {
             token_budget: 256,
-            hint: Some(Cow::Borrowed("fn")),
+            search_term: Some(Cow::Borrowed("fn")),
         };
         let out = RequestCodeContextGat::execute(params, ctx).await;
         assert!(

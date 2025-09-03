@@ -67,7 +67,7 @@ async fn e2e_gat_request_code_context_complex() -> color_eyre::Result<()> {
     
     // Test parameter structure (note: RequestCodeContext uses hint, not search_term)
     let json_args = json!({
-        "hint": "SimpleStruct implementation",
+        "search_term": "SimpleStruct implementation",
         "token_budget": 1500
     }).to_string();
     
@@ -75,7 +75,7 @@ async fn e2e_gat_request_code_context_complex() -> color_eyre::Result<()> {
     let params: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(&json_args)
         .expect("Failed to deserialize RequestCodeContext params");
     
-    assert_eq!(params.hint.as_ref().map(|s| s.as_ref()), Some("SimpleStruct implementation"));
+    assert_eq!(params.search_term.as_ref().map(|s| s.as_ref()), Some("SimpleStruct implementation"));
     assert_eq!(params.token_budget, 1500);
     
     // Test actual tool execution through GAT system
@@ -264,6 +264,94 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
         }
     };
     
+    // 🔧 NEW: Test GAT deserialization of actual API response
+    let mut gat_validation = json!({
+        "gat_tool_deserialization": {
+            "attempted": false,
+            "successful": false,
+            "tool_calls_processed": 0,
+            "deserialization_results": []
+        }
+    });
+    
+    if let Some(choices) = response_json["choices"].as_array() {
+        if let Some(first_choice) = choices.first() {
+            if let Some(tool_calls) = first_choice["message"]["tool_calls"].as_array() {
+                gat_validation["gat_tool_deserialization"]["attempted"] = json!(true);
+                let mut successful_deserializations = 0;
+                let mut deserialization_details = Vec::new();
+                
+                for tool_call in tool_calls {
+                    let function_name = tool_call["function"]["name"].as_str().unwrap_or("");
+                    let arguments_str = tool_call["function"]["arguments"].as_str().unwrap_or("{}");
+                    
+                    // Test GAT deserialization for each tool call
+                    let deserialization_result = match function_name {
+                        "get_file_metadata" => {
+                            match GetFileMetadata::deserialize_params(arguments_str) {
+                                Ok(params) => {
+                                    successful_deserializations += 1;
+                                    json!({
+                                        "tool": "get_file_metadata",
+                                        "success": true,
+                                        "file_path": params.file_path,
+                                        "error": null
+                                    })
+                                },
+                                Err(e) => json!({
+                                    "tool": "get_file_metadata",
+                                    "success": false,
+                                    "file_path": null,
+                                    "error": e.to_string()
+                                })
+                            }
+                        },
+                        "request_code_context" => {
+                            match RequestCodeContextGat::deserialize_params(arguments_str) {
+                                Ok(params) => {
+                                    successful_deserializations += 1;
+                                    json!({
+                                        "tool": "request_code_context",
+                                        "success": true,
+                                        "token_budget": params.token_budget,
+                                        "search_term": params.search_term.as_ref().map(|s| s.as_ref()),
+                                        "error": null
+                                    })
+                                },
+                                Err(e) => json!({
+                                    "tool": "request_code_context",
+                                    "success": false,
+                                    "token_budget": null,
+                                    "search_term": null,
+                                    "error": e.to_string()
+                                })
+                            }
+                        },
+                        _ => json!({
+                            "tool": function_name,
+                            "success": false,
+                            "error": format!("Unknown tool: {}", function_name)
+                        })
+                    };
+                    
+                    deserialization_details.push(deserialization_result);
+                }
+                
+                gat_validation["gat_tool_deserialization"]["successful"] = json!(successful_deserializations > 0);
+                gat_validation["gat_tool_deserialization"]["tool_calls_processed"] = json!(tool_calls.len());
+                gat_validation["gat_tool_deserialization"]["deserialization_results"] = json!(deserialization_details);
+                
+                // Assert that at least one tool call was successfully deserialized through GAT
+                assert!(successful_deserializations > 0, 
+                    "At least one tool call should be successfully deserialized through GAT system. Details: {:?}", 
+                    deserialization_details);
+                
+                println!("  ✓ GAT deserialization successful: {}/{} tool calls", 
+                    successful_deserializations, tool_calls.len());
+            }
+        }
+    }
+    
     // Create verification report
     let mut verification = json!({
         "test_name": "live_gat_tool_call_with_persistence",
@@ -286,6 +374,12 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
                 "has_tool_calls": false,
                 "tool_call_count": 0,
                 "tool_call_details": []
+            },
+            "gat_deserialization": {
+                "attempted": false,
+                "successful": false,
+                "tool_calls_processed": 0,
+                "deserialization_results": []
             }
         }
     });
@@ -335,6 +429,9 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
             }
         }
     }
+    
+    // 🔧 Copy GAT validation results to verification report
+    verification["verification"]["gat_deserialization"] = gat_validation["gat_tool_deserialization"].clone();
     
     // Write verification report
     let verification_path = artifact_dir.join("verification.json");
@@ -395,17 +492,17 @@ async fn e2e_gat_deserialization_validation() {
     assert_eq!(params2.file_path, "relative/path/file.rs");
     
     // Test RequestCodeContext with various token budgets
-    let small_budget = r#"{"token_budget": 100, "hint": "test"}"#;
+    let small_budget = r#"{"token_budget": 100, "search_term": "test"}"#;
     let params3: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(small_budget)
         .expect("Failed to deserialize small budget");
     assert_eq!(params3.token_budget, 100);
-    assert_eq!(params3.hint.as_ref().map(|s| s.as_ref()), Some("test"));
+    assert_eq!(params3.search_term.as_ref().map(|s| s.as_ref()), Some("test"));
     
     let large_budget = r#"{"token_budget": 5000}"#;
     let params4: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(large_budget)
         .expect("Failed to deserialize large budget");
     assert_eq!(params4.token_budget, 5000);
-    assert!(params4.hint.is_none());
+    assert!(params4.search_term.is_none());
     
     println!("✓ GAT deserialization validated with various JSON inputs");
 }

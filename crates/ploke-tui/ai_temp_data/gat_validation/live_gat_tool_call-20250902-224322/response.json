@@ -1,0 +1,3 @@
+
+         
+{"id":"gen-1756853002-zkWWX40ZePRBr1llrrNx","provider":"OpenAI","model":"openai/gpt-4o-mini","object":"chat.completion","created":1756853002,"choices":[{"logprobs":null,"finish_reason":"tool_calls","native_finish_reason":"tool_calls","index":0,"message":{"role":"assistant","content":"","refusal":null,"reasoning":null,"tool_calls":[{"index":0,"id":"call_t4W8I5gSpT6cAdmgdGCf2tV4","type":"function","function":{"name":"get_file_metadata","arguments":"{\"file_path\":\"Cargo.toml\"}"}}]}}],"system_fingerprint":"fp_8bda4d3a2c","usage":{"prompt_tokens":101,"completion_tokens":18,"total_tokens":119,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}

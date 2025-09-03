@@ -14,7 +14,7 @@ pub async fn handle_tool_call_requested(tool_call_params: ToolCallParams) {
         request_id = %request_id,
         parent_id = %parent_id,
         call_id = ?call_id,
-        name = %name,
+        name = ?name,
         "handle_tool_call_requested"
     );
     let tool_call_failed = |error| {

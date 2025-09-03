@@ -15,7 +15,7 @@ fn tool_call_requested_idempotent() {
         call_id: ArcStr::from( "call-1" ),
         parent_id,
  
-        tool_name: "test_tool".to_string(),
+        tool_name: ArcStr::from( "test_tool" ),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),
         started_at: Validity {
@@ -57,7 +57,7 @@ fn tool_call_done_idempotent_and_transition_rules() {
         call_id: call_id.clone(),
         parent_id,
  
-        tool_name: "test_tool".to_string(),
+        tool_name: ArcStr::from( "test_tool" ),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),
         started_at: Validity {

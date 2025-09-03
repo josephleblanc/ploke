@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 use ploke_core::ArcStr;
+use ploke_tui::tools::ToolName;
 use tokio::time::timeout;
 use uuid::Uuid;
 use serde_json::json;
@@ -38,7 +39,7 @@ async fn e2e_minimal_get_file_metadata() -> color_eyre::Result<()> {
         event_bus: harness.event_bus.clone(),
         request_id,
         parent_id: Uuid::new_v4(),
-        name: "get_file_metadata".to_string(),
+        name: ToolName::GetFileMetadata,
         arguments: json!({"file_path": test_file.display().to_string()}),
         call_id: call_id.clone(),
     };

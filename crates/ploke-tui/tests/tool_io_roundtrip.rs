@@ -8,13 +8,13 @@ use uuid::Uuid;
 fn serde_roundtrip_request_code_context() {
     let args = RequestCodeContextArgs {
         token_budget: 512,
-        hint: Some("SimpleStruct".to_string()),
+        search_term: Some("SimpleStruct".to_string()),
     };
     let args_json = serde_json::to_string(&args).expect("serialize args");
     let args_back: RequestCodeContextArgs =
         serde_json::from_str(&args_json).expect("deserialize args");
     assert_eq!(args_back.token_budget, 512);
-    assert_eq!(args_back.hint.as_deref(), Some("SimpleStruct"));
+    assert_eq!(args_back.search_term.as_deref(), Some("SimpleStruct"));
 
     let part = ContextPart {
         id: Uuid::new_v4(),

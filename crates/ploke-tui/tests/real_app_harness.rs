@@ -335,10 +335,10 @@ impl RealAppHarness {
                                             .iter()
                                             .filter_map(|event| {
                                                 match event {
-                                                    AppEvent::LlmTool(_tool_event) => {
-                                                        // Convert tool event to ToolCallRecord if needed
+                                                    AppEvent::System(_system_event) => {
+                                                        // Convert system tool events to ToolCallRecord if needed
                                                         // For now, return empty record since extraction is complex
-                                                        None // TODO: Implement proper conversion from tool event
+                                                        None // TODO: Implement proper conversion from system tool event
                                                     },
                                                     _ => None,
                                                 }

@@ -612,7 +612,7 @@
     "name": "Anthropic: Claude Opus 4.1",
     "context_length": 200000,
     "top_provider": {
-      "is_moderated": true,
+      "is_moderated": false,
       "context_length": 200000,
       "max_completion_tokens": 32000
     },
@@ -624,7 +624,7 @@
       "internal_reasoning": 0.0,
       "prompt": 0.000015,
       "request": 0.0,
-      "web_search": 0.01
+      "web_search": 0.0
     },
     "capabilities": null,
     "supported_parameters": [
@@ -1797,7 +1797,7 @@
     "name": "Anthropic: Claude Opus 4",
     "context_length": 200000,
     "top_provider": {
-      "is_moderated": true,
+      "is_moderated": false,
       "context_length": 200000,
       "max_completion_tokens": 32000
     },
@@ -1809,7 +1809,7 @@
       "internal_reasoning": 0.0,
       "prompt": 0.000015,
       "request": 0.0,
-      "web_search": 0.01
+      "web_search": 0.0
     },
     "capabilities": null,
     "supported_parameters": [

@@ -13,6 +13,7 @@ use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
+use crate::tools::ToolName;
 use crate::{
     app_state::{
         core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode},
@@ -48,29 +49,6 @@ where
     U: Send + Sync + Clone + Serialize + for<'sec> Deserialize<'sec>,
 {
     async fn call_tool(&self, tool_input: T) -> R;
-}
-
-#[derive(Clone, Debug)]
-pub struct GetContext {
-    pub state: Arc<AppState>,
-    pub event_bus: Arc<EventBus>,
-}
-
-impl ToolOutput for SystemEvent {}
-
-impl LlmTool<GetContextInput, SystemEvent, serde_json::Value> for GetContext {
-    async fn call_tool(&self, tool_input: GetContextInput) -> SystemEvent {
-        let tool_call_params = ToolCallParams {
-            state: Arc::clone(&self.state),
-            event_bus: Arc::clone(&self.event_bus),
-            request_id: tool_input.request_id,
-            parent_id: tool_input.parent_id,
-            name: "request_code_context".to_string(),
-            arguments: tool_input.arguments,
-            call_id: tool_input.call_id,
-        };
-        handle_request_context(tool_call_params).await
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -668,7 +646,7 @@ pub async fn handle_request_context(tool_call_params: ToolCallParams) -> SystemE
     }
 
     // Determine query: prefer hint, otherwise last user message
-    let query = if let Some(h) = args.hint.as_ref().filter(|s| !s.trim().is_empty()) {
+    let query = if let Some(h) = args.search_term.as_ref().filter(|s| !s.trim().is_empty()) {
         h.clone()
     } else {
         let guard = state.chat.read().await;

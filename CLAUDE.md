@@ -374,5 +374,8 @@ Test fixtures are located in `tests/fixture_crates/` for realistic parsing scena
 **M8: Multi-agent orchestration** - Role-based collaboration  
 **M9: Reliability & ops** - Checkpointing, metrics, resilience  
 **M10: Packaging & docs** - Templates and onboarding
+
+## General guidelines
+
 - Use ArcStr over Arc<str> or String across threads, defined in ploke_core::ArcStr
 - Do not prefer ArcStr over &'static str

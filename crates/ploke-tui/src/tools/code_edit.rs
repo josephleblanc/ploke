@@ -119,7 +119,7 @@ impl super::Tool for GatCodeEdit {
             event_bus: Arc::clone(&ctx.event_bus),
             request_id,
             parent_id: ctx.parent_id,
-            name: "apply_code_edit".to_string(),
+            name: Self::name(),
             arguments,
             call_id,
         };

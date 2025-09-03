@@ -309,7 +309,7 @@ pub mod system {
     use serde_json::Value;
     use uuid::Uuid;
 
-    use crate::{ArcStr, UiError};
+    use crate::{tools::ToolName, ArcStr, UiError};
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub enum SystemEvent {
@@ -325,7 +325,7 @@ pub mod system {
         ToolCallRequested {
             request_id: Uuid,
             parent_id: Uuid,
-            name: String,
+            name: ToolName,
             arguments: Value,
             call_id: ArcStr,
         },

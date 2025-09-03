@@ -85,12 +85,6 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                     call_id: call_id_val.clone(),
                     content: content.clone(),
                 }));
-            event_bus.send(AppEvent::LlmTool(ToolEvent::Completed {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val,
-                content: content.clone(),
-            }));
 
             chat::add_msg_immediate(
                 state,
@@ -141,12 +135,6 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                     call_id: call_id_val.clone(),
                     error: err_str.clone(),
                 }));
-            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val,
-                error: err_str.clone(),
-            }));
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
             add_msg_imm(msg).await;
@@ -193,12 +181,6 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
                     call_id: call_id_val.clone(),
                     error: err_msg.clone(),
                 }));
-            event_bus.send(AppEvent::LlmTool(ToolEvent::Failed {
-                request_id,
-                parent_id: parent_id_val,
-                call_id: call_id_val,
-                error: err_msg.clone(),
-            }));
 
             let msg = format!("Denied edits for request_id {}", request_id);
             add_msg_imm(msg).await;

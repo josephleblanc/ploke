@@ -37,7 +37,7 @@ pub struct ToolCallReq {
     pub parent_id: uuid::Uuid,
     pub model: String,
     pub provider_slug: Option<String>,
-    pub tool_name: String,
+    pub tool_name: ArcStr,
     pub args_sha256: String,
     pub arguments_json: Option<String>,
     pub started_at: Validity,
@@ -386,7 +386,7 @@ impl ObservabilityStore for Database {
                 .map(|s| DataValue::Str(s.into()))
                 .unwrap_or(DataValue::Null),
         );
-        params.insert("tool_name".into(), DataValue::Str(req.tool_name.into()));
+        params.insert("tool_name".into(), DataValue::Str(req.tool_name.as_ref().into()));
         params.insert("args_sha256".into(), DataValue::Str(req.args_sha256.into()));
         params.insert("arguments_json".into(), arguments_json_value);
 
@@ -487,7 +487,7 @@ impl ObservabilityStore for Database {
         );
         params.insert(
             "tool_name".into(),
-            DataValue::Str(req_meta.tool_name.into()),
+            DataValue::Str(req_meta.tool_name.as_ref().into()),
         );
         params.insert(
             "args_sha256".into(),
@@ -607,7 +607,7 @@ impl ObservabilityStore for Database {
             provider_slug: row[*hid.get("provider_slug").unwrap()]
                 .get_str()
                 .map(|s| s.to_string()),
-            tool_name: to_string(&row[*hid.get("tool_name").unwrap()])?,
+            tool_name: ArcStr::from(row[*hid.get("tool_name").unwrap()].get_str().expect("str")),
             args_sha256: to_string(&row[*hid.get("args_sha256").unwrap()])?,
             arguments_json: row[*hid.get("arguments_json_s").unwrap()]
                 .get_str()
@@ -702,7 +702,7 @@ impl ObservabilityStore for Database {
                 provider_slug: row[*hid.get("provider_slug").unwrap()]
                     .get_str()
                     .map(|s| s.to_string()),
-                tool_name: to_string(&row[*hid.get("tool_name").unwrap()])?,
+                tool_name: ArcStr::from(row[*hid.get("tool_name").unwrap()].get_str().expect("str")),
                 args_sha256: to_string(&row[*hid.get("args_sha256").unwrap()])?,
                 arguments_json: row[*hid.get("arguments_json_s").unwrap()]
                     .get_str()

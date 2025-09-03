@@ -22,6 +22,7 @@ use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_test_utils::workspace_root;
+use ploke_tui::tools::ToolName;
 use ploke_tui::tracing_setup::init_tracing_tests;
 use ploke_tui as app;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
@@ -232,8 +233,8 @@ Run ':model refresh' in the TUI and verify endpoints for tools."
     let mut req_id: Option<Uuid> = None;
     let deadline = Instant::now() + Duration::from_secs(120);
     while Instant::now() < deadline {
-        if let Ok(Ok(app::AppEvent::LlmTool(ploke_tui::llm::ToolEvent::Requested { name, request_id, .. }))) = timeout(Duration::from_secs(10), bg_rx_events.recv()).await {
-            if name == "apply_code_edit" { req_id = Some(request_id); break; }
+        if let Ok(Ok(app::AppEvent::System(ploke_tui::system::SystemEvent::ToolCallRequested { name, request_id, .. }))) = timeout(Duration::from_secs(10), bg_rx_events.recv()).await {
+            if name == ToolName::ApplyCodeEdit { req_id = Some(request_id); break; }
         }
     }
     let req_id = req_id.expect("provider did not request apply_code_edit");
