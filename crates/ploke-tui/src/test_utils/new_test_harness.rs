@@ -2,15 +2,16 @@
 //! and realistic subsystems (state_manager, llm_manager) against the
 //! shared fixture database.
 
+use crate::app_state::SystemStatus;
+use crate::app_state::events::SystemEvent;
+use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use ploke_core::ArcStr;
-use crate::app_state::events::SystemEvent;
-use crate::app_state::SystemStatus;
-use crate::test_harness::openrouter_env;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::runtime::Runtime;
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 
 use ratatui::{Terminal, backend::TestBackend};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -55,6 +56,8 @@ pub struct AppHarness {
         tokio::sync::mpsc::UnboundedSender<Result<crossterm::event::Event, std::io::Error>>,
     app_task: tokio::task::JoinHandle<()>,
 }
+
+// AI: create an arc mutex lazy_static! so we can re-use this harness across different tests AI!
 
 impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
