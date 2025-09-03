@@ -4,6 +4,7 @@
 
 use lazy_static::lazy_static;
 use ploke_core::ArcStr;
+use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::app_state::SystemStatus;
 use ploke_tui::test_harness::openrouter_env;
 use std::path::PathBuf;
@@ -224,7 +225,7 @@ impl AppHarness {
         content: impl Into<String>,
     ) {
         self.event_bus
-            .send(AppEvent::System(tui::system::SystemEvent::ToolCallCompleted {
+            .send(AppEvent::System(SystemEvent::ToolCallCompleted {
                 request_id,
                 parent_id,
                 call_id,

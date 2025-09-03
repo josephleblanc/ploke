@@ -1,5 +1,5 @@
 use super::*;
-use crate::{AppEvent, EventBus, system::SystemEvent};
+use crate::{AppEvent, EventBus};
 use ploke_core::rag_types::GetFileMetadataResult;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

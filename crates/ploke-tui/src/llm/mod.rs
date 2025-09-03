@@ -23,7 +23,6 @@ use crate::tools::{FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeCon
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
-    system::SystemEvent,
     user_config::ModelConfig,
 };
 
@@ -876,7 +875,7 @@ struct LogToolUseCtx<'a> {
     require_tools: bool,
 }
 
-fn log_tool_use<'a>(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
+fn log_tool_use(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
     match diag_dir() {
         Some(dir) => {
             let LogToolUseCtx {
@@ -909,7 +908,7 @@ fn log_tool_use<'a>(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io
     }
 }
 
-fn log_tool_reason<'a>(
+fn log_tool_reason(
     ctx: LogToolUseCtx,
 ) -> Option<impl Future<Output = tokio::io::Result<()>>> {
     let LogToolUseCtx {

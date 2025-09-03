@@ -1,5 +1,6 @@
 use super::App;
 use crate::app::view::EventSubscriber;
+use crate::app_state::events::SystemEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,7 +8,6 @@ use uuid::Uuid;
 
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
-use super::system;
 use super::utils::display_file_info;
 use crate::app::view::components::model_browser::ModelProviderRow;
 
@@ -123,7 +123,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         // managed by the event_bus system instead.
         AppEvent::System(system_event) => {
             match system_event {
-                system::SystemEvent::ModelSwitched(new_model) => {
+                SystemEvent::ModelSwitched(new_model) => {
                     tracing::debug!("SystemEvent::ModelSwitched {}", new_model);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!(
@@ -136,7 +136,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     app.active_model_indicator = Some((new_model.clone(), Instant::now()));
                     app.active_model_id = new_model;
                 }
-                system::SystemEvent::ReadQuery {
+                SystemEvent::ReadQuery {
                     file_name,
                     query_name,
                 } => {
@@ -147,7 +147,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::WriteQuery {
+                SystemEvent::WriteQuery {
                     query_name,
                     query_content,
                 } => {
@@ -165,7 +165,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         query_content,
                     });
                 }
-                system::SystemEvent::HistorySaved { file_path } => {
+                SystemEvent::HistorySaved { file_path } => {
                     tracing::debug!("App receives HistorySaved: {}", file_path);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!("Chat history exported to {}", file_path),
@@ -173,7 +173,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::BackupDb {
+                SystemEvent::BackupDb {
                     file_dir,
                     is_success,
                     ..
@@ -190,7 +190,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::BackupDb {
+                SystemEvent::BackupDb {
                     file_dir,
                     is_success,
                     error,
@@ -208,7 +208,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                system::SystemEvent::LoadDb {
+                SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
                     is_success,
@@ -226,7 +226,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::LoadDb {
+                SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
                     is_success,
@@ -247,14 +247,14 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                system::SystemEvent::ReIndex { workspace } => {
+                SystemEvent::ReIndex { workspace } => {
                     app.send_cmd(StateCommand::IndexWorkspace {
                         workspace,
                         needs_parse: false,
                     });
                 }
                 #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
-                system::SystemEvent::TestHarnessApiResponse { .. } => {
+                SystemEvent::TestHarnessApiResponse { .. } => {
                     // Test harness API response - handled by test subscribers, no UI action needed
                     tracing::debug!("Test harness API response event received");
                 }

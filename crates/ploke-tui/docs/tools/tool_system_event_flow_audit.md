@@ -146,7 +146,7 @@ pub struct ToolCallRecord {
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub call_id: ArcStr,
-    pub tool_name: String,
+    pub tool_name: ArcStr,
     pub arguments: Value,
     pub result: ToolCallResult,
     pub timestamp: chrono::DateTime<chrono::Utc>,
@@ -155,7 +155,7 @@ pub struct ToolCallRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolCallResult {
-    Success { content: String, summary: String },
+    Success { content: serde_json::Value, summary: String },
     Error { error: String },
 }
 

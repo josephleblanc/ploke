@@ -927,6 +927,7 @@ async fn e2e_workflow_compliance_validation() -> Result<()> {
 #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
 #[tokio::test]
 async fn e2e_api_response_deserialization_and_gat_validation() -> Result<()> {
+    use ploke_tui::app_state::events::SystemEvent;
     use tokio_test::assert_ok;
 
     let _g = init_tracing_to_file_ai("e2e_api_response_deserialization_gat_validation");
@@ -986,7 +987,7 @@ async fn e2e_api_response_deserialization_and_gat_validation() -> Result<()> {
 
                     match event {
                         ploke_tui::AppEvent::System(
-                            ploke_tui::system::SystemEvent::TestHarnessApiResponse {
+                            SystemEvent::TestHarnessApiResponse {
                                 request_id: _,
                                 response_body,
                                 model,

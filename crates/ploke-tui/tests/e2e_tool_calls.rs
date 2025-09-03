@@ -1,6 +1,7 @@
 #![cfg(feature = "test_harness")]
 
 use ploke_core::ArcStr;
+use ploke_tui::app_state::events::SystemEvent;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -9,7 +10,6 @@ use uuid::Uuid;
 use ploke_test_utils::workspace_root;
 use ploke_tui::event_bus::EventBusCaps;
 use ploke_tui::rag::utils::ToolCallParams;
-use ploke_tui::system::SystemEvent;
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::tools::{FunctionMarker, Tool, ToolDefinition, ToolName};
 use ploke_tui::{AppEvent, EventBus};
@@ -23,9 +23,12 @@ use reqwest::Client;
 mod test_utils {
     use super::*;
     use ploke_core::ArcStr;
-    use ploke_tui::{app_state::AppState, tools::ToolName};
     #[cfg(all(feature = "live_api_tests", feature = "test_harness"))]
     use ploke_tui::user_config::ModelConfig;
+    use ploke_tui::{
+        app_state::{AppState, events::SystemEvent},
+        tools::ToolName,
+    };
 
     /// Sets up a standard test environment with state and event bus
     pub async fn setup_test_environment() -> (Arc<AppState>, Arc<EventBus>) {
@@ -258,7 +261,7 @@ async fn e2e_get_file_metadata_and_apply_code_edit_splice() {
 
     // 1) Call get_file_metadata via dispatcher
     let request_id_meta = Uuid::new_v4();
-    // NOTE: The exact str used follows a format we aren't exactly clear on yet, 
+    // NOTE: The exact str used follows a format we aren't exactly clear on yet,
     eprintln!("The exact str used follows a format we aren't exactly clear on yet, so if there ");
     eprintln!("is an error with call_id check the format of the actual value");
     let call_id_meta = ArcStr::from("get_file_metadata:0");
@@ -535,23 +538,18 @@ async fn e2e_enhanced_tool_call_lifecycle_validation() {
         let mut tool_completed = false;
 
         let result = timeout(timeout_duration, async {
-            loop {
-                match event_rx.recv().await {
-                    Ok(event) => {
-                        events_collected.push(event.clone());
-                        event_count += 1;
+            while let Ok(event) = event_rx.recv().await {
+                events_collected.push(event.clone());
+                event_count += 1;
 
-                        // Check for tool completion
-                        if let AppEvent::System(SystemEvent::ToolCallCompleted { .. }) = &event {
-                            tool_completed = true;
-                            break;
-                        }
+                // Check for tool completion
+                if let AppEvent::System(SystemEvent::ToolCallCompleted { .. }) = &event {
+                    tool_completed = true;
+                    break;
+                }
 
-                        if event_count > 20 {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+                if event_count > 20 {
+                    break;
                 }
             }
         })
@@ -573,12 +571,7 @@ async fn e2e_enhanced_tool_call_lifecycle_validation() {
 
     let tool_requested_events = final_events
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                AppEvent::System(ploke_tui::system::SystemEvent::ToolCallRequested { .. })
-            )
-        })
+        .filter(|e| matches!(e, AppEvent::System(SystemEvent::ToolCallRequested { .. })))
         .count();
 
     let tool_completed_events = final_events
@@ -618,13 +611,13 @@ async fn e2e_tool_role_validation() {
     // Test that our new Role::Tool functionality works correctly
     let tool_msg = ploke_tui::llm::RequestMessage::new_tool(
         json!({"ok": true, "result": "test"}).to_string(),
-        ArcStr::from( "call_123" ),
+        ArcStr::from("call_123"),
     );
 
     // Validate the message
     assert!(tool_msg.validate().is_ok());
     assert_eq!(tool_msg.role, ploke_tui::llm::Role::Tool);
-    assert_eq!(tool_msg.tool_call_id, Some(ArcStr::from( "call_123" )));
+    assert_eq!(tool_msg.tool_call_id, Some(ArcStr::from("call_123")));
 
     // Test serialization
     let serialized = serde_json::to_string(&tool_msg).unwrap();
@@ -699,7 +692,7 @@ async fn e2e_live_openrouter_tool_call_simple() {
     let tool_calls = response
         .get("choices")
         .and_then(|c| c.as_array())
-        .and_then(|choices| choices.get(0))
+        .and_then(|choices| choices.first())
         .and_then(|choice| choice.get("message"))
         .and_then(|msg| msg.get("tool_calls"))
         .and_then(|tc| tc.as_array());

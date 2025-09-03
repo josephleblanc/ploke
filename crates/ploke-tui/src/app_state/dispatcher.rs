@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use crate::llm::providers::ProviderSlug;
 use crate::rag::context::process_with_rag;
-use crate::system::SystemEvent;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
 use super::commands::StateCommand;
 use super::core::AppState;
+use super::events::SystemEvent;
 use super::{database, handlers};
 use crate::chat_history::MessageKind;
 use uuid::Uuid;

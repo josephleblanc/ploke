@@ -8,7 +8,7 @@ use super::*;
 pub mod commands;
 pub mod core;
 mod dispatcher;
-mod events;
+pub mod events;
 pub mod handlers;
 mod helpers;
 

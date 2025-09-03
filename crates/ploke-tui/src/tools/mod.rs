@@ -5,13 +5,10 @@
 use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{
-    AppEvent,
-    app_state::AppState,
-    rag::{
+    app_state::{events::SystemEvent, AppState}, rag::{
         tools::{apply_code_edit_tool, get_file_metadata_tool, handle_request_context},
         utils::ToolCallParams,
-    },
-    system::SystemEvent,
+    }, AppEvent
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -288,7 +285,7 @@ pub trait Tool {
 
     fn emit_completed(ctx: &Ctx, output_json: String) {
         let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-            crate::system::SystemEvent::ToolCallCompleted {
+            SystemEvent::ToolCallCompleted {
                 request_id: ctx.request_id,
                 parent_id: ctx.parent_id,
                 call_id: ctx.call_id.clone(),
@@ -338,7 +335,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                 Ok(ToolResult { content }) => request_code_context::RequestCodeContextGat::emit_completed(&ctx, content),
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                        crate::system::SystemEvent::ToolCallFailed {
+                        SystemEvent::ToolCallFailed {
                             request_id: ctx.request_id,
                             parent_id: ctx.parent_id,
                             call_id: ctx.call_id,
@@ -349,7 +346,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
             },
             Err(e) => {
                 let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                    crate::system::SystemEvent::ToolCallFailed {
+                    SystemEvent::ToolCallFailed {
                         request_id: ctx.request_id,
                         parent_id: ctx.parent_id,
                         call_id: ctx.call_id,
@@ -364,7 +361,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                     Ok(ToolResult { content }) => code_edit::GatCodeEdit::emit_completed(&ctx, content),
                     Err(e) => {
                         let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                            crate::system::SystemEvent::ToolCallFailed {
+                            SystemEvent::ToolCallFailed {
                                 request_id: ctx.request_id,
                                 parent_id: ctx.parent_id,
                                 call_id: ctx.call_id,
@@ -384,7 +381,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
                 Ok(ToolResult { content }) => GetFileMetadata::emit_completed(&ctx, content),
                 Err(e) => {
                     let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                        crate::system::SystemEvent::ToolCallFailed {
+                        SystemEvent::ToolCallFailed {
                             request_id: ctx.request_id,
                             parent_id: ctx.parent_id,
                             call_id: ctx.call_id,
@@ -395,7 +392,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
             },
             Err(e) => {
                 let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                    crate::system::SystemEvent::ToolCallFailed {
+                    SystemEvent::ToolCallFailed {
                         request_id: ctx.request_id,
                         parent_id: ctx.parent_id,
                         call_id: ctx.call_id,
@@ -406,7 +403,7 @@ pub async fn dispatch_gat_tool(tool_call_params: crate::rag::utils::ToolCallPara
         },
         other => {
             let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
-                crate::system::SystemEvent::ToolCallFailed {
+                SystemEvent::ToolCallFailed {
                     request_id: ctx.request_id,
                     parent_id: ctx.parent_id,
                     call_id: ctx.call_id,

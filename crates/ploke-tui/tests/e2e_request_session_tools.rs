@@ -22,7 +22,7 @@ use ploke_tui::test_harness::openrouter_env;
 /// Test RequestSession with tool-enabled conversation cycle
 #[tokio::test]
 async fn e2e_request_session_with_tool_integration() {
-    let Some(env) = openrouter_env() else { 
+    let Some(_env) = openrouter_env() else { 
         println!("Skipping test: OPENROUTER_API_KEY not set");
         return; 
     };

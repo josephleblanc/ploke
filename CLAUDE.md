@@ -271,16 +271,16 @@ When optimizing hot paths or addressing allocation issues, follow this systemati
    ```
 
 **Decision Framework** - Make structural changes when:
-- ✅ Performance improvement is measurable (>10% in hot paths)
-- ✅ Change eliminates entire classes of bugs (e.g., invalid state representations)
-- ✅ You have comprehensive test coverage for all consumers
-- ✅ Migration path is clear and reversible
+- Performance improvement is measurable (>10% in hot paths)
+- Change eliminates entire classes of bugs (e.g., invalid state representations)
+- You have comprehensive test coverage for all consumers
+- Migration path is clear and reversible
 
 **Avoid structural changes when:**
-- ❌ Improvement is theoretical without measurement
-- ❌ Change affects serialization boundaries without compatibility plan
-- ❌ Consumer code is spread across many modules without clear ownership
-- ❌ No rollback strategy exists
+- Improvement is theoretical without measurement
+- Change affects serialization boundaries without compatibility plan
+- Consumer code is spread across many modules without clear ownership
+- No rollback strategy exists
 
 ### Optimization Validation
 

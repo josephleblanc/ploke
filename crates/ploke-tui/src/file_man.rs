@@ -6,8 +6,9 @@ use tokio::sync::broadcast;
 use tokio::{fs, sync::mpsc};
 use tracing::{error, info, warn};
 
+use crate::app_state::events::SystemEvent;
 use crate::error::ErrorSeverity;
-use crate::{AppEvent, EventBus, system::SystemEvent};
+use crate::{AppEvent, EventBus};
 use crate::{ErrorEvent, RagEvent};
 
 pub struct FileManager {

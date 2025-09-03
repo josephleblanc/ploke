@@ -6,9 +6,9 @@ use ploke_core::ArcStr;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::app_state::events::SystemEvent;
 use crate::AppEvent;
 use crate::llm::{Choices, ToolEvent};
-use crate::system::SystemEvent;
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
 
@@ -155,7 +155,7 @@ impl<'a> RequestSession<'a> {
             {
                 let request_id = uuid::Uuid::new_v4();
                 let _ = self.event_bus.realtime_tx.send(crate::AppEvent::System(
-                    crate::system::SystemEvent::TestHarnessApiResponse {
+                    SystemEvent::TestHarnessApiResponse {
                         request_id,
                         response_body: body.clone(),
                         model: self.provider.model.clone(),
@@ -467,7 +467,7 @@ pub async fn await_tool_result(
                 }
             }
         }
-        Err(format!("Event channel error: channel closed"))
+        Err(format!("Event channel error for call_id: {call_id:?}: channel closed"))
     };
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), wait).await {
@@ -490,7 +490,6 @@ mod tests {
     use crate::EventBusCaps;
     use crate::llm::Role;
     use crate::llm::providers::ProviderSlug;
-    use crate::system::SystemEvent;
     use crate::tools::{
         FunctionMarker as StrongFunctionMarker, ToolDefinition as StrongToolDefinition, ToolDescr,
         ToolFunctionDef as StrongToolFunctionDef, ToolName,

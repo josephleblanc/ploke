@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 use ploke_core::ArcStr;
+use ploke_tui::app_state::events::SystemEvent;
 use ploke_tui::tools::ToolName;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -13,7 +14,6 @@ mod harness;
 use harness::AppHarness;
 
 use ploke_tui::AppEvent;
-use ploke_tui::system::SystemEvent;
 use ploke_tui::rag::utils::ToolCallParams;
 
 /// Basic test that validates tool execution works

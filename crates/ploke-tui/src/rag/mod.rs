@@ -37,4 +37,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AppEvent, EventBus, app_state::AppState, llm, system::SystemEvent};
+use crate::{
+    AppEvent, EventBus,
+    app_state::{AppState, events::SystemEvent},
+    llm,
+};
