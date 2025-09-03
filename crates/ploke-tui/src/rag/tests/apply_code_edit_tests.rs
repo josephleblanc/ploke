@@ -17,6 +17,19 @@ use uuid::Uuid;
 // - Tests MUST fail if database backup is missing or empty
 // ============================================================================
 
+/// Original fixture target for the edits. This is the same as the file used in the backup database
+/// loaded in the test harness.
+/// Needs to be changed back after changing it.
+/// File path is local to workspace.
+const ORIGINAL_FIXTURE: &str = "tests/fixture_crates/fixture_nodes/src/structs.rs";
+/// Backup of the target fixture, with a copy of each file to replace the file contents after the tests.
+const BACKUP_FIXTURE: &str = "tests/fixture_crates/fixture_nodes_copy/src/structs.rs";
+
+/// Restores the fixture in ORIGINAL_FIXTURE from the backup copy in BACKUP_FIXTURE
+fn restore_fixture() {
+    // AI: Fill out this function AI!
+}
+
 // Helper functions for test setup
 fn create_canonical_edit_request(
     file_path: &str,
@@ -60,8 +73,9 @@ async fn create_test_tool_params(
 // ============================================================================
 
 #[tokio::test]
+#[cfg(feature = "test_harness")]
 async fn test_duplicate_request_detection() {
-    let harness = AppHarness::spawn().await.expect("spawn harness");
+    let harness = SHARED_HARNESS.lock().await;
     let request_id = Uuid::new_v4();
 
     // Create a valid edit request using known fixture data
@@ -77,7 +91,7 @@ Some(0.9f32),
     let params = create_test_tool_params(&harness, request_id, arguments.clone()).await;
 
     // Set up event listener to capture tool call results
-    use crate::{EventPriority, AppEvent};
+    use crate::{test_utils::new_test_harness::SHARED_HARNESS, AppEvent, EventPriority};
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
 
     // First call should succeed and create proposal
@@ -135,6 +149,7 @@ Some(0.9f32),
             "Original proposal should still exist"
         );
     }
+    // Change the target back to the original value.
 }
 
 #[tokio::test]
@@ -551,7 +566,7 @@ async fn test_proposal_creation_and_storage() {
         "src/structs.rs",
         "crate::structs::SampleStruct",
         NodeType::Struct,
-        "pub struct SampleStruct { pub field: String, }",
+        "pub struct SampleStruct { pub field: String, new_field: i32 }",
         Some(0.85),
     );
 
@@ -577,7 +592,7 @@ async fn test_proposal_creation_and_storage() {
         let edit = &proposal.edits[0];
         assert_eq!(
             edit.replacement,
-            "pub struct SampleStruct { pub field: String, }"
+            "pub struct SampleStruct { pub field: String, new_field: i32 }",
         );
         assert!(edit.file_path.to_string_lossy().contains("structs.rs"));
     }
@@ -598,7 +613,7 @@ async fn test_auto_confirm_workflow() {
         "src/structs.rs",
         "crate::structs::SampleStruct",
         NodeType::Struct,
-        "pub struct SampleStruct { pub field: String, }",
+        "pub struct SampleStruct { pub field: String, new_field_usize: usize}",
 Some(0.9f32),
     );
 
