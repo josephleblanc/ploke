@@ -62,8 +62,31 @@ pub struct RequestCodeContextResult {
 
 impl From<AssembledContext> for RequestCodeContextResult {
     fn from(value: AssembledContext) -> Self {
-        // AI!
-        todo!()
+        // Use the first part's kind, or default to Code if no parts exist
+        let kind = value.parts.first().map(|p| p.kind).unwrap_or(ContextPartKind::Code);
+        
+        // Create concise context from the first part, or empty if no parts
+        let context = if let Some(part) = value.parts.first() {
+            ConciseContext {
+                file_path: NodeFilepath(part.file_path.clone()),
+                canon_path: CanonPath(part.file_path.clone()),
+                snippet: part.text.clone(),
+            }
+        } else {
+            ConciseContext {
+                file_path: NodeFilepath(String::new()),
+                canon_path: CanonPath(String::new()),
+                snippet: String::new(),
+            }
+        };
+        
+        Self {
+            ok: true,
+            query: String::new(), // Unknown from context
+            top_k: value.parts.len(),
+            kind,
+            context,
+        }
     }
 }
 
