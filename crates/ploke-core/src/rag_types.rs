@@ -54,29 +54,43 @@ pub struct RequestCodeContextArgs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCodeContextResult {
     pub ok: bool,
-    pub query: String,
+    pub search_term: String,
     pub top_k: usize,
     pub kind: ContextPartKind,
-    pub context: ConciseContext,
+    pub context: Vec<ConciseContext>,
 }
 
-impl From<ContextPart> for RequestCodeContextResult {
-    fn from(value: ContextPart) -> Self {
+pub struct AssembledMeta {
+    pub search_term: String,
+    pub top_k: usize,
+    pub kind: ContextPartKind,
+}
+
+impl RequestCodeContextResult {
+    pub fn from_assembled(parts: Vec< ContextPart >, m: AssembledMeta) -> Self {
+        let context: Vec<ConciseContext> = parts.into_iter().map(ConciseContext::from).collect();
         Self {
             ok: true,
-            query: String::new(),
-            top_k: 1,
-            kind: value.kind,
-            context: ConciseContext {
-                file_path: NodeFilepath(value.file_path.clone()),
-                canon_path: CanonPath(value.file_path.clone()),
-                snippet: value.text,
-            },
+            search_term: m.search_term,
+            top_k: m.top_k,
+            kind: m.kind,
+            context,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl From<ContextPart> for ConciseContext {
+    fn from(value: ContextPart) -> Self {
+        Self {
+            file_path: NodeFilepath(value.file_path.clone()),
+            canon_path: CanonPath(value.file_path.clone()),
+            snippet: value.text,
+        }
+    }
+}
+
+// AI: Implement delegate for Eq, PartialOrd, Ord AI!
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct NodeFilepath(pub String);
 
@@ -86,7 +100,8 @@ impl AsRef<str> for NodeFilepath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// AI: Implement delegate for Eq, PartialOrd, Ord AI!
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
@@ -96,7 +111,7 @@ impl AsRef<str> for CanonPath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
 pub struct ConciseContext {
     pub file_path: NodeFilepath,
     pub canon_path: CanonPath,
