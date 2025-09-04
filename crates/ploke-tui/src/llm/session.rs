@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::AppEvent;
 use crate::app_state::events::SystemEvent;
 use crate::llm::{Choices, ToolEvent};
+use crate::utils::consts::DEBUG_TOOLS;
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
 
@@ -51,7 +52,7 @@ impl<'a> RequestSession<'a> {
         let mut use_tools: bool = !self.tools.is_empty();
         let mut tools_fallback_attempted = false;
 
-        loop {
+        for attempts in 0..=self.attempts {
             let effective_messages = if let Some(budget_chars) = self.params.history_char_budget {
                 cap_messages_by_chars(&self.messages, budget_chars)
             } else {
@@ -91,7 +92,8 @@ impl<'a> RequestSession<'a> {
                 provider_slug = ?self.provider.provider_slug,
                 use_tools = use_tools,
                 tools = %tool_names.join(","),
-                "dispatch_request"
+                "dispatch_request with payload: {:#?}",
+                request_payload
             );
 
             let response = self
@@ -167,12 +169,16 @@ impl<'a> RequestSession<'a> {
             let response_body: super::OpenAiResponse = serde_json::from_str(&body)
                 .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
 
+            tracing::debug!(
+                tools = %tool_names.join(","),
+                "response_body parsed as OpenAiReponse: {}",
+                format_args!("{:#?}", response_body)
+            );
+
             if let Some(choice) = response_body.choices.into_iter().next() {
                 // Handle message-based response (most common)
                 if let Some(resp_msg) = choice.message {
                     if let Some(tool_calls) = resp_msg.tool_calls {
-                        self.attempts += 1;
-
                         // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
                         // Dispatch all tool calls concurrently using tokio::task::spawn and join all futures
                         let tool_tasks: Vec<_> = tool_calls
@@ -209,8 +215,18 @@ impl<'a> RequestSession<'a> {
 
                         // Join all tool call futures and process results
                         let tool_results = futures::future::join_all(tool_tasks).await;
+                        tracing::debug!(target: DEBUG_TOOLS,
+                            tools = %tool_names.join(","),
+                            "Tool Results: {}",
+                            format_args!("{:#?}", tool_results)
+                        );
 
                         for task_result in tool_results {
+                            tracing::debug!(target: DEBUG_TOOLS,
+                                tools = %tool_names.join(","),
+                                "Task Results: {}",
+                                format_args!("{:#?}", task_result)
+                            );
                             match task_result {
                                 Ok((call_id, tool_result)) => match tool_result {
                                     Ok(content) => {
@@ -224,23 +240,20 @@ impl<'a> RequestSession<'a> {
                                             json!({"ok": false, "error": err}).to_string();
                                         self.messages
                                             .push(RequestMessage::new_tool(error_content, call_id));
+                                        return Err(LlmError::ToolCall(err));
                                     }
                                 },
                                 Err(join_err) => {
                                     // Handle tokio task join errors - we don't have call_id here, use a placeholder
                                     let error_content = json!({"ok": false, "error": format!("Task join error: {}", join_err)}).to_string();
+                                    let msg = "unknown_call_id".to_string();
                                     self.messages.push(RequestMessage::new_tool(
                                         error_content,
-                                        ArcStr::from("unknown_call_id".to_string()),
+                                        ArcStr::from(msg.clone()),
                                     ));
+                                    return Err(LlmError::ToolCall(msg));
                                 }
                             }
-                        }
-                        if self.attempts > max_retries {
-                            return Err(LlmError::Unknown(format!(
-                                "Tool call retries exhausted after {} attempt(s)",
-                                self.attempts
-                            )));
                         }
 
                         // Continue loop to let the model observe tool outputs and respond
@@ -273,6 +286,10 @@ impl<'a> RequestSession<'a> {
                 ));
             }
         }
+        Err(LlmError::Unknown(format!(
+            "Tool call retries exhausted after {} attempt(s)",
+            self.attempts
+        )))
     }
 
     fn handle_404(

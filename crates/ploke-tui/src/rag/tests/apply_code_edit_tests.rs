@@ -6,6 +6,7 @@ use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::rag_types::ApplyCodeEditResult;
 use ploke_db::NodeType;
+use ploke_test_utils::workspace_root;
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -29,16 +30,18 @@ const BACKUP_FIXTURE: &str = "tests/fixture_crates/fixture_nodes_copy/src/struct
 fn restore_fixture() {
     use std::fs;
     
-    let original_path = ORIGINAL_FIXTURE;
-    let backup_path = BACKUP_FIXTURE;
+    let mut original_path = workspace_root();
+    original_path.push( ORIGINAL_FIXTURE );
+    let mut backup_path = workspace_root();
+    backup_path.push( BACKUP_FIXTURE );
     
     // Read the backup file content
-    let backup_content = fs::read_to_string(backup_path)
-        .unwrap_or_else(|e| panic!("Failed to read backup fixture at {}: {}", backup_path, e));
+    let backup_content = fs::read_to_string(&backup_path)
+        .unwrap_or_else(|e| panic!("Failed to read backup fixture at {}: {}", backup_path.display(), e));
     
     // Write the backup content to the original file
-    fs::write(original_path, backup_content)
-        .unwrap_or_else(|e| panic!("Failed to restore fixture to {}: {}", original_path, e));
+    fs::write(&original_path, backup_content)
+        .unwrap_or_else(|e| panic!("Failed to restore fixture to {}: {}", original_path.display(), e));
 }
 
 // Helper functions for test setup
@@ -86,7 +89,7 @@ async fn create_test_tool_params(
 #[tokio::test]
 #[cfg(feature = "test_harness")]
 async fn test_duplicate_request_detection() {
-    let harness = SHARED_HARNESS.lock().await;
+    let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
 
     // Create a valid edit request using known fixture data
@@ -102,7 +105,7 @@ Some(0.9f32),
     let params = create_test_tool_params(&harness, request_id, arguments.clone()).await;
 
     // Set up event listener to capture tool call results
-    use crate::{test_utils::new_test_harness::SHARED_HARNESS, AppEvent, EventPriority};
+    use crate::{AppEvent, EventPriority};
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
 
     // First call should succeed and create proposal
@@ -161,6 +164,7 @@ Some(0.9f32),
         );
     }
     // Change the target back to the original value.
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -208,6 +212,8 @@ async fn test_empty_edits_validation() {
             "Empty edits should not create proposal"
         );
     }
+
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -254,6 +260,7 @@ async fn test_malformed_json_handling() {
             "Malformed JSON should not create proposal"
         );
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -308,6 +315,7 @@ async fn test_canonical_resolution_success() {
         );
         assert!(!edit.replacement.is_empty(), "Should have replacement code");
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -337,6 +345,7 @@ async fn test_canonical_resolution_not_found() {
             "Failed resolution should not create proposal"
         );
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -366,6 +375,7 @@ async fn test_canonical_resolution_wrong_node_type() {
             "Wrong node type should not create proposal"
         );
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -397,6 +407,7 @@ Some(0.9f32),
         assert_eq!(proposal.status, EditProposalStatus::Pending);
         assert!(!proposal.edits.is_empty(), "Should have resolved edits");
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -443,6 +454,7 @@ Some(0.9f32),
             }
         }
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -493,6 +505,7 @@ Some(0.9f32),
             }
         }
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -562,6 +575,7 @@ Some(0.9f32),
             }
         }
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -607,6 +621,7 @@ async fn test_proposal_creation_and_storage() {
         );
         assert!(edit.file_path.to_string_lossy().contains("structs.rs"));
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -643,6 +658,7 @@ Some(0.9f32),
         // Auto-approval should have completed and applied the edit
         assert_eq!(proposal.status, EditProposalStatus::Applied);
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -704,6 +720,7 @@ Some(0.9f32),
         assert!(!structured_result.files.is_empty());
         assert!(!structured_result.preview_mode.is_empty());
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -776,6 +793,7 @@ async fn test_multiple_files_batch_processing() {
             println!("No proposals created - fixture may not contain expected enum");
         }
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -834,6 +852,7 @@ async fn test_unsupported_node_type() {
             "Unsupported node type should not create proposal"
         );
     }
+    restore_fixture();
 }
 
 #[tokio::test]
@@ -862,6 +881,7 @@ async fn test_invalid_canonical_path_format() {
             "Invalid canonical path should not create proposal"
         );
     }
+    restore_fixture();
 }
 
 // ============================================================================
@@ -953,4 +973,5 @@ async fn test_complete_canonical_edit_flow_integration() {
             "File path should be correct"
         );
     }
+    restore_fixture();
 }

@@ -506,7 +506,6 @@ impl App {
             .split("/")
             .last()
             .unwrap_or(&self.active_model_id);
-        log::debug!("display_model: {}", display_model);
 
         let model_display = Paragraph::new(format!(" {} ", display_model))
             .style(Style::new().fg(Color::Green))

@@ -118,7 +118,7 @@ impl ProvEnd {
             .build()?;
 
         let url = op
-            .url
+            .base_url
             .join(&format!("models/{}/{}/endpoints", self.author.as_ref(), self.model.as_ref()))
             .map_err(|e| color_eyre::eyre::eyre!("Malformed URL: {}", e))?;
 

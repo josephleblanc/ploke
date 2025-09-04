@@ -6,6 +6,7 @@ use tracing::instrument;
 use ploke_embed::indexer::{self, IndexStatus};
 use tokio::sync::broadcast;
 
+use crate::utils::consts::DBG_EVENTS;
 use crate::{AppEvent, error::ErrorSeverity};
 
 #[derive(Clone, Copy, Debug)]
@@ -195,7 +196,7 @@ impl EventBus {
     #[instrument(skip(self, event))]
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
-        tracing::debug!("event_priority: {:?}", priority);
+        tracing::trace!(target: DBG_EVENTS, "event_priority: {:?}", priority);
         let tx = match priority {
             EventPriority::Realtime => &self.realtime_tx,
             EventPriority::Background => &self.background_tx,

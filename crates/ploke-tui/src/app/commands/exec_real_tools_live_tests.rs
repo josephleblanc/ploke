@@ -392,7 +392,7 @@ async fn run_tool_roundtrip(
     let tool_calls = parsed
         .get("choices")
         .and_then(|c| c.as_array())
-        .and_then(|arr| arr.get(0))
+        .and_then(|arr| arr.first())
         .and_then(|c0| c0.get("message"))
         .and_then(|m| m.get("tool_calls"))
         .and_then(|a| a.as_array())
@@ -409,8 +409,7 @@ async fn run_tool_roundtrip(
     }
 
     // Create temp targets and execute locally
-    let tool_call_id = tool_calls
-        .get(0)
+    let tool_call_id = tool_calls.first()
         .and_then(|x| x.get("id"))
         .and_then(|s| s.as_str())
         .unwrap_or("call_1")
@@ -490,7 +489,7 @@ async fn run_tool_roundtrip(
                 .and_then(|v| {
                     v.get("choices")
                         .and_then(|c| c.as_array())
-                        .and_then(|arr| arr.get(0))
+                        .and_then(|arr| arr.first())
                         .and_then(|c0| c0.get("message"))
                         .and_then(|m| m.get("content"))
                         .and_then(|s| s.as_str().map(|s| s.to_string()))
@@ -535,7 +534,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         .expect("client");
 
     // Fetch user-filtered models
-    let models = match openrouter_catalog::fetch_models(&client, op.url.clone(), &op.key).await {
+    let models = match openrouter_catalog::fetch_models(&client, op.base_url.clone(), &op.key).await {
         Ok(m) => m,
         Err(e) => {
             warn!("Failed to fetch OpenRouter catalog: {}", e);
@@ -553,7 +552,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         let model_id = m.id;
         info!("model: {}", model_id);
 
-        let chosen = choose_tools_endpoint_for_model(&client, &op.url.to_string(), &op.key, &model_id).await;
+        let chosen = choose_tools_endpoint_for_model(&client, op.base_url.as_str(), &op.key, &model_id).await;
         let Some((author, slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
             continue;
@@ -586,7 +585,7 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         ]) {
             run_tool_roundtrip(
                 &client,
-                &op.url.to_string(),
+                op.base_url.as_str(),
                 &op.key,
                 &model_id,
                 provider_slug_hint.as_deref(),

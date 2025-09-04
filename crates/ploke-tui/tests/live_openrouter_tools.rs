@@ -37,7 +37,7 @@ async fn live_tool_call_request_code_context() {
         api_key: env.key.clone(),
         provider_slug: None,
         api_key_env: None,
-        base_url: env.url.to_string(),
+        base_url: env.base_url.to_string(),
         // Choose a model likely to have tool-capable endpoints
         model: "qwen/qwen-2.5-7b-instruct".to_string(),
         display_name: None,
@@ -47,7 +47,7 @@ async fn live_tool_call_request_code_context() {
 
     // Fetch endpoints and pick a provider that supports tools if available; skip gracefully otherwise
     if let Ok(eps) =
-        fetch_model_endpoints(&client, env.url.clone(), &env.key, &provider.model).await
+        fetch_model_endpoints(&client, env.base_url.clone(), &env.key, &provider.model).await
     {
         if let Some(p) = eps.iter().find(|e| {
             e.supported_parameters
@@ -68,8 +68,8 @@ async fn live_tool_call_request_code_context() {
             return;
         }
     } else {
-        // Unable to fetch endpoints; skip to avoid false negatives in constrained environments
-        return;
+        panic!("unable to fetch models via fetch_model_endpoints using ModelConfig:\n{:#?}", provider);
+        // Unable to fetch endpoints; should fail to avoid false positive
     }
 
     let sys = RequestMessage {

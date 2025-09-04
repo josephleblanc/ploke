@@ -36,6 +36,7 @@ mod harness;
 
 use harness::AppHarness;
 use lazy_static::lazy_static;
+use ploke_tui::llm::openrouter_catalog::ModelsResponse;
 use ploke_tui::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsResponse, SupportedParameters};
 use ploke_tui::llm::providers::ProvidersResponse;
 use ploke_tui::test_harness::openrouter_env;
@@ -182,33 +183,45 @@ async fn choose_tools_endpoint_for_model(
 #[tokio::test]
 async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
     let _tracing_guard = init_tracing_tests(Level::INFO);
-    if std::env::var("PLOKE_RUN_LIVE_TESTS").ok().as_deref() != Some("1") {
-        eprintln!("Skipping: PLOKE_RUN_LIVE_TESTS!=1");
-        return Ok(());
-    }
     // Dedicated diagnostics directory (env-driven by LLM layer)
     let out_dir = std::path::PathBuf::from("target/test-output/openrouter_e2e");
     fs::create_dir_all(&out_dir).ok();
     println!("[E2E] Diagnostics directory: {}", out_dir.display());
     // Spawn headless App and subsystems via test harness
     let h = AppHarness::spawn().await?;
-    // Best-effort capability refresh so tools are considered for models that advertise them.
-    {
-        let mut cfg = h.state.config.write().await;
-        cfg.model_registry.refresh_from_openrouter().await?;
-    }
-
     let op = openrouter_env().expect("Skipping E2E live test: OPENROUTER_API_KEY not set.");
+
+    let base_url = op.base_url.clone();
 
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
         .default_headers(default_headers())
         .build()
         .expect("client");
+    let url = base_url
+        .join("models")
+        .expect("Malformed models url");
+    let resp = client
+        .get(url)
+        .bearer_auth(&op.key)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let body: serde_json::Value = resp.json().await?;
+
+    let parsed: ModelsResponse = serde_json::from_value(body).unwrap();
+    // Best-effort capability refresh so tools are considered for models that advertise them.
+    {
+        let mut cfg = h.state.config.write().await;
+        cfg.model_registry.refresh_from_openrouter().await?;
+    }
+
+
 
     // Fetch catalog filtered by user allowances
     let models = match ploke_tui::llm::openrouter_catalog::fetch_models(
-        &client, op.url.clone(), &op.key,
+        &client, op.base_url.clone(), &op.key,
     )
     .await
     {
@@ -257,8 +270,9 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
     //     },
     //     Err(_) => Default::default(),
     // };
+    let provider_url = op.base_url.join("providers")?;
     let resp = client
-        .get(format!("{}/providers", op.url))
+        .get(provider_url)
         .bearer_auth(&op.key)
         .send()
         .await
@@ -269,183 +283,6 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
         .inspect(|p| println!("{:#?}", p) )
         .count();
     println!("count: {}", count);
-
-    panic!();
-
-//     for m in models.into_iter().take(max_models) {
-//         // if processed >= max_models {
-//         //     break;
-//         // }
-//
-//         let model_id = m.id;
-//         info!("model: {}", model_id);
-//
-//         let chosen = choose_tools_endpoint_for_model(
-//             &client,
-//             &base_url,
-//             &api_key,
-//             &model_id,
-//             &providers_map,
-//         )
-//         .await;
-//         let Some((_author, _slug, endpoint, provider_slug_hint)) = chosen else {
-//             info!("  no tools-capable endpoints; skipping {}", model_id);
-//             processed += 1;
-//             continue;
-//         };
-//
-//         // Force-enable tool support in the registry for the selected model so tools are included.
-//         {
-//             let mut cfg = h.state.config.write().await;
-//             cfg.model_registry.capabilities.insert(
-//                 model_id.clone(),
-//                 ModelCapabilities {
-//                     supports_tools: true,
-//                     context_length: Some(endpoint.context_length as u32),
-//                     input_cost_per_million: None,
-//                     output_cost_per_million: None,
-//                 },
-//             );
-//         }
-//
-//         tracing::trace!(
-//             "  chosen endpoint: provider='{}' context_length={} price_hint={:.8}",
-//             endpoint.name,
-//             endpoint.context_length,
-//             endpoint_price_hint(&endpoint)
-//         );
-//
-//         // Record the model/endpoint choice for summary/diagnostics
-//         outcomes.push(ToolRoundtripOutcome {
-//             tool_name: "endpoint_choice".to_string(),
-//             model_id: model_id.clone(),
-//             provider_slug: provider_slug_hint.clone(),
-//             first_status: 0,
-//             tool_called: false,
-//             second_status: None,
-//             body_excerpt_first: format!("chosen endpoint: {}", endpoint.name),
-//         });
-//
-//         // Configure the active provider/model for this loop iteration
-//         if let Some(provider_slug_hint) = provider_slug_hint.clone() {
-//             let _ = h.cmd_tx
-//                 .send(StateCommand::SelectModelProvider {
-//                     model_id: model_id.clone(),
-//                     provider_id: provider_slug_hint.clone(),
-//                 })
-//                 .await;
-//             // Allow the dispatcher to apply the change
-//             tokio::time::sleep(Duration::from_millis(100)).await;
-//         }
-//
-//         // Submit a realistic user request to drive the full lifecycle
-//         let request_id = Uuid::new_v4();
-//         let system_instr = [PROMPT_HEADER, PROMPT_CODE].join("");
-//         let user_instr = String::from(
-// "Hello, I would like you to help me understand the difference between the SimpleStruct and the GenericStruct in my code.
-//
-// If tools are available, you MUST call the `request_code_context` tool with {\"token_budget\": 256} and wait for the tool result before responding.",
-//         );
-//         let parent_id = h.add_user_msg(user_instr.clone()).await;
-//
-//         // Observe LLM and Tool events with a shorter window; break early on first tool signal
-//         let mut bg_rx = h.event_bus.subscribe(EventPriority::Background);
-//         let mut rt_rx = h.event_bus.subscribe(EventPriority::Realtime);
-//         let observe_until = std::time::Instant::now() + Duration::from_secs(10);
-//         let mut saw_tool = false;
-//         while std::time::Instant::now() < observe_until {
-//             let next_bg = tokio::time::timeout(Duration::from_millis(1000), bg_rx.recv());
-//             let next_rt = tokio::time::timeout(Duration::from_millis(1000), rt_rx.recv());
-//             tokio::select! {
-//                 Ok(Ok(ev)) = next_rt => match ev {
-//                     AppEvent::LlmTool(llm::ToolEvent::Requested { name, call_id, .. }) => {
-//                         println!("[E2E] tool_requested model={} name={} call_id={}", model_id, name, call_id);
-//                         saw_tool = true; break;
-//                     }
-//                     AppEvent::LlmTool(llm::ToolEvent::Completed { call_id, content, .. }) => {
-//                         let excerpt: String = content.chars().take(200).collect();
-//                         println!("[E2E] tool_completed model={} call_id={} excerpt={}", model_id, call_id, excerpt);
-//                         saw_tool = true; break;
-//                     }
-//                     AppEvent::LlmTool(llm::ToolEvent::Failed { call_id, error, .. }) => {
-//                         println!("[E2E] tool_failed model={} call_id={} error={}", model_id, call_id, error);
-//                         saw_tool = true; break;
-//                     }
-//                     _ => {}
-//                 },
-//                 Ok(Ok(ev)) = next_bg => match ev {
-//                     AppEvent::Llm(llm::Event::ToolCall {
-//                         name,
-//                         ..
-//                     }) => {
-//
-//                         saw_tool = true;
-//                         break;
-//                     }
-//                     AppEvent::Llm(llm::Event::Response { content, model, .. }) => {
-//                         let excerpt: String = content.chars().take(180).collect();
-//                         println!("[E2E] response model={} excerpt={}", model, excerpt);
-//                     }
-//                     _ => {}
-//                 },
-//                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-//             }
-//         }
-//
-//         println!(
-//             "[E2E] summary model={} provider_hint={} saw_tool={}",
-//             model_id,
-//             provider_slug_hint.clone().unwrap_or_else(|| "-".into()),
-//             saw_tool
-//         );
-//
-//         outcomes.push(ToolRoundtripOutcome {
-//             tool_name: "request_code_context".to_string(),
-//             model_id: model_id.clone(),
-//             provider_slug: provider_slug_hint.clone(),
-//             first_status: 0,
-//             tool_called: saw_tool,
-//             second_status: None,
-//             body_excerpt_first: "event observation complete".to_string(),
-//         });
-//
-//         processed += 1;
-//
-//         // Stop early once we observe at least one tool call to keep run time reasonable.
-//         if saw_tool {
-//             break;
-//         }
-//     }
-//
-//     // Persist discovered tools-capable endpoints for diagnostics
-//     if let Ok(map) = TOOL_ENDPOINT_CANDIDATES.lock() {
-//         let path = out_dir.join("openrouter_tools_candidates.json");
-//         let _ = fs::write(&path, serde_json::to_string_pretty(&*map).unwrap_or_default());
-//         println!("[E2E] wrote tools-capable endpoint summary to {}", path.display());
-//     }
-//
-//     // Summary of outcomes across models/tools
-//     let total = outcomes.len();
-//     let successes = outcomes
-//         .iter()
-//         .filter(|o| o.tool_called && matches!(o.second_status, Some(s) if (200..=299).contains(&s)))
-//         .count();
-//     let no_tool_calls = outcomes.iter().filter(|o| !o.tool_called).count();
-//     let first_404 = outcomes.iter().filter(|o| o.first_status == 404).count();
-//     let any_429 = outcomes
-//         .iter()
-//         .filter(|o| o.first_status == 429 || matches!(o.second_status, Some(429)))
-//         .count();
-//     info!(
-//         "Summary: total_outcomes={} successes={} no_tool_calls={} http_404_first_leg={} http_429_any_leg={}",
-//         total, successes, no_tool_calls, first_404, any_429
-//     );
-//
-//     assert!(
-//         outcomes.iter().any(|o| o.tool_called),
-//         "No tool calls were observed across evaluated models. Ensure OPENROUTER_API_KEY is set and at least one tools-capable endpoint is selected."
-//     );
-
     // Request a clean shutdown of the UI loop
     h.shutdown().await;
 

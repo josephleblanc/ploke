@@ -95,7 +95,7 @@ pub const TOOL_RETRIES: u32 = 2;
 
 /// The default number of tokens per LLM request.
 // TODO: Add this to user config
-pub const TOKEN_LIMIT: u32 = 2048;
+pub const TOKEN_LIMIT: u32 = 8196;
 
 /// The default number of seconds for timeout on LLM request loop.
 // TODO: Add this to user config

@@ -94,7 +94,7 @@ use std::path::PathBuf;
                 .build()
                 .expect("client");
             let op = openrouter_env().expect("No key");
-            let url = op.url.join("models").expect("Malformed Url");
+            let url = op.base_url.join("models").expect("Malformed Url");
             let api_key = op.key;
 
             client.get(url).bearer_auth(&api_key)
@@ -109,7 +109,7 @@ use std::path::PathBuf;
                 .build()
                 .expect("client");
             let op = openrouter_env().expect("No key");
-            let url = op.url.join("models").expect("Malformed Url");
+            let url = op.base_url.join("models").expect("Malformed Url");
             let api_key = op.key;
 
             client.get(url).bearer_auth(&api_key)

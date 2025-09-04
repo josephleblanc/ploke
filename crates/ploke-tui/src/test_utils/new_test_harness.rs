@@ -6,6 +6,7 @@ use crate::app_state::SystemStatus;
 use crate::app_state::events::SystemEvent;
 use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use ploke_core::ArcStr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -55,20 +56,6 @@ pub struct AppHarness {
     pub input_tx:
         tokio::sync::mpsc::UnboundedSender<Result<crossterm::event::Event, std::io::Error>>,
     app_task: tokio::task::JoinHandle<()>,
-}
-
-lazy_static! {
-    /// Shared AppHarness instance that can be reused across tests
-    pub static ref SHARED_HARNESS: Arc<Mutex<Option<AppHarness>>> = {
-        let harness = Arc::new(Mutex::new(None));
-        let rt = Runtime::new().expect("Failed to create runtime");
-        let _guard = rt.enter();
-        {
-            let mut h = harness.blocking_lock();
-            *h = Some(rt.block_on(AppHarness::spawn()).expect("Failed to spawn harness"));
-        }
-        harness
-    };
 }
 
 impl AppHarness {

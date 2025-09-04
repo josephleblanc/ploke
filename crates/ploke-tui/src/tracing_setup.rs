@@ -42,7 +42,7 @@ pub fn init_tracing_to_file_ai(file_name_prefix: &str) -> WorkerGuard {
 
 pub fn init_tracing() -> WorkerGuard {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("debug,ploke_db=error,cozo=error,tokenizer=error")); // Default to 'info' level
+        .unwrap_or_else(|_| EnvFilter::new("dbg_tools=debug,debug,ploke_db=error,cozo=error,tokenizer=error")); // Default to 'info' level
 
     // File appender with custom timestamp format
     let log_dir = "logs";

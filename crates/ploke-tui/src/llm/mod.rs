@@ -20,6 +20,7 @@ use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
 use crate::tools::{FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall, ToolDefinition, ToolFunctionDef, ToolName};
+use crate::utils::consts::DEBUG_TOOLS;
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
@@ -165,7 +166,8 @@ impl From<MessageKind> for Role {
             MessageKind::Assistant => Role::Assistant,
             // TODO: Should change below to Role::System, might break something, check tests
             // before/after
-            MessageKind::System => Role::Assistant,
+            MessageKind::System => Role::System,
+            MessageKind::Tool => Role::Tool,
             _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
         }
     }
@@ -385,7 +387,7 @@ pub async fn llm_manager(
                 // arguments,
                 // call_id,
             }) => {
-                tracing::info!(
+                tracing::debug!(target: DEBUG_TOOLS,
                     request_id = %request_id,
                     parent_id = %parent_id,
                     call_id = ?tool_call.call_id,
@@ -1066,6 +1068,10 @@ pub enum LlmError {
     #[error("Failed to deserialize response data: {0}")]
     Deserialization(String),
 
+    /// Failed to deserialize the API response.
+    #[error("Failed to deserialize response data: {0}")]
+    ToolCall(String),
+
     /// An unexpected or unknown error occurred.
     #[error("An unknown error occurred: {0}")]
     Unknown(String),
@@ -1113,9 +1119,13 @@ impl From<LlmError> for ploke_error::Error {
                     msg
                 )))
             }
-            LlmError::Unknown(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            LlmError::ToolCall(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", msg)),
             ),
+            LlmError::Unknown(msg) => 
+            ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            )
         }
     }
 }
@@ -1282,10 +1292,10 @@ impl Default for LLMParameters {
             response_format: Default::default(),
             safety_settings: Default::default(),
             system_prompt: None,
-            tool_max_retries: Some(2),
-            tool_token_limit: Some(2048),
-            history_char_budget: Some(12000),
-            tool_timeout_secs: Some(30),
+            tool_max_retries: Some(TOOL_RETRIES),
+            tool_token_limit: Some(TOKEN_LIMIT),
+            history_char_budget: None,
+            tool_timeout_secs: Some(LLM_TIMEOUT_SECS),
         }
     }
 }

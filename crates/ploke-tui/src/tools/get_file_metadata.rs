@@ -115,6 +115,9 @@ impl super::Tool for GetFileMetadata {
     ) -> Result<ToolResult, ploke_error::Error> {
         use ploke_core::PROJECT_NAMESPACE_UUID;
         let path = PathBuf::from(params.file_path.as_ref());
+        tracing::debug!(target: DEBUG_TOOLS, 
+            path = %path.display(),
+        );
         match tokio::fs::read(&path).await {
             Ok(bytes) => {
                 let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);

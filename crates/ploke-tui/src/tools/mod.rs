@@ -2,7 +2,7 @@
 
 // For any db-related issues, check cross-crate contract with db in:
 //  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
-use crate::utils::se_de::{ de_arc_str, se_arc_str };
+use crate::utils::{consts::DEBUG_TOOLS, se_de::{ de_arc_str, se_arc_str }};
 use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{
@@ -231,30 +231,61 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     // };
     let name = tool_call.function.name;
     let args = tool_call.function.arguments;
+    tracing::debug!(target: DEBUG_TOOLS,
+        request_id = %ctx.request_id,
+        call_id = ?tool_call.call_id,
+        args = ?args,
+        tool = ?tool_call.function.name,
+        "Processing tool"
+    );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
             let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
             let ToolResult { content } =
                 request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
                     .await
                     .inspect_err(|e| RequestCodeContextGat::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
             request_code_context::RequestCodeContextGat::emit_completed(&ctx, content);
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
             let params = code_edit::GatCodeEdit::deserialize_params(&args)?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
             let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
                 .inspect_err(|e| GatCodeEdit::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
             code_edit::GatCodeEdit::emit_completed(&ctx, content);
             Ok(())
         }
         ToolName::GetFileMetadata => {
             let params = get_file_metadata::GetFileMetadata::deserialize_params(&args)?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
             let ToolResult { content } =
                 get_file_metadata::GetFileMetadata::execute(params, ctx.clone())
                     .await
                     .inspect_err(|e| GetFileMetadata::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS, 
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
             get_file_metadata::GetFileMetadata::emit_completed(&ctx, content);
             Ok(())
         } // more here

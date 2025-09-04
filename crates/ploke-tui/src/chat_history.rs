@@ -409,6 +409,17 @@ impl ChatHistory {
         self.add_child(parent_id, child_id, &content, status, kind)
     }
 
+    pub fn add_message_tool(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        kind: MessageKind,
+        content: String,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        self.add_child(parent_id, child_id, &content, status, kind)
+    }
+
     /// Adds a new child message to the conversation tree.
     /// Takes some data from the state of the chat history, modifies chat history state to include
     /// the new child and message, and returns the new child id.

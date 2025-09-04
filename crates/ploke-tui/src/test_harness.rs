@@ -176,11 +176,11 @@ pub fn default_headers() -> HeaderMap {
 
 pub struct OpenRouterEnv {
     pub key: String,
-    pub url: reqwest::Url,
+    pub base_url: reqwest::Url,
 }
 impl OpenRouterEnv {
-    pub fn new(key: String, url: reqwest::Url) -> Self {
-        Self { key, url }
+    pub fn new(key: String, base_url: reqwest::Url) -> Self {
+        Self { key, base_url }
     }
 }
 

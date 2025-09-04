@@ -191,7 +191,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
         api_key: env.key.clone(),
         provider_slug: Some( ProviderSlug::openai ),
         api_key_env: None,
-        base_url: env.url.to_string(),
+        base_url: env.base_url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
         provider_type: ProviderType::OpenRouter,
@@ -216,7 +216,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
     
     // Make API call
     let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", env.url.as_str().trim_end_matches('/'));
+    let url = format!("{}/chat/completions", env.base_url.as_str().trim_end_matches('/'));
     let response = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", env.key))

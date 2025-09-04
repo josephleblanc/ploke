@@ -182,7 +182,7 @@ async fn openrouter_model_tools_support_check() {
         .default_headers(default_headers())
         .build()
         .expect("client");
-    let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
+    let url = format!("{}/models/{}/{}/endpoints", op.base_url, author, slug);
     match client
         .get(&url)
         .bearer_auth(&op.key)
@@ -258,7 +258,7 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, op_env.url.clone(), &op_env.key, preferred.as_deref()).await;
+    let model_id = choose_tools_model(&client, op_env.base_url.clone(), &op_env.key, preferred.as_deref()).await;
 
     let payload = json!({
         "model": model_id,
@@ -284,7 +284,7 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
 
-    let url = format!("{}/chat/completions", op_env.url);
+    let url = format!("{}/chat/completions", op_env.base_url);
     let start = Instant::now();
     match client
         .post(&url)
@@ -407,7 +407,7 @@ async fn openrouter_endpoints_live_smoke() {
         .expect("client");
 
     // Warm up: fetch providers list to build a name->slug map (logged only)
-    let providers_url = format!("{}/providers", op.url);
+    let providers_url = format!("{}/providers", op.base_url);
     let providers_resp = client
         .get(&providers_url)
         .bearer_auth(&op.key)
@@ -426,7 +426,7 @@ async fn openrouter_endpoints_live_smoke() {
     }
 
     // Fetch endpoints for the model
-    let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
+    let url = format!("{}/models/{}/{}/endpoints", op.base_url, author, slug);
     let resp = client
         .get(&url)
         .bearer_auth(&op.key)
@@ -494,7 +494,7 @@ async fn openrouter_tools_success_matrix() {
 
     // Choose a tools-capable model (prefer env override, else auto-detect from catalog).
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, op.url.clone(), &op.key, preferred.as_deref()).await;
+    let model_id = choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
 
     // Pre-check: does this model expose any endpoints that advertise "tools" support?
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -502,7 +502,7 @@ async fn openrouter_tools_success_matrix() {
     if parts.len() == 2 {
         let author = parts[0];
         let slug = parts[1];
-        let url = format!("{}/models/{}/{}/endpoints", op.url, author, slug);
+        let url = format!("{}/models/{}/{}/endpoints", op.base_url, author, slug);
         let client_probe = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -682,7 +682,7 @@ async fn openrouter_tools_success_matrix() {
                         _ => {}
                     }
 
-                    let url = format!("{}/chat/completions", op.url);
+                    let url = format!("{}/chat/completions", op.base_url);
                     let start = Instant::now();
                     let send_res = client
                         .post(&url)
@@ -941,7 +941,7 @@ async fn openrouter_provider_preference_experiment() {
     let c = mk_payload(Some(json!({"allow": ["openai"]})));
 
     for (label, payload) in [("A: omitted", a), ("B: order", b), ("C: allow", c)] {
-        let url = format!("{}/chat/completions", op.url);
+        let url = format!("{}/chat/completions", op.base_url);
         let res = client
             .post(&url)
             .bearer_auth(&op.key)
@@ -1032,7 +1032,7 @@ async fn openrouter_tools_smoke() {
         ]
     });
 
-    let url = format!("{}/chat/completions", op.url);
+    let url = format!("{}/chat/completions", op.base_url);
     let res = client
         .post(&url)
         .bearer_auth(&op.key)
@@ -1096,7 +1096,7 @@ async fn openrouter_tools_model_touchpoints() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let primary = choose_tools_model(&client, op.url.clone(), &op.key, preferred.as_deref()).await;
+    let primary = choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
 
     let mut models: Vec<String> = vec![
         primary,
@@ -1154,7 +1154,7 @@ async fn openrouter_tools_model_touchpoints() {
             "max_tokens": 128
         });
 
-        let url = format!("{}/chat/completions", &op.url);
+        let url = format!("{}/chat/completions", &op.base_url);
         let start = Instant::now();
         match client
             .post(&url)

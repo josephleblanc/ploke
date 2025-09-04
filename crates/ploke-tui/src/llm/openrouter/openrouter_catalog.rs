@@ -170,7 +170,7 @@ pub async fn fetch_models(
 ) -> color_eyre::Result<Vec<ModelEntry>> {
     // Use public models endpoint (same as working tests)
     let url = base_url
-        .join("/models")
+        .join("models") // must be "models", not "/models"
         .expect("Malformed models url");
     let resp = client
         .get(url)
@@ -251,7 +251,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    #[cfg(feature = "xxx")]
     fn test_pricing_deser_from_strings() {
         let body = r#"{
             "data": [
@@ -269,8 +268,8 @@ mod tests {
         let p = &parsed.data[0];
         assert_eq!(p.id, "openai");
         let pr = p.pricing.as_ref().expect("pricing exists");
-        assert!((pr.input.unwrap() - 0.000001).abs() < 1e-12);
-        assert!((pr.output.unwrap() - 0.000002).abs() < 1e-12);
+        assert!((pr.prompt - 0.000001).abs() < 1e-12);
+        assert!((pr.completion - 0.000002).abs() < 1e-12);
         assert_eq!(p.supported_parameters.as_ref().unwrap()[0], "tools");
         assert_eq!(p.capabilities.as_ref().unwrap().tools, Some(true));
     }
