@@ -56,7 +56,15 @@ pub struct RequestCodeContextResult {
     pub ok: bool,
     pub query: String,
     pub top_k: usize,
-    pub context: AssembledContext,
+    pub kind: ContextPartKind,
+    pub context: ConciseContext,
+}
+
+impl From<AssembledContext> for RequestCodeContextResult {
+    fn from(value: AssembledContext) -> Self {
+        // AI!
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
