@@ -75,6 +75,7 @@ async fn e2e_gat_request_code_context_complex() -> color_eyre::Result<()> {
     let params: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(&json_args)
         .expect("Failed to deserialize RequestCodeContext params");
     
+    // AI: Update assert_eq with changes to search_term and token_budget AI!
     assert_eq!(params.search_term.as_ref().map(|s| s.as_ref()), Some("SimpleStruct implementation"));
     assert_eq!(params.token_budget, 1500);
     
