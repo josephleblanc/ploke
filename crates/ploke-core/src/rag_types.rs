@@ -60,6 +60,35 @@ pub struct RequestCodeContextResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeFilepath(pub String);
+
+impl AsRef for NodeFilepath {
+    fn as_ref(&self) -> &T {
+        // AI!
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanonPath(pub String);
+
+impl AsRef for CanonPath {
+    fn as_ref(&self) -> &T {
+        // AI!
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConciseContext {
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetFileMetadataResult {
     pub ok: bool,
     pub file_path: String,
