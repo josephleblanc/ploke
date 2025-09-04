@@ -89,8 +89,7 @@ impl From<ContextPart> for ConciseContext {
     }
 }
 
-// AI: Implement delegate for Eq, PartialOrd, Ord AI!
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct NodeFilepath(pub String);
 
@@ -100,14 +99,25 @@ impl AsRef<str> for NodeFilepath {
     }
 }
 
-// AI: Implement delegate for Eq, PartialOrd, Ord AI!
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+impl PartialEq for NodeFilepath {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
 impl AsRef<str> for CanonPath {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl PartialEq for CanonPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 
