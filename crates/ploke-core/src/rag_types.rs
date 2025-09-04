@@ -62,8 +62,17 @@ pub struct RequestCodeContextResult {
 
 impl From<ContextPart> for RequestCodeContextResult {
     fn from(value: ContextPart) -> Self {
-        // AI!
-        todo!()
+        Self {
+            ok: true,
+            query: String::new(),
+            top_k: 1,
+            kind: value.kind,
+            context: ConciseContext {
+                file_path: NodeFilepath(value.file_path.clone()),
+                canon_path: CanonPath(value.file_path.clone()),
+                snippet: value.text,
+            },
+        }
     }
 }
 
