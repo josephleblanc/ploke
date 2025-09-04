@@ -63,10 +63,9 @@ pub struct RequestCodeContextResult {
 #[serde(transparent)]
 pub struct NodeFilepath(pub String);
 
-impl AsRef for NodeFilepath {
-    fn as_ref(&self) -> &T {
-        // AI!
-        todo!()
+impl AsRef<str> for NodeFilepath {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -74,10 +73,9 @@ impl AsRef for NodeFilepath {
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
-impl AsRef for CanonPath {
-    fn as_ref(&self) -> &T {
-        // AI!
-        todo!()
+impl AsRef<str> for CanonPath {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
