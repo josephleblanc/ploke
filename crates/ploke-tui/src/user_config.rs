@@ -9,6 +9,8 @@
 //!   while save/load provide persistence with optional secret redaction.
 
 
+use std::collections::HashMap;
+
 use lazy_static::lazy_static;
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
@@ -49,6 +51,8 @@ pub struct UserConfig {
     pub editing: EditingConfig,
     #[serde(default)]
     pub ploke_editor: Option<String>,
+    #[serde(default)]
+    pub keys: HashMap<ProviderType, Option<String>>,
 }
 
 impl UserConfig {
@@ -256,7 +260,7 @@ pub fn default_strictness() -> ModelRegistryStrictness {
 
 impl ModelConfig {
     /// Resolve the actual API key to use, considering env vars and defaults
-    pub fn resolve_api_key(&self) -> Result<String> {
+    pub fn resolve_api_key(&self) -> Result<String, ploke_error::Error> {
         // 1. Check provider-type specific env vars
         let key = match self.provider_type {
             ProviderType::OpenRouter => std::env::var("OPENROUTER_API_KEY"),
@@ -272,6 +276,7 @@ impl ModelConfig {
         if key.is_err() && !self.api_key.is_empty() {
             Ok(self.api_key.clone())
         } else {
+            // AI: Change the error type for ploke_error::Error AI!
             key.map_err(|e| color_eyre::eyre::eyre!("Failed to resolve API key: {}", e))
         }
     }
@@ -447,16 +452,7 @@ impl ModelRegistry {
             .providers
             .iter()
             .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
-            .map(|p| p.resolve_api_key())
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .unwrap_or_default();
-
-        if api_key.is_empty() {
-            tracing::warn!(
-                "OPENROUTER_API_KEY not set and no OpenRouter provider configured; skipping model registry refresh"
-            );
-            return Ok(());
-        }
+            .map(|p| p.resolve_api_key());
 
         let client = Client::new();
         let models =
