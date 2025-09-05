@@ -205,14 +205,12 @@ pub struct ModelRegistry {
 pub struct ModelConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
-    /// The API key for this specific provider
-    pub api_key: String,
     /// Optional: upstream provider slug (for OpenRouter routing preferences)
     #[serde(default)]
     pub provider_slug: Option<ProviderSlug>,
-    /// Optional: provider-specific environment variable name for API key
+    /// Provider-specific environment variable name for API key
     #[serde(default)]
-    pub api_key_env: Option<String>,
+    pub api_key: String,
     /// The base URL for the API endpoint.
     /// For OpenRouter, this would be "https://openrouter.ai/api/v1".
     #[serde(default = "default_base_url")]
@@ -258,21 +256,11 @@ pub fn default_strictness() -> ModelRegistryStrictness {
 
 impl ModelConfig {
     /// Resolve the actual API key to use, considering env vars and defaults
-    pub fn resolve_api_key(&self) -> String {
-        // 1. Check provider-specific env var if specified
-        if let Some(env_var) = &self.api_key_env {
-            if let Ok(key) = std::env::var(env_var) {
-                return key;
-            }
-        }
-
-        // 2. Check provider-type specific env vars
-        match self.provider_type {
-            ProviderType::OpenRouter => {
-                if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
-                    return key;
-                }
-            }
+    pub fn resolve_api_key(&self) -> Result< String > {
+        // 1. Check provider-type specific env vars
+        let key = match self.provider_type {
+            ProviderType::OpenRouter => std::env::var("OPENROUTER_API_KEY"),
+            // refactor the remaining items similar to OpenRouter above AI!
             ProviderType::OpenAI => {
                 if let Ok(key) = std::env::var("OPENAI_API_KEY") {
                     return key;
@@ -290,9 +278,6 @@ impl ModelConfig {
                 }
             }
         }
-
-        // 3. Fall back to the explicitly configured key
-        self.api_key.clone()
     }
     pub fn with_api_key(mut self) -> Self {
         self.api_key = self.resolve_api_key();
@@ -494,23 +479,7 @@ impl ModelRegistry {
                 .map(|v| v.supports_tools())
                 .unwrap_or(false);
 
-            let provider_tools = m
-                .providers
-                .as_ref()
-                .map(|ps| {
-                    ps.iter().any(|p| {
-                        p.supported_parameters
-                            .as_ref()
-                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                            .unwrap_or_else(|| {
-                                p.capabilities
-                                    .as_ref()
-                                    .and_then(|c| c.tools)
-                                    .unwrap_or(false)
-                            })
-                    })
-                })
-                .unwrap_or(false);
+            let provider_tools = m.providers.as_ref().is_some_and(|v| v.iter().any(|p| p.supports_tools()));
 
             let supports_tools = model_level_tools
                 || provider_tools
