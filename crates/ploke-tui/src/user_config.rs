@@ -256,31 +256,27 @@ pub fn default_strictness() -> ModelRegistryStrictness {
 
 impl ModelConfig {
     /// Resolve the actual API key to use, considering env vars and defaults
-    pub fn resolve_api_key(&self) -> Result< String > {
+    pub fn resolve_api_key(&self) -> Result<String> {
         // 1. Check provider-type specific env vars
         let key = match self.provider_type {
             ProviderType::OpenRouter => std::env::var("OPENROUTER_API_KEY"),
-            // refactor the remaining items similar to OpenRouter above AI!
-            ProviderType::OpenAI => {
-                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-                    return key;
-                }
-            }
-            ProviderType::Anthropic => {
-                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                    return key;
-                }
-            }
+            ProviderType::OpenAI => std::env::var("OPENAI_API_KEY"),
+            ProviderType::Anthropic => std::env::var("ANTHROPIC_API_KEY"),
             ProviderType::Custom => {
                 // Check generic env vars
-                if let Ok(key) = std::env::var("LLM_API_KEY") {
-                    return key;
-                }
+                std::env::var("LLM_API_KEY")
             }
+        };
+        
+        // 2. Fall back to the configured key if env var is not set
+        if key.is_err() && !self.api_key.is_empty() {
+            Ok(self.api_key.clone())
+        } else {
+            key.map_err(|e| color_eyre::eyre::eyre!("Failed to resolve API key: {}", e))
         }
     }
     pub fn with_api_key(mut self) -> Self {
-        self.api_key = self.resolve_api_key();
+        self.api_key = self.resolve_api_key().unwrap_or_default();
         self
     }
 }
