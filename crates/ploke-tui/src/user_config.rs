@@ -276,8 +276,7 @@ impl ModelConfig {
         if key.is_err() && !self.api_key.is_empty() {
             Ok(self.api_key.clone())
         } else {
-            // AI: Change the error type for ploke_error::Error AI!
-            key.map_err(|e| color_eyre::eyre::eyre!("Failed to resolve API key: {}", e))
+            key.map_err(|e| ploke_error::Error::Config(format!("Failed to resolve API key: {}", e)))
         }
     }
     pub fn with_api_key(mut self) -> Self {
