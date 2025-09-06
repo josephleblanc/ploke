@@ -228,6 +228,9 @@ pub struct ModelConfig {
     /// Optional per-provider LLM parameters (temperature, top-p, etc.)
     #[serde(default)]
     pub llm_params: Option<crate::llm::LLMParameters>,
+    /// API key for this provider (can be empty if using env vars)
+    #[serde(default)]
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Hash, Eq)]
@@ -269,7 +272,8 @@ impl ModelConfig {
                 std::env::var("LLM_API_KEY")
             }
         };
-        eyre!("Failed to resolve API key: {}", self.id);
+        
+        key.map_err(|_| eyre!("Failed to resolve API key for provider: {}", self.id))
     }
 }
 
@@ -360,8 +364,25 @@ impl ModelRegistry {
 
     /// Ensure all providers have their API keys loaded from environment variables
     pub fn load_api_keys(&mut self) -> color_eyre::Result<()> {
-        // AI: load api keys from env AI!
-        eyre!("No API keys found!")
+        let mut keys_found = 0;
+        
+        for provider in &mut self.providers {
+            match provider.resolve_api_key() {
+                Ok(key) => {
+                    provider.api_key = key;
+                    keys_found += 1;
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to resolve API key for provider '{}': {}", provider.id, err);
+                }
+            }
+        }
+        
+        if keys_found == 0 {
+            return Err(eyre!("No API keys found in environment variables"));
+        }
+        
+        Ok(())
     }
 
     /// Ensure all providers have their API keys loaded from environment variables
