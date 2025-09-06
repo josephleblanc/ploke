@@ -356,6 +356,14 @@ Test fixtures are located in `tests/fixture_crates/` for realistic parsing scena
 - **Implementation Logs**: `crates/ploke-tui/docs/agent-system/impl-log/`
 - **Decisions Required**: `crates/ploke-tui/docs/decisions_required.md`
 
+### System Data Flow Reports (Generated: 2025-09-06)
+For understanding existing UX and state changes, reference these comprehensive analyses:
+- **App Startup**: `crates/ploke-tui/docs/reports/app_startup_dataflow_analysis.md` - 7-phase initialization from binary launch to ready state
+- **Configuration Loading**: `crates/ploke-tui/docs/reports/user_config_loading_detailed.md` - TOML/env loading, API key resolution, OpenRouter integration
+- **User Query Processing**: `crates/ploke-tui/docs/reports/user_query_api_dataflow_analysis.md` - Complete flow from input to LLM response including RAG context assembly
+- **Model Commands**: `crates/ploke-tui/docs/reports/model_commands_dataflow_analysis.md` - Command parsing, registry validation, OpenRouter search integration
+- **Event Flow Summary**: `crates/ploke-tui/docs/reports/event_flow_summaries.md` - Consolidated flow diagrams and event priority architecture
+
 ### Development Workflow
 - Plans and logs live in `crates/ploke-tui/docs/plans/agentic-system-plan/` and `crates/ploke-tui/docs/reports/`
 - Implementation logs track decisions with evidence and cross-references
@@ -399,55 +407,27 @@ In short, `ploke-tui` is a binary, first, not a lib.
 
 ## TODO
 
-1. Generate summary and full data flow for existing UX and state changes
-- create new documents with reports in `crates/ploke-tui/docs/reports/` (directory empty to start)
-- [ ] UI:
-  - [ ] App startup and initialization
-    - [ ] loading user config 
-      - what does it contain? 
-      - what are loaded as defaults?
-      - what is the order of preference overwriting?
-    - [ ] rebuilding bm25
-    - [ ] loading backup db crate with `/load crate <name>`
-    - [ ] summarize: What is the system state after these actions? Include:
-      - vector embedding data (present, not present?) 
-      - hnsw index (indexed, not indexed?)
-      - synced to local files?
-      - selected model?
-      - selected provider?
-  - [ ] Initial user query + query dataflow + API
-    - [ ] Trace dataflow from user query lifecycle
-      -> User message appearing in UI
-      -> LLM message appearing in UI
-      - What other intermediate messages appear in the UI?
-      - How is the API query formed?
-      - Given that this occurs after app startup and initialization, what happens?
-      - Supposing this occurs *before* app startup and initialization, what happens?
-  - [ ] Trace data flow for user commands, assuming App startup and initialization success:
-    - [ ] `model` commands:
-      - [ ] model list 
-      - [ ] model info 
-      - [ ] model use <name> 
-      - [ ] model refresh
-      - [ ] model load [path]
-      - [ ] model save [path]
-      - [ ] model search <keyword>
-        - [ ] UI + events dataflow
-        - [ ] state changes
-        - [ ] queries to OpenRouter API at `/models`
-          - [ ] data structures used for deserialization
-        - [ ] queries to OpenRouter API at `/:author/:model/endpoints`
-          - [ ] data structures used for deserialization
-      - [ ] model providers <model_id>
-    - [ ] `provider` commands (somewhat confusing name, refers to provider endpoint through OpenRouter, e.g. `DeepInfra` for `deepinfra/deepseek-r1` or `deepinfra/fp4/deepseek-r1`)
-      - [ ] provider strictness <openrouter-only|allow-custom|allow-any>
-      - [ ] provider tools-only <on|off>
-      - [ ] provider select <model_id> <provider_slug> 
-      - [ ] provider pin <model_id> <provider_slug>
-- [ ] Event flow summaries:
-  - [ ] user query to LLM
-  - [ ] user model selection
-  - [ ] entering model picker overlay and selecting a model
+1. [x] Generate summary and full data flow for existing UX and state changes *(Completed 2025-09-06)*
+- [x] Created comprehensive reports in `crates/ploke-tui/docs/reports/`
+- [x] **App startup and initialization** - See `app_startup_dataflow_analysis.md`
+  - [x] User config loading (TOML/env priority, defaults merging, API key resolution)
+  - [x] BM25 service initialization and database setup
+  - [x] System state summary (embedding processors, RAG service, model registry)
+- [x] **Initial user query + API dataflow** - See `user_query_api_dataflow_analysis.md` 
+  - [x] Complete flow from keyboard input to LLM response
+  - [x] RAG context assembly (vector + BM25 search)
+  - [x] Message lifecycle and UI updates
+- [x] **Model commands dataflow** - See `model_commands_dataflow_analysis.md`
+  - [x] Command parsing and validation (model list, info, use, refresh, load, save)
+  - [x] Model search UI + OpenRouter API integration
+  - [x] Provider selection and registry updates
+- [x] **Event flow summaries** - See `event_flow_summaries.md`
+  - [x] Priority architecture (realtime vs background events)
+  - [x] Error handling and recovery patterns
+- [x] **Provider commands** - See `model_commands_dataflow_analysis.md` (sections 3.1 & 4)
+  - [x] Provider strictness policies (openrouter-only|allow-custom|allow-any)
+  - [x] Provider tools-only filtering
+  - [x] Provider select/pin for specific OpenRouter endpoints
 
 2. Implement UI/UX improvements
 - [ ] Improve model selection
