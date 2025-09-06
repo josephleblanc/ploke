@@ -45,6 +45,7 @@ CARGO_TEST_OUTPUT.txt
 crates/ingest/syn_parser/tests/data
 crates/ingest/syn_parser/tests/fixtures
 crates/ingest/syn_parser/tests/integration
+crates/ploke-tui/test-logs/
 
 # deprecated data output files
 crates/ingest/syn_parser/code_graph.ron
@@ -60,6 +61,9 @@ nvim_debug.log
 # gemini cli
 .gemini/
 GEMINI.md
+
+# codex
+.codex/
 
 # opencode
 .opencode/
@@ -80,3 +84,4 @@ query/
 # temporary
 docs/active/AGENT_FORUM.md
 docs/dependency_details/cozo/notes/vectors.md
+.env

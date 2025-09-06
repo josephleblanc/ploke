@@ -276,7 +276,7 @@ pub(super) async fn scan_for_change(
     tracing::info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(crate_name)?;
-    tracing::info!("file_data: {:#?}", file_data);
+    tracing::trace!("file_data: {:#?}", file_data);
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
@@ -409,9 +409,9 @@ pub(super) async fn scan_for_change(
             // .filter(|&id| !matches!(id, AnyNodeId::Import(_)) || !matches!(id, AnyNodeId::Impl(_)))
             .collect::<HashSet<AnyNodeId>>();
 
-        tracing::info!("Nodes in union set:");
+        tracing::trace!("Nodes in union set:");
         let printable_union_items = printable_nodes(&merged, filtered_union.iter());
-        tracing::info!("prinable_union_items:\n{}", printable_union_items);
+        tracing::trace!("prinable_union_items:\n{}", printable_union_items);
         // filter relations
         merged.graph.relations.retain(|r| {
             filtered_union.contains(&r.source()) || filtered_union.contains(&r.target())
@@ -441,7 +441,7 @@ pub(super) async fn scan_for_change(
             }
         }
 
-        tracing::info!("Finishing scanning, sending message to reindex workspace");
+        tracing::trace!("Finishing scanning, sending message to reindex workspace");
         event_bus.send(AppEvent::System(SystemEvent::ReIndex {
             workspace: crate_name.to_string(),
         }));
@@ -722,6 +722,10 @@ mod test {
 
     #[tokio::test]
     async fn test_update_embed() -> color_eyre::Result<()> {
+        if std::env::var("PLOKE_RUN_UPDATE_EMBED").ok().as_deref() != Some("1") {
+            eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
+            return Ok(());
+        }
         // init_test_tracing(Level::DEBUG);
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";

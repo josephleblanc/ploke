@@ -31,6 +31,21 @@ If we had this feature, it might have helped to avoid the error linked below:
 Open questions:
 - dimensionality reduction
 
+Small touches
+- subtle sound effects
+- fade in/out of filtered items
+- undo/redo
+- right click
+
+Functional:
+- Variable similarity cloud/highlight
+- Clustering button
+- Search filters/highlights nodes
+- Inject node into TUI
+
+Context:
+- Context profiles with context items to add to the context window (maybe separate from rust code base)
+
 ## Cracked Smol Model
 
 - Change the agentic framework to optimize for uptime, meaning the AI does as much as possible as often as possible.

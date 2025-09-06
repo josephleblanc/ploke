@@ -1,5 +1,8 @@
+use crate::llm::model_provider::EndpointData;
+use crate::llm::provider_endpoints::SupportsTools as _;
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
+pub mod editor;
 pub mod events;
 pub mod input;
 pub mod message_item;
@@ -18,7 +21,7 @@ use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{OPENROUTER_URL, ModelConfig, ProviderType};
+use crate::user_config::{ModelConfig, OPENROUTER_URL, ProviderType};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -34,25 +37,40 @@ use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
+use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-use view::components::model_browser::{render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow};
+use view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use view::components::model_browser::{
+    ModelBrowserItem, ModelBrowserState, ModelProviderRow, render_model_browser,
+};
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
-struct TerminalModeGuard;
+struct TerminalModeGuard {
+    enabled: bool,
+}
 
 impl Drop for TerminalModeGuard {
     fn drop(&mut self) {
-        // Best-effort disable; ignore errors to avoid panicking in Drop
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            DisableBracketedPaste,
-            DisableFocusChange,
-            DisableMouseCapture,
-        );
+        if self.enabled {
+            // Best-effort disable; ignore errors to avoid panicking in Drop
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                DisableBracketedPaste,
+                DisableFocusChange,
+                DisableMouseCapture,
+            );
+        }
         // ratatui::restore is called by the outer try_main panic hook as an extra safety net
     }
+}
+
+/// Options controlling how the TUI run loop configures the terminal.
+/// In tests, prefer `setup_terminal_modes: false` to avoid taking over the host terminal.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunOptions {
+    pub setup_terminal_modes: bool,
 }
 
 #[derive(Debug)]
@@ -86,6 +104,8 @@ pub struct App {
     show_context_preview: bool,
     // Modal overlay for interactive model discovery/selection
     model_browser: Option<ModelBrowserState>,
+    // Modal overlay for approvals list
+    approvals: Option<ApprovalsState>,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
@@ -120,6 +140,7 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             model_browser: None,
+            approvals: None,
             input_history: Vec::new(),
             input_history_pos: None,
         }
@@ -132,23 +153,42 @@ impl App {
         }
     }
 
-    /// Run the application's main loop.
-    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    /// Run the application's main loop with a generic backend and input stream.
+    /// Use `run` for the default production path; use this for tests with `TestBackend`.
+    pub async fn run_with<B, S>(
+        mut self,
+        mut terminal: ratatui::Terminal<B>,
+        mut input: S,
+        opts: RunOptions,
+    ) -> Result<()>
+    where
+        B: ratatui::backend::Backend,
+        S: futures::Stream<Item = std::result::Result<crossterm::event::Event, std::io::Error>>
+            + Unpin,
+    {
+        use futures::StreamExt;
         self.running = true;
-        let mut crossterm_events = crossterm::event::EventStream::new();
-        if let Err(e) = execute!(
-            std::io::stdout(),
-            EnableBracketedPaste,
-            EnableFocusChange,
-            EnableMouseCapture
-        ) {
-            tracing::warn!("Failed to enable terminal modes: {}", e);
+        if opts.setup_terminal_modes {
+            if let Err(e) = execute!(
+                std::io::stdout(),
+                EnableBracketedPaste,
+                EnableFocusChange,
+                EnableMouseCapture
+            ) {
+                tracing::warn!("Failed to enable terminal modes: {}", e);
+            }
         }
         // RAII guard to ensure terminal modes are disabled on unwind
-        let _terminal_mode_guard = TerminalModeGuard;
+        let _terminal_mode_guard = TerminalModeGuard {
+            enabled: opts.setup_terminal_modes,
+        };
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
+
+        // If the provided input stream ends (e.g., tests using an empty stream),
+        // stop polling it to avoid starving event handling.
+        let mut input_done = false;
 
         // let mut frame_counter = 0;
         while self.running {
@@ -177,14 +217,15 @@ impl App {
             // Prioritize Ui responsiveness
             biased;
 
-            // User input
-            maybe_event = crossterm_events.next().fuse() => {
-                if let Some(Ok(event)) = maybe_event {
-                    match event {
-                        Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
-                        Event::FocusGained => {},
-                        Event::FocusLost => {},
-                        Event::Mouse(mouse_event) => {
+            // User input (only while input stream is active)
+            maybe_event = input.next().fuse(), if !input_done => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        match event {
+                            Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
+                            Event::FocusGained => {},
+                            Event::FocusLost => {},
+                            Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
                                     self.conversation.scroll_lines_up(3);
@@ -278,10 +319,13 @@ impl App {
                                 }
                                 _ => {}
                             }
-                        },
-                        Event::Paste(_) => {},
-                        Event::Resize(_, _) => { self.needs_redraw = true; },
+                            },
+                            Event::Paste(_) => {},
+                            Event::Resize(_, _) => { self.needs_redraw = true; },
+                        }
                     }
+                    // Stream ended or error: stop polling input to avoid busy-loop
+                    _ => { input_done = true; }
                 }
             }
 
@@ -294,15 +338,22 @@ impl App {
             }
         }
 
-        if let Err(e) = execute!(
-            std::io::stdout(),
-            DisableBracketedPaste,
-            DisableFocusChange,
-            DisableMouseCapture
-        ) {
-            tracing::warn!("Failed to disable terminal modes: {}", e);
-        }
+        // Terminal modes are disabled by TerminalModeGuard when enabled
         Ok(())
+    }
+
+    /// Run the application's main loop with the default terminal backend and real input events.
+    pub async fn run(self, terminal: DefaultTerminal) -> Result<()> {
+        use futures::StreamExt;
+        let crossterm_events = crossterm::event::EventStream::new();
+        self.run_with(
+            terminal,
+            crossterm_events,
+            RunOptions {
+                setup_terminal_modes: true,
+            },
+        )
+        .await
     }
 
     /// Renders the user interface.
@@ -466,7 +517,6 @@ impl App {
             .split("/")
             .last()
             .unwrap_or(&self.active_model_id);
-        log::debug!("display_model: {}", display_model);
 
         let model_display = Paragraph::new(format!(" {} ", display_model))
             .style(Style::new().fg(Color::Green))
@@ -526,7 +576,128 @@ impl App {
             }
         }
 
+        // Render approvals overlay if visible (on top)
+        if let Some(approvals) = &self.approvals {
+            // Centered overlay
+            let w = frame.area().width.saturating_mul(8) / 10;
+            let h = frame.area().height.saturating_mul(8) / 10;
+            let x = frame.area().x + (frame.area().width.saturating_sub(w)) / 2;
+            let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
+            let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
+            let _ = render_approvals_overlay(frame, overlay_area, &self.state, approvals);
+        }
+
         // Cursor position is handled by InputView.
+    }
+
+    fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        if self.approvals.is_none() {
+            return false;
+        }
+        let mut close = false;
+        let mut approve = false;
+        let mut deny = false;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                close = true;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(st) = &mut self.approvals {
+                    st.select_prev();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(st) = &mut self.approvals {
+                    st.select_next();
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('y') => {
+                approve = true;
+            }
+            KeyCode::Char('n') | KeyCode::Char('d') => {
+                deny = true;
+            }
+            KeyCode::Char('?') => {
+                if let Some(st) = &mut self.approvals {
+                    st.help_visible = !st.help_visible;
+                }
+                return true;
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                if let Some(st) = &mut self.approvals {
+                    st.increase_view_lines();
+                }
+                return true;
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                if let Some(st) = &mut self.approvals {
+                    st.decrease_view_lines();
+                }
+                return true;
+            }
+            KeyCode::Char('u') => {
+                if let Some(st) = &mut self.approvals {
+                    st.toggle_unlimited();
+                }
+                return true;
+            }
+            KeyCode::Char('o') => {
+                // Open-in-editor for the first file of selected proposal
+                if let Some(st) = &self.approvals {
+                    let sel_index = st.selected;
+                    let state = Arc::clone(&self.state);
+                    let cmd_tx = self.cmd_tx.clone();
+                    tokio::spawn(async move {
+                        let guard = state.proposals.read().await;
+                        let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+                        ids.sort();
+                        if let Some(id) = ids.get(sel_index) {
+                            if let Some(p) = guard.get(id) {
+                                if let Some(path) = p.files.first() {
+                                    let cfg = state.config.read().await;
+                                    let editor = resolve_editor_command(&cfg);
+                                    drop(cfg);
+                                    if let Some(cmd) = editor {
+                                        let args = build_editor_args(path, None);
+                                        let _ = std::process::Command::new(cmd).args(args).spawn();
+                                    } else {
+                                        let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                return true;
+            }
+            _ => {}
+        }
+        if close {
+            self.approvals = None;
+            return true;
+        }
+        if approve || deny {
+            if let Some(st) = &self.approvals {
+                let sel_index = st.selected;
+                let state = Arc::clone(&self.state);
+                let cmd_tx = self.cmd_tx.clone();
+                tokio::spawn(async move {
+                    let guard = state.proposals.read().await;
+                    let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
+                    ids.sort();
+                    if let Some(id) = ids.get(sel_index) {
+                        let _ = if approve {
+                            cmd_tx.try_send(StateCommand::ApproveEdits { request_id: *id })
+                        } else {
+                            cmd_tx.try_send(StateCommand::DenyEdits { request_id: *id })
+                        };
+                    }
+                });
+            }
+            return true;
+        }
+        true
     }
 
     fn create_branch(&mut self) {
@@ -557,6 +728,10 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        // Intercept approvals overlay keys
+        if self.approvals.is_some() && self.handle_overlay_key(key) {
+            return;
+        }
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
             let mut chosen_id: Option<String> = None;
@@ -586,11 +761,15 @@ impl App {
                         if let Some(item) = mb.items.get_mut(mb.selected) {
                             item.expanded = !item.expanded;
                             // On expand, if providers not yet loaded, request endpoints
-                            if item.expanded && item.providers.is_empty() && !item.loading_providers {
+                            if item.expanded && item.providers.is_empty() && !item.loading_providers
+                            {
                                 item.loading_providers = true;
                                 let model_id = item.id.clone();
                                 tokio::spawn(async move {
-                                    crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                    crate::emit_app_event(
+                                        crate::AppEvent::ModelsEndpointsRequest { model_id },
+                                    )
+                                    .await;
                                 });
                             }
                         }
@@ -604,7 +783,10 @@ impl App {
                                     item.pending_select = true;
                                     let model_id = item.id.clone();
                                     tokio::spawn(async move {
-                                        crate::emit_app_event(crate::AppEvent::ModelEndpointsRequest { model_id }).await;
+                                        crate::emit_app_event(
+                                            crate::AppEvent::ModelsEndpointsRequest { model_id },
+                                        )
+                                        .await;
                                     });
                                 } else {
                                     // Already loading; just mark pending select
@@ -617,9 +799,9 @@ impl App {
                                     .iter()
                                     .find(|p| p.supports_tools)
                                     .or_else(|| item.providers.first())
-                                    .map(|p| p.id.clone());
+                                    .map(|p| p.name.clone());
                                 if let Some(pid) = provider_choice {
-                                    chosen_id = Some(format!("{}::{}", item.id, pid));
+                                    chosen_id = Some(format!("{}::{}", item.id, pid.as_ref()));
                                 } else {
                                     chosen_id = Some(item.id.clone());
                                 }
@@ -644,6 +826,20 @@ impl App {
             }
             self.needs_redraw = true;
             return;
+        }
+
+        // Global action mapping (including OpenApprovals)
+        if let Some(action) = to_action(self.mode, key, self.command_style) {
+            use Action::*;
+            if let OpenApprovals = action {
+                if self.approvals.is_some() {
+                    self.approvals = None;
+                } else {
+                    self.approvals = Some(ApprovalsState::default());
+                }
+                self.needs_redraw = true;
+                return;
+            }
         }
 
         // Insert mode input history navigation
@@ -710,6 +906,13 @@ impl App {
         use crate::chat_history::NavigationDirection::{Next, Previous};
 
         match action {
+            Action::OpenApprovals => {
+                if self.approvals.is_some() {
+                    self.approvals = None;
+                } else {
+                    self.approvals = Some(ApprovalsState::default());
+                }
+            }
             Action::Quit => {
                 self.quit();
             }
@@ -996,47 +1199,25 @@ impl App {
         self.input_buffer = self.input_history[last].clone();
     }
 
-    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelEntry>) {
+    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelsEndpoint>) {
         let items = items
             .into_iter()
             .map(|m| {
-                // Provider rows
-                let provider_rows = m
-                    .providers
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|p| ModelProviderRow {
-                        id: p.id,
-                        context_length: p.context_length,
-                        input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
-                        output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
-                        supports_tools: p
-                            .supported_parameters
-                            .as_ref()
-                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                            .or_else(|| p.capabilities.as_ref().and_then(|c| c.tools))
-                            .unwrap_or(false),
-                    })
-                    .collect::<Vec<_>>();
-
                 // Model-level tools: true if any provider supports tools OR model supported_parameters says so
-                let model_supports_tools = m
-                    .supported_parameters
-                    .as_ref()
-                    .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                    .unwrap_or(false)
-                    || provider_rows.iter().any(|p| p.supports_tools);
+                let model_supports_tools = m.supports_tools();
 
                 ModelBrowserItem {
                     id: m.id,
-                    name: m.name,
+                    name: Some( m.name ),
                     context_length: m
                         .context_length
-                        .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                    input_cost: m.pricing.as_ref().and_then(|p| p.input),
-                    output_cost: m.pricing.as_ref().and_then(|p| p.output),
+                        .or_else(|| m.top_provider.context_length),
+                    input_cost: Some( m.pricing.prompt ),
+                    output_cost: Some( m.pricing.completion ),
                     supports_tools: model_supports_tools,
-                    providers: provider_rows,
+                    // Provider rows will be populated later by `list_model_providers_async` after the
+                    // command `Command::ModelProviders(model_id)`, the details are empty to start with.
+                    providers: Vec::new(),
                     expanded: false,
                     loading_providers: false,
                     pending_select: false,
@@ -1081,7 +1262,6 @@ impl App {
                         provider_type: ProviderType::OpenRouter,
                         llm_params: Some(crate::llm::LLMParameters {
                             model: model_id.to_string(),
-                            // AI: Maybe we should add a field here to require models with tools?
                             ..Default::default()
                         }),
                     });
@@ -1105,7 +1285,10 @@ impl App {
     }
 
     fn execute_command(&mut self) {
-        commands::execute_command(self);
+        let style = self.command_style;
+        let cmd = &self.input_buffer.clone();
+        let command = commands::parser::parse(self, cmd, style);
+        commands::exec::execute(self, command);
     }
 
     fn show_command_help(&self) {
@@ -1167,5 +1350,26 @@ impl App {
 
     pub fn set_selected_model(&mut self, model_id: String) {
         self.active_model_id = model_id;
+    }
+
+    // Test-only helpers to exercise overlay and key handling without exposing internals publicly
+    /// Open the approvals overlay (intended for tests and scripted UI flows)
+    pub fn approvals_open(&mut self) {
+        self.approvals = Some(ApprovalsState::default());
+    }
+
+    /// Close the approvals overlay (intended for tests and scripted UI flows)
+    pub fn approvals_close(&mut self) {
+        self.approvals = None;
+    }
+
+    /// Inject a KeyEvent into the App input handler (intended for tests)
+    pub fn push_test_key(&mut self, key: KeyEvent) {
+        self.on_key_event(key);
+    }
+
+    // Test-only accessor to shared AppState for integration tests via test_harness
+    pub(crate) fn test_get_state(&self) -> Arc<AppState> {
+        Arc::clone(&self.state)
     }
 }

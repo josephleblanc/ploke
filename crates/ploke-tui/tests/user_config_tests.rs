@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use ploke_tui::user_config::{
-    ModelConfig, ModelRegistry, ModelRegistryStrictness, ProviderType, UserConfig,
+    ModelConfig, ModelRegistry, ModelRegistryStrictness, ProviderType, UserConfig
 };
 
 fn temp_path(name: &str) -> PathBuf {

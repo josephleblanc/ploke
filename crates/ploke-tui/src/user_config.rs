@@ -8,57 +8,27 @@
 //! - Commands (`/model *`, `/provider strictness`) mutate `ModelRegistry` at runtime,
 //!   while save/load provide persistence with optional secret redaction.
 
-// NOTE: This todo list applies to both this file and to the `ploke-tui/llm/mod.rs` file
-//
-//                        Additional steps needed for multi-model support:
-//
-//  1 - [ ] Model Configuration Schema - Add a way to define multiple model endpoints in config
-//  2 - [ ] Provider Registry - Create a registry system to handle different API providers (OpenAI,
-//      Anthropic, OpenRouter, etc.)
-//  3 - [ ] Model-Specific Request Formatters - Each provider has different request/response formats
-//  4 - [ ] Provider Selection UI - Add commands to switch between configured models
-//  5 - [ ] Model Capability Detection - Handle different max tokens, context windows, etc.
-//  6 - [ ] Rate Limiting per Provider - Different providers have different rate limits
-//  7 - [ ] Error Handling per Provider - Different error codes and retry strategies
-//  8 - [ ] Streaming Support Variations - Not all providers support streaming the same way
-//  9 - [ ] Cost Tracking - Track usage/cost per provider
-// 10 - [ ] Fallback Mechanism - Switch to backup providers on failure
-//
-//
-//                                  Questions for clarification:
-//
-// 1 Priority: Should we focus on OpenRouter (which already supports many models via one API)
-//   first, or build direct support for specific providers?
-//   - Answer: Yes, we should focus on OpenRouter first.
-// 2 Configuration: Do you want model configs in the main config.toml, or separate model-specific
-//   config files?
-//   - Answer: We want a single config.toml that has the specs for all the models.
-// 3 Switching: Should users be able to switch models per-conversation, or only at startup?
-//   - Answer: They should be able to switch per-message using a chat command.
-//   - 3.1 (Switching) For per-message switching: Should we support model "aliases" (e.g., `!gpt` = `openrouter/gpt-4-turbo`)?
-//      - Answer Yes, with user-definable aliases in config
-// 4 Defaults: Should we maintain a curated list of "recommended" models with sensible defaults?
-//   - Answer: Yes, this is important.
-// 5 Environment: Should API keys be per-model or shared across providers?
-//   - Answer: Shared across providers.
-//
-// The current `ModelConfig` in user_config.rs seems designed for a single provider. Should we
-// evolve this into a `Vec<ModelConfig>` with a way to select the active one?
-//
-// More information on future development is in `ploke-tui/docs/model_configs.md`
 
+use lazy_static::lazy_static;
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
     indexer::{CozoBackend, EmbeddingProcessor, EmbeddingSource},
     local::{DevicePreference, EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder},
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{self, RequestMessage};
+use crate::llm::{self, openrouter_catalog, provider_endpoints::{SupportedParameters, SupportsTools}, providers::ProviderSlug, RequestMessage};
 
-pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
+lazy_static! {
+    pub static ref OPENROUTER_URL: Url = 
+        Url::parse("https://openrouter.ai/api/v1/").expect("Invalid OpenRouter base URL");
+}
+
+pub fn openrouter_url() -> reqwest::Url {
+    OPENROUTER_URL.clone()
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
@@ -77,6 +47,8 @@ pub struct UserConfig {
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub editing: EditingConfig,
+    #[serde(default)]
+    pub ploke_editor: Option<String>,
 }
 
 impl UserConfig {
@@ -237,7 +209,7 @@ pub struct ModelConfig {
     pub api_key: String,
     /// Optional: upstream provider slug (for OpenRouter routing preferences)
     #[serde(default)]
-    pub provider_slug: Option<String>,
+    pub provider_slug: Option<ProviderSlug>,
     /// Optional: provider-specific environment variable name for API key
     #[serde(default)]
     pub api_key_env: Option<String>,
@@ -258,7 +230,7 @@ pub struct ModelConfig {
     pub llm_params: Option<crate::llm::LLMParameters>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 /// Provider type used for request formatting and env-var resolution.
 pub enum ProviderType {
     #[default]
@@ -465,6 +437,16 @@ impl ModelRegistry {
         }
     }
 
+    /// Ensure all providers have their API keys loaded from environment variables
+    pub fn set_openrouter_key(&mut self, api_key: &str) {
+        // All Openrouter keys are 73 chars long (including dashes), e.g.
+        // xx-xx-xx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        assert_eq!(api_key.chars().count(), 73);
+        for provider in self.providers.iter_mut().filter(|p| p.provider_type == ProviderType::OpenRouter) {
+            provider.api_key = api_key.to_owned();
+        }
+    }
+
     /// Returns a list of all available providers as `(id, display_name)` tuples.
     // - LLM Generated, reviewed by - JL 25-07-17
     pub fn list_available(&self) -> Vec<(String, String)> {
@@ -497,7 +479,7 @@ impl ModelRegistry {
 
         let client = Client::new();
         let models =
-            crate::llm::openrouter_catalog::fetch_models(&client, OPENROUTER_URL, &api_key).await?;
+           openrouter_catalog::fetch_models(&client, openrouter_url(), &api_key).await?;
 
         self.capabilities.clear();
         for m in models {
@@ -509,42 +491,28 @@ impl ModelRegistry {
             let model_level_tools = m
                 .supported_parameters
                 .as_ref()
-                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
+                .map(|v| v.supports_tools())
                 .unwrap_or(false);
 
-            let provider_tools = m
-                .providers
-                .as_ref()
-                .map(|ps| {
-                    ps.iter().any(|p| {
-                        p.supported_parameters
-                            .as_ref()
-                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                            .unwrap_or_else(|| {
-                                p.capabilities
-                                    .as_ref()
-                                    .and_then(|c| c.tools)
-                                    .unwrap_or(false)
-                            })
-                    })
-                })
-                .unwrap_or(false);
-
-            let supports_tools = model_level_tools
-                || provider_tools
-                || m.capabilities
-                    .as_ref()
-                    .and_then(|c| c.tools)
-                    .unwrap_or(false);
+            let supports_tools = m.supported_parameters
+                .as_ref().is_some_and(|p| p.supports_tools());
 
             let caps = ModelCapabilities {
                 supports_tools,
                 context_length: m
-                    .context_length
-                    .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                input_cost_per_million: m.pricing.as_ref().and_then(|p| p.input),
-                output_cost_per_million: m.pricing.as_ref().and_then(|p| p.output),
+                    .context_length,
+                input_cost_per_million: Some( m.pricing.prompt * 1_000_000.0 ),
+                output_cost_per_million: Some( m.pricing.completion * 1_000_000.0 )
             };
+
+            // let caps = ModelCapabilities {
+            //     supports_tools,
+            //     context_length: m
+            //         .context_length
+            //         .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
+            //     input_cost_per_million: m.pricing.as_ref().map(|p| p.prompt),
+            //     output_cost_per_million: m.pricing.as_ref().map(|p| p.completion),
+            // };
             self.capabilities.insert(m.id, caps);
         }
         Ok(())
@@ -552,7 +520,20 @@ impl ModelRegistry {
 
     /// Helper to check if a specific model is known to support tools.
     pub fn model_supports_tools(&self, model: &str) -> Option<bool> {
-        self.capabilities.get(model).map(|c| c.supports_tools)
+        // Check registry first
+        if let Some(caps) = self.capabilities.get(model) {
+            return Some(caps.supports_tools);
+        }
+        
+        // Fallback for known tool-capable models when registry refresh fails
+        match model {
+            "moonshotai/kimi-k2" | "kimi-k2" => Some(true),
+            "openai/gpt-4o" | "gpt-4o" => Some(true),
+            "openai/gpt-4o-mini" | "gpt-4o-mini" => Some(true),
+            "anthropic/claude-3-5-sonnet" => Some(true),
+            "anthropic/claude-3-5-haiku" => Some(true),
+            _ => None
+        }
     }
 }
 

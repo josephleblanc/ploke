@@ -138,7 +138,7 @@ fn logistic(
 }
 
 /// Configuration for Reciprocal Rank Fusion (RRF).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RrfConfig {
     /// RRF smoothing parameter (typically ~60.0).
     pub k: f32,
@@ -187,14 +187,14 @@ pub fn rrf_fuse(bm25: &[(Uuid, f32)], dense: &[(Uuid, f32)], cfg: &RrfConfig) ->
 }
 
 /// Similarity metrics for MMR.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Similarity {
     /// Cosine similarity on L2-normalized vectors.
     Cosine,
 }
 
 /// Configuration for Maximal Marginal Relevance (MMR).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct MmrConfig {
     /// Tradeoff between relevance and diversity: score = λ * rel - (1-λ) * max_sim
     pub lambda: f32,

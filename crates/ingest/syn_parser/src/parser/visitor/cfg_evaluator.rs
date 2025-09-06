@@ -10,7 +10,7 @@
 //!
 //! * `target_pointer_width = "64"` / `"32"`  
 //! * `target_endian = "little"` / `"big"`  
-//! * `target_vendor = "unknown"` / `"apple"` / `"pc"`  
+ 
 //! * `target_env = "gnu"` / `"musl"` / `"msvc"`  
 //! * `windows`, `unix`, `test`, `debug_assertions`, `doc`, `proc_macro`  
 //! * `panic = "unwind"` / `"abort"`  

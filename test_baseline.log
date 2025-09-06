@@ -1,0 +1,656 @@
+warning: unreachable expression
+  --> crates/ploke-db/tests/observability_tests.rs:25:24
+   |
+24 |         model: todo!(),
+   |                ------- any code following this expression is unreachable
+25 |         provider_slug: todo!(),
+   |                        ^^^^^^^ unreachable expression
+   |
+   = note: `#[warn(unreachable_code)]` on by default
+   = note: this warning originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable expression
+  --> crates/ploke-db/tests/observability_tests.rs:67:24
+   |
+66 |         model: todo!(),
+   |                ------- any code following this expression is unreachable
+67 |         provider_slug: todo!(),
+   |                        ^^^^^^^ unreachable expression
+   |
+   = note: this warning originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `ploke-db` (test "observability_tests") generated 2 warnings
+   Compiling ploke-tui v0.1.0 (/home/brasides/code/openai-codex/ploke/crates/ploke-tui)
+warning: unused variable: `rag_event_rx`
+   --> crates/ploke-tui/tests/real_app_harness.rs:150:28
+    |
+150 |         let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+    |                            ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rag_event_rx`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `tracker`
+   --> crates/ploke-tui/tests/e2e_comprehensive_tool_validation.rs:238:13
+    |
+238 |         let tracker = harness.send_user_message(message).await;
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tracker`
+
+warning: fields `state`, `cmd_tx`, and `input_tx` are never read
+  --> crates/ploke-tui/tests/harness.rs:49:9
+   |
+48 | pub struct AppHarness {
+   |            ---------- fields in this struct
+49 |     pub state: Arc<AppState>,
+   |         ^^^^^
+50 |     pub event_bus: Arc<EventBus>,
+51 |     pub cmd_tx: mpsc::Sender<StateCommand>,
+   |         ^^^^^^
+52 |     pub input_tx:
+   |         ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: methods `add_user_msg` and `emit_tool_completed` are never used
+   --> crates/ploke-tui/tests/harness.rs:190:18
+    |
+57  | impl AppHarness {
+    | --------------- methods in this implementation
+...
+190 |     pub async fn add_user_msg(&self, content: impl Into<String>) -> Uuid {
+    |                  ^^^^^^^^^^^^
+...
+218 |     pub fn emit_tool_completed(
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: function `buffer_to_string` is never used
+   --> crates/ploke-tui/tests/harness.rs:243:8
+    |
+243 | pub fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: fields `id` and `events_observed` are never read
+  --> crates/ploke-tui/tests/real_app_harness.rs:39:9
+   |
+38 | pub struct AssistantResponse {
+   |            ----------------- fields in this struct
+39 |     pub id: Uuid,
+   |         ^^
+...
+43 |     pub events_observed: Vec<AppEvent>,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `AssistantResponse` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: fields `event_bus` and `app_events_rx` are never read
+  --> crates/ploke-tui/tests/real_app_harness.rs:53:9
+   |
+47 | pub struct RealAppHarness {
+   |            -------------- fields in this struct
+...
+53 |     pub event_bus: Arc<EventBus>,
+   |         ^^^^^^^^^
+...
+57 |     app_events_rx: broadcast::Receiver<AppEvent>,
+   |     ^^^^^^^^^^^^^
+
+warning: fields `cmd_tx` and `input_tx` are never read
+  --> crates/ploke-tui/tests/harness.rs:51:9
+   |
+48 | pub struct AppHarness {
+   |            ---------- fields in this struct
+...
+51 |     pub cmd_tx: mpsc::Sender<StateCommand>,
+   |         ^^^^^^
+52 |     pub input_tx:
+   |         ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: unused import: `init_tracing_tests`
+  --> crates/ploke-tui/tests/e2e_complete_tool_conversations.rs:15:46
+   |
+15 | use ploke_tui::tracing_setup::{init_tracing, init_tracing_tests, init_tracing_to_file_ai};
+   |                                              ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `tracing::Level`
+  --> crates/ploke-tui/tests/e2e_complete_tool_conversations.rs:16:5
+   |
+16 | use tracing::Level;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused variable: `tool_call_id`
+   --> crates/ploke-tui/tests/e2e_complete_tool_conversations.rs:108:9
+    |
+108 |     let tool_call_id = "test_call_123";
+    |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tool_call_id`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: field `input_tx` is never read
+  --> crates/ploke-tui/tests/harness.rs:52:9
+   |
+48 | pub struct AppHarness {
+   |            ---------- field in this struct
+...
+52 |     pub input_tx:
+   |         ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `app_events_rx` is never read
+  --> crates/ploke-tui/tests/real_app_harness.rs:57:5
+   |
+47 | pub struct RealAppHarness {
+   |            -------------- field in this struct
+...
+57 |     app_events_rx: broadcast::Receiver<AppEvent>,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `ploke-tui` (test "e2e_api_compliance") generated 3 warnings (3 duplicates)
+warning: `ploke-tui` (test "e2e_tool_minimal") generated 3 warnings (2 duplicates)
+warning: `ploke-tui` (test "e2e_gat_validation") generated 3 warnings (3 duplicates)
+warning: `ploke-tui` (test "e2e_tool_performance") generated 3 warnings
+warning: `ploke-tui` (test "e2e_comprehensive_tool_validation") generated 4 warnings
+warning: unused variable: `env`
+  --> crates/ploke-tui/tests/e2e_request_session_tools.rs:25:14
+   |
+25 |     let Some(env) = openrouter_env() else { 
+   |              ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `client`
+  --> crates/ploke-tui/tests/e2e_request_session_tools.rs:30:9
+   |
+30 |     let client = Client::new();
+   |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_client`
+
+warning: unused variable: `request_id`
+  --> crates/ploke-tui/tests/e2e_request_session_tools.rs:31:9
+   |
+31 |     let request_id = Uuid::new_v4();
+   |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: `ploke-tui` (test "real_app_harness") generated 2 warnings (1 duplicate)
+warning: `ploke-tui` (test "e2e_complete_tool_conversations") generated 5 warnings (1 duplicate) (run `cargo fix --test "e2e_complete_tool_conversations"` to apply 2 suggestions)
+warning: `ploke-tui` (test "e2e_request_session_tools") generated 3 warnings
+warning: `ploke-tui` (test "e2e_full_tool_conversation") generated 3 warnings (3 duplicates)
+warning: `ploke-tui` (test "e2e_multi_tool_workflow") generated 3 warnings (3 duplicates)
+warning: `ploke-tui` (test "e2e_tool_error_scenarios") generated 3 warnings (3 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.89s
+     Running unittests src/lib.rs (target/debug/deps/derive_test_helpers-09d7fcc6d21fe0f3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_common-953c295ce5c1558d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_core-abdc14d9b6d9d31e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_db-7ead6f359934a50f)
+
+running 36 tests
+test bm25_index::tests::token_count_matches_tokenize_len_on_simple_input ... ok
+test bm25_index::tests::tokenizer_splits_identifiers_and_comments ... ok
+test bm25_index::tests::new_from_corpus_consumes_vec_and_indexes ... ok
+test bm25_index::tests::scorer_scores_higher_for_matching_document ... ok
+test database::tests::update_embeddings_batch_single ... ignored, test needs refactoring
+test bm25_index::tests::indexer_indexes_and_searches_basic ... ok
+test bm25_index::tests::compute_avgdl_from_staged_meta ... ok
+test database::tests::test_upsert_bm25_doc_meta_batch ... ok
+test database::tests::update_embeddings_batch_empty ... ok
+test index::tokenizer::tests::split_camel_case ... ok
+test index::tokenizer::tests::split_pascal_and_acronym ... ok
+test index::tokenizer::tests::split_snake_case ... ok
+test index::tokenizer::tests::tokenize_comments_and_code ... ok
+test index::tokenizer::tests::tokenize_mixed_symbols ... ok
+test query::builder::test::add_lhs ... ok
+test query::callbacks::tests::test_clone_counter ... ok
+test query::callbacks::tests::test_get_recvr_fail ... ok
+test query::callbacks::tests::test_get_recvr_success ... ok
+test index::hnsw::tests::test_hnsw_init_from_backup_error ... ok
+test query::callbacks::tests::test_init_max ... ok
+test query::callbacks::tests::test_new_bounded ... ok
+test query::callbacks::tests::test_new_unbounded ... ok
+test bm25_index::tests::index_batch_with_cozo_writes_doc_meta ... ok
+test bm25_index::tests::bm25_service_index_search_finalize_roundtrip ... ok
+test bm25_index::tests::rebuild_from_db_builds_index_and_searches_by_name ... ok
+test bm25_index::tests::bm25_service_rebuild_command_reindexes_from_db ... ok
+test index::hnsw::tests::test_hnsw_init_from_backup ... ok
+test database::tests::test_get_nodes_two ... ok
+test database::tests::test_count_nodes_for_embedding ... ok
+test database::tests::test_get_nodes_for_embedding ... ok
+test database::tests::test_unembedded_counts ... ok
+test database::tests::test_get_file_data ... ok
+test database::tests::test_update_embeddings_batch ... ok
+test get_by_id::tests::test_canon_path ... ok
+test helpers::tests::test_resolve_nodes_by_canon_in_file_via_paths_from_id ... ok
+test helpers::tests::test_relaxed_fallback_when_file_mismatch ... ok
+
+test result: ok. 35 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.64s
+
+     Running tests/debug_obsv.rs (target/debug/deps/debug_obsv-a2fcc47a6fe26195)
+
+running 1 test
+test debug_record_tool_call_requested ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/mod.rs (target/debug/deps/mod-59f47aaf7ad01902)
+
+running 18 tests
+test unit::database_init_tests::test_hnsw_initialization ... ignored, outdated test needs update
+test unit::database_tests::test_pending_embedding_count ... ignored, outdated test, needs update
+test unit::database_tests::test_simple_function_insert ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_batch_empty ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_batch_single ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_invalid_input ... ignored, outdated test, needs update
+test unit::index_test::tests::test_index_rebuild ... ignored, outdated test needs update
+test unit::index_test::tests::test_index_stats ... ignored, outdated test needs update
+test unit::database_tests::test_into_usize_valid ... ok
+test unit::index_test::tests::test_different_embedding_dimensions ... ok
+test unit::database_tests::test_into_usize_invalid ... ok
+test unit::database_init_tests::test_function_schema_creation_script ... ok
+test unit::index_test::tests::test_empty_search ... ok
+test unit::index_test::tests::test_create_index_and_insert ... ok
+test unit::debug_cozo::debug_cozo_update_syntax ... ok
+test unit::database_init_tests::test_reinitialization_handling ... ok
+test unit::database_init_tests::test_schema_creation_success ... ok
+test unit::index_test::tests::test_similarity_search ... ok
+
+test result: ok. 10 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/observability_tests.rs (target/debug/deps/observability_tests-506bc9e04d85758b)
+
+running 2 tests
+test tool_call_done_idempotent_and_transition_rules ... ignored, temporary ignore: test uses todo! placeholders; focusing on feature work
+test tool_call_requested_idempotent ... ignored, temporary ignore: test uses todo! placeholders; focusing on feature work
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_embed-b6b8a3063826b4a2)
+
+running 42 tests
+test indexer::unit_tests::test_batch_file_dir_detection ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_spp_edge_cases_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_spp_edge_cases_no_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_cyclic_types ... ok
+test indexer::unit_tests::test_batch_ss_attributes ... ok
+test indexer::unit_tests::test_batch_ss_edge_cases ... ok
+test indexer::unit_tests::test_batch_ss_file_dir_detection ... ignored, temporary ignore: failing in current CI/sandbox; focus on feature work
+test indexer::unit_tests::test_batch_ss_error ... ok
+test indexer::unit_tests::test_batch_ss_generics ... ok
+test indexer::unit_tests::test_batch_ss_nodes ... ignored, long-running; run periodically to cover full crate
+test indexer::unit_tests::test_batch_ss_io ... ok
+test indexer::unit_tests::test_batch_ss_path_resolution ... ok
+test indexer::unit_tests::test_batch_ss_macros ... ok
+test indexer::unit_tests::test_batch_ss_spp_edge_cases_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_rag ... ok
+test indexer::unit_tests::test_batch_ss_spp_edge_cases_no_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_syn ... ok
+test indexer::unit_tests::test_batch_ss_test_utils ... ok
+test indexer::unit_tests::test_batch_ss_transform ... ok
+test indexer::unit_tests::test_batch_ss_tui ... ok
+test indexer::unit_tests::test_batch_ss_tracking_hash ... ok
+test indexer::unit_tests::test_batch_ss_ty_mcp ... ok
+test indexer::unit_tests::test_batch_ss_types ... ok
+test indexer::unit_tests::test_index_bm25 ... ignored, long-running; run periodically to validate BM25 index path
+test indexer::unit_tests::test_batch_edge_cases ... ok
+test indexer::unit_tests::test_batch_tracking_hash ... ok
+test indexer::unit_tests::test_batch_generics ... ok
+test indexer::unit_tests::test_batch_macros ... ok
+test indexer::unit_tests::test_batch_attributes ... ok
+test indexer::unit_tests::test_batch_types ... ok
+test indexer::unit_tests::test_batch_path_resolution ... ok
+test indexer::unit_tests::test_next_batch_only ... ok
+test cancel_token::tests::test_cancellation_listener ... ok
+test cancel_token::tests::test_cancellation_token_basic ... ok
+test indexer::unit_tests::test_batch_cyclic_types ... ok
+test indexer::unit_tests::test_batch_ss_db ... ok
+test cancel_token::tests::test_handle_dropped ... ok
+test indexer::unit_tests::test_batch_ss_embed ... ok
+test indexer::unit_tests::test_batch_ss_core ... ok
+test cancel_token::tests::test_cancellation_token_async_wait ... ok
+test indexer::unit_tests::test_local_model_config ... ok
+test indexer::unit_tests::test_local_model_embedding_processor ... ok
+
+test result: ok. 34 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/test_helpers.rs (target/debug/deps/test_helpers-8784fa62a7403e73)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_vector_functionality.rs (target/debug/deps/test_vector_functionality-04f8f58a3cc03927)
+
+running 4 tests
+test test_vector_similarity_search ... ignored, requires update
+test test_vector_similarity_search_identical ... ignored, requires update
+test test_hnsw_graph_walking ... ok
+test test_basic_vector_functionality ... ok
+
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_error-a0776e6530f3c92b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_io-b2f72bb15f450a0d)
+
+running 36 tests
+test read::tests::test_get_snippets_batch_preserves_order ... ignored, needs redisign to have the id (NodeId) of file
+test read::tests::test_reject_relative_path ... ok
+test read::tests::test_utf8_error ... ok
+test read::tests::test_concurrent_modification ... ok
+test read::tests::test_mixed_batch_hash_mismatch_per_request ... ok
+test read::tests::test_seek_errors ... ok
+test read::tests::test_io_errors ... ok
+test read::tests::test_zero_byte_files ... ok
+test read::tests::test_invalid_byte_ranges ... ok
+test read::tests::test_multi_byte_unicode_boundaries ... ok
+test read::tests::test_partial_failure_handling ... ok
+test read::tests::test_content_mismatch ... ok
+test read::tests::test_parse_error_invalid_rust ... ok
+test read::tests::test_permission_denied ... ok
+test tests_skeleton::test_fd_limit_default_from_soft ... ok
+test tests_skeleton::test_handle_request ... ignored, needs work
+test tests_skeleton::test_fd_limit_default_on_error ... ok
+test tests_skeleton::test_fd_limit_precedence_and_clamp ... ok
+test tests_skeleton::test_fd_limit_env_applied_when_no_builder ... ok
+test read::tests::test_roots_enforcement_basic ... ok
+test read::tests::test_zero_length_snippet ... ok
+test tests_skeleton::test_token_stream_sensitivity ... ok
+test write_tests::test_write_roots_enforcement ... ok
+test write_tests::test_write_invalid_range ... ok
+test write_tests::test_write_splice_and_hash_recompute ... ok
+test read::tests::test_exact_semaphore_limit ... ok
+test read::tests::test_concurrency_throttling ... ok
+test scan::tests::test_scan_changes_preserves_input_order ... ok
+test tests_skeleton::test_read_during_shutdown ... ok
+test tests_skeleton::test_send_during_shutdown ... ok
+test scan::tests::test_scan_changes_bounded_concurrency ... ok
+test watcher::tests::test_watcher_emits_rename ... ok
+test watcher::tests::test_watcher_emits_create_modify_remove ... ok
+test tests_skeleton::test_handle_read_snippet_batch ... ok
+test tests_skeleton::test_actor_shutdown_during_ops ... ok
+test read::tests::test_large_file_snippet_extraction ... ok
+
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 7.84s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_rag-f95c4282321e3faa)
+
+running 23 tests
+test context::tests::approx_char_tokenizer_counts ... ok
+test context::tests::trimming_obeys_limits ... ok
+test context::tests::dedup_preserves_order ... ok
+test core::unit_tests::tests::test_bm25_rebuild ... ok
+test fusion::tests::test_logistic ... ok
+test fusion::tests::test_minmax_all_equal_uses_epsilon ... ok
+test fusion::tests::test_minmax_basic ... ok
+test fusion::tests::test_zscore ... ok
+test core::unit_tests::tests::test_bm25_search_basic ... ok
+test core::unit_tests::tests::test_bm25_search_complex_enum ... ok
+test core::unit_tests::tests::test_search_structs ... ok
+test core::unit_tests::tests::test_hybrid_search ... ok
+test core::unit_tests::tests::test_hybrid_search_generic_trait ... ok
+test core::unit_tests::tests::test_search_function_definitions ... ok
+test core::unit_tests::tests::test_search ... ok
+test core::unit_tests::tests::test_bm25_search_fallback ... ok
+test core::unit_tests::tests::test_search_enums ... ok
+test core::unit_tests::tests::test_search_statics ... ok
+test core::unit_tests::tests::test_search_traits ... ok
+test core::unit_tests::tests::test_search_constants ... ok
+test core::unit_tests::tests::test_search_macros ... ok
+test core::unit_tests::tests::test_search_unions ... ok
+test core::unit_tests::tests::test_search_type_aliases ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
+
+     Running tests/integration_tests.rs (target/debug/deps/integration_tests-796cb4bf99924ae8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_test_macros-e39bba76cd459e2a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_test_utils-d22977053150ea0a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_transform-ffe5ae57168bfc15)
+
+running 28 tests
+test transform::crate_context::test::test_transform_crate_context ... ok
+test transform::functions::test::func_transform ... ok
+test transform::consts::tests::test_transform_consts ... ok
+test transform::enums::tests::test_transform_enums ... ok
+test transform::module::tests::test_transform_modules ... ok
+test transform::secondary_nodes::test::test_transform_attribute ... ok
+test transform::macros::tests::test_transform_macros ... ok
+test transform::imports::tests::test_transform_imports ... ok
+test transform::impls::tests::test_transform_impls ... ok
+test transform::statics::tests::test_transform_statics ... ok
+test transform::structs::test::test_transform_structs ... ok
+test transform::type_alias::tests::test_transform_type_aliases ... ok
+test transform::edges::tests::test_transform_edges ... ok
+test transform::traits::tests::test_transform_traits ... ok
+test transform::unions::test::test_transform_unions ... ok
+test tests::test_transform_ ... ok
+test transform::type_node::tests::test_transform_types ... ok
+test tests::test_transform_ty_mcp ... ok
+test tests::test_transform_error ... ok
+test transform::tests::test_insert_all ... ok
+test tests::test_transform_rag ... ok
+test tests::test_transform_core ... ok
+test tests::test_transform_io ... ok
+test tests::test_transform_embed ... ok
+test tests::test_transform_self ... ok
+test tests::test_transform_db ... ok
+test tests::test_transform_syn ... ok
+test tests::test_transform_tui ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.65s
+
+     Running unittests src/lib.rs (target/debug/deps/ploke_tui-e722080f5b53621e)
+
+running 87 tests
+test app_state::tests::test_concurrency_with_fuzzing ... ignored, test broken, cause unclear, non-trivial fix needs attention
+test app_state::tests::test_race_condition_without_oneshot ... ignored, needs refactor
+test app_state::database::test::test_update_embed ... ok
+test app::commands::exec_real_tools_live_tests::openrouter_real_tools_roundtrip_smoke ... ok
+test app::commands::exec_live_tests::openrouter_provider_preference_experiment ... ok
+test app::commands::exec_live_tests::openrouter_tools_forced_choice_diagnostics ... ok
+test app::commands::exec_live_tests::openrouter_tools_model_touchpoints ... ok
+test app::commands::exec_live_tests::openrouter_model_tools_support_check ... ok
+test app::commands::exec_live_tests::openrouter_tools_success_matrix ... ok
+test app::commands::exec_live_tests::openrouter_tools_smoke ... ok
+test chat_history::tests::delete_root_returns_none_and_no_changes ... ok
+test chat_history::tests::delete_nonexistent_returns_none_and_no_effect ... ok
+test chat_history::tests::add_sibling_on_root_errors ... ok
+test chat_history::tests::navigate_sibling_requires_two_children ... ok
+test app::commands::exec::typed_response_tests::default_fields_do_not_panic ... ok
+test chat_history::tests::last_user_msg_behaves ... ok
+test chat_history::tests::delete_internal_node_removes_subtree ... ok
+test chat_history::tests::current_path_ids_sequence ... ok
+test chat_history::tests::delete_leaf_updates_state ... ok
+test chat_history::tests::delete_sibling_updates_selected_child_and_tail ... ok
+test chat_history::tests::iter_path_matches_tail_chain ... ok
+test llm::openrouter::model_provider::tests::fallback_marker_serde_roundtrip ... ok
+test chat_history::tests::persist_writes_expected_content ... ok
+test llm::openrouter::model_provider::tests::json_obj_marker_serde_roundtrip ... ok
+test llm::openrouter::models::tests::ai_temp_endpoint_dump_and_stats ... ok
+test app::commands::exec::typed_response_tests::deserialize_endpoints_basic ... ok
+test llm::openrouter::model_provider::tests::provider_name_str_slug_and_author ... ok
+test llm::openrouter::models::tests::flakey_models_all_raw_ep ... ignored
+test llm::openrouter::model_provider::tests::endpoint_min_deserialize ... ok
+test llm::openrouter::model_provider::tests::tool_choice_serde_variants ... ok
+test event_bus::tests::ssot_forwards_indexing_completed_once ... ok
+test event_bus::tests::ssot_forwards_indexing_failed_once ... ok
+test llm::openrouter::models::tests::flakey_openrouter_models ... ignored, kept as backup for macro
+test app::commands::exec_live_tests::openrouter_endpoints_live_smoke ... ok
+test llm::openrouter::json_visitor::tests::test_explore_file_visit ... ok
+test llm::openrouter::openrouter_catalog::tests::test_alias_id_from_name ... ok
+test llm::openrouter::openrouter_catalog::tests::test_canonicalize_model_id_for_endpoints ... ok
+test llm::openrouter::provider_endpoints::tests::mock_test ... ignored, todo
+test llm::openrouter::provider_endpoints::tests::prov_end_from_canonical_slug ... ok
+test llm::openrouter::provider_endpoints::tests::prov_end_try_from_url ... ignored
+test app::commands::exec_live_tests::harness_smoke_app_constructs ... ok
+test llm::openrouter::model_provider::tests::live_endpoints_into_endpoint_deserialize ... ok
+test llm::openrouter::model_provider::live_endpoints_roundtrip_compare ... ok
+test llm::session::tests::test_await_tool_result_completed ... ok
+test llm::session::tests::test_build_request_regular_chat_snapshot ... ok
+test llm::session::tests::test_build_request_tool_call_snapshot ... ok
+test llm::tests::test_role_tool_serialization ... ok
+test llm::tests::test_tool_message_constructors ... ok
+test llm::tests::test_tool_message_serialization ... ok
+test llm::tests::test_tool_message_validation ... ok
+test parser::tests::test_resolve_target_dir_with_empty_path ... ok
+test parser::tests::test_resolve_target_dir_with_user_path ... ok
+test parser::tests::test_resolve_target_dir_without_user_path ... ok
+test tools::code_edit::gat_tests::de_to_value ... ok
+test tools::code_edit::gat_tests::name_desc_and_schema_present ... ok
+test tools::code_edit::gat_tests::params_deserialize_and_into_owned ... ok
+test tools::code_edit::tests::canonical_mapping_includes_mode ... ok
+test tools::get_file_metadata::gat_tests::de_to_value ... ok
+test tools::get_file_metadata::gat_tests::execute_happy_path ... ok
+[31mERROR[0m ThreadId(14) [2mploke_db::index::hnsw[0m[2m:[0m [2m318:[0m Cannot find requested stored relation 'function'
+test tools::code_edit::gat_tests::execute_errors_when_proposal_not_staged ... ok
+test tools::get_file_metadata::gat_tests::name_desc_and_schema_present ... ok
+test tools::get_file_metadata::gat_tests::params_deserialize_and_into_owned ... ok
+test tools::get_file_metadata::tests::tool_def_serializes_expected_shape ... ok
+test tools::request_code_context::gat_tests::de_to_value ... ok
+test app_state::tests::test_fix_with_oneshot ... ok
+test tools::request_code_context::gat_tests::name_desc_and_schema_present ... ok
+test tools::request_code_context::gat_tests::params_deserialize_and_into_owned ... ok
+test tools::request_code_context::tests::tool_def_serializes_expected_shape ... ok
+test tools::tests::function_marker_roundtrip ... ok
+test tools::get_file_metadata::gat_tests::execute_missing_file_errors ... ok
+test tools::tests::tool_definition_serializes_expected_shape ... ok
+test tools::tests::tool_name_as_str_mappings ... ok
+test llm::session::tests::test_await_tool_result_failed ... ok
+test tools::tests::process_tool_emits_completed_for_get_file_metadata ... ok
+test llm::openrouter::models::tests::flakey_models_all_raw ... ok
+test llm::openrouter::providers::tests::flakey_openrouter_providers ... ok
+test llm::openrouter::models::tests::flakey_openrouter_model_ids ... ok
+test llm::openrouter::models::tests::flakey_openrouter_model_names ... ok
+test llm::openrouter::models::tests::flakey_supported_parameters ... ok
+test llm::openrouter::models::tests::flakey_supports_tools ... ok
+test tools::request_code_context::gat_tests::execute_returns_error_without_rag_success ... ok
+test llm::openrouter::models::tests::write_tool_capable_models_to_ai_temp ... ok
+test llm::openrouter::models::tests::flakey_models_all ... ok
+test llm::openrouter::model_provider::tests::live_endpoints_fetch_smoke ... ok
+test llm::openrouter::model_provider::tests::live_endpoints_into_endpoint_qwen ... ok
+test llm::openrouter::models::tests::flakey_models_all_raw_stats ... ok
+test llm::openrouter::model_provider::live_endpoints_multi_models_smoke ... ok
+
+test result: ok. 81 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+     Running unittests src/main.rs (target/debug/deps/ploke_tui-832c146d82c022a5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/approvals_overlay_keys.rs (target/debug/deps/approvals_overlay_keys-f19ad37c20ee7ab6)
+
+running 3 tests
+test approvals_overlay_approve_and_deny_send_commands ... ok
+test approvals_overlay_open_in_editor_without_editor_emits_sysinfo ... ok
+test approvals_overlay_open_in_editor_with_editor_smoke ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/approvals_overlay_render.rs (target/debug/deps/approvals_overlay_render-23f5c82af6605d8d)
+
+running 4 tests
+test approvals_overlay_renders_single_proposal_unified_diff ... ok
+test approvals_overlay_renders_empty_list ... ok
+test approvals_overlay_renders_multiple_and_moves_selection ... ok
+test approvals_overlay_renders_codeblocks_preview_and_selection ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/commands_parser_m1.rs (target/debug/deps/commands_parser_m1-0b1efa5a21f81642)
+
+running 2 tests
+test parses_edit_approve_and_deny ... ignored, needs refactor, fails without tokio runtime
+test parses_edit_preview_mode_and_lines_and_auto ... ignored, needs refactor, fails without tokio runtime
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/comp_req_shapes.rs (target/debug/deps/comp_req_shapes-6d2bd30163606c7d)
+
+running 1 test
+test comp_req_with_tools_and_provider_prefs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/e2e_api_compliance.rs (target/debug/deps/e2e_api_compliance-d39e7fc644e7ac39)
+
+running 5 tests
+test e2e_request_message_serialization_compliance ... ok
+test e2e_tool_definition_serialization_compliance ... ok
+[34mDEBUG[0m ThreadId(04) [2mploke_tui::llm::session[0m[2m:[0m [2m338:[0m build_comp_req [3mmodel[0m[2m=[0mopenai/gpt-4o-mini [3muse_tools[0m[2m=[0mtrue [3mmessages[0m[2m=[0m2
+[34mDEBUG[0m ThreadId(03) [2mploke_tui::llm::session[0m[2m:[0m [2m338:[0m build_comp_req [3mmodel[0m[2m=[0mopenai/gpt-4o-mini [3muse_tools[0m[2m=[0mfalse [3mmessages[0m[2m=[0m1
+[34mDEBUG[0m ThreadId(02) [2mploke_tui::llm::session[0m[2m:[0m [2m338:[0m build_comp_req [3mmodel[0m[2m=[0mopenai/gpt-4o-mini [3muse_tools[0m[2m=[0mtrue [3mmessages[0m[2m=[0m2
+[34mDEBUG[0m ThreadId(02) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m198:[0m event_priority: Realtime
+[32m INFO[0m ThreadId(02) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m195:[0m close [3mtime.busy[0m[2m=[0m60.9µs [3mtime.idle[0m[2m=[0m34.2µs
+[34mDEBUG[0m ThreadId(04) [2mreqwest::connect[0m[2m:[0m [2m625:[0m starting new connection: https://openrouter.ai/    
+[34mDEBUG[0m ThreadId(03) [2mreqwest::connect[0m[2m:[0m [2m625:[0m starting new connection: https://openrouter.ai/    
+[34mDEBUG[0m ThreadId(02) [2mploke_tui::app[0m[2m:[0m [2m509:[0m display_model: kimi-k2    
+test e2e_completion_request_serialization_compliance ... ok
+[34mDEBUG[0m ThreadId(04) [2mploke_tui::app[0m[2m:[0m [2m509:[0m display_model: kimi-k2    
+[34mDEBUG[0m ThreadId(03) [2mploke_tui::app[0m[2m:[0m [2m509:[0m display_model: kimi-k2    
+[34mDEBUG[0m ThreadId(03) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m198:[0m event_priority: Realtime
+[32m INFO[0m ThreadId(03) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m195:[0m close [3mtime.busy[0m[2m=[0m123µs [3mtime.idle[0m[2m=[0m50.9µs
+test e2e_live_api_request_response_types ... ok
+[34mDEBUG[0m ThreadId(04) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m198:[0m event_priority: Realtime
+[32m INFO[0m ThreadId(04) [1msend[0m[2m:[0m [2mploke_tui::event_bus[0m[2m:[0m [2m195:[0m close [3mtime.busy[0m[2m=[0m114µs [3mtime.idle[0m[2m=[0m39.5µs
+test e2e_live_api_tool_call_types ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
+
+     Running tests/e2e_complete_tool_conversations.rs (target/debug/deps/e2e_complete_tool_conversations-197da3ca36bd46fb)
+
+running 8 tests
+test e2e_tool_execution_event_flow ... ok
+test e2e_basic_message_addition ... ok
+test e2e_complete_get_metadata_conversation ... ok
+test e2e_conversation_with_tool_errors ... ok
+test e2e_tool_result_conversation_integration ... ok
+test e2e_multi_step_tool_conversation ... ok
+test e2e_conversation_context_for_tools ... ok
+test e2e_conversation_state_persistence ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.30s
+
+     Running tests/e2e_comprehensive_tool_validation.rs (target/debug/deps/e2e_comprehensive_tool_validation-7ef925ec33f5f527)
+
+running 6 tests
+test e2e_performance_validation ... ok
+test e2e_conversation_context_persistence ... FAILED
+test e2e_harness_basic_functionality ... ok

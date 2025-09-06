@@ -1,15 +1,19 @@
-use std::sync::Arc;
 
+use std::sync::Arc;
 use chrono::Utc;
+use ploke_core::ArcStr;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::select;
 use uuid::Uuid;
+use tokio::sync::mpsc;
 
+use crate::app_state::events::SystemEvent;
 use crate::app_state::MessageUpdatedEvent;
 use crate::chat_history::{Message, MessageKind};
+use crate::tools::ToolName;
 use crate::{AppEvent, EventBus, EventPriority};
-use crate::{llm::ToolEvent, system::SystemEvent};
+use crate::llm::ToolEvent;
 
 use crate::app_state::AppState;
 
@@ -26,10 +30,9 @@ use serde::{Deserialize, Serialize};
 struct ToolRequestPersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    vendor: crate::llm::ToolVendor,
-    tool_name: String,
+    tool_name: ToolName,
     arguments: Value,
-    call_id: String,
+    call_id: ArcStr,
 }
 
 /// Parameter bundle for persisting a tool-call terminal lifecycle event.
@@ -38,7 +41,7 @@ struct ToolRequestPersistParams {
 struct ToolDonePersistParams {
     request_id: Uuid,
     parent_id: Uuid,
-    call_id: String,
+    call_id: ArcStr,
     outcome: Option<Value>,
     error: Option<String>,
     status: ToolStatus,
@@ -48,6 +51,8 @@ struct ToolDonePersistParams {
 /// more type-safe patterns. Future work: ploke-db to accept Json directly to
 /// avoid string round-trips; track latency by correlating start/end timestamps.
 pub async fn run_observability(event_bus: Arc<EventBus>, state: Arc<AppState>) {
+    // Initialize tool persistence worker (best-effort)
+    init_tool_persist_worker(&state);
     let mut rt_rx = event_bus.subscribe(EventPriority::Realtime);
     let mut bg_rx = event_bus.subscribe(EventPriority::Background);
 
@@ -75,6 +80,55 @@ pub async fn run_observability(event_bus: Arc<EventBus>, state: Arc<AppState>) {
     }
 }
 
+fn init_tool_persist_worker(state: &Arc<AppState>) {
+    let (tx, mut rx) = mpsc::channel::<crate::tools::ToolCallRecord>(1024);
+    crate::tools::set_tool_persist_sender(tx);
+    let state = Arc::clone(state);
+    tokio::spawn(async move {
+        while let Some(rec) = rx.recv().await {
+            let args_json = match Arc::try_unwrap(rec.params_json) {
+                Ok(s) => s,
+                Err(arc) => (*arc).clone(),
+            };
+            let out_json = match Arc::try_unwrap(rec.output_json) {
+                Ok(s) => s,
+                Err(arc) => (*arc).clone(),
+            };
+            // Build request and done params using existing helpers
+            let arguments: serde_json::Value = match serde_json::from_str(&args_json) {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
+            let done_value: serde_json::Value = match serde_json::from_str(&out_json) {
+                Ok(v) => v,
+                Err(_) => serde_json::Value::Null,
+            };
+            // Reuse persist helpers from this module
+            let req_params = ToolRequestPersistParams {
+                request_id: rec.request_id,
+                parent_id: rec.parent_id,
+                tool_name: rec.name,
+                arguments,
+                call_id: rec.call_id.clone(),
+            };
+            if let Err(e) = persist_tool_requested(&state, &req_params).await {
+                tracing::warn!("observability: mpsc record_tool_call_requested failed: {}", e);
+            }
+            let done_params = ToolDonePersistParams {
+                request_id: rec.request_id,
+                parent_id: rec.parent_id,
+                call_id: rec.call_id,
+                outcome: Some(done_value),
+                error: None,
+                status: ploke_db::observability::ToolStatus::Completed,
+            };
+            if let Err(e) = persist_tool_done(&state, &done_params).await {
+                tracing::warn!("observability: mpsc record_tool_call_done failed: {}", e);
+            }
+        }
+    });
+}
+
 async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
     match ev {
         // Persist conversation turns when a message is (created/)updated
@@ -86,86 +140,18 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             }
         }
 
-        // Typed tool events (preferred path)
-        AppEvent::LlmTool(ToolEvent::Requested {
-            request_id,
-            parent_id,
-            name,
-            arguments,
-            call_id,
-            vendor,
-        }) => {
-            let params = ToolRequestPersistParams {
-                request_id,
-                parent_id,
-                vendor,
-                tool_name: name,
-                arguments,
-                call_id,
-            };
-            if let Err(e) = persist_tool_requested(state, &params).await {
-                tracing::warn!("observability: record_tool_call_requested failed: {}", e);
-            }
-        }
-        AppEvent::LlmTool(ToolEvent::Completed {
-            request_id,
-            parent_id,
-            call_id,
-            content,
-        }) => {
-            let params = ToolDonePersistParams {
-                request_id,
-                parent_id,
-                call_id,
-                outcome: Some(Value::String(content)),
-                error: None,
-                status: ToolStatus::Completed,
-            };
-            if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!(
-                    "observability: record_tool_call_done (completed) failed: {}",
-                    e
-                );
-            }
-        }
-        AppEvent::LlmTool(ToolEvent::Failed {
-            request_id,
-            parent_id,
-            call_id,
-            error,
-        }) => {
-            let params = ToolDonePersistParams {
-                request_id,
-                parent_id,
-                call_id,
-                outcome: None,
-                error: Some(error),
-                status: ToolStatus::Failed,
-            };
-            if let Err(e) = persist_tool_done(state, &params).await {
-                tracing::warn!(
-                    "observability: record_tool_call_done (failed) failed: {}",
-                    e
-                );
-            }
-        }
-
-        // Compatibility path during M0: System tool events
+        // System tool events (single unified path)
         AppEvent::System(SystemEvent::ToolCallRequested {
             request_id,
             parent_id,
-            vendor,
-            name,
-            arguments,
-            call_id,
+            tool_call,
         }) => {
             let params = ToolRequestPersistParams {
                 request_id,
                 parent_id,
-                vendor,
-                tool_name: name,
-                arguments,
-                call_id,
+                tool_name: tool_call.function.name,
+                arguments: serde_json::Value::String(tool_call.function.arguments),
+                call_id: tool_call.call_id,
             };
             if let Err(e) = persist_tool_requested(state, &params).await {
                 tracing::warn!(
@@ -248,7 +234,7 @@ async fn persist_tool_requested(
     let (model, provider_slug) = {
         let cfg = state.config.read().await;
         if let Some(p) = cfg.model_registry.get_active_model_config() {
-            (p.model.clone(), p.provider_slug.clone())
+            (p.model.clone(), p.provider_slug.map(|ps| ps.to_string()))
         } else {
             ("".to_string(), None)
         }
@@ -257,10 +243,9 @@ async fn persist_tool_requested(
         request_id: params.request_id,
         call_id: params.call_id.clone(),
         parent_id: params.parent_id,
-        vendor: vendor_str(&params.vendor).to_string(),
         model,
         provider_slug,
-        tool_name: params.tool_name.clone(),
+        tool_name: ArcStr::from(params.tool_name.as_str()),
         args_sha256: sha256_hex(&args_json),
         arguments_json: Some(args_json),
         started_at: Validity {
@@ -323,13 +308,6 @@ fn kind_str(k: MessageKind) -> &'static str {
         MessageKind::System => "system",
         MessageKind::SysInfo => "sysinfo",
         MessageKind::Tool => "tool",
-    }
-}
-
-fn vendor_str(v: &crate::llm::ToolVendor) -> &'static str {
-    match v {
-        crate::llm::ToolVendor::OpenAI => "openai",
-        crate::llm::ToolVendor::Other => "other",
     }
 }
 

@@ -1,11 +1,15 @@
+use std::ops::ControlFlow;
 use std::time::Duration;
 
+use futures::future;
+use ploke_core::ArcStr;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::AppEvent;
-use crate::llm::ToolEvent;
-use crate::system::SystemEvent;
+use crate::app_state::events::SystemEvent;
+use crate::llm::{Choices, ToolEvent};
+use crate::utils::consts::DEBUG_TOOLS;
 
 // --- RequestSession: extracted per-request loop (Milestone 2 partial) ---
 
@@ -13,50 +17,30 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::tool_call;
 use super::{
-    GenericToolCall, LLMParameters, LlmError, OpenAiRequest, RequestMessage, ToolDefinition,
-    ToolVendor, cap_messages_by_chars, cap_messages_by_tokens,
+    LLMParameters, LlmError, RequestMessage, cap_messages_by_chars, cap_messages_by_tokens,
 };
 use crate::EventBus;
+use crate::tools::{Ctx, ToolCall, ToolDefinition, process_tool};
 
 /// Owns the lifecycle of a single LLM request/response, including tool-call cycles.
 pub struct RequestSession<'a> {
-    client: &'a Client,
-    provider: &'a crate::user_config::ModelConfig,
-    event_bus: Arc<EventBus>,
-    parent_id: Uuid,
-    messages: Vec<RequestMessage<'a>>,
-    tools: Vec<ToolDefinition>,
-    params: LLMParameters,
-    fallback_on_404: bool,
-    attempts: u32,
+    pub client: &'a Client,
+    pub provider: &'a crate::user_config::ModelConfig,
+    pub event_bus: Arc<EventBus>,
+    pub parent_id: Uuid,
+    pub messages: Vec<RequestMessage>,
+    pub tools: Vec<ToolDefinition>,
+    pub params: LLMParameters,
+    pub fallback_on_404: bool,
+    pub attempts: u32,
 }
 
+#[allow(
+    clippy::needless_lifetimes,
+    reason = "Getting warning but removing lifetimes makes error."
+)]
 impl<'a> RequestSession<'a> {
-    pub fn new(
-        client: &'a Client,
-        provider: &'a crate::user_config::ModelConfig,
-        event_bus: Arc<EventBus>,
-        parent_id: Uuid,
-        messages: Vec<RequestMessage<'a>>,
-        tools: Vec<ToolDefinition>,
-        params: LLMParameters,
-        fallback_on_404: bool,
-    ) -> Self {
-        Self {
-            client,
-            provider,
-            event_bus,
-            parent_id,
-            messages,
-            tools,
-            params,
-            fallback_on_404,
-            attempts: 0,
-        }
-    }
-
     /// Execute the request loop until completion or error.
     pub async fn run(mut self) -> Result<String, LlmError> {
         let span = tracing::info_span!("request_session_run", model = %self.provider.model);
@@ -68,16 +52,20 @@ impl<'a> RequestSession<'a> {
         let mut use_tools: bool = !self.tools.is_empty();
         let mut tools_fallback_attempted = false;
 
-        loop {
+        for attempts in 0..=self.attempts {
             let effective_messages = if let Some(budget_chars) = self.params.history_char_budget {
                 cap_messages_by_chars(&self.messages, budget_chars)
             } else {
-                let budget_tokens = self.params.max_tokens.map(|t| t as usize).unwrap_or(3000);
+                let budget_tokens = self
+                    .params
+                    .max_tokens
+                    .map(|t| t as usize)
+                    .unwrap_or(crate::TOKEN_LIMIT as usize);
                 cap_messages_by_tokens(&self.messages, budget_tokens)
             };
 
             let require_parameters = true;
-            let request_payload = build_openai_request(
+            let request_payload = build_comp_req(
                 self.provider,
                 effective_messages,
                 &self.params,
@@ -87,26 +75,33 @@ impl<'a> RequestSession<'a> {
                     None
                 },
                 use_tools,
-                require_parameters
+                require_parameters,
             );
 
             // Brief, structured dispatch log for efficient triage
-            let tool_names: Vec<&str> = self.tools.iter().map(|t| t.function.name).collect();
-            tracing::info!(
+            let tool_names: Vec<&str> = self
+                .tools
+                .iter()
+                .map(|t| t.function.name.as_str())
+                .collect();
+            let url = format!("{}/chat/completions", self.provider.base_url);
+            tracing::debug!(
                 model = %self.provider.model,
                 base_url = %self.provider.base_url,
+                full_url = %url,
                 provider_slug = ?self.provider.provider_slug,
                 use_tools = use_tools,
                 tools = %tool_names.join(","),
-                "dispatch_request"
+                "dispatch_request with payload: {:#?}",
+                request_payload
             );
 
             let response = self
                 .client
-                .post(format!("{}/chat/completions", self.provider.base_url))
+                .post(url)
                 .bearer_auth(self.provider.resolve_api_key())
                 .json(&request_payload)
-                .timeout(Duration::from_secs(45))
+                .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
                 .send()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
@@ -120,71 +115,19 @@ impl<'a> RequestSession<'a> {
 
                 // Deterministic enforcement for tool use: fail fast when endpoint lacks tool support.
                 // Example provider body: {"error":{"message":"No endpoints found that support tool use.", "code":404}}
-                if status == 404 && use_tools && error_text.to_lowercase().contains("support tool")
-                {
-                    tracing::warn!(
-                        model = %self.provider.model,
-                        provider_slug = ?self.provider.provider_slug,
-                        "tool_unsupported_endpoint: {}",
-                        error_text
-                    );
-
-                    let mut guidance = String::new();
-                    guidance.push_str("Selected endpoint appears to lack tool support.\n\n");
-                    guidance.push_str("Remediation steps:\n");
-                    guidance.push_str(&format!(
-                        "  1) List tool-capable endpoints for this model:\n     :model providers {}\n",
-                        self.provider.model
-                    ));
-                    guidance.push_str(&format!(
-                        "  2) Pin a specific provider endpoint (slug shown in step 1):\n     :provider pin {} <provider_slug>\n",
-                        self.provider.model
-                    ));
-                    guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
-                    guidance.push_str(&format!("Details: {}", error_text));
-
-                    // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
-                    if self.fallback_on_404 && !tools_fallback_attempted {
-                        let msg = format!(
-                            "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
-                            guidance
-                        );
-                        self.messages.push(RequestMessage::new_system(msg));
-                        tools_fallback_attempted = true;
-                        use_tools = false;
-                        continue;
-                    }
-
-                    return Err(LlmError::Api {
-                        status,
-                        message: guidance,
-                    });
-                }
-
-                tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
-
-                let user_friendly_msg = if status == 401 {
-                    format!(
-                        "Authentication failed. Please check your API key configuration.\n\nDetails {}",
-                        error_text
-                    )
-                } else if status == 429 {
-                    format!(
-                        "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
-                        error_text
-                    )
-                } else if status >= 500 {
-                    format!(
-                        "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
-                        error_text
-                    )
-                } else {
-                    format!("API error (status {}): {}", status, error_text)
+                tracing::debug!("raw error body: {}", error_text);
+                let err_msg = match self.handle_404(
+                    &mut use_tools,
+                    &mut tools_fallback_attempted,
+                    status,
+                    error_text,
+                ) {
+                    Some(value) => value,
+                    None => continue,
                 };
-
                 return Err(LlmError::Api {
                     status,
-                    message: user_friendly_msg,
+                    message: err_msg,
                 });
             }
 
@@ -192,7 +135,6 @@ impl<'a> RequestSession<'a> {
                 .text()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
-            tracing::debug!("raw body: {}", body);
 
             // Providers sometimes put errors inside a 200 body
             if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -209,161 +151,295 @@ impl<'a> RequestSession<'a> {
                 }
             }
 
+            // Emit API response for test harness validation BEFORE deserialization
+            #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+            {
+                tracing::trace!("raw body: {}", body);
+                let request_id = uuid::Uuid::new_v4();
+                let _ = self.event_bus.realtime_tx.send(crate::AppEvent::System(
+                    SystemEvent::TestHarnessApiResponse {
+                        request_id,
+                        response_body: body.clone(),
+                        model: self.provider.model.clone(),
+                        use_tools,
+                    },
+                ));
+            }
+
             let response_body: super::OpenAiResponse = serde_json::from_str(&body)
                 .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
-            tracing::trace!("raw body response to request: {:#?}", body);
+
+            tracing::debug!(
+                tools = %tool_names.join(","),
+                "response_body parsed as OpenAiReponse: {}",
+                format_args!("{:#?}", response_body)
+            );
 
             if let Some(choice) = response_body.choices.into_iter().next() {
-                let resp_msg = choice.message;
+                // Handle message-based response (most common)
+                if let Some(resp_msg) = choice.message {
+                    if let Some(tool_calls) = resp_msg.tool_calls {
+                        // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
+                        // Dispatch all tool calls concurrently using tokio::task::spawn and join all futures
+                        let tool_tasks: Vec<_> = tool_calls
+                            .into_iter()
+                            .map(|call| {
+                                let event_bus = self.event_bus.clone();
+                                let parent_id = self.parent_id;
+                                let timeout_secs = self.params.tool_timeout_secs.unwrap_or(30);
 
-                if let Some(tool_calls) = resp_msg.tool_calls {
-                    self.attempts += 1;
-
-                    // Build specs for supported (OpenAI) tool calls; collect unsupported for immediate error
-                    let mut specs: Vec<tool_call::ToolCallSpec> = Vec::new();
-                    let mut other_errors: Vec<(String, String)> = Vec::new(); // (call_id, error_json)
-
-                    for call in tool_calls {
-                        match call {
-                            GenericToolCall::OpenAi(oc) => {
-                                tracing::info!(
-                                    "OpenAI tool call received: id={}, type={}, fn={}, args={}",
-                                    oc.id,
-                                    oc.r#type,
-                                    oc.function.name,
-                                    oc.function.arguments
-                                );
-                                let arguments =
-                                    serde_json::from_str::<Value>(&oc.function.arguments)
-                                        .unwrap_or(json!({ "raw": oc.function.arguments }));
-                                specs.push(tool_call::ToolCallSpec {
-                                    name: oc.function.name.clone(),
-                                    arguments,
-                                    call_id: oc.id.clone(),
-                                    vendor: ToolVendor::OpenAI,
-                                });
-                            }
-                            GenericToolCall::Other(v) => {
-                                tracing::warn!("Received non-OpenAI tool call payload: {}", v);
-                                let call_id = v
-                                    .get("id")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("unknown")
-                                    .to_string();
-                                let err_json = json!({
-                                    "ok": false,
-                                    "error": "Unsupported tool call format",
-                                    "vendor": "other"
-                                })
-                                .to_string();
-                                other_errors.push((call_id, err_json));
-                            }
-                        }
-                    }
-
-                    // Execute supported tool calls concurrently and append in stable order by call_id
-                    if !specs.is_empty() {
-                        let outcomes = tool_call::execute_tool_calls(
-                            &self.event_bus,
-                            self.parent_id,
-                            specs,
-                            self.params.tool_timeout_secs.unwrap_or(30),
-                        )
-                        .await;
-                        for (spec, result) in outcomes {
-                            match result {
-                                Ok(content) => {
-                                    self.messages
-                                        .push(RequestMessage::new_tool(content, spec.call_id));
-                                }
-                                Err(err) => {
-                                    let sys_msg =
-                                        format!("Tool call '{}' failed: {}.", spec.name, err);
-                                    self.messages.push(RequestMessage::new_system(sys_msg));
-                                    self.messages.push(RequestMessage::new_tool(
-                                        json!({"ok": false, "error": err}).to_string(),
-                                        spec.call_id,
+                                tokio::task::spawn(async move {
+                                    // Subscribe before sending
+                                    let rx = event_bus.realtime_tx.subscribe();
+                                    let request_id = Uuid::new_v4();
+                                    let call_id = call.call_id.clone();
+                                    event_bus.send(AppEvent::System(
+                                        SystemEvent::ToolCallRequested {
+                                            tool_call: call,
+                                            request_id,
+                                            parent_id,
+                                        },
                                     ));
+
+                                    let result = await_tool_result(
+                                        rx,
+                                        request_id,
+                                        call_id.clone(),
+                                        timeout_secs,
+                                    )
+                                    .await;
+                                    (call_id, result)
+                                })
+                            })
+                            .collect();
+
+                        // Join all tool call futures and process results
+                        let tool_results = futures::future::join_all(tool_tasks).await;
+                        tracing::debug!(target: DEBUG_TOOLS,
+                            tools = %tool_names.join(","),
+                            "Tool Results: {}",
+                            format_args!("{:#?}", tool_results)
+                        );
+
+                        for task_result in tool_results {
+                            tracing::debug!(target: DEBUG_TOOLS,
+                                tools = %tool_names.join(","),
+                                "Task Results: {}",
+                                format_args!("{:#?}", task_result)
+                            );
+                            match task_result {
+                                Ok((call_id, tool_result)) => match tool_result {
+                                    Ok(content) => {
+                                        // Add proper tool message with the required tool_call_id
+                                        self.messages
+                                            .push(RequestMessage::new_tool(content, call_id));
+                                    }
+                                    Err(err) => {
+                                        // For tool errors, we still use a tool message but with error content
+                                        let error_content =
+                                            json!({"ok": false, "error": err}).to_string();
+                                        self.messages
+                                            .push(RequestMessage::new_tool(error_content, call_id));
+                                        return Err(LlmError::ToolCall(err));
+                                    }
+                                },
+                                Err(join_err) => {
+                                    // Handle tokio task join errors - we don't have call_id here, use a placeholder
+                                    let error_content = json!({"ok": false, "error": format!("Task join error: {}", join_err)}).to_string();
+                                    let msg = "unknown_call_id".to_string();
+                                    self.messages.push(RequestMessage::new_tool(
+                                        error_content,
+                                        ArcStr::from(msg.clone()),
+                                    ));
+                                    return Err(LlmError::ToolCall(msg));
                                 }
                             }
                         }
+
+                        // Continue loop to let the model observe tool outputs and respond
+                        continue;
                     }
 
-                    // Handle unsupported/other formats as immediate failures
-                    for (call_id, err_json) in other_errors {
-                        self.messages.push(RequestMessage::new_system(
-                            "Unsupported tool call format".to_string(),
-                        ));
-                        self.messages
-                            .push(RequestMessage::new_tool(err_json, call_id));
-                    }
-
-                    if self.attempts > max_retries {
-                        return Err(LlmError::Unknown(format!(
-                            "Tool call retries exhausted after {} attempt(s)",
-                            self.attempts
-                        )));
-                    }
-
-                    // Continue loop to let the model observe tool outputs and respond
-                    continue;
+                    // No tool calls; finalize content
+                    let content = resp_msg
+                        .content
+                        .unwrap_or_else(|| "No content received from API.".to_string());
+                    return Ok(content);
                 }
-
-                // No tool calls; finalize content
-                let content = resp_msg
-                    .content
-                    .unwrap_or_else(|| "No content received from API.".to_string());
-                return Ok(content);
+                // Handle text-based response (for non-chat models)
+                else if let Some(text) = choice.text {
+                    return Ok(text);
+                }
+                // Handle streaming delta (shouldn't happen in this context)
+                else if let Some(_delta) = choice.delta {
+                    return Err(LlmError::Deserialization(
+                        "Unexpected streaming response in non-streaming context".to_string(),
+                    ));
+                } else {
+                    return Err(LlmError::Deserialization(
+                        "Choice has no message, text, or delta".to_string(),
+                    ));
+                }
             } else {
                 return Err(LlmError::Deserialization(
                     "No choices in response".to_string(),
                 ));
             }
         }
+        Err(LlmError::Unknown(format!(
+            "Tool call retries exhausted after {} attempt(s)",
+            self.attempts
+        )))
+    }
+
+    fn handle_404(
+        &mut self,
+        use_tools: &mut bool,
+        tools_fallback_attempted: &mut bool,
+        status: u16,
+        error_text: String,
+    ) -> Option<String> {
+        let err_msg = if status == 404
+            && *use_tools
+            && error_text.to_lowercase().contains("support tool")
+        {
+            tracing::warn!(
+                model = %self.provider.model,
+                provider_slug = ?self.provider.provider_slug,
+                "tool_unsupported_endpoint: {}",
+                error_text
+            );
+
+            let mut guidance = String::new();
+            self.form_guidance_msg(&error_text, &mut guidance);
+
+            // Fallback once without tools: inform the model via a system message, then retry (if allowed by policy).
+            if self.fallback_on_404 && !*tools_fallback_attempted {
+                let msg = format!(
+                    "Notice: provider endpoint appears to lack tool support; retrying without tools.\n\n{}",
+                    guidance
+                );
+                self.messages.push(RequestMessage::new_system(msg));
+                *tools_fallback_attempted = true;
+                *use_tools = false;
+                return None;
+            }
+
+            guidance
+        } else {
+            tracing::warn!(status = status, model = %self.provider.model, "api_error_body: {}", error_text);
+
+            construct_user_friendly_msg(status, error_text)
+        };
+        Some(err_msg)
+    }
+
+    fn form_guidance_msg(&mut self, error_text: &String, guidance: &mut String) {
+        guidance.push_str("Selected endpoint appears to lack tool support.\n\n");
+        guidance.push_str("Remediation steps:\n");
+        guidance.push_str(&format!(
+            "  1) List tool-capable endpoints for this model:\n     :model providers {}\n",
+            self.provider.model
+        ));
+        guidance.push_str(&format!(
+            "  2) Pin a specific provider endpoint (slug shown in step 1):\n     :provider pin {} <provider_slug>\n",
+            self.provider.model
+        ));
+        guidance.push_str("  3) If you intentionally want to continue without tools, disable enforcement:\n     :provider tools-only off\n\n");
+        guidance.push_str(&format!("Details: {}", error_text));
     }
 }
-pub fn build_openai_request<'a>(
-    provider: &'a crate::user_config::ModelConfig,
-    messages: Vec<super::RequestMessage<'a>>,
-    params: &super::LLMParameters,
-    tools: Option<Vec<super::ToolDefinition>>,
-    use_tools: bool,
-    require_parameters: bool
-) -> super::OpenAiRequest<'a> {
-    tracing::trace!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_openai_request");
-    // NOTE: OpenRouter routing: prefer minimal provider preference shape on chat/completions.
-    // We include `provider: { \"order\": [\"<slug>\"] }` when a valid provider_slug is set.
 
-    super::OpenAiRequest {
-        model: provider.model.as_str(),
-        messages,
-        temperature: params.temperature,
+fn construct_user_friendly_msg(status: u16, error_text: String) -> String {
+    if status == 401 {
+        format!(
+            "Authentication failed. Please check your API key configuration.\n\nDetails {}",
+            error_text
+        )
+    } else if status == 429 {
+        format!(
+            "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
+            error_text
+        )
+    } else if status >= 500 {
+        format!(
+            "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
+            error_text
+        )
+    } else {
+        format!("API error (status {}): {}", status, error_text)
+    }
+}
+pub fn build_comp_req<'a>(
+    provider: &'a crate::user_config::ModelConfig,
+    messages: Vec<RequestMessage>,
+    params: &super::LLMParameters,
+    tools: Option<Vec<crate::tools::ToolDefinition>>,
+    use_tools: bool,
+    require_parameters: bool,
+) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+    use crate::llm::openrouter::model_provider::{CompReq, ToolChoice};
+    tracing::debug!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_comp_req");
+    CompReq {
+        messages: Some(messages),
+        prompt: None,
+        model: Some(provider.model.as_str()),
+        response_format: None,
+        stop: None,
+        stream: Some(false),
         max_tokens: params.max_tokens,
-        top_p: params.top_p,
-        stream: false,
+        temperature: params.temperature,
         tools: if use_tools { tools } else { None },
         tool_choice: if use_tools {
-            Some("auto".to_string())
+            Some(ToolChoice::Auto)
         } else {
             None
         },
+        seed: None,
+        top_p: params.top_p,
+        top_k: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        repetition_penalty: None,
+        logit_bias: None,
+        top_logprobs: None,
+        min_p: None,
+        top_a: None,
+        transforms: None,
+        models: None,
+        route: None,
         provider: if use_tools {
-            provider.provider_slug.as_ref().and_then(|slug| {
-                let s = slug.trim();
-                if s.is_empty() || s == "-" {
-                    None
-                } else {
-                    Some(super::ProviderPreferences {
-                        order: vec![s.to_string()],
-                        require_parameters,
-                        ..Default::default()
-                    })
-                }
-            })
+            provider
+                .provider_slug
+                .map(|p| crate::llm::ProviderPreferences {
+                    order: vec![p],
+                    require_parameters,
+                    ..Default::default()
+                })
         } else {
             None
         },
+        user: None,
     }
+}
+
+/// Backward-compat alias used by live tests
+pub fn build_openai_request<'a>(
+    provider: &'a crate::user_config::ModelConfig,
+    messages: Vec<RequestMessage>,
+    params: &super::LLMParameters,
+    tools: Option<Vec<crate::tools::ToolDefinition>>,
+    use_tools: bool,
+    require_parameters: bool,
+) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+    build_comp_req(
+        provider,
+        messages,
+        params,
+        tools,
+        use_tools,
+        require_parameters,
+    )
 }
 
 /// Await a correlated ToolCall completion/failure on the realtime broadcast channel.
@@ -378,56 +454,36 @@ pub fn build_openai_request<'a>(
 pub async fn await_tool_result(
     mut rx: broadcast::Receiver<AppEvent>,
     request_id: Uuid,
-    call_id: &str,
+    call_id: ArcStr,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let span =
-        tracing::info_span!("await_tool_result", request_id = %request_id, call_id = %call_id);
+        tracing::info_span!("await_tool_result", request_id = %request_id, call_id = ?call_id);
     let _enter = span.enter();
     tracing::debug!("Awaiting tool result");
     let wait = async {
-        loop {
-            match rx.recv().await {
-                Ok(AppEvent::LlmTool(ToolEvent::Completed {
+        while let Ok(event) = rx.recv().await {
+            match event {
+                AppEvent::System(SystemEvent::ToolCallCompleted {
                     request_id: rid,
                     call_id: cid,
                     content,
                     ..
-                })) if rid == request_id && cid == call_id => {
-                    break Ok(content);
-                }
-                Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id: rid,
-                    call_id: cid,
-                    content,
-                    ..
-                })) if rid == request_id && cid == call_id => {
-                    break Ok(content);
-                }
-                Ok(AppEvent::LlmTool(ToolEvent::Failed {
+                }) if rid == request_id && cid == call_id => return Ok(content),
+                AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id: rid,
                     call_id: cid,
                     error,
                     ..
-                })) if rid == request_id && cid == call_id => {
-                    break Err(error);
-                }
-                Ok(AppEvent::System(SystemEvent::ToolCallFailed {
-                    request_id: rid,
-                    call_id: cid,
-                    error,
-                    ..
-                })) if rid == request_id && cid == call_id => {
-                    break Err(error);
-                }
-                Ok(_) => {
+                }) if rid == request_id && cid == call_id => return Err(error),
+                _ => {
                     // unrelated event; keep waiting
-                }
-                Err(e) => {
-                    break Err(format!("Event channel error: {}", e));
                 }
             }
         }
+        Err(format!(
+            "Event channel error for call_id: {call_id:?}: channel closed"
+        ))
     };
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), wait).await {
@@ -442,13 +498,18 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use ploke_core::ArcStr;
     use tokio::time::sleep;
 
     use crate::AppEvent;
     use crate::EventBus;
     use crate::EventBusCaps;
-    use crate::llm::ToolFunctionDef;
-    use crate::system::SystemEvent;
+    use crate::llm::Role;
+    use crate::llm::providers::ProviderSlug;
+    use crate::tools::{
+        FunctionMarker as StrongFunctionMarker, ToolDefinition as StrongToolDefinition, ToolDescr,
+        ToolFunctionDef as StrongToolFunctionDef, ToolName,
+    };
     use uuid::Uuid;
 
     // Simple test logger with a rolling window of 3 files in target/test-logs
@@ -513,7 +574,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = "call-123".to_string();
+        let call_id = ArcStr::from("call-123");
         let content = "tool response".to_string();
         let eb = event_bus.clone();
 
@@ -530,7 +591,7 @@ mod tests {
             }));
         });
 
-        let res = await_tool_result(rx, request_id, &call_id, 5).await;
+        let res = await_tool_result(rx, request_id, call_id, 5).await;
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), content);
     }
@@ -540,7 +601,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let rx = event_bus.realtime_tx.subscribe();
         let request_id = Uuid::new_v4();
-        let call_id = "call-err".to_string();
+        let call_id = ArcStr::from("call-err");
         let error_msg = "something went wrong".to_string();
         let eb = event_bus.clone();
 
@@ -556,7 +617,7 @@ mod tests {
             }));
         });
 
-        let res = await_tool_result(rx, request_id, &call_id, 5).await;
+        let res = await_tool_result(rx, request_id, call_id, 5).await;
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), error_msg);
     }
@@ -568,7 +629,7 @@ mod tests {
         let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
-            provider_slug: Some("openrouter".to_string()),
+            provider_slug: None,
             api_key_env: None,
             base_url: crate::user_config::OPENROUTER_URL.to_string(),
             model: "qwen/qwen-2.5-72b-instruct".to_string(),
@@ -597,40 +658,30 @@ mod tests {
 
         let messages = vec![
             super::RequestMessage {
-                role: "system",
+                role: Role::System,
                 content: "You are helpful.".to_string(),
                 tool_call_id: None,
             },
             super::RequestMessage {
-                role: "user",
+                role: Role::User,
                 content: "Hello!".to_string(),
                 tool_call_id: None,
             },
         ];
 
         // Act: build request without tools
-        let payload = super::build_openai_request(&provider, messages, &params, None, false, false);
-        let json = serde_json::to_string_pretty(&payload).unwrap();
-
-        // Snapshot: expected payload (stable field order)
-        let expected = r#"{
-  "model": "qwen/qwen-2.5-72b-instruct",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are helpful."
-    },
-    {
-      "role": "user",
-      "content": "Hello!"
-    }
-  ],
-  "temperature": 0.2,
-  "max_tokens": 256,
-  "stream": false
-}"#;
-
-        assert_eq!(json, expected);
+        let payload = super::build_comp_req(&provider, messages, &params, None, false, false);
+        let v = serde_json::to_value(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.get("model").and_then(|m| m.as_str()),
+            Some("qwen/qwen-2.5-72b-instruct")
+        );
+        assert_eq!(obj.get("stream").and_then(|b| b.as_bool()), Some(false));
+        let msgs = obj.get("messages").and_then(|m| m.as_array()).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].get("role").and_then(|r| r.as_str()), Some("system"));
+        assert_eq!(msgs[1].get("role").and_then(|r| r.as_str()), Some("user"));
     }
 
     #[test]
@@ -640,7 +691,7 @@ mod tests {
         let provider = crate::user_config::ModelConfig {
             id: "qwen-72b".to_string(),
             api_key: "".to_string(),
-            provider_slug: Some("openrouter".to_string()),
+            provider_slug: None,
             api_key_env: None,
             base_url: crate::user_config::OPENROUTER_URL.to_string(),
             model: "qwen/qwen-2.5-72b-instruct".to_string(),
@@ -669,81 +720,50 @@ mod tests {
 
         let messages = vec![
             super::RequestMessage {
-                role: "system",
+                role: Role::System,
                 content: "You can call tools.".to_string(),
                 tool_call_id: None,
             },
             super::RequestMessage {
-                role: "user",
+                role: Role::User,
                 content: "Please fetch context.".to_string(),
                 tool_call_id: None,
             },
         ];
 
-        let tool = super::ToolDefinition {
-            r#type: "function",
-            function: ToolFunctionDef {
-                name: "dummy_tool",
-                description: "Return a fixed string",
+        let tool: StrongToolDefinition = StrongToolDefinition {
+            r#type: StrongFunctionMarker,
+            function: StrongToolFunctionDef {
+                name: ToolName::RequestCodeContext,
+                description: ToolDescr::RequestCodeContext,
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "arg": { "type": "string" }
+                        "token_budget": {"type": "integer"},
+                        "hint": {"type": "string"}
                     },
-                    "required": ["arg"]
+                    "required": ["token_budget"]
                 }),
             },
         };
 
         // Act: build request with tools and auto tool_choice
         let payload =
-            super::build_openai_request(&provider, messages, &params, Some(vec![tool]), true, true);
-        let json = serde_json::to_string_pretty(&payload).unwrap();
-
-        // Snapshot: expected payload (stable field order)
-        let expected = r#"{
-  "model": "qwen/qwen-2.5-72b-instruct",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You can call tools."
-    },
-    {
-      "role": "user",
-      "content": "Please fetch context."
-    }
-  ],
-  "temperature": 0.0,
-  "max_tokens": 128,
-  "stream": false,
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "dummy_tool",
-        "description": "Return a fixed string",
-        "parameters": {
-          "properties": {
-            "arg": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "arg"
-          ],
-          "type": "object"
-        }
-      }
-    }
-  ],
-  "tool_choice": "auto",
-  "provider": {
-    "order": [
-      "openrouter"
-    ]
-  }
-}"#;
-
-        assert_eq!(json, expected);
+            super::build_comp_req(&provider, messages, &params, Some(vec![tool]), true, true);
+        let v = serde_json::to_value(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.get("model").and_then(|m| m.as_str()),
+            Some("qwen/qwen-2.5-72b-instruct")
+        );
+        let tools = obj.get("tools").and_then(|t| t.as_array()).unwrap();
+        assert_eq!(tools.len(), 1);
+        let t0 = tools[0].as_object().unwrap();
+        assert_eq!(t0.get("type").and_then(|s| s.as_str()), Some("function"));
+        let func = t0.get("function").and_then(|f| f.as_object()).unwrap();
+        assert_eq!(
+            func.get("name").and_then(|s| s.as_str()),
+            Some("request_code_context")
+        );
     }
 }

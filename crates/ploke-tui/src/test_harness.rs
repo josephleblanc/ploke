@@ -5,17 +5,14 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    EventBus, EventBusCaps,
-    app::App,
-    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState},
-    chat_history::ChatHistory,
-    user_config::{UserConfig, default_model},
+    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, file_man::FileManager, llm::llm_manager, observability, run_event_bus, user_config::{default_model, openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::workspace_root;
 
+#[cfg(feature = "test_harness")]
 lazy_static! {
     /// A globally accessible App instance for tests, wrapped in Arc<Mutex<...>>.
     pub static ref TEST_APP: Arc<Mutex<App>> = {
@@ -106,11 +103,43 @@ lazy_static! {
             budget: TokenBudget::default(),
         });
 
-        // Command channel (not wired to a state_manager loop in tests)
-        let (cmd_tx, _cmd_rx) = mpsc::channel::<StateCommand>(1024);
+        let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+        // Create command channel with backpressure
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+        let (cancellation_token, cancel_handle) = CancellationToken::new();
+        let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        let file_manager = FileManager::new(
+            io_handle.clone(),
+            event_bus.subscribe(EventPriority::Background),
+            event_bus.background_tx.clone(),
+            rag_event_tx.clone(),
+            event_bus.realtime_tx.clone(),
+        );
+
+        tokio::spawn(file_manager.run());
+
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            rag_event_tx,
+        ));
 
         // Build the App
+        // Spawn subsystems with backpressure-aware command sender
         let command_style = config.command_style;
+        tokio::spawn(llm_manager(
+            event_bus.subscribe(EventPriority::Background),
+            state.clone(),
+            cmd_tx.clone(), // Clone for each subsystem
+            event_bus.clone(),
+        ));
+        tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+        tokio::spawn(observability::run_observability(
+            event_bus.clone(),
+            state.clone(),
+        ));
         let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
 
         Arc::new(Mutex::new(app))
@@ -118,6 +147,54 @@ lazy_static! {
 }
 
 /// Convenience accessor for the global test App.
+#[cfg(feature = "test_harness")]
 pub fn app() -> &'static Arc<Mutex<App>> {
     &TEST_APP
+}
+
+/// Accessor for the shared AppState used by TEST_APP.
+/// This provides a clone of the Arc<AppState> so integration tests can stage
+/// proposals or inspect state efficiently without recreating the app.
+#[cfg(feature = "test_harness")]
+pub async fn get_state() -> Arc<AppState> {
+    let app = TEST_APP.lock().await;
+    app.test_get_state()
+}
+
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+pub fn default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let referer = HeaderName::from_static("http-referer");
+    let x_title = HeaderName::from_static("x-title");
+    headers.insert(
+        referer,
+        HeaderValue::from_static("https://github.com/ploke-ai/ploke"),
+    );
+    headers.insert(x_title, HeaderValue::from_static("Ploke TUI E2E Tests"));
+    headers
+}
+
+pub struct OpenRouterEnv {
+    pub key: String,
+    pub base_url: reqwest::Url,
+}
+impl OpenRouterEnv {
+    pub fn new(key: String, base_url: reqwest::Url) -> Self {
+        Self { key, base_url }
+    }
+}
+
+pub fn openrouter_env() -> Option<OpenRouterEnv >{
+    // Try current process env first; if missing, load from .env as a fallback
+    let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
+    let key = match key_opt {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            let _ = dotenvy::dotenv();
+            let k = std::env::var("OPENROUTER_API_KEY").ok()?;
+            if k.trim().is_empty() { return None; }
+            k
+        }
+    };
+    Some(OpenRouterEnv::new(key, openrouter_url()))
 }

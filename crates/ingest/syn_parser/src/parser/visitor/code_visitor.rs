@@ -165,11 +165,19 @@ impl<'a> CodeVisitor<'a> {
                 let span = rename.extract_span_bytes();
 
                 // Register the new node ID
-                let registration_result = self.register_new_node_id(
-                    &visible_name,
-                    ItemKind::Import,
-                    cfg_bytes, // Pass down received cfg_bytes
-                );
+                let registration_result = if visible_name.as_str() == "_" {
+                    self.register_new_node_id(
+                        &original_name,
+                        ItemKind::Import,
+                        cfg_bytes, // Pass down received cfg_bytes
+                    )
+                } else {
+                    self.register_new_node_id(
+                        &visible_name,
+                        ItemKind::Import,
+                        cfg_bytes, // Pass down received cfg_bytes
+                    )
+                };
                 // Check if registration failed
                 if registration_result.is_none() {
                     let err = CodeVisitorError::RegistrationFailed {

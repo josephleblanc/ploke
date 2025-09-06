@@ -27,25 +27,20 @@ pub struct AssembledContext {
     pub stats: ContextStats,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextPartKind {
-    #[serde(rename = "code")]
     Code,
-    #[serde(rename = "doc")]
     Doc,
-    #[serde(rename = "signature")]
     Signature,
-    #[serde(rename = "metadata")]
     Metadata,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum Modality {
-    #[serde(rename = "dense")]
     Dense,
-    #[serde(rename = "sparse")]
     Sparse,
-    #[serde(rename = "hybrid_fused")]
     HybridFused,
 }
 
@@ -53,15 +48,84 @@ pub enum Modality {
 pub struct RequestCodeContextArgs {
     pub token_budget: u32,
     #[serde(default)]
-    pub hint: Option<String>,
+    pub search_term: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCodeContextResult {
     pub ok: bool,
-    pub query: String,
+    pub search_term: String,
     pub top_k: usize,
-    pub context: AssembledContext,
+    pub kind: ContextPartKind,
+    pub context: Vec<ConciseContext>,
+}
+
+pub struct AssembledMeta {
+    pub search_term: String,
+    pub top_k: usize,
+    pub kind: ContextPartKind,
+}
+
+impl RequestCodeContextResult {
+    pub fn from_assembled(parts: Vec< ContextPart >, m: AssembledMeta) -> Self {
+        let context: Vec<ConciseContext> = parts.into_iter().map(ConciseContext::from).collect();
+        Self {
+            ok: true,
+            search_term: m.search_term,
+            top_k: m.top_k,
+            kind: m.kind,
+            context,
+        }
+    }
+}
+
+impl From<ContextPart> for ConciseContext {
+    fn from(value: ContextPart) -> Self {
+        Self {
+            file_path: NodeFilepath(value.file_path.clone()),
+            canon_path: CanonPath(value.file_path.clone()),
+            snippet: value.text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct NodeFilepath(pub String);
+
+impl AsRef<str> for NodeFilepath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq for NodeFilepath {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq,  PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct CanonPath(pub String);
+
+impl AsRef<str> for CanonPath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq for CanonPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+pub struct ConciseContext {
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+    pub snippet: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

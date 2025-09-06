@@ -1,3 +1,4 @@
+use ploke_core::ArcStr;
 use ratatui::Frame;
 use ratatui::layout::{ Rect, Layout, Direction, Constraint };
 use ratatui::style::{ Color, Style, Stylize as _ };
@@ -8,7 +9,7 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{OPENROUTER_URL, ModelConfig, ProviderType};
+use crate::user_config::{OPENROUTER_URL, ModelConfig};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -44,10 +45,10 @@ pub struct ModelBrowserItem {
 
 #[derive(Debug)]
 pub struct ModelProviderRow {
-    pub id: String,
-    pub context_length: Option<u32>,
-    pub input_cost: Option<f64>,
-    pub output_cost: Option<f64>,
+    pub name: ArcStr,
+    pub context_length: u32,
+    pub input_cost: f64,
+    pub output_cost: f64,
     pub supports_tools: bool,
 }
 
@@ -190,17 +191,11 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
                     lines.push(Line::from(Span::styled(
                         format!(
                             "      - {}  tools={}  ctx={}  pricing: in={} out={}",
-                            p.id,
+                            p.name.as_ref(),
                             p.supports_tools,
-                            p.context_length
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "-".to_string()),
-                            p.input_cost
-                                .map(|v| format!("{:.6}", v))
-                                .unwrap_or_else(|| "-".to_string()),
-                            p.output_cost
-                                .map(|v| format!("{:.6}", v))
-                                .unwrap_or_else(|| "-".to_string())
+                            format_args!("{:.0}", p.context_length),
+                            format_args!("{:.3}", p.input_cost * 1_000_000.0),
+                            format_args!("{:.3}", p.output_cost * 1_000_000.0                                             ),
                         ),
                         detail_style,
                     )));

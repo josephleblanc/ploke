@@ -25,11 +25,13 @@
 //!   background loops itself. It relies on the EventBus for communicating with the UI and LLM manager.
 
 pub mod context;
-pub mod dispatcher;
 pub mod editing;
 pub mod search;
 pub mod tools;
 pub mod utils;
+
+#[cfg(test)]
+mod tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,4 +39,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AppEvent, EventBus, app_state::AppState, llm, system::SystemEvent};
+use crate::{
+    AppEvent, EventBus,
+    app_state::{AppState, events::SystemEvent},
+    llm,
+};

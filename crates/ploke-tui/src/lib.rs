@@ -26,33 +26,38 @@ pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
 pub mod rag;
+pub mod tools;
+#[cfg(test)]
+mod tests;
 
 pub mod test_utils;
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 pub use test_utils::mock;
+
+use ploke_core::ArcStr;
 
 pub mod test_harness;
 
 use app::App;
 use app_state::{
-    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
-    core::RuntimeConfig, state_manager,
+    core::RuntimeConfig, events::SystemEvent, state_manager, AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
-use llm::llm_manager;
+use llm::{llm_manager, model_provider::EndpointData, openrouter_catalog::{ModelEntry, ProviderSummary}, provider_endpoints::ModelsEndpoint};
 use parser::run_parse;
 use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
-use ploke_rag::TokenBudget;
-use system::SystemEvent;
+use ploke_rag::{RrfConfig, TokenBudget};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ModelConfig, ProviderType, UserConfig, default_model};
+use user_config::{OPENROUTER_URL, ModelConfig, UserConfig, default_model};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -75,6 +80,26 @@ use uuid::Uuid;
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
 static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
+
+pub const TOP_K: usize = 15;
+lazy_static! {
+    static ref RETRIEVAL_STRATEGY: ploke_rag::RetrievalStrategy = ploke_rag::RetrievalStrategy::Hybrid {
+        rrf: RrfConfig::default(),
+        mmr: None,
+    };
+}
+
+/// The number of tool retries to allow if model fails to call tool correctly.
+// TODO: Add this to user config
+pub const TOOL_RETRIES: u32 = 2;
+
+/// The default number of tokens per LLM request.
+// TODO: Add this to user config
+pub const TOKEN_LIMIT: u32 = 8196;
+
+/// The default number of seconds for timeout on LLM request loop.
+// TODO: Add this to user config
+pub const LLM_TIMEOUT_SECS: u64 = 45;
 
 /// Set the global event bus for error handling
 pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
@@ -200,6 +225,9 @@ pub async fn try_main() -> color_eyre::Result<()> {
         budget: TokenBudget::default(),
     });
 
+    // Load persisted proposals (best-effort) before starting subsystems
+    crate::app_state::handlers::proposals::load_proposals(&state).await;
+
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
@@ -260,7 +288,7 @@ pub mod ui {
     }
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum UiError {
     ExampleError,
 }
@@ -270,72 +298,6 @@ impl std::fmt::Display for UiError {
         match self {
             UiError::ExampleError => write!(f, "Example error occurred"),
         }
-    }
-}
-
-pub mod system {
-    use std::{borrow::Cow, sync::Arc};
-
-    use crate::llm::ToolVendor;
-    use ploke_db::TypedEmbedData;
-    use serde_json::Value;
-    use uuid::Uuid;
-
-    use crate::UiError;
-
-    #[derive(Clone, Debug)]
-    pub enum SystemEvent {
-        SaveRequested(Vec<u8>), // Serialized content
-        HistorySaved {
-            file_path: String,
-        },
-        MutationFailed(UiError),
-        CommandDropped(&'static str),
-        ReadSnippet(TypedEmbedData),
-        CompleteReadSnip(Vec<String>),
-        ModelSwitched(String),
-        ToolCallRequested {
-            request_id: Uuid,
-            parent_id: Uuid,
-            vendor: ToolVendor,
-            name: String,
-            arguments: Value,
-            call_id: String,
-        },
-        ToolCallCompleted {
-            request_id: Uuid,
-            parent_id: Uuid,
-            call_id: String,
-            content: String,
-        },
-        ToolCallFailed {
-            request_id: Uuid,
-            parent_id: Uuid,
-            call_id: String,
-            error: String,
-        },
-        ReadQuery {
-            file_name: String,
-            query_name: String,
-        },
-        WriteQuery {
-            query_name: String,
-            query_content: String,
-        },
-        BackupDb {
-            file_dir: String,
-            is_success: bool,
-            error: Option<String>,
-        },
-        LoadDb {
-            crate_name: String,
-            file_dir: Option<Arc<std::path::PathBuf>>,
-            is_success: bool,
-            error: Option<&'static str>,
-        },
-        ReIndex {
-            workspace: String,
-        },
     }
 }
 
@@ -353,21 +315,23 @@ pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::Event),
     LlmTool(llm::ToolEvent),
+    // External signal to request a clean UI shutdown
+    Quit,
     // TODO:
     // File(file::Event),
     // Rag(rag::Event),
     // Agent(agent::Event),
-    System(system::SystemEvent),
+    System(SystemEvent),
     ModelSearchResults {
         keyword: String,
-        items: Vec<crate::llm::openrouter_catalog::ModelEntry>,
+        items: Vec<ModelsEndpoint>,
     },
-    ModelEndpointsRequest {
+    ModelsEndpointsRequest {
         model_id: String,
     },
-    ModelEndpointsResults {
+    ModelsEndpointsResults {
         model_id: String,
-        providers: Vec<crate::llm::openrouter_catalog::ProviderEntry>,
+        providers: Vec<ProviderSummary>,
     },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
@@ -401,6 +365,7 @@ impl AppEvent {
                     EventPriority::Realtime
                 }
             },
+            AppEvent::Quit => EventPriority::Realtime,
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
@@ -411,8 +376,8 @@ impl AppEvent {
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
             AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
-            AppEvent::ModelEndpointsRequest { .. } => EventPriority::Background,
-            AppEvent::ModelEndpointsResults { .. } => EventPriority::Realtime,
+            AppEvent::ModelsEndpointsRequest { .. } => EventPriority::Background,
+            AppEvent::ModelsEndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,

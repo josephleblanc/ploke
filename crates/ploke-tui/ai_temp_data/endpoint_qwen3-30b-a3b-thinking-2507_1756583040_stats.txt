@@ -1,0 +1,25 @@
+=== JSON Profiling Report (endpoints) ===
+Endpoints analyzed: 12
+
+(100.0%) context_length: present=12 null=0 missing=0
+(100.0%) max_completion_tokens: present=12 null=4 missing=0
+(100.0%) max_prompt_tokens: present=12 null=12 missing=0
+(100.0%) model_name: present=12 null=0 missing=0
+(100.0%) name: present=12 null=0 missing=0
+(100.0%) pricing: present=12 null=0 missing=0
+(100.0%) pricing.completion: present=12 null=0 missing=0
+(100.0%) pricing.discount: present=12 null=0 missing=0
+(100.0%) pricing.image: present=12 null=0 missing=0
+(100.0%) pricing.image_output: present=12 null=0 missing=0
+( 16.7%) pricing.input_cache_read: present=2 null=0 missing=10
+(100.0%) pricing.internal_reasoning: present=12 null=0 missing=0
+(100.0%) pricing.prompt: present=12 null=0 missing=0
+(100.0%) pricing.request: present=12 null=0 missing=0
+(100.0%) pricing.web_search: present=12 null=0 missing=0
+(100.0%) provider_name: present=12 null=0 missing=0
+(100.0%) quantization: present=12 null=6 missing=0
+(100.0%) status: present=12 null=0 missing=0
+(100.0%) supported_parameters: present=12 null=0 missing=0
+(100.0%) supports_implicit_caching: present=12 null=0 missing=0
+(100.0%) tag: present=12 null=0 missing=0
+(100.0%) uptime_last_30m: present=12 null=2 missing=0

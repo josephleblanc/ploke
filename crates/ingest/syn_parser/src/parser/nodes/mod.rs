@@ -82,7 +82,7 @@ pub enum NodeError {
 /// Will not contain "self" (already resolved in Phase 2 processing)
 ///     - see `visit_item_use` method of `CodeGraph` in code_graph.rs for details on resolution of
 ///     `syn::UseTree` into ImportNode.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd)]
 pub struct NodePath(Vec<String>);
 
 impl Display for NodePath {

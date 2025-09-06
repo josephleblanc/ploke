@@ -157,11 +157,17 @@ pub async fn add_msg_immediate(
 
     let message_wrapper = match kind {
         MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
-        MessageKind::System => todo!(),
+        MessageKind::System => {
+            tracing::error!("System message used with add_msg_immediate");
+            todo!("System message used with add_msg_immediate")
+            // chat_guard.add_message_tool(parent_id, new_msg_id, kind, content.clone())
+        },
         MessageKind::Assistant => {
             chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
         }
-        MessageKind::Tool => todo!(),
+        MessageKind::Tool => {
+            chat_guard.add_message_tool(parent_id, new_msg_id, kind, content.clone())
+        },
         MessageKind::SysInfo => {
             chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
         }

@@ -19,19 +19,12 @@ use uuid::Uuid;
 use ploke_db::Database;
 use ploke_error::Error;
 
+use crate::llm::model_provider::{Endpoint, EndpointsResponse};
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::ModelEndpointsResponse;
+use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
+use crate::test_harness::openrouter_env;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
-
-/// OPENROUTER_API_KEY + base URL
-fn openrouter_env() -> Option<(String, String)> {
-    let key = std::env::var("OPENROUTER_API_KEY").ok()?;
-    if key.trim().is_empty() {
-        return None;
-    }
-    Some((key, OPENROUTER_URL.to_string()))
-}
 
 /// Recommended headers for OpenRouter (improves routing/diagnostics)
 fn default_headers() -> HeaderMap {
@@ -83,7 +76,7 @@ async fn post_with_retries(
 }
 
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
-fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelEndpoint) -> f64 {
+fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelsEndpoint) -> f64 {
     let p = ep.pricing.prompt_or_default();
     let c = ep.pricing.completion_or_default();
     p + c
@@ -98,7 +91,7 @@ async fn choose_tools_endpoint_for_model(
 ) -> Option<(
     String, /*author*/
     String, /*slug*/
-    crate::llm::provider_endpoints::ModelEndpoint,
+    Endpoint,
     Option<String>, /*provider slug hint*/
 )> {
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -143,33 +136,45 @@ async fn choose_tools_endpoint_for_model(
         .await
         .and_then(|r| r.error_for_status())
         .ok()?
-        .json::<ModelEndpointsResponse>()
+        .json::<EndpointsResponse>()
         .await
         .ok()?;
 
-    let mut candidates: Vec<crate::llm::provider_endpoints::ModelEndpoint> = payload
+    let mut candidates: Vec<Endpoint> = payload
         .data
         .endpoints
         .into_iter()
-        .filter(|ep| {
-            ep.supported_parameters
-                .iter()
-                .any(|p| p.eq_ignore_ascii_case("tools"))
-        })
+        .filter(|ep| ep.supports_tools())
         .collect();
 
     if candidates.is_empty() {
         return None;
     }
     candidates.sort_by(|a, b| {
-        endpoint_price_hint(a)
-            .partial_cmp(&endpoint_price_hint(b))
+        a.pricing.prompt.partial_cmp(&b.pricing.prompt)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let chosen = candidates.remove(0);
-    let slug_hint = providers_map.get(&chosen.name).cloned();
+    let chosen = if candidates.first().is_some() {
+        candidates.swap_remove(0)
+    } else {
+        return None;
+    };
+    let slug_hint = providers_map.get(chosen.name.as_ref()).cloned();
     Some((author, slug, chosen, slug_hint))
+}
+
+pub(crate) trait WarnIfNone {
+    fn warn_if_none(self) -> Self;
+}
+
+impl<T> WarnIfNone for Option<T> {
+    fn warn_if_none(self) -> Self {
+        if self.is_none() {
+            tracing::warn!("This value is None");
+        }
+        self
+    }
 }
 
 /// Build the three real tool definitions we expose to models.
@@ -400,7 +405,7 @@ async fn run_tool_roundtrip(
     let tool_calls = parsed
         .get("choices")
         .and_then(|c| c.as_array())
-        .and_then(|arr| arr.get(0))
+        .and_then(|arr| arr.first())
         .and_then(|c0| c0.get("message"))
         .and_then(|m| m.get("tool_calls"))
         .and_then(|a| a.as_array())
@@ -418,7 +423,7 @@ async fn run_tool_roundtrip(
 
     // Create temp targets and execute locally
     let tool_call_id = tool_calls
-        .get(0)
+        .first()
         .and_then(|x| x.get("id"))
         .and_then(|s| s.as_str())
         .unwrap_or("call_1")
@@ -498,7 +503,7 @@ async fn run_tool_roundtrip(
                 .and_then(|v| {
                     v.get("choices")
                         .and_then(|c| c.as_array())
-                        .and_then(|arr| arr.get(0))
+                        .and_then(|arr| arr.first())
                         .and_then(|c0| c0.get("message"))
                         .and_then(|m| m.get("content"))
                         .and_then(|s| s.as_str().map(|s| s.to_string()))
@@ -528,12 +533,17 @@ async fn run_tool_roundtrip(
 /// - It performs local tool execution; tool schemas are aligned with our LLM plumbing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn openrouter_real_tools_roundtrip_smoke() {
+    if std::env::var("PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        eprintln!("Skipping: PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS!=1");
+        return;
+    }
     let _guard = init_tracing();
 
-    let Some((api_key, base_url)) = openrouter_env() else {
-        eprintln!("Skipping: OPENROUTER_API_KEY not set.");
-        return;
-    };
+    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
 
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -542,7 +552,8 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         .expect("client");
 
     // Fetch user-filtered models
-    let models = match openrouter_catalog::fetch_models(&client, &base_url, &api_key).await {
+    let models = match openrouter_catalog::fetch_models(&client, op.base_url.clone(), &op.key).await
+    {
         Ok(m) => m,
         Err(e) => {
             warn!("Failed to fetch OpenRouter catalog: {}", e);
@@ -552,30 +563,31 @@ async fn openrouter_real_tools_roundtrip_smoke() {
     info!("models/user returned {} entries", models.len());
 
     // Cap iteration for safety (can be increased locally)
-    let mut processed = 0usize;
-    for m in models {
+    for (processed, m) in models.into_iter().enumerate() {
         if processed >= 5 {
             break;
         }
-        processed += 1;
 
         let model_id = m.id;
         info!("model: {}", model_id);
 
-        let chosen = choose_tools_endpoint_for_model(&client, &base_url, &api_key, &model_id).await;
+        let chosen =
+            choose_tools_endpoint_for_model(&client, op.base_url.as_str(), &op.key, &model_id)
+                .await;
         let Some((author, slug, endpoint, provider_slug_hint)) = chosen else {
             info!("  no tools-capable endpoints; skipping {}", model_id);
             continue;
         };
 
         info!(
-            "  chosen endpoint: provider='{}' slug_hint='{}' context_length={} price_hint={:.8}",
-            endpoint.name,
+            "  chosen endpoint: provider='{}' slug_hint='{}' context_length={} price (per M tokens) prompt=${:.4}, completion=${:.4}",
+            endpoint.name.as_ref(),
             provider_slug_hint
                 .clone()
                 .unwrap_or_else(|| "-".to_string()),
             endpoint.context_length,
-            endpoint_price_hint(&endpoint)
+            endpoint.pricing.prompt * 1_000_000.0,
+            endpoint.pricing.completion * 1_000_000.0,
         );
 
         // Build our tool set and targeted args per tool
@@ -595,8 +607,8 @@ async fn openrouter_real_tools_roundtrip_smoke() {
         ]) {
             run_tool_roundtrip(
                 &client,
-                &base_url,
-                &api_key,
+                op.base_url.as_str(),
+                &op.key,
                 &model_id,
                 provider_slug_hint.as_deref(),
                 def,

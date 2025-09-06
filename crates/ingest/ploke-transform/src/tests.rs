@@ -1,7 +1,6 @@
 #![cfg(test)]
 
 use cozo::{Db, MemStorage};
-use ploke_test_utils::parse_and_build_tree;
 
 use crate::{schema::create_schema_all, transform::transform_parsed_graph};
 
@@ -9,6 +8,13 @@ macro_rules! crate_test_transform {
     ($test_name:ident, $crate_name:expr) => {
         #[test]
         pub fn $test_name() -> Result<(), ploke_error::Error> {
+            use tracing::Level;
+            use ploke_test_utils::{init_tracing_tests, parse_and_build_tree};
+            // init tracing, silent fail if global registry already set
+            let test_prefix = "ploke-db::tests";
+            let test_name = stringify!($test_name);
+            let target_name = format!("{test_prefix}::{test_name}");
+            init_tracing_tests(&target_name, Level::INFO, None);
             // initialize db
             let db = Db::new(MemStorage::default()).expect("Failed to create database");
             db.initialize().expect("Failed to initialize database");

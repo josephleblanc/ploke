@@ -1,0 +1,541 @@
+  2025-09-02T10:07:11.028531Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028601Z  INFO ploke_tui::event_bus: close, time.busy: 70.4µs, time.idle: 3.08µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028623Z  INFO ploke_tui::app_state::handlers::chat: sending llm_request wrapped in an AppEvent::Llm of kind user with ids 
+                new_msg_id (not sent): e638b789-89c9-404a-92a9-e1ab849ca3f5,
+                parent_id: a5da65f8-339d-4656-b2c7-9cc9b98b0779
+                message_id: e638b789-89c9-404a-92a9-e1ab849ca3f5,
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:185 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028630Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028635Z  INFO ploke_tui::event_bus: close, time.busy: 5.19µs, time.idle: 1.36µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028643Z  INFO ploke_tui::app_state::handlers::chat: close, time.busy: 133µs, time.idle: 3.88µs
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:146 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5, content: "Use the get_file_metadata tool to check the file 'Cargo.toml' in the current directory. I need to see the file size and tracking hash.", kind: User
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028651Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 164µs, time.idle: 12.2µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddUserMessage
+
+  2025-09-02T10:07:11.028665Z  INFO ploke_tui::app_state::database: scan_for_change in crate_name: fixture_nodes
+    at crates/ploke-tui/src/app_state/database.rs:276 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.030961Z  INFO ploke_tui::app_state::database: file_data: [
+    FileData {
+        id: d68bf001-e754-500d-b14d-68bbd08c720b,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            dd256356-df42-54dd-b057-14c920fd4d37,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/lib.rs",
+    },
+    FileData {
+        id: b2a32910-7045-5247-a240-db2af6b54485,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            ac93e2c5-1ab4-5ff6-93f5-bbf673647324,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/imports.rs",
+    },
+    FileData {
+        id: b6de9492-7bdb-535f-9eab-4be8213ffaa7,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            c9e5b5bf-d784-5773-822c-19d291dadb15,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs",
+    },
+    FileData {
+        id: 98cf843e-a79d-53ad-b63e-edbb06f55dbf,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            4203f6af-f226-5586-8770-4bd1fd1aca0d,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/structs.rs",
+    },
+    FileData {
+        id: 06da6227-0818-5518-a993-a6f5f97a8767,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            40ea1595-d05d-5820-b4b1-cb665f5a1f46,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/unions.rs",
+    },
+    FileData {
+        id: 78d3361f-0a2b-55d1-a35e-1ae57b02bf06,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            8764de16-cce8-5344-a268-d86abe5598d9,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/const_static.rs",
+    },
+    FileData {
+        id: 24c3c750-21b0-5633-905c-b67b10176426,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            b1835274-d0e4-5951-891a-5071e4680f02,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/traits.rs",
+    },
+    FileData {
+        id: 2bc98b2f-8ac7-5650-ae38-c9b24c179319,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            c663eeb6-e897-5ec9-9013-6f3d244de65b,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/impls.rs",
+    },
+    FileData {
+        id: 94817678-df0e-59fa-8a65-8a7f6a0267a0,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            f1eac66e-d822-57a0-8774-390cd4b049a3,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/type_alias.rs",
+    },
+    FileData {
+        id: 29940c0b-7fe9-5ea0-83c3-4a4bc1b7ee4a,
+        namespace: bfc25988-15c1-5e58-9aa8-3d33b5e58b92,
+        file_tracking_hash: TrackingHash(
+            7e370317-0e37-5bcb-a7ac-3bc37e2f2e22,
+        ),
+        file_path: "/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/macros.rs",
+    },
+]
+    at crates/ploke-tui/src/app_state/database.rs:279 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.038199Z  INFO ploke_tui::llm: Received LLM request for parent_id: e638b789-89c9-404a-92a9-e1ab849ca3f5
+new_msg_id: e638b789-89c9-404a-92a9-e1ab849ca3f5
+    at crates/ploke-tui/src/llm/mod.rs:304 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.041693Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.042274Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.042584Z  INFO ploke_tui::app_state::database: No file changes detected
+    at crates/ploke-tui/src/app_state/database.rs:292 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.042600Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 13.9ms, time.idle: 2.61µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: ScanForChange
+
+  2025-09-02T10:07:11.043227Z  INFO ploke_embed::local: Processing outputs with self.model.forward
+    at crates/ingest/ploke-embed/src/local/mod.rs:411 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.277501Z DEBUG ploke_embed::local: shapes: outputs=[1, 36, 384], weights=[1, 36, 384], sum_embeddings=[1, 1, 384]
+    at crates/ingest/ploke-embed/src/local/mod.rs:428 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.278620Z DEBUG ploke_embed::local: shapes: outputs=[1, 36, 384], weights=[1, 36, 384], norms=[1, 1, 1]
+    at crates/ingest/ploke-embed/src/local/mod.rs:444 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.278649Z DEBUG ploke_embed::local: close, time.busy: 236ms, time.idle: 2.86µs
+    at crates/ingest/ploke-embed/src/local/mod.rs:380 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.467234Z DEBUG ploke_rag::core: Dense search collected 82 results across 10 node types
+    at crates/ploke-rag/src/core/mod.rs:537 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.467289Z DEBUG ploke_rag::core: Dense search returning 15 results
+    at crates/ploke-rag/src/core/mod.rs:547 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.467311Z  INFO ploke_rag::core: close, time.busy: 425ms, time.idle: 7.16µs
+    at crates/ploke-rag/src/core/mod.rs:486 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.467377Z  INFO ploke_rag::core: close, time.busy: 31.4µs, time.idle: 425ms
+    at crates/ploke-rag/src/core/mod.rs:342 on ThreadId(2)
+    in ploke_rag::core::bm25_status with timeout_ms: 250
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.467481Z DEBUG ploke_rag::core: BM25 empty; retrying after backoff, attempts: 1, bm25_results: 0, bm25_status: Some(Uninitialized), backoff_ms: 50
+    at crates/ploke-rag/src/core/mod.rs:303 on ThreadId(2)
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.518991Z  INFO ploke_rag::core: close, time.busy: 56.0µs, time.idle: 41.9µs
+    at crates/ploke-rag/src/core/mod.rs:342 on ThreadId(2)
+    in ploke_rag::core::bm25_status with timeout_ms: 250
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.519253Z DEBUG ploke_rag::core: BM25 empty; retrying after backoff, attempts: 2, bm25_results: 0, bm25_status: Some(Uninitialized), backoff_ms: 100
+    at crates/ploke-rag/src/core/mod.rs:303 on ThreadId(2)
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.620143Z  INFO ploke_rag::core: close, time.busy: 52.1µs, time.idle: 35.7µs
+    at crates/ploke-rag/src/core/mod.rs:342 on ThreadId(2)
+    in ploke_rag::core::bm25_status with timeout_ms: 250
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.620365Z DEBUG ploke_rag::core: BM25 not ready/empty; falling back to dense search, bm25_results: 0, bm25_status: Some(Uninitialized), attempts: 3, fallback_used: true
+    at crates/ploke-rag/src/core/mod.rs:312 on ThreadId(2)
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.621308Z  INFO ploke_embed::local: Processing outputs with self.model.forward
+    at crates/ingest/ploke-embed/src/local/mod.rs:411 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.859469Z DEBUG ploke_embed::local: shapes: outputs=[1, 36, 384], weights=[1, 36, 384], sum_embeddings=[1, 1, 384]
+    at crates/ingest/ploke-embed/src/local/mod.rs:428 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.860596Z DEBUG ploke_embed::local: shapes: outputs=[1, 36, 384], weights=[1, 36, 384], norms=[1, 1, 1]
+    at crates/ingest/ploke-embed/src/local/mod.rs:444 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:11.860629Z DEBUG ploke_embed::local: close, time.busy: 240ms, time.idle: 3.81µs
+    at crates/ingest/ploke-embed/src/local/mod.rs:380 on ThreadId(2)
+    in ploke_embed::local::process_batch
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.050684Z DEBUG ploke_rag::core: Dense search collected 82 results across 10 node types
+    at crates/ploke-rag/src/core/mod.rs:537 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.050740Z DEBUG ploke_rag::core: Dense search returning 15 results
+    at crates/ploke-rag/src/core/mod.rs:547 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.050762Z  INFO ploke_rag::core: close, time.busy: 430ms, time.idle: 7.38µs
+    at crates/ploke-rag/src/core/mod.rs:486 on ThreadId(2)
+    in ploke_rag::core::search with query_len: 134, top_k: 15
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.050783Z DEBUG ploke_rag::core: Dense fallback complete, dense_results: 15
+    at crates/ploke-rag/src/core/mod.rs:321 on ThreadId(2)
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.050793Z  INFO ploke_rag::core: close, time.busy: 431ms, time.idle: 577ms
+    at crates/ploke-rag/src/core/mod.rs:231 on ThreadId(2)
+    in ploke_rag::core::search_bm25 with query_len: 134, top_k: 15, strict: false, timeout_ms: 250
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086688Z  INFO ploke_rag::context: close, time.busy: 29.9ms, time.idle: 5.95ms
+    at crates/ploke-rag/src/context/mod.rs:153 on ThreadId(2)
+    in ploke_rag::context::assemble_context with query_len: 134, hits: 15
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086746Z  INFO ploke_rag::core: close, time.busy: 886ms, time.idle: 158ms
+    at crates/ploke-rag/src/core/mod.rs:553 on ThreadId(2)
+    in ploke_rag::core::get_context with query_len: 134, top_k: 15
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086777Z  INFO ploke_tui::rag::context: constructing context (RAG) with 15 parts and 2 messages
+    at crates/ploke-tui/src/rag/context.rs:118 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086793Z DEBUG ploke_tui::rag::context: m.content.is_empty() = false
+    at crates/ploke-tui/src/rag/context.rs:137 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086813Z DEBUG ploke_tui::event_bus: event_priority: Background
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086828Z  INFO ploke_tui::event_bus: close, time.busy: 14.9µs, time.idle: 2.19µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086839Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 1.04s, time.idle: 3.91µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: EmbedMessage
+
+  2025-09-02T10:07:12.086863Z  INFO ploke_tui::llm: Received context for parent_id: e638b789-89c9-404a-92a9-e1ab849ca3f5
+    at crates/ploke-tui/src/llm/mod.rs:315 on ThreadId(2)
+
+  2025-09-02T10:07:12.086881Z  INFO ploke_tui::llm: pending_requests found match for req_parent: e638b789-89c9-404a-92a9-e1ab849ca3f5
+    at crates/ploke-tui/src/llm/mod.rs:338 on ThreadId(2)
+
+  2025-09-02T10:07:12.086886Z  INFO ploke_tui::llm: ready_contexts found match for req_parent: e638b789-89c9-404a-92a9-e1ab849ca3f5
+    at crates/ploke-tui/src/llm/mod.rs:343 on ThreadId(2)
+
+  2025-09-02T10:07:12.086902Z  INFO ploke_tui::llm: removing id from pending_requests
+    at crates/ploke-tui/src/llm/mod.rs:361 on ThreadId(2)
+
+  2025-09-02T10:07:12.086946Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::dispatcher::processing with cmd: CreateAssistantMessage
+
+  2025-09-02T10:07:12.086953Z  INFO ploke_tui::event_bus: close, time.busy: 6.99µs, time.idle: 1.39µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::dispatcher::processing with cmd: CreateAssistantMessage
+
+  2025-09-02T10:07:12.086959Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 26.5µs, time.idle: 1.28µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: CreateAssistantMessage
+
+  2025-09-02T10:07:12.086981Z  INFO ploke_tui::llm: prepare_and_run_llm_call start, model: moonshotai/kimi-k2, has_context: true
+    at crates/ploke-tui/src/llm/mod.rs:654 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087009Z DEBUG ploke_tui::llm: llm_request_plan, model: moonshotai/kimi-k2, base_url: https://openrouter.ai/api/v1, provider_type: OpenRouter, provider_slug: None, supports_tools_cache: Some(true), require_tool_support: true
+    at crates/ploke-tui/src/llm/mod.rs:730 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087053Z DEBUG ploke_tui::llm: llm_request_tools:
+	use_tools: true
+	tool_names: request_code_context,apply_code_edit,get_file_metadata
+    at crates/ploke-tui/src/llm/mod.rs:772 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087094Z DEBUG ploke_tui::llm::session: Starting RequestSession::run, self.params: LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) }
+    at crates/ploke-tui/src/llm/session.rs:45 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087114Z DEBUG ploke_tui::llm::session: build_comp_req, model: moonshotai/kimi-k2, use_tools: true, messages: 18
+    at crates/ploke-tui/src/llm/session.rs:338 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087124Z DEBUG ploke_tui::llm::session: dispatch_request, model: moonshotai/kimi-k2, base_url: https://openrouter.ai/api/v1, full_url: https://openrouter.ai/api/v1/chat/completions, provider_slug: None, use_tools: true, tools: request_code_context,apply_code_edit,get_file_metadata
+    at crates/ploke-tui/src/llm/session.rs:85 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087346Z DEBUG reqwest::connect: starting new connection: https://openrouter.ai/
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.12.15/src/connect.rs:625 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.087810Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.125798Z DEBUG hyper_util::client::legacy::connect::dns: close, time.busy: 38.3ms, time.idle: 73.8µs
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/dns.rs:121 on ThreadId(30)
+    in hyper_util::client::legacy::connect::dns::resolve with host: openrouter.ai
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.125969Z DEBUG hyper_util::client::legacy::connect::http: connecting to 104.18.3.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:657 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:12.145847Z DEBUG hyper_util::client::legacy::connect::http: connected to 104.18.3.115:443
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/connect/http.rs:660 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:13.383694Z DEBUG ploke_tui::llm::session: raw body: 
+         
+
+         
+{"id":"gen-1756807632-79ztpu2oxW21UOJ256hn","provider":"Nebius","model":"moonshotai/kimi-k2","object":"chat.completion","created":1756807632,"choices":[{"logprobs":null,"finish_reason":"tool_calls","native_finish_reason":"tool_calls","index":0,"message":{"role":"assistant","content":"","refusal":null,"reasoning":null,"tool_calls":[{"index":0,"id":"functions.get_file_metadata:0","function":{"name":"get_file_metadata","arguments":"{\"file_path\": \"Cargo.toml\"}"},"type":"function"}]}}],"usage":{"prompt_tokens":1699,"completion_tokens":20,"total_tokens":1719}}
+    at crates/ploke-tui/src/llm/session.rs:134 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:13.383877Z  INFO ploke_tui::llm::session: close, time.busy: 1.30s, time.idle: 3.65µs
+    at crates/ploke-tui/src/llm/session.rs:43 on ThreadId(2)
+    in ploke_tui::llm::session::request_session_run with model: moonshotai/kimi-k2
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:13.383985Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("https", openrouter.ai)
+    at /home/brasides/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.10/src/client/legacy/pool.rs:396 on ThreadId(2)
+
+  2025-09-02T10:07:13.384122Z  INFO ploke_tui::llm: close, time.busy: 2.93ms, time.idle: 1.29s
+    at crates/ploke-tui/src/llm/mod.rs:641 on ThreadId(2)
+    in ploke_tui::llm::prepare_and_run_llm_call with provider_params: Some(LLMParameters { model: "moonshotai/kimi-k2", temperature: None, top_p: None, max_tokens: None, presence_penalty: None, frequency_penalty: None, stop_sequences: [], parallel_tool_calls: true, response_format: Text, safety_settings: SafetySettings { hate: 0, harassment: 0, self_harm: 0, sexual_content: 0 }, system_prompt: None, tool_max_retries: Some(2), tool_token_limit: Some(2048), history_char_budget: Some(12000), tool_timeout_secs: Some(30) })
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:13.384165Z  INFO ploke_tui::llm: close, time.busy: 3.04ms, time.idle: 1.29s
+    at crates/ploke-tui/src/llm/mod.rs:503 on ThreadId(2)
+    in ploke_tui::llm::process_llm_request with model: moonshotai/kimi-k2
+
+  2025-09-02T10:07:13.384258Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 45690167-9aa5-43f2-8283-5f63a6785961, content: "LLM request failed: Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}}", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384278Z  INFO ploke_tui::event_bus: close, time.busy: 20.3µs, time.idle: 1.81µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 45690167-9aa5-43f2-8283-5f63a6785961, content: "LLM request failed: Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}}", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384290Z  INFO ploke_tui::app_state::handlers::chat: close, time.busy: 57.6µs, time.idle: 3.40µs
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:146 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 45690167-9aa5-43f2-8283-5f63a6785961, content: "LLM request failed: Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}}", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384297Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 84.3µs, time.idle: 2.74µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384317Z  INFO ploke_tui::app_state::handlers::chat: Updating message ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6 status=Some(Completed) content_preview=Request failed: Failed to deserialize response data: UUID parsing failed: invalid character: expecte...
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:24 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::update_message with id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, new_status: Some(Completed)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384326Z  INFO ploke_tui::app_state::handlers::chat: Message updated successfully; dispatching MessageUpdatedEvent, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, kind: Assistant, old_status: Generating, new_status: Completed
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:42 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::update_message with id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, new_status: Some(Completed)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384334Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::update_message with id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, new_status: Some(Completed)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384341Z  INFO ploke_tui::event_bus: close, time.busy: 6.46µs, time.idle: 1.51µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::update_message with id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, new_status: Some(Completed)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384350Z  INFO ploke_tui::app_state::handlers::chat: close, time.busy: 35.0µs, time.idle: 3.19µs
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:17 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::update_message with id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, msg_id: ffd9fc25-d2a1-4eba-ad21-8492ab7a39e6, new_status: Some(Completed)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384358Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 52.0µs, time.idle: 1.63µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: UpdateMessage
+
+  2025-09-02T10:07:13.384379Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 3faf7dd5-f018-4ed7-9a78-d998f7ea1e03, content: "Request summary: error (Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}})", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384386Z  INFO ploke_tui::event_bus: close, time.busy: 6.87µs, time.idle: 1.52µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 3faf7dd5-f018-4ed7-9a78-d998f7ea1e03, content: "Request summary: error (Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}})", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384395Z  INFO ploke_tui::app_state::handlers::chat: close, time.busy: 20.7µs, time.idle: 2.24µs
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:146 on ThreadId(2)
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 3faf7dd5-f018-4ed7-9a78-d998f7ea1e03, content: "Request summary: error (Failed to deserialize response data: UUID parsing failed: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `g` at 1 at line 5 column 43 — body was: \n         \n\n         \n{\"id\":\"gen-1756807632-79ztpu2oxW21UOJ256hn\",\"provider\":\"Nebius\",\"model\":\"moonshotai/kimi-k2\",\"object\":\"chat.completion\",\"created\":1756807632,\"choices\":[{\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"refusal\":null,\"reasoning\":null,\"tool_calls\":[{\"index\":0,\"id\":\"functions.get_file_metadata:0\",\"function\":{\"name\":\"get_file_metadata\",\"arguments\":\"{\\\"file_path\\\": \\\"Cargo.toml\\\"}\"},\"type\":\"function\"}]}}],\"usage\":{\"prompt_tokens\":1699,\"completion_tokens\":20,\"total_tokens\":1719}})", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.384401Z DEBUG ploke_tui::app_state::dispatcher: close, time.busy: 35.9µs, time.idle: 1.53µs
+    at crates/ploke-tui/src/app_state/dispatcher.rs:34 on ThreadId(2)
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  2025-09-02T10:07:13.385833Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+
+  2025-09-02T10:07:13.387500Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+
+  2025-09-02T10:07:13.389072Z DEBUG ploke_tui::app: display_model: kimi-k2
+    at /home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/mod.rs:509 on ThreadId(2)
+
+  2025-09-02T10:07:31.029380Z DEBUG ploke_tui::event_bus: event_priority: Realtime
+    at crates/ploke-tui/src/event_bus/mod.rs:198 on ThreadId(2)
+    in ploke_tui::event_bus::send
+
+  2025-09-02T10:07:31.029493Z  INFO ploke_tui::event_bus: close, time.busy: 120µs, time.idle: 18.9µs
+    at crates/ploke-tui/src/event_bus/mod.rs:195 on ThreadId(2)
+    in ploke_tui::event_bus::send
+

@@ -116,7 +116,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Command::ModelSearch(kw)
             }
         }
-        s if s.starts_with("model providers ") => {
+        s if s.starts_with("model providers") => {
             let id = s.trim_start_matches("model providers ").trim().to_string();
             if id.is_empty() {
                 Command::ModelProviders(app.active_model_id.clone())

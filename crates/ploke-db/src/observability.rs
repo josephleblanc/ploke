@@ -2,9 +2,10 @@
 // - This is difficult without having a clear tool calling implementation, wait on further
 // implementation of observability until we have working tools.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
     Database, DbError,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Deserialize)]
 pub struct Validity {
     pub at: i64,        // epoch millis
     pub is_valid: bool, // asserted or retracted
@@ -32,12 +33,11 @@ pub struct ConversationTurn {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct ToolCallReq {
     pub request_id: uuid::Uuid,
-    pub call_id: String,
+    pub call_id: ArcStr,
     pub parent_id: uuid::Uuid,
-    pub vendor: String,
     pub model: String,
     pub provider_slug: Option<String>,
-    pub tool_name: String,
+    pub tool_name: ArcStr,
     pub args_sha256: String,
     pub arguments_json: Option<String>,
     pub started_at: Validity,
@@ -74,7 +74,7 @@ impl ToolStatus {
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct ToolCallDone {
     pub request_id: uuid::Uuid,
-    pub call_id: String,
+    pub call_id: ArcStr,
     pub ended_at: Validity,
     pub latency_ms: i64,
     pub outcome_json: Option<String>, // on completed
@@ -160,7 +160,7 @@ impl Database {
     at: Validity
     =>
     parent_id: Uuid,
-    vendor: String,
+ 
     model: String?,
     provider_slug: String?,
     tool_name: String,
@@ -212,6 +212,7 @@ impl Database {
 }
 
 impl ObservabilityStore for Database {
+    // TODO: Needs to be tested.
     fn upsert_conversation_turn(&self, turn: ConversationTurn) -> Result<(), DbError> {
         self.ensure_observability_schema()?;
 
@@ -249,9 +250,16 @@ impl ObservabilityStore for Database {
     :put conversation_turn { id, at => parent_id, message_id, kind, content, thread_id }
 }
 "#;
-        self.run_script(script, params, ScriptMutability::Mutable)
-            .map(|_| ())
-            .map_err(|e| DbError::Cozo(e.to_string()))
+        match self.run_script(script, params, ScriptMutability::Mutable) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "record_tool_call_requested script error: {}\nscript:\n{}",
+                    e, script
+                );
+                Err(DbError::Cozo(e.to_string()))
+            }
+        }
     }
 
     fn list_conversation_since(
@@ -339,7 +347,6 @@ impl ObservabilityStore for Database {
             if existing_req.request_id == req.request_id
                 && existing_req.call_id == req.call_id
                 && existing_req.parent_id == req.parent_id
-                && existing_req.vendor == req.vendor
                 && existing_req.tool_name == req.tool_name
                 && existing_req.args_sha256 == req.args_sha256
                 && existing_req.arguments_json == req.arguments_json
@@ -363,12 +370,14 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(req.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(req.call_id.into()));
+        params.insert(
+            "call_id".into(),
+            DataValue::Str(req.call_id.as_ref().into()),
+        );
         params.insert(
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req.vendor.into()));
         params.insert("model".into(), DataValue::Str(req.model.into()));
         params.insert(
             "provider_slug".into(),
@@ -377,19 +386,18 @@ impl ObservabilityStore for Database {
                 .map(|s| DataValue::Str(s.into()))
                 .unwrap_or(DataValue::Null),
         );
-        params.insert("tool_name".into(), DataValue::Str(req.tool_name.into()));
+        params.insert("tool_name".into(), DataValue::Str(req.tool_name.as_ref().into()));
         params.insert("args_sha256".into(), DataValue::Str(req.args_sha256.into()));
         params.insert("arguments_json".into(), arguments_json_value);
 
         // Upsert requested state
         let script = r#"
 {
-    ?[request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
+    ?[request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
         request_id = $request_id,
         call_id = $call_id,
         at = 'ASSERT',
         parent_id = $parent_id,
-        vendor = $vendor,
         model = $model,
         provider_slug = $provider_slug,
         tool_name = $tool_name,
@@ -401,13 +409,20 @@ impl ObservabilityStore for Database {
         outcome_json = null,
         error_kind = null,
         error_msg = null
-    :put tool_call { request_id, call_id, at => parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
+    :put tool_call { request_id, call_id, at => parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
 }
 "#;
 
-        self.run_script(script, params, ScriptMutability::Mutable)
-            .map(|_| ())
-            .map_err(|e| DbError::Cozo(e.to_string()))
+        match self.run_script(script, params, ScriptMutability::Mutable) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "record_tool_call_done script error: {}\nscript:\n{}",
+                    e, script
+                );
+                Err(DbError::Cozo(e.to_string()))
+            }
+        }
     }
 
     fn record_tool_call_done(&self, done: ToolCallDone) -> Result<(), DbError> {
@@ -448,7 +463,10 @@ impl ObservabilityStore for Database {
             "request_id".into(),
             DataValue::Uuid(UuidWrapper(done.request_id)),
         );
-        params.insert("call_id".into(), DataValue::Str(done.call_id.into()));
+        params.insert(
+            "call_id".into(),
+            DataValue::Str(done.call_id.as_ref().into()),
+        );
         params.insert("ended_at_ms".into(), DataValue::from(done.ended_at.at));
         params.insert("latency_ms".into(), DataValue::from(done.latency_ms));
         params.insert("status".into(), DataValue::Str(done.status.as_str().into()));
@@ -458,7 +476,6 @@ impl ObservabilityStore for Database {
             "parent_id".into(),
             DataValue::Uuid(UuidWrapper(req_meta.parent_id)),
         );
-        params.insert("vendor".into(), DataValue::Str(req_meta.vendor.into()));
         params.insert("model".into(), DataValue::Str(req_meta.model.into()));
         params.insert(
             "provider_slug".into(),
@@ -470,7 +487,7 @@ impl ObservabilityStore for Database {
         );
         params.insert(
             "tool_name".into(),
-            DataValue::Str(req_meta.tool_name.into()),
+            DataValue::Str(req_meta.tool_name.as_ref().into()),
         );
         params.insert(
             "args_sha256".into(),
@@ -514,12 +531,11 @@ impl ObservabilityStore for Database {
 
         let script = r#"
 {
-    ?[request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
-        at = 'ASSERT',
+    ?[request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg] :=
         request_id = $request_id,
         call_id = $call_id,
+        at = 'ASSERT',
         parent_id = $parent_id,
-        vendor = $vendor,
         model = $model,
         provider_slug = $provider_slug,
         tool_name = $tool_name,
@@ -531,7 +547,7 @@ impl ObservabilityStore for Database {
         outcome_json = $outcome_json,
         error_kind = $error_kind,
         error_msg = $error_msg
-    :put tool_call { request_id, call_id, at => parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
+    :put tool_call { request_id, call_id, at => parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg }
 }
 "#;
 
@@ -556,11 +572,8 @@ impl ObservabilityStore for Database {
 
         // Use dump_json to return JSON strings to the client
         let script = r#"
-?[request_id, call_id, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
-    *tool_call{
-        request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg
-        @ 'NOW'
-    },
+?[request_id, call_id, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+    *tool_call{ request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg @ 'NOW' },
     request_id = $request_id,
     call_id = $call_id,
     arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
@@ -587,14 +600,14 @@ impl ObservabilityStore for Database {
 
         let req = ToolCallReq {
             request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-            call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
+            call_id: ArcStr::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
             parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
-            vendor: to_string(&row[*hid.get("vendor").unwrap()])?,
+
             model: to_string(&row[*hid.get("model").unwrap()])?,
             provider_slug: row[*hid.get("provider_slug").unwrap()]
                 .get_str()
                 .map(|s| s.to_string()),
-            tool_name: to_string(&row[*hid.get("tool_name").unwrap()])?,
+            tool_name: ArcStr::from(row[*hid.get("tool_name").unwrap()].get_str().expect("str")),
             args_sha256: to_string(&row[*hid.get("args_sha256").unwrap()])?,
             arguments_json: row[*hid.get("arguments_json_s").unwrap()]
                 .get_str()
@@ -655,11 +668,8 @@ impl ObservabilityStore for Database {
         params.insert("limit".into(), DataValue::from(limit as i64));
 
         let script = r#"
-?[request_id, call_id, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
-    *tool_call{
-        request_id, call_id, at, parent_id, vendor, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg
-        @ 'NOW'
-    },
+?[request_id, call_id, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json_s, status, ended_at_ms, latency_ms, outcome_json_s, error_kind, error_msg, at_ms, at_valid] :=
+    *tool_call{ request_id, call_id, at, parent_id, model, provider_slug, tool_name, args_sha256, arguments_json, status, ended_at_ms, latency_ms, outcome_json, error_kind, error_msg @ 'NOW' },
     parent_id = $parent_id,
     arguments_json_s = if(is_null(arguments_json), null, dump_json(arguments_json)),
     outcome_json_s = if(is_null(outcome_json), null, dump_json(outcome_json)),
@@ -685,14 +695,14 @@ impl ObservabilityStore for Database {
         for row in rows.rows {
             let req = ToolCallReq {
                 request_id: to_uuid(&row[*hid.get("request_id").unwrap()])?,
-                call_id: to_string(&row[*hid.get("call_id").unwrap()])?,
+                call_id: ArcStr::from(row[*hid.get("call_id").unwrap()].get_str().expect("str")),
                 parent_id: to_uuid(&row[*hid.get("parent_id").unwrap()])?,
-                vendor: to_string(&row[*hid.get("vendor").unwrap()])?,
+
                 model: to_string(&row[*hid.get("model").unwrap()])?,
                 provider_slug: row[*hid.get("provider_slug").unwrap()]
                     .get_str()
                     .map(|s| s.to_string()),
-                tool_name: to_string(&row[*hid.get("tool_name").unwrap()])?,
+                tool_name: ArcStr::from(row[*hid.get("tool_name").unwrap()].get_str().expect("str")),
                 args_sha256: to_string(&row[*hid.get("args_sha256").unwrap()])?,
                 arguments_json: row[*hid.get("arguments_json_s").unwrap()]
                     .get_str()
@@ -939,10 +949,8 @@ impl ObservabilityStore for Database {
             });
 
         let status = to_string(&row[*hid.get("status").unwrap()])?;
-        let decided_at_ms: Option<i64> = row[*hid.get("decided_at_ms").unwrap()]
-            .get_int();
-        let applied_at_ms: Option<i64> = row[*hid.get("applied_at_ms").unwrap()]
-            .get_int();
+        let decided_at_ms: Option<i64> = row[*hid.get("decided_at_ms").unwrap()].get_int();
+        let applied_at_ms: Option<i64> = row[*hid.get("applied_at_ms").unwrap()].get_int();
         let commit_hash: Option<String> = row[*hid.get("commit_hash").unwrap()]
             .get_str()
             .map(|s| s.to_string());

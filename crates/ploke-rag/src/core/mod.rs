@@ -16,7 +16,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {
     Dense,
     Sparse {
@@ -26,6 +26,14 @@ pub enum RetrievalStrategy {
         rrf: RrfConfig,
         mmr: Option<MmrConfig>,
     },
+}
+impl Default for RetrievalStrategy {
+    fn default() -> Self {
+        Self::Hybrid {
+            rrf: RrfConfig::default(),
+            mmr: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -548,7 +556,7 @@ impl RagService {
         query: &str,
         top_k: usize,
         budget: &TokenBudget,
-        strategy: RetrievalStrategy,
+        strategy: &RetrievalStrategy,
     ) -> Result<AssembledContext, RagError> {
         // 1) Retrieve hits according to strategy
         let hits: Vec<(Uuid, f32)> = match strategy {
@@ -571,13 +579,13 @@ impl RagService {
                 let bm25_list = bm25_res?;
                 let dense_list = dense_res
                     .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
-                let mut fused = rrf_fuse(&bm25_list, &dense_list, &rrf);
+                let mut fused = rrf_fuse(&bm25_list, &dense_list, rrf);
                 fused.truncate(top_k);
                 if let Some(mcfg) = mmr {
                     // Optional diversity re-ranking based on embeddings; default to no-embeddings map.
                     let embed_map: HashMap<Uuid, Vec<f32>> = HashMap::new();
 
-                    mmr_select(&fused, top_k, &embed_map, &mcfg)
+                    mmr_select(&fused, top_k, &embed_map, mcfg)
                 } else {
                     fused
                 }

@@ -1,0 +1,159 @@
+{
+  "endpoints": 12,
+  "fields": {
+    "context_length": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "max_completion_tokens": {
+      "presence": {
+        "missing": 0,
+        "null": 4,
+        "present": 12
+      }
+    },
+    "max_prompt_tokens": {
+      "presence": {
+        "missing": 0,
+        "null": 12,
+        "present": 12
+      }
+    },
+    "model_name": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "name": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.completion": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.discount": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.image": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.image_output": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.input_cache_read": {
+      "presence": {
+        "missing": 10,
+        "null": 0,
+        "present": 2
+      }
+    },
+    "pricing.internal_reasoning": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.prompt": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.request": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "pricing.web_search": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "provider_name": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "quantization": {
+      "presence": {
+        "missing": 0,
+        "null": 6,
+        "present": 12
+      }
+    },
+    "status": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "supported_parameters": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "supports_implicit_caching": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "tag": {
+      "presence": {
+        "missing": 0,
+        "null": 0,
+        "present": 12
+      }
+    },
+    "uptime_last_30m": {
+      "presence": {
+        "missing": 0,
+        "null": 2,
+        "present": 12
+      }
+    }
+  }
+}

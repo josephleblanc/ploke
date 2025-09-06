@@ -36,6 +36,7 @@ bm25 = "2.3.1"
 [dev-dependencies]
 ploke-test-utils = { path = "../test-utils" }
 tokio-test = "0.4.4"
+criterion = "0.7"
 
 [features]
 defaults = []

@@ -20,12 +20,14 @@ similar = "2"
 # concurrency
 tokio = { workspace = true } # "full" for simplicity, you can narrow down later
 tokio-utils = "0.1"
+tokio-stream = "0.1"
 flume = { workspace = true }
 num_cpus = "1.0"
 nonzero_ext = "0.3"
 
 # network
 reqwest = { version = "0.12", features = ["json"] }
+url = { version = "2.5.7", features = ["serde"] }
 governor = "0.10"
 
 # embeddings
@@ -34,12 +36,13 @@ ploke-io = { path = "../ploke-io", features = ["watcher"] }
 ploke-db = { path = "../ploke-db" }
 ploke-rag = { path = "../ploke-rag" }
 
-# common
-ploke-core = { path = "../ploke-core" }
+# seraialize/deserialize
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# common
+ploke-core = { path = "../ploke-core" }
 sha2 = "0.10"
-tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+# tokio-tungstenite = { version = "0.27", features = ["native-tls"] }
 cozo = { workspace = true }
 
 # config
@@ -78,20 +81,24 @@ ploke-test-utils = { path = "../test-utils" }
 
 [dev-dependencies]
 tempfile = "3.4"
-wiremock = "0.5.14"
 tokio-test = "0.4"
-test-context = "0.1"
+test-context = "0.4"
 fake = "4.3.0"
 cozo = { workspace = true }
 rand = "0.9"
-insta = "1.39.0"
-criterion = "0.5"
+insta = { version = "1.39.0", features = ["redactions"] }
+regex = "1"
+criterion = "0.7"
 quote = { workspace = true }
 syn = { workspace = true }
 
 [features]
-default = ["custom_list"]
+default = ["test_harness", "live_api_tests"]
 custom_list = []
+live_api_tests = []
+test_harness = []
+json_visitor = []
+xxx = []
 
 [[bench]]
 name = "ui_measure"

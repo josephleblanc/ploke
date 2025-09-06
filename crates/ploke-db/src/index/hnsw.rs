@@ -28,63 +28,6 @@ pub fn hnsw_all_types(
         results.extend(ty_ret);
     }
     Ok(results)
-    // let mut script = String::from(
-    //     r#"
-    //         ?[id, name, distance] := "#,
-    // );
-    //
-    // let mut rel_params = std::collections::BTreeMap::new();
-    // for (i, ty) in NodeType::primary_nodes().iter().enumerate() {
-    //     let rel = ty.relation_str();
-    //     let k_for_ty = format!("{}{}", rel, k);
-    //     let ef_for_ty = format!("{}{}", rel, ef);
-    //     rel_params.insert(k_for_ty.clone(), DataValue::from(k as i64));
-    //     rel_params.insert(ef_for_ty.clone(), DataValue::from(ef as i64));
-    //     rel_params.insert(rel.to_string(), DataValue::from(rel));
-    //
-    //     let rel_rhs = [
-    //         rel,
-    //         r#"{
-    //                 id,
-    //                 name,
-    //                 embedding: v
-    //             },
-    //             ~"#,
-    //         rel,
-    //         HNSW_SUFFIX,
-    //         r#"{id, name|
-    //                 query: v,
-    //                 k: $"#,
-    //         k_for_ty.as_str(),
-    //         r#",
-    //                 ef: $ef,
-    //                 bind_distance: distance
-    //             }
-    //         "#,
-    //     ]
-    //     .into_iter();
-    //     script.extend(rel_rhs);
-    //     if !i > NodeType::primary_nodes().len() {
-    //         script.push_str(" or ");
-    //     }
-    // }
-    //
-    // let result = run_script_warn(db, &script, rel_params, ScriptMutability::Immutable)?;
-    // let mut results = Vec::new();
-    // use cozo::Vector;
-    // for row in result.rows.into_iter() {
-    //     tracing::trace!("{:?}", row);
-    //     let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-    //         tracing::trace!("{:?}", id);
-    //         id
-    //     } else {
-    //         uuid::Uuid::max()
-    //     };
-    //     let content = row[1].get_str().unwrap().to_string();
-    //     results.push((id, content, row[2].to_owned()));
-    // }
-    //
-    // Ok(results)
 }
 
 pub fn run_script_warn(
@@ -567,17 +510,25 @@ mod tests {
 
     use lazy_static::lazy_static;
     use ploke_error::Error;
+    use tokio_test::assert_err;
 
     use crate::Database;
 
     #[tokio::test]
-    async fn test_hnsw_init() -> Result<(), Error> {
-        let db_arc = TEST_DB_NODES
-            .clone()
-            .expect("problem loading fixture_nodes from cold start");
-        let db = db_arc
-            .lock()
-            .expect("problem getting lock on test db for fixture_nodes");
+    async fn test_hnsw_init_from_backup() -> Result<(), Error> {
+
+        let db = Database::init_with_schema()?;
+
+        let mut target_file = workspace_root();
+        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        eprintln!("Loading backup db from file at:\n{}", target_file.display());
+        let prior_rels_vec = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+
+        super::create_index_primary(&db)?;
+
         let k = 20;
         let ef = 40;
         hnsw_all_types(&db, k, ef)?;
@@ -585,6 +536,33 @@ mod tests {
         println!("unembedded: {unembedded}");
         let embedded = db.count_pending_embeddings()?;
         println!("embedded: {embedded}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_init_from_backup_error() -> Result<(), Error> {
+
+        let db = Database::init_with_schema()?;
+
+        let mut target_file = workspace_root();
+        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        eprintln!("Loading backup db from file at:\n{}", target_file.display());
+        let prior_rels_vec = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+
+        // Note: purposefully commented out to cause failure.
+        // super::create_index_primary(&db)?;
+
+        let k = 20;
+        let ef = 40;
+        let e = hnsw_all_types(&db, k, ef);
+        assert_err!(e.clone());
+        let err_msg = String::from( "Database error: Index hnsw_idx not found on relation function" );
+        let expect_err = ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(err_msg));
+        let actual_err = e.expect_err("expect error");
+        assert!(matches!(actual_err,ploke_error::Error::Warning(_) ));
         Ok(())
     }
 }

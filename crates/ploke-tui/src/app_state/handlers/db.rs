@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use crate::app_state::events::SystemEvent;
 use crate::{AppEvent, EventBus, app_state::database, error::ErrorExt as _};
 
 use crate::AppState;
@@ -65,14 +66,14 @@ pub async fn write_query(state: &Arc<AppState>, query_content: String) {
 pub async fn read_query(event_bus: &Arc<EventBus>, query_name: String, file_name: String) {
     let _ = event_bus
         .realtime_tx
-        .send(AppEvent::System(crate::system::SystemEvent::ReadQuery {
+        .send(AppEvent::System(SystemEvent::ReadQuery {
             query_name: query_name.clone(),
             file_name: file_name.clone(),
         }))
         .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
     let _ = event_bus
         .background_tx
-        .send(AppEvent::System(crate::system::SystemEvent::ReadQuery {
+        .send(AppEvent::System(SystemEvent::ReadQuery {
             query_name,
             file_name,
         }))

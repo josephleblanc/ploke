@@ -1,12 +1,12 @@
 use crate::handle::IoManagerHandle;
-use ploke_core::{TrackingHash, WriteResult, WriteSnippetData, PROJECT_NAMESPACE_UUID};
+use ploke_core::{TrackingHash, WriteSnippetData, PROJECT_NAMESPACE_UUID};
 use quote::ToTokens;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 use tempfile::tempdir;
 use uuid::Uuid;
 
-fn compute_hash(content: &str, file_path: &PathBuf, namespace: Uuid) -> TrackingHash {
+fn compute_hash(content: &str, file_path: &Path, namespace: Uuid) -> TrackingHash {
     let file = syn::parse_file(content).expect("Failed to parse content");
     let tokens = file.into_token_stream();
     TrackingHash::generate(namespace, file_path, &tokens)

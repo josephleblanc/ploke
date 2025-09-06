@@ -1,0 +1,78 @@
+Checking id=8278f91d-a125-5006-a2b5-8f28b7585441 name=MutRawPtr
+  canon=crate::type_alias::MutRawPtr
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/type_alias.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 0 rows
+  relation=type_alias returned 1 row(s); contains id match = true
+Checking id=5d7083f9-0964-506b-af27-1cc1657448a2 name=LifetimeTrait
+  canon=crate::traits::LifetimeTrait
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/traits.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 1 row(s); contains id match = true
+Checking id=f3ed7659-decd-506f-9267-16c8b1753309 name=UnionWithFieldAttr
+  canon=crate::unions::UnionWithFieldAttr
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/unions.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 0 rows
+  relation=type_alias returned 0 rows
+  relation=union returned 1 row(s); contains id match = true
+Checking id=c76a4b26-5770-5075-a084-b6eca2cf8073 name=INNER_MUT_STATIC
+  canon=crate::const_static::inner_mod::INNER_MUT_STATIC
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/const_static.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 1 row(s); contains id match = true
+Checking id=585be382-b9bd-5086-9f55-9ee377be823b name=const_static
+  canon=crate::const_static
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/lib.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 1 row(s); contains id match = true
+Checking id=eaaa3c77-6b46-5094-9ce5-949a97f4dde5 name=CrateUnion
+  canon=crate::unions::CrateUnion
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/unions.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 0 rows
+  relation=type_alias returned 0 rows
+  relation=union returned 1 row(s); contains id match = true
+Checking id=9c4dd903-8363-50a5-9e08-eb9175ac905c name=SampleEnum
+  canon=crate::enums::SampleEnum
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 1 row(s); contains id match = true
+Checking id=495a287e-2545-50ab-87dd-0c1fb0925650 name=JustLifetimeGeneric
+  canon=crate::enums::JustLifetimeGeneric
+  file=/home/brasides/code/openai-codex/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 1 row(s); contains id match = true

@@ -25,7 +25,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add tests for TrackingHash
     * [ ] Remove Remove `?` from the database transforms for `TrackingHash`
  * [ ] Consider adding an ID to `SyntacticRelation`s
- * [x] Implement a `Database` type to wrap the cozo database, probably in `ploke-core`
+ * [x] Implement a `Database` type to wrap the cozo database
   - NOTE: This is in `ploke-db`
  * [ ] `CrateContext` Only added some of the fields, could possibly also add better file processing or a list of the Uuids of the modules/primary node types here.
 
@@ -40,17 +40,31 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Need to add more feedback
     * [ ] Refactor `FileManager` or `AppEvent` to handle response with update
           on file save state completion.
+* [ ] Introduce a reusable trait for scrollable overlays/panes (dynamic placement left/right/top/bottom, adjustable coverage like splits, with consistent scroll state management); adopt in Model Browser and new Context/Approvals overlays.
+* [ ] Add input autocomplete for commands and keywords; show suggestions inline.
+* [ ] In Slash/Command mode, detect known commands pre-submit and change input box color (visual affordance).
+* [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
+
+## OpenRouter Types
+* [ ] Consolidate OpenRouter types into a single module with strong typing (serde derives), remove ad‑hoc conversions; add micro validation layer.
 
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
 
 ## Tests
+- [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`
 
-### Test Database
-* [ ] Tests for loading database from config file
-  * [ ] Graceful failures
+## async
+- [ ] Look for opportunities to let things run in the background without `.await`, and then `join` them together. 
 
+### Tests
+* Database
+  * [ ] Tests for loading database from config file
+    * [ ] Graceful failures
+* `syn_parser`
+  * [ ] Add test for multiple imports renamed as `_` in the same file, as followup to squashed bug
+    - See bug report in `ploke/docs/bugs/squashed.md` under "Duplicate Relation (Sep 1, 2025)"
 ## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
   Missing Rust types:
@@ -61,3 +75,34 @@ This is a list of known fixes that I will want to make but are not terribly urge
   5. **Type parameters** (generic placeholders like `T`)
   6. **Const generics** (e.g., `[T; N]` where N is a const generic)
   7. **Placeholder types** (like `_` in more contexts)
+
+## Deps
+Audit
+```
+cargo tree | less or cargo tree -e features (to see which features pull what).
+
+cargo geiger to check unsafe usage in dependencies.
+
+cargo udeps for unused dependencies.
+```
+
+Turn off default features aggressively.
+```
+Example: reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }.
+```
+
+This alone can cut dozens of transitive crates.
+
+Replace big crates with small targeted ones.
+
+Instead of reqwest, sometimes plain hyper + serde_json is enough.
+
+Instead of pulling anyhow + thiserror, you might just use one.
+
+For OpenRouter, you may not need a full OpenAPI-generated client, just reqwest + a couple of structs.
+
+Split workspaces.
+If Ploke is a workspace, you can isolate heavy stuff (e.g. graph visualization with petgraph, eframe, d3) in its own crate, so your core logic compiles faster.
+
+Watch for codegen crates.
+Anything pulling prost, tonic, or bindgen will balloon compile time and disk use. Sometimes you can generate once and commit the result.

@@ -1,0 +1,53 @@
+{
+  "max_tokens": 4096,
+  "messages": [
+    {
+      "content": "You can call tools.",
+      "role": "system"
+    },
+    {
+      "content": "Only call request_code_context to fetch context for lib.rs; do not answer.",
+      "role": "user"
+    }
+  ],
+  "model": "nousresearch/hermes-4-70b",
+  "provider": {
+    "order": [
+      "chutes"
+    ],
+    "require_parameters": true
+  },
+  "tool_choice": {
+    "function": {
+      "name": "request_code_context"
+    },
+    "type": "function"
+  },
+  "tools": [
+    {
+      "function": {
+        "description": "Request additional code context from the repository up to a token budget.",
+        "name": "request_code_context",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "search_term": {
+              "description": "Search term guide which code guide hybrid semantic search and bm25.",
+              "type": "string"
+            },
+            "token_budget": {
+              "description": "Optional maximum tokens of code context to return, sane defaults",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "search_term"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

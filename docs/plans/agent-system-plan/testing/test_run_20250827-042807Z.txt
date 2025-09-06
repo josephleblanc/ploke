@@ -1,0 +1,422 @@
+Running full workspace test suite at 20250827-042807Z
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test bm25_index::tests::new_from_corpus_consumes_vec_and_indexes ... ok
+test bm25_index::tests::scorer_scores_higher_for_matching_document ... ok
+test bm25_index::tests::token_count_matches_tokenize_len_on_simple_input ... ok
+test bm25_index::tests::tokenizer_splits_identifiers_and_comments ... ok
+test bm25_index::tests::compute_avgdl_from_staged_meta ... ok
+test database::tests::update_embeddings_batch_single ... ignored, test needs refactoring
+test bm25_index::tests::indexer_indexes_and_searches_basic ... ok
+test index::tokenizer::tests::split_camel_case ... ok
+test index::tokenizer::tests::split_pascal_and_acronym ... ok
+test index::tokenizer::tests::split_snake_case ... ok
+test index::tokenizer::tests::tokenize_comments_and_code ... ok
+test index::tokenizer::tests::tokenize_mixed_symbols ... ok
+test query::builder::test::add_lhs ... ok
+test query::callbacks::tests::test_get_recvr_fail ... ok
+test query::callbacks::tests::test_get_recvr_success ... ok
+test query::callbacks::tests::test_clone_counter ... ok
+test database::tests::update_embeddings_batch_empty ... ok
+test database::tests::test_upsert_bm25_doc_meta_batch ... ok
+test query::callbacks::tests::test_init_max ... ok
+test query::callbacks::tests::test_new_unbounded ... ok
+test query::callbacks::tests::test_new_bounded ... ok
+test bm25_index::tests::index_batch_with_cozo_writes_doc_meta ... ok
+test bm25_index::tests::bm25_service_index_search_finalize_roundtrip ... ok
+test bm25_index::tests::rebuild_from_db_builds_index_and_searches_by_name ... ok
+test bm25_index::tests::bm25_service_rebuild_command_reindexes_from_db ... ok
+test database::tests::test_count_nodes_for_embedding ... ok
+test database::tests::test_get_nodes_two ... ok
+test database::tests::test_get_nodes_for_embedding ... ok
+test database::tests::test_get_file_data ... ok
+test database::tests::test_unembedded_counts ... ok
+test database::tests::test_update_embeddings_batch ... ok
+test get_by_id::tests::test_canon_path ... ok
+unembedded: 0
+embedded: 10
+test index::hnsw::tests::test_hnsw_init ... ok
+
+test result: ok. 32 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.10s
+
+
+running 18 tests
+test unit::database_init_tests::test_hnsw_initialization ... ignored, outdated test needs update
+test unit::database_tests::test_pending_embedding_count ... ignored, outdated test, needs update
+test unit::database_tests::test_simple_function_insert ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_batch_empty ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_batch_single ... ignored, outdated test, needs update
+test unit::database_tests::test_update_embeddings_invalid_input ... ignored, outdated test, needs update
+test unit::index_test::tests::test_index_rebuild ... ignored, outdated test needs update
+test unit::index_test::tests::test_index_stats ... ignored, outdated test needs update
+test unit::database_tests::test_into_usize_invalid ... ok
+test unit::database_tests::test_into_usize_valid ... ok
+test unit::index_test::tests::test_different_embedding_dimensions ... ok
+Generated FunctionNodeSchema script:
+:create function { id: Uuid, at: Validity => name: String, docstring: String?, vis_kind: String, vis_path: [String]?, span: [Int; 2], tracking_hash: Uuid, cfgs: [String], return_type_id: Uuid?, body: String?, module_id: Uuid, embedding: <F32; 384>? }
+Create table result: Ok(NamedRows { headers: ["status"], rows: [["OK"]], next: None })
+test unit::database_init_tests::test_function_schema_creation_script ... ok
+Insert result: Ok(NamedRows { headers: ["status"], rows: [["OK"]], next: None })
+
+=== Test 1: Direct literal format ===
+Update literal result: Ok(NamedRows { headers: ["status"], rows: [["OK"]], next: None })
+
+=== Test 2: Using $updates parameter (our current approach) ===
+Parameters: {"updates": [[to_uuid("11111111-1111-1111-1111-111111111111"), [100, 200, 300]]]}
+test unit::index_test::tests::test_empty_search ... ok
+Update param result: Ok(NamedRows { headers: ["status"], rows: [["OK"]], next: None })
+
+=== Test 3: Debug - just select the parameter ===
+Debug select result: Ok(NamedRows { headers: ["id", "embedding"], rows: [[to_uuid("22222222-2222-2222-2222-222222222222"), [400, 500, 600]]], next: None })
+
+=== Test 4: Check table structure ===
+Describe table result: Err(parser::pest
+
+  × The query parser has encountered unexpected input / end of input at 27..27
+)
+
+=== Test 5: Show table contents ===
+Table contents: Ok(NamedRows { headers: ["id", "embedding"], rows: [[to_uuid("11111111-1111-1111-1111-111111111111"), [100, 200, 300]], [to_uuid("33333333-3333-3333-3333-333333333333"), [4, 5, 6]]], next: None })
+
+=== Test 6: Use conditional update ===
+test unit::index_test::tests::test_create_index_and_insert ... ok
+Update literal result: Ok(NamedRows { headers: ["a"], rows: [], next: None })
+
+=== Test 7: Use conditional update realistic ===
+Update literal result: Ok(NamedRows { headers: [], rows: [], next: None })
+Parameters: {"updates": [[to_uuid("11111111-1111-1111-1111-111111111111"), [1, 2, 3]], [to_uuid("22222222-2222-2222-2222-222222222222"), [9, 8, 7]], [to_uuid("99999999-9999-9999-9999-999999999999"), [10, 10, 1]]]}
+Update param result: Ok(NamedRows { headers: ["status"], rows: [["OK"]], next: None })
+Update param result: Ok(NamedRows { headers: ["id", "embedding"], rows: [[to_uuid("11111111-1111-1111-1111-111111111111"), [1, 2, 3]], [to_uuid("33333333-3333-3333-3333-333333333333"), [4, 5, 6]]], next: None })
+test unit::debug_cozo::debug_cozo_update_syntax ... ok
+test unit::database_init_tests::test_reinitialization_handling ... ok
+test unit::database_init_tests::test_schema_creation_success ... ok
+test unit::index_test::tests::test_similarity_search ... ok
+
+test result: ok. 10 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 2 tests
+test tool_call_done_idempotent_and_transition_rules ... ignored, temporary ignore: test uses todo! placeholders; focusing on feature work
+test tool_call_requested_idempotent ... ignored, temporary ignore: test uses todo! placeholders; focusing on feature work
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 42 tests
+test indexer::unit_tests::test_batch_file_dir_detection ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_spp_edge_cases_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_spp_edge_cases_no_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_cyclic_types ... ok
+test indexer::unit_tests::test_batch_ss_core ... ok
+test indexer::unit_tests::test_batch_ss_attributes ... ok
+test indexer::unit_tests::test_batch_ss_file_dir_detection ... ignored, temporary ignore: failing in current CI/sandbox; focus on feature work
+test cancel_token::tests::test_cancellation_listener ... ok
+test cancel_token::tests::test_handle_dropped ... ok
+test indexer::unit_tests::test_batch_ss_generics ... ok
+test cancel_token::tests::test_cancellation_token_basic ... ok
+test indexer::unit_tests::test_batch_ss_io ... ok
+test indexer::unit_tests::test_batch_ss_error ... ok
+test indexer::unit_tests::test_batch_generics ... ok
+test indexer::unit_tests::test_batch_ss_nodes ... ignored, long-running; run periodically to cover full crate
+test indexer::unit_tests::test_batch_cyclic_types ... ok
+test indexer::unit_tests::test_batch_macros ... ok
+test indexer::unit_tests::test_batch_edge_cases ... ok
+test indexer::unit_tests::test_batch_ss_spp_edge_cases_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_spp_edge_cases_no_cfg ... ignored, requires further improvement of syn_parser
+test indexer::unit_tests::test_batch_ss_macros ... ok
+test indexer::unit_tests::test_batch_ss_syn ... ok
+test indexer::unit_tests::test_batch_ss_test_utils ... ok
+test indexer::unit_tests::test_batch_ss_path_resolution ... ok
+test indexer::unit_tests::test_batch_ss_rag ... ok
+test indexer::unit_tests::test_batch_ss_tracking_hash ... ok
+test indexer::unit_tests::test_index_bm25 ... ignored, long-running; run periodically to validate BM25 index path
+test indexer::unit_tests::test_batch_ss_transform ... ok
+test indexer::unit_tests::test_batch_ss_tui ... ok
+test indexer::unit_tests::test_batch_ss_types ... ok
+test indexer::unit_tests::test_batch_ss_ty_mcp ... ok
+test indexer::unit_tests::test_batch_tracking_hash ... ok
+test indexer::unit_tests::test_batch_types ... ok
+test indexer::unit_tests::test_next_batch_only ... ok
+test indexer::unit_tests::test_batch_ss_db ... ok
+test indexer::unit_tests::test_batch_path_resolution ... ok
+test indexer::unit_tests::test_batch_attributes ... ok
+test indexer::unit_tests::test_batch_ss_embed ... ok
+test indexer::unit_tests::test_batch_ss_edge_cases ... ok
+test cancel_token::tests::test_cancellation_token_async_wait ... ok
+test indexer::unit_tests::test_local_model_config ... ok
+test indexer::unit_tests::test_local_model_embedding_processor ... ok
+
+test result: ok. 34 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test test_vector_similarity_search ... ignored, requires update
+test test_vector_similarity_search_identical ... ignored, requires update
+
+--------------------------------------------------
+DEBUG: HNSW graph connections
+NamedRows { headers: ["fr_id", "to_id", "dist"], rows: [[1, 1, 3], [1, 2, 2], [1, 3, 2], [1, 4, 0.75], [2, 1, 2], [2, 2, 3], [2, 3, 2], [2, 4, 0.75], [3, 1, 2], [3, 2, 2]], next: None }
+--------------------------------------------------
+
+test test_hnsw_graph_walking ... ok
+test test_basic_vector_functionality ... ok
+
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 36 tests
+test read::tests::test_get_snippets_batch_preserves_order ... ignored, needs redisign to have the id (NodeId) of file
+test read::tests::test_reject_relative_path ... ok
+test read::tests::test_content_mismatch ... ok
+test read::tests::test_parse_error_invalid_rust ... ok
+test read::tests::test_invalid_byte_ranges ... ok
+test read::tests::test_utf8_error ... ok
+test read::tests::test_mixed_batch_hash_mismatch_per_request ... ok
+test read::tests::test_io_errors ... ok
+test read::tests::test_seek_errors ... ok
+test read::tests::test_partial_failure_handling ... ok
+test read::tests::test_multi_byte_unicode_boundaries ... ok
+test read::tests::test_permission_denied ... ok
+test read::tests::test_zero_byte_files ... ok
+test read::tests::test_concurrent_modification ... ok
+test tests_skeleton::test_fd_limit_default_from_soft ... ok
+test tests_skeleton::test_fd_limit_default_on_error ... ok
+test tests_skeleton::test_fd_limit_env_applied_when_no_builder ... ok
+test tests_skeleton::test_handle_request ... ignored, needs work
+test tests_skeleton::test_fd_limit_precedence_and_clamp ... ok
+test read::tests::test_roots_enforcement_basic ... ok
+test tests_skeleton::test_token_stream_sensitivity ... ok
+test write_tests::test_write_roots_enforcement ... ok
+test read::tests::test_zero_length_snippet ... ok
+test write_tests::test_write_invalid_range ... ok
+test write_tests::test_write_splice_and_hash_recompute ... ok
+test read::tests::test_exact_semaphore_limit ... ok
+test read::tests::test_concurrency_throttling ... ok
+test scan::tests::test_scan_changes_preserves_input_order ... ok
+test tests_skeleton::test_send_during_shutdown ... ok
+test tests_skeleton::test_read_during_shutdown ... ok
+test scan::tests::test_scan_changes_bounded_concurrency ... ok
+test watcher::tests::test_watcher_emits_rename ... ok
+test watcher::tests::test_watcher_emits_create_modify_remove ... ok
+test tests_skeleton::test_handle_read_snippet_batch ... ok
+test tests_skeleton::test_actor_shutdown_during_ops ... ok
+test read::tests::test_large_file_snippet_extraction ... ok
+
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 7.70s
+
+
+running 23 tests
+test context::tests::approx_char_tokenizer_counts ... ok
+test context::tests::trimming_obeys_limits ... ok
+test context::tests::dedup_preserves_order ... ok
+test core::unit_tests::tests::test_bm25_rebuild ... ok
+test fusion::tests::test_logistic ... ok
+test fusion::tests::test_minmax_all_equal_uses_epsilon ... ok
+test fusion::tests::test_minmax_basic ... ok
+test fusion::tests::test_zscore ... ok
+test core::unit_tests::tests::test_bm25_search_complex_enum ... ok
+test core::unit_tests::tests::test_bm25_search_basic ... ok
+test core::unit_tests::tests::test_search_function_definitions ... ok
+test core::unit_tests::tests::test_search_type_aliases ... ok
+test core::unit_tests::tests::test_search_statics ... ok
+test core::unit_tests::tests::test_search_structs ... ok
+test core::unit_tests::tests::test_search_macros ... ok
+test core::unit_tests::tests::test_hybrid_search_generic_trait ... ok
+test core::unit_tests::tests::test_search_constants ... ok
+test core::unit_tests::tests::test_search_enums ... ok
+test core::unit_tests::tests::test_hybrid_search ... ok
+test core::unit_tests::tests::test_search ... ok
+test core::unit_tests::tests::test_bm25_search_fallback ... ok
+test core::unit_tests::tests::test_search_unions ... ok
+test core::unit_tests::tests::test_search_traits ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.30s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 28 tests
+test transform::functions::test::func_transform ... ok
+test transform::consts::tests::test_transform_consts ... ok
+test transform::impls::tests::test_transform_impls ... ok
+test transform::imports::tests::test_transform_imports ... ok
+test transform::crate_context::test::test_transform_crate_context ... ok
+test transform::secondary_nodes::test::test_transform_attribute ... ok
+test transform::macros::tests::test_transform_macros ... ok
+test transform::module::tests::test_transform_modules ... ok
+test transform::statics::tests::test_transform_statics ... ok
+test tests::test_transform_ ... ok
+test transform::structs::test::test_transform_structs ... ok
+test transform::enums::tests::test_transform_enums ... ok
+test transform::type_alias::tests::test_transform_type_aliases ... ok
+test transform::traits::tests::test_transform_traits ... ok
+test transform::unions::test::test_transform_unions ... ok
+test transform::edges::tests::test_transform_edges ... ok
+test transform::type_node::tests::test_transform_types ... ok
+test tests::test_transform_error ... ok
+test tests::test_transform_core ... ok
+test tests::test_transform_rag ... ok
+test tests::test_transform_ty_mcp ... ok
+test transform::tests::test_insert_all ... ok
+test tests::test_transform_io ... ok
+test tests::test_transform_embed ... ok
+test tests::test_transform_self ... ok
+test tests::test_transform_db ... ok
+test tests::test_transform_tui ... ok
+test tests::test_transform_syn ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.02s
+
+
+running 39 tests
+test app_state::tests::test_concurrency_with_fuzzing ... ignored, test broken, cause unclear, non-trivial fix needs attention
+test app_state::tests::test_race_condition_without_oneshot ... ignored, needs refactor
+test app::commands::exec_live_tests::openrouter_provider_preference_experiment ... ok
+test chat_history::tests::add_sibling_on_root_errors ... ok
+test chat_history::tests::delete_nonexistent_returns_none_and_no_effect ... ok
+test chat_history::tests::delete_root_returns_none_and_no_changes ... ok
+test chat_history::tests::delete_internal_node_removes_subtree ... ok
+test chat_history::tests::delete_sibling_updates_selected_child_and_tail ... ok
+test chat_history::tests::delete_leaf_updates_state ... ok
+test chat_history::tests::current_path_ids_sequence ... ok
+test chat_history::tests::iter_path_matches_tail_chain ... ok
+test chat_history::tests::navigate_sibling_requires_two_children ... ok
+test chat_history::tests::last_user_msg_behaves ... ok
+test app::commands::exec::typed_response_tests::default_fields_do_not_panic ... ok
+test llm::openrouter_catalog::tests::test_canonicalize_model_id_for_endpoints ... ok
+test chat_history::tests::persist_writes_expected_content ... ok
+test llm::openrouter_catalog::tests::test_pricing_deser_from_numbers ... ok
+test llm::openrouter_catalog::tests::test_alias_id_from_name ... ok
+test llm::openrouter_catalog::tests::test_pricing_deser_from_strings ... ok
+test app::commands::exec::typed_response_tests::deserialize_endpoints_basic ... ok
+test event_bus::tests::ssot_forwards_indexing_failed_once ... ok
+test event_bus::tests::ssot_forwards_indexing_completed_once ... ok
+test parser::tests::test_resolve_target_dir_with_empty_path ... ok
+test parser::tests::test_resolve_target_dir_with_user_path ... ok
+test parser::tests::test_resolve_target_dir_without_user_path ... ok
+test llm::session::tests::test_build_request_regular_chat_snapshot ... ok
+test llm::session::tests::test_build_request_tool_call_snapshot ... ok
+test app::commands::exec_live_tests::openrouter_endpoints_live_smoke ... ok
+test app::commands::exec_live_tests::openrouter_model_tools_support_check ... ok
+test app::commands::exec_live_tests::openrouter_tools_smoke ... ok
+test app::commands::exec_live_tests::openrouter_tools_model_touchpoints ... ok
+test app::commands::exec_live_tests::openrouter_tools_forced_choice_diagnostics ... ok
+test app::commands::exec_live_tests::openrouter_tools_success_matrix ... ok
+test app::commands::exec_real_tools_live_tests::openrouter_real_tools_roundtrip_smoke ... ok
+test llm::session::tests::test_await_tool_result_failed ... ok
+test llm::session::tests::test_await_tool_result_completed ... ok
+test app::commands::exec_live_tests::harness_smoke_app_constructs ... ok
+test app_state::tests::test_fix_with_oneshot ... ok
+test app_state::database::test::test_update_embed ... ok
+
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 13.32s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test parses_edit_approve_and_deny ... ignored, needs refactor, fails without tokio runtime
+test parses_edit_preview_mode_and_lines_and_auto ... ignored, needs refactor, fails without tokio runtime
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test e2e_apply_code_edit_real_llm ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+[E2E] Diagnostics directory: target/test-output/openrouter_e2e
+test e2e_openrouter_tools_with_app_and_db ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 3 tests
+test command_enter_executes_command ... ok
+test slash_prefix_is_insert_char_in_slash_style ... ok
+test insert_char_maps_to_action ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test command_mode_enter_executes_and_esc_exits ... ok
+test command_mode_backspace_is_forwarded ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test insert_mode_enter_and_backspace ... ok
+test insert_mode_slash_is_just_a_char ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test ctrl_c_is_quit_in_any_mode ... ok
+test normal_mode_command_openers ... ok
+test normal_mode_paging_and_toggles ... ok
+test normal_mode_basic_navigation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test deny_marks_denied_and_does_not_change_file ... FAILED
+test approve_applies_edits_and_updates_status ... FAILED
+test stage_proposal_creates_pending_entry_and_preview ... FAILED
+
+failures:
+
+failures:
+    approve_applies_edits_and_updates_status
+    deny_marks_denied_and_does_not_change_file
+    stage_proposal_creates_pending_entry_and_preview
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+

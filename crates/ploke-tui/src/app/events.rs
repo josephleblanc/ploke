@@ -1,13 +1,14 @@
 use super::App;
 use crate::app::view::EventSubscriber;
+use crate::app_state::events::SystemEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
+use ploke_core::ArcStr;
 use uuid::Uuid;
 
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
-use super::system;
 use super::utils::display_file_info;
 use crate::app::view::components::model_browser::ModelProviderRow;
 
@@ -17,6 +18,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
     app.conversation.on_event(&app_event);
     app.input_view.on_event(&app_event);
     match app_event {
+        AppEvent::Quit => {
+            app.quit();
+        }
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }
@@ -24,30 +28,21 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             // Populate or update the Model Browser overlay with async results
             app.open_model_browser(keyword, items);
         }
-        AppEvent::ModelEndpointsResults { model_id, providers } => {
+        AppEvent::ModelsEndpointsResults { model_id, providers } => {
             // Defer selection and overlay close until after we release the borrow on model_browser
-            let mut select_after: Option<(String, String)> = None;
+            let mut select_after: Option<(String, ArcStr)> = None;
             if let Some(mb) = app.model_browser.as_mut() {
                 if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
                     // Map ProviderEntry -> ModelProviderRow
                     let rows = providers
                         .into_iter()
                         .map(|p| {
-                            let supports_tools = p
-                                .supported_parameters
-                                .as_ref()
-                                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                                .unwrap_or_else(|| {
-                                    p.capabilities
-                                        .as_ref()
-                                        .and_then(|c| c.tools)
-                                        .unwrap_or(false)
-                                });
+                            let supports_tools = p.tool_use;
                             ModelProviderRow {
-                                id: p.id,
-                                context_length: p.context_length,
-                                input_cost: p.pricing.as_ref().and_then(|pr| pr.input),
-                                output_cost: p.pricing.as_ref().and_then(|pr| pr.output),
+                                name: p.ep_name.clone(),
+                                context_length: p.ep_context_length,
+                                input_cost: p.ep_pricing_prompt,
+                                output_cost: p.ep_pricing_completion,
                                 supports_tools,
                             }
                         })
@@ -62,7 +57,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                             .iter()
                             .find(|p| p.supports_tools)
                             .or_else(|| item.providers.first())
-                            .map(|p| p.id.clone());
+                            .map(|p| p.name.clone());
 
                         if let Some(pid) = provider_choice {
                             // Defer selection until after borrow ends
@@ -77,8 +72,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 app.model_browser = None;
             }
         }
-        AppEvent::ModelEndpointsRequest { .. } => {
-            // Request event: handled by llm_manager; UI waits for ModelEndpointsResults.
+        AppEvent::ModelsEndpointsRequest { .. } => {
+            // Request event: handled by llm_manager; UI waits for ModelsEndpointsResults.
         }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
@@ -120,7 +115,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         // managed by the event_bus system instead.
         AppEvent::System(system_event) => {
             match system_event {
-                system::SystemEvent::ModelSwitched(new_model) => {
+                SystemEvent::ModelSwitched(new_model) => {
                     tracing::debug!("SystemEvent::ModelSwitched {}", new_model);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!(
@@ -133,7 +128,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     app.active_model_indicator = Some((new_model.clone(), Instant::now()));
                     app.active_model_id = new_model;
                 }
-                system::SystemEvent::ReadQuery {
+                SystemEvent::ReadQuery {
                     file_name,
                     query_name,
                 } => {
@@ -144,7 +139,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::WriteQuery {
+                SystemEvent::WriteQuery {
                     query_name,
                     query_content,
                 } => {
@@ -162,7 +157,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         query_content,
                     });
                 }
-                system::SystemEvent::HistorySaved { file_path } => {
+                SystemEvent::HistorySaved { file_path } => {
                     tracing::debug!("App receives HistorySaved: {}", file_path);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!("Chat history exported to {}", file_path),
@@ -170,7 +165,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::BackupDb {
+                SystemEvent::BackupDb {
                     file_dir,
                     is_success,
                     ..
@@ -187,7 +182,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::BackupDb {
+                SystemEvent::BackupDb {
                     file_dir,
                     is_success,
                     error,
@@ -205,7 +200,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                system::SystemEvent::LoadDb {
+                SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
                     is_success,
@@ -223,7 +218,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
-                system::SystemEvent::LoadDb {
+                SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
                     is_success,
@@ -244,11 +239,16 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         });
                     }
                 }
-                system::SystemEvent::ReIndex { workspace } => {
+                SystemEvent::ReIndex { workspace } => {
                     app.send_cmd(StateCommand::IndexWorkspace {
                         workspace,
                         needs_parse: false,
                     });
+                }
+                #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
+                SystemEvent::TestHarnessApiResponse { .. } => {
+                    // Test harness API response - handled by test subscribers, no UI action needed
+                    tracing::debug!("Test harness API response event received");
                 }
                 other => {
                     tracing::warn!("Unused system event in main app loop: {:?}", other)

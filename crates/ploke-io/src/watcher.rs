@@ -382,14 +382,12 @@ mod tests {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         let mut seen = false;
         while tokio::time::Instant::now() < deadline {
-            if let Ok(evt) = timeout(Duration::from_millis(500), rx.recv()).await {
-                if let Ok(evt) = evt {
-                    if let FileEventKind::Renamed = evt.kind {
-                        // Path may be either old or new depending on platform
-                        if evt.path == new_path || evt.path == old_path {
-                            seen = true;
-                            break;
-                        }
+            if let Ok(Ok(evt)) = timeout(Duration::from_millis(500), rx.recv()).await {
+                if let FileEventKind::Renamed = evt.kind {
+                    // Path may be either old or new depending on platform
+                    if evt.path == new_path || evt.path == old_path {
+                        seen = true;
+                        break;
                     }
                 }
             }

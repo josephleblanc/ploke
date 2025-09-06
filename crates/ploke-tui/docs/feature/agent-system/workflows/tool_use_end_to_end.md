@@ -43,6 +43,7 @@ Failure Modes and What To Do
   - Network calls to chat/completions use a 45s timeout. Retry or choose another endpoint.
 
 Notes on Routing
+- Specifying supported_parameters allows us to use any model with those parameters, e.g. tools, routed by OpenRouter, so the model can be none in that case and a model will be selected by OpenRouter.
 - The request payload includes a provider preference of the form:
   provider: { order: ["<slug>"] }
   when a valid provider slug is set for the active selection.
