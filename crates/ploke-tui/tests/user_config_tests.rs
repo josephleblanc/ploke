@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use ploke_tui::user_config::{
-    ModelConfig, ModelRegistry, ModelRegistryStrictness, ProviderType, UserConfig,
+    ModelConfig, ModelRegistry, ModelRegistryStrictness, UserConfig,
 };
 
 fn temp_path(name: &str) -> PathBuf {
@@ -21,7 +21,7 @@ fn sample_registry() -> ModelRegistry {
                 base_url: "https://openrouter.ai/api/v1".to_string(),
                 model: "openai/gpt-4o".to_string(),
                 display_name: Some("GPT-4o".to_string()),
-                provider_type: ProviderType::OpenRouter,
+                provider_type: ApiKey::OpenRouter,
                 llm_params: None,
             },
             ModelConfig {
@@ -32,7 +32,7 @@ fn sample_registry() -> ModelRegistry {
                 base_url: "http://localhost:9999".to_string(),
                 model: "local/dev".to_string(),
                 display_name: Some("Local Dev".to_string()),
-                provider_type: ProviderType::Custom,
+                provider_type: ApiKey::Custom,
                 llm_params: None,
             },
         ],

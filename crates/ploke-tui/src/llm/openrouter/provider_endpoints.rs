@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::llm::openrouter::openrouter_catalog::ModelPricing;
 use crate::utils::consts::OPENROUTER_BASE_STR;
 use crate::utils::consts::OPENROUTER_ENDPOINT_STR;
 use crate::utils::se_de::string_or_f64;
@@ -11,7 +12,6 @@ use ploke_core::ArcStr;
 use ploke_test_utils::workspace_root;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use crate::llm::openrouter::openrouter_catalog::ModelPricing;
 
 const MODEL_ENDPOINT_RESP_DIR: &str = "crates/ploke-tui/data/endpoints/";
 
@@ -22,80 +22,6 @@ lazy_static! {
 
 use std::convert::TryFrom;
 
-//
-//
-// {
-//   "data": [
-//     {
-//       "architecture": {
-//         "input_modalities": [
-//           "text"
-//         ],
-//         "instruct_type": null,
-//         "modality": "text->text",
-//         "output_modalities": [
-//           "text"
-//         ],
-//         "tokenizer": "Qwen3"
-//       },
-//       "canonical_slug": "qwen/qwen3-30b-a3b-thinking-2507",
-//       "context_length": 262144,
-//       "created": 1756399192,
-//       "description": "Qwen3-30B-A3B-Thinking-2507 is a 30B parameter Mixture-of-Experts reasoning model optimized for complex tasks requiring extended multi-step thinking. The model is designed specifically for “thinking mode,” where internal reasoning traces are separated from final answers.\n\nCompared to earlier Qwen3-30B releases, this version improves performance across logical reasoning, mathematics, science, coding, and multilingual benchmarks. It also demonstrates stronger instruction following, tool use, and alignment with human preferences. With higher reasoning efficiency and extended output budgets, it is best suited for advanced research, competitive problem solving, and agentic applications requiring structured long-context reasoning.",
-//       "hugging_face_id": "Qwen/Qwen3-30B-A3B-Thinking-2507",
-//       "id": "qwen/qwen3-30b-a3b-thinking-2507",
-//       "name": "Qwen: Qwen3 30B A3B Thinking 2507",
-//       "per_request_limits": null,
-//       "pricing": {
-//         "completion": "0.0000002852",
-//         "image": "0",
-//         "internal_reasoning": "0",
-//         "prompt": "0.0000000713",
-//         "request": "0",
-//         "web_search": "0"
-//       },
-//       "supported_parameters": [
-//         "frequency_penalty",
-//         "include_reasoning",
-//         "logit_bias",
-//         "logprobs",
-//         "max_tokens",
-//         "min_p",
-//         "presence_penalty",
-//         "reasoning",
-//         "repetition_penalty",
-//         "response_format",
-//         "seed",
-//         "stop",
-//         "temperature",
-//         "tool_choice",
-//         "tools",
-//         "top_k",
-//         "top_logprobs",
-//         "top_p"
-//       ],
-//       "top_provider": {
-//         "context_length": 262144,
-//         "is_moderated": false,
-//         "max_completion_tokens": 262144
-//       }
-//     },
-//     // There are 15k lines in the original file, this is a semi-typical example
-//   ]
-// }
-
-// From OpenRouter docs:
-//  - https://openrouter.ai/api/v1/models/author/slug/endpoints
-//  NOTE: Naming here is extremely confusing. What is referred to as an "author" here is called
-//  a "slug" from the providers endpoint. We are going with "author" instead, and "model"
-//  instead of the "author", such that
-//  - "author/slug" -> "author/model"
-//  - https://openrouter.ai/api/v1/models/author/slug/endpoints
-//      -> https://openrouter.ai/api/v1/models/author/model/endpoints
-//  - https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b-thinking-2507/endpoints
-//      - author:   qwen
-//      - model:    qwen3-30b-a3b-thinking-2507
-//
 /// A more strongly typed and segmented type that can be used to make a call to a model endpoint
 /// with OpenRouter's API
 // TODO: need to implement Deserialize on ProvEnd, likely a custom implementation so we can
@@ -119,7 +45,11 @@ impl ProvEnd {
 
         let url = op
             .base_url
-            .join(&format!("models/{}/{}/endpoints", self.author.as_ref(), self.model.as_ref()))
+            .join(&format!(
+                "models/{}/{}/endpoints",
+                self.author.as_ref(),
+                self.model.as_ref()
+            ))
             .map_err(|e| color_eyre::eyre::eyre!("Malformed URL: {}", e))?;
 
         let resp = client
@@ -146,7 +76,10 @@ impl ProvEnd {
         fs::create_dir_all(&dir)?;
 
         // Timestamp suffix for filename
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut path = dir.clone();
         path.push(format!("{}-{}.json", self.model.as_ref(), ts));
 
@@ -167,9 +100,7 @@ impl ProvEnd {
 }
 
 // TODO: (After confirming shape of response data)
-//  - Need 
-
-
+//  - Need
 
 impl<'de> Deserialize<'de> for ProvEnd {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -177,14 +108,36 @@ impl<'de> Deserialize<'de> for ProvEnd {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let mut parts = s.splitn(2, '/');
+        // splits to return at most three items, since the pattern is like:
+        // `deepinfra/fp8/deepseek-r1`
+
+        // let (author_str, rem) = s.split_n('/');
+        // let (maybe_quant, model_str) = s
+        //     .rsplit_once('/')
+        //     .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
+
+        // let author_str = parts
+        //     .next()
+        //     .ok_or_else(|| serde::de::Error::custom("missing author in canonical_slug"))?;
+        // let model_str = parts
+        //     .next()
+        //     .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
+
+        // splits to return at most three items, since the pattern can be like:
+        // `deepinfra/fp8/deepseek-chat-v3`
+        //  or 
+        // `novita/deepseek-chat-v3`
+        let mut parts = s.split('/');
         let author_str = parts
             .next()
             .ok_or_else(|| serde::de::Error::custom("missing author in canonical_slug"))?;
         let model_str = parts
-            .next()
+            .next_back()
             .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
-        Ok(ProvEnd { author: ArcStr::from(author_str), model: ArcStr::from(model_str) })
+        Ok(ProvEnd {
+            author: ArcStr::from(author_str),
+            model: ArcStr::from(model_str),
+        })
     }
 }
 
@@ -260,18 +213,21 @@ impl TryFrom<&Url> for ProvEnd {
             return Err(ProvEndParseError::TrailingSegments);
         }
 
-        Ok(ProvEnd { author: ArcStr::from(author_str), model: model_arc })
+        Ok(ProvEnd {
+            author: ArcStr::from(author_str),
+            model: model_arc,
+        })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Typed response to deserialize the response from:
-/// https://openrouter.ai/api/v1/endpoints
-pub struct ModelEndpointsResponse {
-    pub data: ModelEndpointsData,
+/// https://openrouter.ai/api/v1/models
+pub struct ModelsEndpointResponse {
+    pub endpoint: Vec<ModelsEndpoint>,
 }
 
-impl ModelEndpointsResponse {
+impl ModelsEndpointResponse {
     /// Returns the static URL for the OpenRouter models endpoint.
     ///
     /// This URL points to the official OpenRouter API endpoint that lists all available models.
@@ -290,30 +246,77 @@ impl ModelEndpointsResponse {
 // system in the first place.
 ///// Container for the list of model endpoints returned by the OpenRouter API.
 
+// OpenRouter `https://openrouter.ai/api/v1/models` example.
+//
+// {
+//   "data": [
+//     {
+//       "id": "openrouter/sonoma-dusk-alpha",
+//       "canonical_slug": "openrouter/sonoma-dusk-alpha",
+//       "hugging_face_id": "",
+//       "name": "Sonoma Dusk Alpha",
+//       "created": 1757093247,
+//       "description": "This is a cloaked model provided to the community to gather feedback. A fast and intelligent general-purpose frontier model with a 2 million token context window. Supports image inputs and parallel tool calling.\n\nNote: It’s free to use during this testing period, and prompts and completions are logged by the model creator for feedback and training.",
+//       "context_length": 2000000,
+//       "architecture": {
+//         "modality": "text+image->text",
+//         "input_modalities": [
+//           "text",
+//           "image"
+//         ],
+//         "output_modalities": [
+//           "text"
+//         ],
+//         "tokenizer": "Other",
+//         "instruct_type": null
+//       },
+//       "pricing": {
+//         "prompt": "0",
+//         "completion": "0",
+//         "request": "0",
+//         "image": "0",
+//         "web_search": "0",
+//         "internal_reasoning": "0"
+//       },
+//       "top_provider": {
+//         "context_length": 2000000,
+//         "max_completion_tokens": null,
+//         "is_moderated": false
+//       },
+//       "per_request_limits": null,
+//       "supported_parameters": [
+//         "max_tokens",
+//         "response_format",
+//         "structured_outputs",
+//         "tool_choice",
+//         "tools"
+//       ]
+//     },
 
 /// Represents a single model endpoint from OpenRouter's API.
 ///
+/// This is the response shape from: `https://openrouter.ai/api/v1/models`
 /// After doing some analysis on the data on Aug 29, 2025, the following fields have some nuance:
 ///     - hugging_face_id: missing for 43/323 models
 ///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
 ///     - architecture.instruct_type: missing for most (~65%), 208/323
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelEndpoint {
-    /// Unique identifier for this model.
-    #[serde(default)]
+pub struct ModelsEndpoint {
+    /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
     pub id: String,
-    #[serde(default)]
+    /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
     pub name: String,
-    #[serde(default)]
-    /// Unix timestamp
+    /// Unix timestamp, e.g. 1755779628
     // TODO: Get serde to deserialize into proper type
     pub created: i64,
-    #[serde(default)]
+    /// User-facing description. Kind of long.
     pub description: String,
-    #[serde(default)]
+    /// Things like tokenizer, modality, etc. See `Architecture` struct.
     pub architecture: Architecture,
+    /// Top provider info (often carries context length when model-level is missing).
     #[serde(default)]
     pub top_provider: TopProvider,
+    /// Input/output pricing; maps from OpenRouter's prompt/completion when present.
     #[serde(default)]
     pub pricing: ModelPricing,
     /// For example:
@@ -322,20 +325,31 @@ pub struct ModelEndpoint {
     /// - "canonical_slug": "nousresearch/hermes-4-70b",
     #[serde(rename = "canonical_slug", default)]
     pub canonical: Option<ProvEnd>,
+    /// Context window size if known (model-level).
     #[serde(default)]
-    pub context_length: u64,
+    pub context_length: Option<u32>,
+    /// Presumably the huggingface model card
     #[serde(default)]
     pub hugging_face_id: Option<String>,
+    /// null on all values so far, but it is there in the original so I'll include it.
     #[serde(default)]
-    pub per_request_limits: HashMap<String, serde_json::Value>,
+    pub per_request_limits: Option<HashMap<String, serde_json::Value>>,
+    /// Parameters supported as options by this endpoint, includes things like:
+    /// - tools
+    /// - top_k
+    /// - stop
+    /// - include_reasoning
+    ///
+    /// See SupportedParameters for full enum of observed values.
+    /// (also appears in endpoints)
     #[serde(default)]
-    pub supported_parameters: Vec<SupportedParameters>,
+    pub supported_parameters: Option<Vec<SupportedParameters>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelEndpointsData {
+pub struct ModelsEndpointsData {
     /// List of available model endpoints from OpenRouter.
-    pub endpoints: Vec<ModelEndpoint>,
+    pub data: Vec<ModelsEndpoint>,
 }
 
 pub(crate) trait SupportsTools {
@@ -350,6 +364,14 @@ impl SupportsTools for &[SupportedParameters] {
 impl SupportsTools for &Vec<SupportedParameters> {
     fn supports_tools(&self) -> bool {
         self.contains(&SupportedParameters::Tools)
+    }
+}
+
+impl SupportsTools for ModelsEndpoint {
+    fn supports_tools(&self) -> bool {
+        self.supported_parameters
+            .as_ref()
+            .is_some_and(|sp| sp.supports_tools())
     }
 }
 
@@ -381,14 +403,12 @@ pub enum SupportedParameters {
 }
 
 /// Architecture details of a model, including input/output modalities and tokenizer info.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Architecture {
     /// Input modalities supported by this model (text, image, audio, video).
     pub input_modalities: Vec<InputModality>,
-    #[serde(default)]
     pub output_modalities: Vec<OutputModality>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokenizer: Option<Tokenizer>,
+    pub tokenizer: Tokenizer,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instruct_type: Option<InstructType>,
 }
@@ -401,6 +421,7 @@ pub enum InputModality {
     Image,
     Audio,
     Video,
+    File,
 }
 
 /// Possible output modalities that a model can produce.
@@ -469,20 +490,18 @@ pub enum InstructType {
     Gemma,
     #[serde(rename = "alpaca")]
     Alpaca,
+    #[serde(rename = "none")]
+    None,
 }
 
 /// Provider-specific information about the model.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TopProvider {
     /// Whether this model is subject to content moderation.
-    #[serde(default)]
-    is_moderated: bool,
-    #[serde(default)]
-    context_length: u64,
-    #[serde(default)]
-    max_completion_tokens: Option<u64>,
+    pub(crate) is_moderated: bool,
+    pub(crate) context_length: Option<u32>,
+    pub(crate) max_completion_tokens: Option<u64>,
 }
-
 
 // --- serde helpers for flexible number-or-string fields ---
 
@@ -557,8 +576,13 @@ mod tests {
     #[test]
     fn prov_end_from_canonical_slug() {
         #[derive(Deserialize)]
-        struct Wrapper { #[serde(rename = "canonical_slug")] canonical: ProvEnd }
-        let w: Wrapper = serde_json::from_str("{\"canonical_slug\":\"qwen/qwen3-30b-a3b-thinking-2507\"}").expect("parse provend");
+        struct Wrapper {
+            #[serde(rename = "canonical_slug")]
+            canonical: ProvEnd,
+        }
+        let w: Wrapper =
+            serde_json::from_str("{\"canonical_slug\":\"qwen/qwen3-30b-a3b-thinking-2507\"}")
+                .expect("parse provend");
         assert_eq!(w.canonical.author.to_string(), "qwen");
         assert_eq!(&*w.canonical.model, "qwen3-30b-a3b-thinking-2507");
         let s = serde_json::to_string(&w.canonical).unwrap();
@@ -568,7 +592,10 @@ mod tests {
     #[test]
     #[ignore]
     fn prov_end_try_from_url() {
-        let url = reqwest::Url::parse("https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b-thinking-2507/endpoints").unwrap();
+        let url = reqwest::Url::parse(
+            "https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b-thinking-2507/endpoints",
+        )
+        .unwrap();
         let pe = ProvEnd::try_from(&url).expect("try_from url");
         assert_eq!(pe.author.to_string(), "qwen");
         assert_eq!(&*pe.model, "qwen3-30b-a3b-thinking-2507");

@@ -1,16 +1,17 @@
 #![cfg(test)]
 
+use crate::llm::model_provider::EndpointsResponse;
 use crate::test_harness::openrouter_env;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, instrument, warn, Level};
+use tracing::{Level, info, instrument, warn};
 
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters, SupportsTools};
+use crate::llm::provider_endpoints::{ModelsEndpointResponse, SupportedParameters, SupportsTools};
 use crate::tracing_setup::{init_tracing, init_tracing_tests};
 use crate::user_config::OPENROUTER_URL;
 
@@ -45,7 +46,7 @@ fn default_headers() -> HeaderMap {
 /// Choose a tools-capable model:
 /// 1) If a preferred model is provided and advertises "tools" via the endpoints API, use it.
 /// 2) Otherwise, scan /models/user and pick the first model whose supported_parameters includes "tools".
-/// 3) Fallback to "google/gemini-2.0-flash-001" if nothing else is found.
+/// 3) Fallback to "moonshotai/kimi-k2" if nothing else is found.
 async fn choose_tools_model(
     client: &Client,
     base_url: reqwest::Url,
@@ -68,12 +69,8 @@ async fn choose_tools_model(
             {
                 Ok(resp) => {
                     if let Ok(text) = resp.text().await {
-                        if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&text) {
-                            parsed.data.endpoints.iter().any(|ep| {
-                                ep.supported_parameters
-                                    .iter()
-                                    .any(|p| matches!(p, SupportedParameters::Tools))
-                            })
+                        if let Ok(parsed) = serde_json::from_str::<EndpointsResponse>(&text) {
+                            parsed.data.endpoints.iter().any(|ep| ep.supports_tools())
                         } else {
                             false
                         }
@@ -116,27 +113,6 @@ async fn choose_tools_model(
                 );
                 return m.id.clone();
             }
-            // Try provider-level signals if model-level is missing
-            if let Some(m) = models.iter().find(|m| {
-                m.providers
-                    .as_ref()
-                    .map(|ps| {
-                        ps.iter().any(|p| {
-                            p.supported_parameters
-                                .as_ref()
-                                .map(|sp| sp.iter().any(|x| x.eq_ignore_ascii_case("tools")))
-                                .unwrap_or(false)
-                        })
-                    })
-                    .unwrap_or(false)
-            }) {
-                info!(
-                    "choose_tools_model: selected tools-capable provider variant: {}",
-                    m.id
-                );
-                return m.id.clone();
-            }
-            warn!("choose_tools_model: no tools-capable model found in user catalog; falling back");
         }
         Err(e) => {
             warn!("choose_tools_model: failed to fetch models catalog: {}", e);
@@ -196,30 +172,23 @@ async fn openrouter_model_tools_support_check() {
             let saved = save_response_body("model_tools_support_check", &body);
             info!("GET {} -> {}. Saved to {}", url, status, saved);
 
-            match serde_json::from_str::<ModelEndpointsResponse>(&body) {
+            match serde_json::from_str::<EndpointsResponse>(&body) {
                 Ok(parsed) => {
                     let total = parsed.data.endpoints.len();
                     let tools_cnt = parsed
                         .data
                         .endpoints
                         .iter()
-                        .filter(|ep| {
-                            ep.supported_parameters
-                                .iter()
-                                .any(|p| matches!(p, SupportedParameters::Tools))
-                        })
+                        .filter(|ep| ep.supports_tools())
                         .count();
                     info!(
                         "model={} endpoints total={}, tools_capable={}",
                         model_id, total, tools_cnt
                     );
                     for ep in parsed.data.endpoints.iter() {
-                        let supports_tools = ep
-                            .supported_parameters
-                            .iter()
-                            .any(|p| matches!(p, SupportedParameters::Tools));
+                        let supports_tools = ep.supports_tools();
                         info!(
-                            "  - provider='{}' slug_hint='{}' supports_tools={} context_length={}",
+                            "  - provider={:?} slug_hint='{}' supports_tools={} context_length={}",
                             ep.name,
                             ep.name.to_lowercase().replace(' ', "-"),
                             supports_tools,
@@ -258,7 +227,13 @@ async fn openrouter_tools_forced_choice_diagnostics() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, op_env.base_url.clone(), &op_env.key, preferred.as_deref()).await;
+    let model_id = choose_tools_model(
+        &client,
+        op_env.base_url.clone(),
+        &op_env.key,
+        preferred.as_deref(),
+    )
+    .await;
 
     let payload = json!({
         "model": model_id,
@@ -408,11 +383,7 @@ async fn openrouter_endpoints_live_smoke() {
 
     // Warm up: fetch providers list to build a name->slug map (logged only)
     let providers_url = format!("{}/providers", op.base_url);
-    let providers_resp = client
-        .get(&providers_url)
-        .bearer_auth(&op.key)
-        .send()
-        .await;
+    let providers_resp = client.get(&providers_url).bearer_auth(&op.key).send().await;
 
     match providers_resp {
         Ok(resp) => {
@@ -451,7 +422,7 @@ async fn openrouter_endpoints_live_smoke() {
             );
 
             // Try to parse strongly-typed to validate our schema
-            match serde_json::from_str::<ModelEndpointsResponse>(&text) {
+            match serde_json::from_str::<EndpointsResponse>(&text) {
                 Ok(parsed) => {
                     info!("Parsed endpoints: {} entries", parsed.data.endpoints.len());
                     // Soft assertion: Expect at least one endpoint in most cases
@@ -494,7 +465,8 @@ async fn openrouter_tools_success_matrix() {
 
     // Choose a tools-capable model (prefer env override, else auto-detect from catalog).
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let model_id = choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
+    let model_id =
+        choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
 
     // Pre-check: does this model expose any endpoints that advertise "tools" support?
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -517,16 +489,12 @@ async fn openrouter_tools_success_matrix() {
             Ok(resp) => {
                 let body = resp.text().await.unwrap_or_default();
                 let _ = save_response_body("tools_matrix_endpoints_probe", &body);
-                if let Ok(parsed) = serde_json::from_str::<ModelEndpointsResponse>(&body) {
+                if let Ok(parsed) = serde_json::from_str::<EndpointsResponse>(&body) {
                     let cnt = parsed
                         .data
                         .endpoints
                         .iter()
-                        .filter(|ep| {
-                            ep.supported_parameters
-                                .iter()
-                                .any(|p| matches!(p, SupportedParameters::Tools))
-                        })
+                        .filter(|ep| ep.supports_tools())
                         .count();
                     endpoints_tools_count = Some(cnt);
                     info!(
@@ -1096,7 +1064,8 @@ async fn openrouter_tools_model_touchpoints() {
         .expect("client");
 
     let preferred = std::env::var("PLOKE_MODEL_ID").ok();
-    let primary = choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
+    let primary =
+        choose_tools_model(&client, op.base_url.clone(), &op.key, preferred.as_deref()).await;
 
     let mut models: Vec<String> = vec![
         primary,

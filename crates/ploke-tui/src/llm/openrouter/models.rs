@@ -4,20 +4,19 @@ use std::{collections::HashSet, fs::File, time::Duration};
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 
-use crate::llm::openrouter_catalog::ModelEntry;
-
 use super::openrouter_catalog::ModelsResponse;
 
-    pub const REL_MODEL_ID_DATA: &str = "crates/ploke-tui/data/models/ids.txt";
-    pub const REL_MODEL_NAME_DATA: &str = "crates/ploke-tui/data/models/names.txt";
-    pub const REL_MODEL_PROVIDER_DATA: &str = "crates/ploke-tui/data/models/providers.txt";
-    pub const REL_MODEL_CAPABILITIES_DATA: &str = "crates/ploke-tui/data/models/capabilities.txt";
-    pub const REL_MODEL_SUPPORTED_PARAMETERS_DATA: &str = "crates/ploke-tui/data/models/supported_parameters.txt";
-    pub const REL_MODEL_SUPPORTS_TOOLS_DATA: &str = "crates/ploke-tui/data/models/supports_tools.json";
-    pub const REL_MODEL_ALL_DATA: &str = "crates/ploke-tui/data/models/all.json";
-    pub const REL_MODEL_ALL_DATA_RAW: &str = "crates/ploke-tui/data/models/all_raw.json";
-    pub const REL_MODEL_ALL_DATA_RAW_EP: &str = "crates/ploke-tui/data/models/all_raw_ep.json";
-    pub const REL_MODEL_ALL_DATA_STATS: &str = "crates/ploke-tui/data/models/all_raw_stats.txt";
+pub const REL_MODEL_ID_DATA: &str = "crates/ploke-tui/data/models/ids.txt";
+pub const REL_MODEL_NAME_DATA: &str = "crates/ploke-tui/data/models/names.txt";
+pub const REL_MODEL_PROVIDER_DATA: &str = "crates/ploke-tui/data/models/providers.txt";
+pub const REL_MODEL_CAPABILITIES_DATA: &str = "crates/ploke-tui/data/models/capabilities.txt";
+pub const REL_MODEL_SUPPORTED_PARAMETERS_DATA: &str =
+    "crates/ploke-tui/data/models/supported_parameters.txt";
+pub const REL_MODEL_SUPPORTS_TOOLS_DATA: &str = "crates/ploke-tui/data/models/supports_tools.json";
+pub const REL_MODEL_ALL_DATA: &str = "crates/ploke-tui/data/models/all.json";
+pub const REL_MODEL_ALL_DATA_RAW: &str = "crates/ploke-tui/data/models/all_raw.json";
+pub const REL_MODEL_ALL_DATA_RAW_EP: &str = "crates/ploke-tui/data/models/all_raw_ep.json";
+pub const REL_MODEL_ALL_DATA_STATS: &str = "crates/ploke-tui/data/models/all_raw_stats.txt";
 
 #[cfg(feature = "live_api_tests")]
 mod tests {
@@ -37,14 +36,15 @@ mod tests {
         REL_MODEL_ALL_DATA, REL_MODEL_ID_DATA, REL_MODEL_NAME_DATA,
         REL_MODEL_SUPPORTED_PARAMETERS_DATA, REL_MODEL_SUPPORTS_TOOLS_DATA,
     };
-    use crate::llm::openrouter_catalog::ModelEntry;
-    use crate::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsData, SupportedParameters, SupportsTools};
-use std::path::PathBuf;
+    use crate::llm::provider_endpoints::{
+        ModelsEndpoint, ModelsEndpointsData, SupportedParameters, SupportsTools,
+    };
     use crate::{
         llm::openrouter_catalog::ModelsResponse,
         test_harness::{default_headers, openrouter_env},
         user_config::openrouter_url,
     };
+    use std::path::PathBuf;
     use tokio::runtime::Runtime;
 
     use once_cell::sync::Lazy;
@@ -52,7 +52,7 @@ use std::path::PathBuf;
     use super::{REL_MODEL_ALL_DATA_RAW, REL_MODEL_ALL_DATA_RAW_EP, REL_MODEL_ALL_DATA_STATS};
 
     // Run the request only once per test run
-    static MODELS_RESPONSE: Lazy<ModelsResponse> = Lazy::new(|| {
+    static MODELS_RESPONSE: Lazy<ModelsEndpointsData> = Lazy::new(|| {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let req_builder = OPENROUTER_MODELS_RESPONSE
@@ -65,26 +65,28 @@ use std::path::PathBuf;
                 .and_then(|r| r.error_for_status())
                 .expect("failed response");
 
-            resp.json::<ModelsResponse>().await.expect("failed parse")
+            resp.json::<ModelsEndpointsData>().await.expect("failed parse")
         })
     });
-    // Run the request only once per test run
-    static MODELS_RESPONSE_EP: Lazy<ModelEndpointsData> = Lazy::new(|| {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let req_builder = OPENROUTER_MODELS_RESPONSE
-                .try_clone()
-                .expect("Error in response");
-
-            let resp = req_builder
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .expect("failed response");
-
-            resp.json::<ModelEndpointsData>().await.expect("failed parse")
-        })
-    });
+    // // Run the request only once per test run
+    // static MODELS_RESPONSE_EP: Lazy<ModelsEndpointsData> = Lazy::new(|| {
+    //     let rt = Runtime::new().unwrap();
+    //     rt.block_on(async {
+    //         let req_builder = OPENROUTER_MODELS_RESPONSE_EP
+    //             .try_clone()
+    //             .expect("Error in response");
+    //
+    //         let resp = req_builder
+    //             .send()
+    //             .await
+    //             .and_then(|r| r.error_for_status())
+    //             .expect("failed response");
+    //
+    //         resp.json::<ModelsEndpointsData>()
+    //             .await
+    //             .expect("failed parse")
+    //     })
+    // });
 
     lazy_static! {
         static ref OPENROUTER_MODELS_RESPONSE: RequestBuilder = {
@@ -123,7 +125,7 @@ use std::path::PathBuf;
             fn $test_name() -> color_eyre::Result<()> {
                 use std::collections::HashSet;
 
-                let models_resp = MODELS_RESPONSE.deref();
+                let models_resp = &MODELS_RESPONSE;
 
                 let mut all_values = HashSet::new();
                 for val in models_resp
@@ -154,12 +156,17 @@ use std::path::PathBuf;
                     Ok(s) => s,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                         let alt: std::path::PathBuf = std::path::PathBuf::from(
-                            log_file.to_string_lossy().replace("data/models/", "ai_temp_data/"),
+                            log_file
+                                .to_string_lossy()
+                                .replace("data/models/", "ai_temp_data/"),
                         );
                         match std::fs::read_to_string(&alt) {
                             Ok(s) => s,
                             Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {
-                                eprintln!("Skipping: golden file not found at {:?} or {:?}", log_file, alt);
+                                eprintln!(
+                                    "Skipping: golden file not found at {:?} or {:?}",
+                                    log_file, alt
+                                );
                                 return Ok(());
                             }
                             Err(e2) => return Err(e2.into()),
@@ -201,20 +208,25 @@ use std::path::PathBuf;
 
     generate_model_field_test!(
         flakey_openrouter_model_ids,
-        |m: ModelEntry| Some(m.id),
+        |m: ModelsEndpoint| Some(m.id),
         REL_MODEL_ID_DATA
     );
     generate_model_field_test!(
         flakey_openrouter_model_names,
-        |m: ModelEntry| m.name,
+        |m: ModelsEndpoint| Some(m.name),
         REL_MODEL_NAME_DATA
     );
     generate_model_field_test!(
         flakey_supported_parameters,
-        |m: ModelEntry| {
+        |m: ModelsEndpoint| {
             m.supported_parameters.map(|v| {
                 v.iter()
-                    .map(|sp| serde_json::to_string(sp).unwrap().trim_matches('"').to_string())
+                    .map(|sp| {
+                        serde_json::to_string(sp)
+                            .unwrap()
+                            .trim_matches('"')
+                            .to_string()
+                    })
                     .collect::<Vec<_>>()
                     .join(",")
             })
@@ -225,9 +237,9 @@ use std::path::PathBuf;
     #[test]
     #[ignore = "kept as backup for macro"]
     fn flakey_openrouter_models() -> color_eyre::Result<()> {
-        let models_resp = MODELS_RESPONSE.deref();
+        let models_resp = &MODELS_RESPONSE;
         let mut all_names = HashSet::new();
-        for value in models_resp.data.clone().into_iter().filter_map(|m| m.name) {
+        for value in models_resp.data.clone().into_iter().map(|m| m.name) {
             all_names.insert(value);
         }
         eprintln!("all_names:");
@@ -245,17 +257,17 @@ use std::path::PathBuf;
     }
     #[test]
     fn flakey_supports_tools() -> color_eyre::Result<()> {
-        let models_resp = MODELS_RESPONSE.deref();
+        let models_resp = &MODELS_RESPONSE;
         let rel_path_const = REL_MODEL_SUPPORTS_TOOLS_DATA;
 
-        let tools_filter = |m: &ModelEntry| {
+        let tools_filter = |m: &ModelsEndpoint| {
             m.supported_parameters
                 .as_ref()
                 .is_some_and(|p| p.supports_tools())
-                // .is_some_and(|p| p.contains(&SupportedParameters::Tools))
+            // .is_some_and(|p| p.contains(&SupportedParameters::Tools))
         };
 
-        let all_values: Vec<ModelEntry> = models_resp
+        let all_values: Vec<ModelsEndpoint> = models_resp
             .data
             .clone()
             .into_iter()
@@ -277,12 +289,17 @@ use std::path::PathBuf;
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let alt: std::path::PathBuf = std::path::PathBuf::from(
-                    log_file.to_string_lossy().replace("data/models/", "ai_temp_data/"),
+                    log_file
+                        .to_string_lossy()
+                        .replace("data/models/", "ai_temp_data/"),
                 );
                 match File::open(&alt) {
                     Ok(f) => f,
                     Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {
-                        eprintln!("Skipping: golden file not found at {:?} or {:?}", log_file, alt);
+                        eprintln!(
+                            "Skipping: golden file not found at {:?} or {:?}",
+                            log_file, alt
+                        );
                         return Ok(());
                     }
                     Err(e2) => return Err(e2.into()),
@@ -291,16 +308,16 @@ use std::path::PathBuf;
             Err(e) => return Err(e.into()),
         };
         let buf_reader = BufReader::new(file);
-        let contents: Vec<ModelEntry> = serde_json::from_reader(buf_reader)?;
+        let contents: Vec<ModelsEndpoint> = serde_json::from_reader(buf_reader)?;
         let file_id_map = contents
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelEntry>>();
+            .collect::<HashMap<String, ModelsEndpoint>>();
         let file_id_set = file_id_map.keys().cloned().collect::<HashSet<String>>();
         let resp_id_map = all_values
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelEntry>>();
+            .collect::<HashMap<String, ModelsEndpoint>>();
         let resp_id_set = resp_id_map.keys().cloned().collect::<HashSet<String>>();
 
         let missing: Vec<_> = file_id_set.difference(&resp_id_set).collect();
@@ -333,15 +350,15 @@ use std::path::PathBuf;
     fn write_tool_capable_models_to_ai_temp() -> color_eyre::Result<()> {
         use itertools::Itertools;
         use std::fs;
-        let models_resp = MODELS_RESPONSE.deref();
+        let models_resp = &MODELS_RESPONSE;
 
-        let tools_filter = |m: &ModelEntry| {
+        let tools_filter = |m: &ModelsEndpoint| {
             m.supported_parameters
                 .as_ref()
                 .is_some_and(|p| p.supports_tools())
         };
 
-        let selected: Vec<ModelEntry> = models_resp
+        let selected: Vec<ModelsEndpoint> = models_resp
             .data
             .clone()
             .into_iter()
@@ -393,7 +410,7 @@ use std::path::PathBuf;
                     .and_then(|r| r.error_for_status())
                     .expect("failed response");
 
-                resp.json::<Vec<ModelEndpoint>>()
+                resp.json::<Vec<ModelsEndpoint>>()
                     .await
                     .expect("failed parse")
             })
@@ -458,12 +475,23 @@ use std::path::PathBuf;
             serde_json::to_writer_pretty(f, &models_resp)?;
             eprintln!("Wrote models_all_raw.json to {}", out_path.display());
             // Run visitor and write stats into ai_temp_data
-            crate::llm::openrouter::json_visitor::explore_file_visit_to_dir(&out_path, Some(&ai_dir));
+            crate::llm::openrouter::json_visitor::explore_file_visit_to_dir(
+                &out_path,
+                Some(&ai_dir),
+            );
             // Cardinality for id/canonical_slug and provider identities
             crate::llm::openrouter::json_visitor::analyze_cardinality_to_dir(
                 &out_path,
                 &ai_dir,
-                &["id", "canonical_slug", "providers.id", "providers.provider", "providers.name", "providers.slug", "providers.provider_slug"],
+                &[
+                    "id",
+                    "canonical_slug",
+                    "providers.id",
+                    "providers.provider",
+                    "providers.name",
+                    "providers.slug",
+                    "providers.provider_slug",
+                ],
             );
         }
         Ok(())
@@ -485,21 +513,29 @@ use std::path::PathBuf;
         use crate::llm::openrouter::providers::ProviderSlug;
         let rt = Runtime::new().unwrap();
         let v = rt.block_on(async move {
-            let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
+            let pe = ProvEnd {
+                author: ArcStr::from("deepseek"),
+                model: ArcStr::from("deepseek-chat-v3.1"),
+            };
             pe.call_endpoint_raw().await
         })?;
 
         let mut ai_dir = workspace_root();
         ai_dir.push("crates/ploke-tui/ai_temp_data");
         std::fs::create_dir_all(&ai_dir).ok();
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut out_path = ai_dir.clone();
         out_path.push(format!("endpoint_qwen3-30b-a3b-thinking-2507_{}.json", ts));
         let f = File::create(&out_path)?;
         serde_json::to_writer_pretty(f, &v)?;
         eprintln!("Wrote endpoint raw JSON to {}", out_path.display());
         // Analyze endpoints array and write stats to ai_temp_data
-        crate::llm::openrouter::json_visitor::explore_endpoints_file_visit_to_dir(&out_path, &ai_dir);
+        crate::llm::openrouter::json_visitor::explore_endpoints_file_visit_to_dir(
+            &out_path, &ai_dir,
+        );
         crate::llm::openrouter::json_visitor::analyze_endpoints_cardinality_to_dir(
             &out_path,
             &ai_dir,
@@ -545,10 +581,11 @@ use std::path::PathBuf;
 
     #[test]
     fn flakey_models_all() -> color_eyre::Result<()> {
-        let models_resp = MODELS_RESPONSE.deref();
+        let models_resp = &MODELS_RESPONSE;
         let rel_path_const = REL_MODEL_ALL_DATA;
 
-        let all_values: Vec<ModelEntry> = models_resp.data.clone().into_iter().collect_vec();
+        let all_values: Vec<ModelsEndpoint> =
+            models_resp.data.clone().into_iter().collect_vec();
 
         let mut log_file = workspace_root();
         log_file.push(rel_path_const);
@@ -565,12 +602,17 @@ use std::path::PathBuf;
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let alt: std::path::PathBuf = std::path::PathBuf::from(
-                    log_file.to_string_lossy().replace("data/models/", "ai_temp_data/"),
+                    log_file
+                        .to_string_lossy()
+                        .replace("data/models/", "ai_temp_data/"),
                 );
                 match File::open(&alt) {
                     Ok(f) => f,
                     Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {
-                        eprintln!("Skipping: golden file not found at {:?} or {:?}", log_file, alt);
+                        eprintln!(
+                            "Skipping: golden file not found at {:?} or {:?}",
+                            log_file, alt
+                        );
                         return Ok(());
                     }
                     Err(e2) => return Err(e2.into()),
@@ -579,16 +621,16 @@ use std::path::PathBuf;
             Err(e) => return Err(e.into()),
         };
         let buf_reader = BufReader::new(file);
-        let contents: Vec<ModelEntry> = serde_json::from_reader(buf_reader)?;
+        let contents: Vec<ModelsEndpoint> = serde_json::from_reader(buf_reader)?;
         let file_id_map = contents
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelEntry>>();
+            .collect::<HashMap<String, ModelsEndpoint>>();
         let file_id_set = file_id_map.keys().cloned().collect::<HashSet<String>>();
         let resp_id_map = all_values
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelEntry>>();
+            .collect::<HashMap<String, ModelsEndpoint>>();
         let resp_id_set = resp_id_map.keys().cloned().collect::<HashSet<String>>();
 
         let missing: Vec<_> = file_id_set.difference(&resp_id_set).collect();

@@ -45,7 +45,7 @@ use app_state::{
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
-use llm::llm_manager;
+use llm::{llm_manager, model_provider::EndpointData, openrouter_catalog::{ModelEntry, ProviderSummary}, provider_endpoints::ModelsEndpoint};
 use parser::run_parse;
 use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
 use ploke_embed::{
@@ -57,7 +57,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ModelConfig, ProviderType, UserConfig, default_model};
+use user_config::{OPENROUTER_URL, ModelConfig, UserConfig, default_model};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -324,14 +324,14 @@ pub enum AppEvent {
     System(SystemEvent),
     ModelSearchResults {
         keyword: String,
-        items: Vec<crate::llm::openrouter_catalog::ModelEntry>,
+        items: Vec<ModelsEndpoint>,
     },
-    ModelEndpointsRequest {
+    ModelsEndpointsRequest {
         model_id: String,
     },
-    ModelEndpointsResults {
+    ModelsEndpointsResults {
         model_id: String,
-        providers: Vec<crate::llm::openrouter_catalog::ProviderEntry>,
+        providers: Vec<ProviderSummary>,
     },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
@@ -376,8 +376,8 @@ impl AppEvent {
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
             AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
-            AppEvent::ModelEndpointsRequest { .. } => EventPriority::Background,
-            AppEvent::ModelEndpointsResults { .. } => EventPriority::Realtime,
+            AppEvent::ModelsEndpointsRequest { .. } => EventPriority::Background,
+            AppEvent::ModelsEndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,

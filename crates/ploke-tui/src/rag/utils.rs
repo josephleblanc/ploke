@@ -1,11 +1,12 @@
-use crate::tools::ToolName;
+use crate::{tools::ToolName, TOKEN_LIMIT};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
 use ploke_db::NodeType;
 
 pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
-    let top_k = (token_budget / 200) as usize;
+    let budget = token_budget;
+    let top_k = (budget / 200) as usize;
     top_k.clamp(5, 20)
 }
 

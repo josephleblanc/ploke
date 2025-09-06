@@ -1,6 +1,6 @@
 use ploke_core::rag_types::{
-    ApplyCodeEditResult, AssembledContext, ContextPart, ContextPartKind, ContextStats,
-    GetFileMetadataResult, Modality, RequestCodeContextArgs, RequestCodeContextResult,
+    ApplyCodeEditResult, CanonPath, ConciseContext, ContextPartKind, GetFileMetadataResult,
+    NodeFilepath, RequestCodeContextArgs, RequestCodeContextResult,
 };
 use uuid::Uuid;
 
@@ -16,38 +16,26 @@ fn serde_roundtrip_request_code_context() {
     assert_eq!(args_back.token_budget, 512);
     assert_eq!(args_back.search_term.as_deref(), Some("SimpleStruct"));
 
-    let part = ContextPart {
-        id: Uuid::new_v4(),
-        file_path: "id://dummy".to_string(),
-        ranges: vec![(0, 10)],
-        kind: ContextPartKind::Code,
-        text: "fn foo() {}".to_string(),
-        score: 0.99,
-        modality: Modality::HybridFused,
+    let part = ConciseContext {
+        file_path: NodeFilepath("id://dummy".to_string()),
+        canon_path: CanonPath("some::module::dummy".to_string()),
+        snippet: "fn foo() {}".to_string(),
     };
     let result = RequestCodeContextResult {
         ok: true,
-        query: "foo".to_string(),
+        search_term: "foo".to_string(),
         top_k: 3,
-        context: AssembledContext {
-            parts: vec![part],
-            stats: ContextStats {
-                total_tokens: 42,
-                files: 1,
-                parts: 1,
-                truncated_parts: 0,
-                dedup_removed: 0,
-            },
-        },
+        context: vec![part.clone()],
+        kind: ContextPartKind::Code,
     };
     let res_json = serde_json::to_string(&result).expect("serialize result");
     let res_back: RequestCodeContextResult =
         serde_json::from_str(&res_json).expect("deserialize result");
     assert!(res_back.ok);
-    assert_eq!(res_back.query, "foo");
+    assert_eq!(res_back.search_term, "foo");
     assert_eq!(res_back.top_k, 3);
-    assert_eq!(res_back.context.parts.len(), 1);
-    assert_eq!(res_back.context.stats.total_tokens, 42);
+    assert_eq!(res_back.context, vec![part]);
+    assert_eq!(res_back.kind, ContextPartKind::Code);
 }
 
 #[test]

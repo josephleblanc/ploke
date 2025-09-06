@@ -4,6 +4,7 @@ use crate::app_state::events::SystemEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
+use ploke_core::ArcStr;
 use uuid::Uuid;
 
 // Bring AppEvent and SystemEvent into scope from the parent module tree
@@ -27,30 +28,21 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             // Populate or update the Model Browser overlay with async results
             app.open_model_browser(keyword, items);
         }
-        AppEvent::ModelEndpointsResults { model_id, providers } => {
+        AppEvent::ModelsEndpointsResults { model_id, providers } => {
             // Defer selection and overlay close until after we release the borrow on model_browser
-            let mut select_after: Option<(String, String)> = None;
+            let mut select_after: Option<(String, ArcStr)> = None;
             if let Some(mb) = app.model_browser.as_mut() {
                 if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
                     // Map ProviderEntry -> ModelProviderRow
                     let rows = providers
                         .into_iter()
                         .map(|p| {
-                            let supports_tools = p
-                                .supported_parameters
-                                .as_ref()
-                                .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                                .unwrap_or_else(|| {
-                                    p.capabilities
-                                        .as_ref()
-                                        .and_then(|c| c.tools)
-                                        .unwrap_or(false)
-                                });
+                            let supports_tools = p.tool_use;
                             ModelProviderRow {
-                                id: p.id,
-                                context_length: p.context_length,
-                                input_cost: p.pricing.as_ref().map(|pr| pr.prompt),
-                                output_cost: p.pricing.as_ref().map(|pr| pr.completion),
+                                name: p.ep_name.clone(),
+                                context_length: p.ep_context_length,
+                                input_cost: p.ep_pricing_prompt,
+                                output_cost: p.ep_pricing_completion,
                                 supports_tools,
                             }
                         })
@@ -65,7 +57,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                             .iter()
                             .find(|p| p.supports_tools)
                             .or_else(|| item.providers.first())
-                            .map(|p| p.id.clone());
+                            .map(|p| p.name.clone());
 
                         if let Some(pid) = provider_choice {
                             // Defer selection until after borrow ends
@@ -80,8 +72,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 app.model_browser = None;
             }
         }
-        AppEvent::ModelEndpointsRequest { .. } => {
-            // Request event: handled by llm_manager; UI waits for ModelEndpointsResults.
+        AppEvent::ModelsEndpointsRequest { .. } => {
+            // Request event: handled by llm_manager; UI waits for ModelsEndpointsResults.
         }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);

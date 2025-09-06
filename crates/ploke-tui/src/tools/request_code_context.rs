@@ -1,3 +1,8 @@
+
+use ploke_core::rag_types::{AssembledContext, AssembledMeta, ConciseContext, RequestCodeContextResult};
+
+use crate::TOKEN_LIMIT;
+
 use super::*;
 
 // Canonical schema: RequestCodeContextArgs { token_budget, hint }
@@ -72,15 +77,15 @@ use std::borrow::Cow;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RequestCodeContextParams<'a> {
-    pub token_budget: u32,
-    #[serde(borrow, default)]
-    pub search_term: Option<Cow<'a, str>>,
+    pub token_budget: Option<u32>,
+    #[serde(borrow)]
+    pub search_term: Cow<'a, str>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestCodeContextParamsOwned {
-    pub token_budget: u32,
-    pub search_term: Option<String>,
+    pub token_budget: Option< u32 >,
+    pub search_term: String,
 }
 
 /// Unit struct for GAT-based tool; uses Ctx to access RagService/state
@@ -115,7 +120,7 @@ impl super::Tool for RequestCodeContextGat {
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         RequestCodeContextParamsOwned {
             token_budget: params.token_budget,
-            search_term: params.search_term.clone().map(|h| h.into_owned()),
+            search_term: params.search_term.to_string(),
         }
     }
 
@@ -133,6 +138,8 @@ impl super::Tool for RequestCodeContextGat {
     ) -> Result<ToolResult, ploke_error::Error> {
         use crate::rag::utils::calc_top_k_for_budget;
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
+        fn extract_llm_context(assembled: AssembledContext) {
+        }
         let rag = match &ctx.state.rag {
             Some(r) => r.clone(),
             None => {
@@ -143,7 +150,7 @@ impl super::Tool for RequestCodeContextGat {
                 ));
             }
         };
-        let search_term = params.search_term.as_ref().map(|h| h.as_ref()).unwrap_or("");
+        let search_term = params.search_term.as_ref();
         if search_term.trim().is_empty() {
             return Err(ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(
@@ -151,22 +158,27 @@ impl super::Tool for RequestCodeContextGat {
                 ),
             ));
         }
-        let top_k = calc_top_k_for_budget(params.token_budget);
+        let token_budget = params.token_budget.unwrap_or(TOKEN_LIMIT);
+        let top_k = calc_top_k_for_budget(token_budget);
         let budget = TokenBudget {
-            max_total: params.token_budget as usize,
+            max_total: token_budget as usize,
             ..Default::default()
         };
         let strategy = RetrievalStrategy::Hybrid {
             rrf: RrfConfig::default(),
             mmr: None,
         };
-        let assembled = rag.get_context(search_term, top_k, &budget, &strategy).await?;
-        let result = ploke_core::rag_types::RequestCodeContextResult {
-            ok: true,
-            query: search_term.to_string(),
+        let AssembledContext {
+            parts,
+            stats,
+        } = rag.get_context(search_term, top_k, &budget, &strategy).await?;
+        let assembled_meta = AssembledMeta {
+            search_term: params.search_term.to_string(),
             top_k,
-            context: assembled,
+            kind: ContextPartKind::Code
         };
+        tracing::info!("Executed Tool: {:?} \nWith stats: {:#?}", Self::name(), stats);
+        let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
         let serialized = serde_json::to_string(&result).expect("Invalid state: serialization");
         Ok(ToolResult {
             content: serialized,
@@ -183,11 +195,11 @@ mod gat_tests {
     fn params_deserialize_and_into_owned() {
         let raw = r#"{"token_budget":512,"search_term":"foo bar"}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
-        assert_eq!(params.token_budget, 512);
-        assert_eq!(params.search_term.as_deref(), Some("foo bar"));
+        assert_eq!(params.token_budget, Some( 512 ));
+        assert_eq!(params.search_term, "foo bar");
         let owned = RequestCodeContextGat::into_owned(&params);
-        assert_eq!(owned.token_budget, 512);
-        assert_eq!(owned.search_term.as_deref(), Some("foo bar"));
+        assert_eq!(owned.token_budget, Some( 512 ));
+        assert_eq!(owned.search_term, "foo bar");
     }
 
     #[test]
@@ -218,8 +230,8 @@ mod gat_tests {
             call_id: ArcStr::from("rcctx-test"),
         };
         let params = RequestCodeContextParams {
-            token_budget: 256,
-            search_term: Some(Cow::Borrowed("fn")),
+            token_budget: Some( 256 ),
+            search_term: Cow::Borrowed("fn"),
         };
         let out = RequestCodeContextGat::execute(params, ctx).await;
         assert!(

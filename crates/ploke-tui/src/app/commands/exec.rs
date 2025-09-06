@@ -16,8 +16,10 @@ use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::openrouter_catalog::{self, ModelEntry};
-use crate::llm::provider_endpoints::{ModelEndpointsResponse, SupportedParameters};
-use crate::user_config::{openrouter_url, ModelRegistryStrictness, ProviderType, UserConfig, OPENROUTER_URL};
+use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
+use crate::user_config::{
+    ModelRegistryStrictness, OPENROUTER_URL, ProviderType, UserConfig, openrouter_url,
+};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use reqwest::Client;
@@ -323,7 +325,9 @@ fn show_model_info_async(app: &App) {
                 format!("  Provider type: {:?}", p.provider_type),
                 format!(
                     "  Provider slug: {}",
-                    p.provider_slug.map(|ps| ps.to_string()).unwrap_or("-".to_string())
+                    p.provider_slug
+                        .map(|ps| ps.to_string())
+                        .unwrap_or("-".to_string())
                 ),
                 "".to_string(),
                 "  LLM parameters:".to_string(),
@@ -575,28 +579,29 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         }
 
         let client = Client::new();
-        match openrouter_catalog::fetch_model_endpoints(&client, base_url, &api_key, &model_id).await {
-            Ok(providers) => {
+        match openrouter_catalog::fetch_model_endpoints(&client, base_url, &api_key, &model_id)
+            .await
+        {
+            // First get the endpoints from openrouter, using
+            // typed endpoint entry from `/models/:author/:slug/endpoints`,
+            // e.g. for model_id = deepseek-chat-v3.1
+            // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
+            Ok(endpoint_data) => {
+                let endpoints = endpoint_data.endpoints;
                 let mut lines = vec![
                     format!("Available endpoints for model '{}':", model_id),
                     "  (Providers marked [tools] advertise tool support)".to_string(),
                 ];
-                if providers.is_empty() {
+                if endpoints.is_empty() {
                     lines.push("  No endpoints returned for this model.".to_string());
                 } else {
-                    for p in providers {
-                        let supports_tools = p
-                            .supported_parameters
-                            .as_ref()
-                            .map(|v| v.iter().any(|s| s.eq_ignore_ascii_case("tools")))
-                            .or_else(|| p.capabilities.as_ref().and_then(|c| c.tools))
-                            .unwrap_or(false);
-                        let ctx = p.context_length.map(|v| format!(" context length = {}", v)).unwrap_or_default();
+                    for ep in endpoints {
+                        let supports_tools = if ep.supports_tools() { "[tools]" } else { "" };
                         lines.push(format!(
                             "  - {} {}{}",
-                            p.id,
-                            if supports_tools { "[tools]" } else { "" },
-                            ctx
+                            ep.name.as_ref(),
+                            supports_tools,
+                            format_args!(" context length = {:.0}", ep.context_length)
                         ));
                     }
                 }
@@ -608,8 +613,10 @@ fn list_model_providers_async(app: &App, model_id: &str) {
 
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
-                        msg: lines.join("
-"),
+                        msg: lines.join(
+                            "
+",
+                        ),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     })
@@ -645,12 +652,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 .model_registry
                 .providers
                 .iter()
-                .find(|p| {
-                    matches!(
-                        p.provider_type,
-                        crate::user_config::ProviderType::OpenRouter
-                    )
-                })
+                .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
                 .map(|p| p.resolve_api_key())
                 .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
                 .unwrap_or_default();
@@ -672,15 +674,11 @@ fn open_model_search(app: &mut App, keyword: &str) {
         match openrouter_catalog::fetch_models(&client, base_url, &api_key).await {
             Ok(models) => {
                 let kw_lower = keyword_str.to_lowercase();
-                let mut filtered: Vec<ModelEntry> = models
+                let mut filtered: Vec<ModelsEndpoint> = models
                     .into_iter()
                     .filter(|m| {
                         let id_match = m.id.to_lowercase().contains(&kw_lower);
-                        let name_match = m
-                            .name
-                            .as_ref()
-                            .map(|n| n.to_lowercase().contains(&kw_lower))
-                            .unwrap_or(false);
+                        let name_match = m.name.to_lowercase().contains(&kw_lower);
                         id_match || name_match
                     })
                     .collect();
@@ -978,6 +976,12 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
 
 #[cfg(test)]
 mod typed_response_tests {
+    use crate::llm::openrouter::model_provider::{EndpointsResponse, ProviderNameStr};
+    use crate::llm::openrouter::provider_endpoints::SupportedParameters;
+    use crate::llm::openrouter_catalog::ModelPricing;
+    use crate::llm::providers::ProviderSlug;
+    use ploke_core::ArcStr;
+
     use super::*;
     use serde_json::json;
 
@@ -985,43 +989,76 @@ mod typed_response_tests {
     fn deserialize_endpoints_basic() {
         let payload = json!({
             "data": {
+                "id": "test/model",
+                "name": "Test Model",
+                "created": 1234567890.0,
+                "description": "A test model",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"], 
+                    "tokenizer": "GPT"
+                },
                 "endpoints": [
                     {
+                        "name": "Foo Provider | test/model",
+                        "model_name": "Test Model",
+                        "context_length": 8192.0,
+                        "pricing": {
+                            "prompt": 0.001,
+                            "completion": 0.002
+                        },
                         "provider_name": "Foo Provider",
-                        "context_length": 8192,
-                        "supported_parameters": ["tools", "structured_outputs"],
-                        "name": "foo/bar",
-                        "max_completion_tokens": 4096,
-                        "max_prompt_tokens": 8192
+                        "tag": "openai",
+                        "supported_parameters": ["tools", "structured_outputs"]
                     },
                     {
+                        "name": "Bar Provider | test/model", 
+                        "model_name": "Test Model",
+                        "context_length": 4096.0,
+                        "pricing": {
+                            "prompt": 0.001,
+                            "completion": 0.002
+                        },
                         "provider_name": "Bar Provider",
+                        "tag": "anthropic",
                         "supported_parameters": []
                     }
                 ]
             }
         });
 
-        let parsed: crate::llm::openrouter::model_provider::EndpointsResponse =
-            serde_json::from_value(payload).expect("valid response");
+        let parsed: EndpointsResponse = serde_json::from_value(payload).expect("valid response");
         assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(parsed.data.endpoints[0].provider_name.as_ref().map(|n| n.as_str()), Some("Foo Provider"));
-        assert_eq!(parsed.data.endpoints[0].context_length, Some(8192));
-        assert!(
-            parsed.data.endpoints[0]
-                .supported_parameters
-                .as_ref()
-                .map(|v| v.iter().any(|p| matches!(p, SupportedParameters::Tools)))
-                .unwrap_or(false)
+        assert_eq!(
+            parsed.data.endpoints[0].provider_name,
+            ProviderNameStr("Foo Provider".to_string())
         );
-        assert_eq!(parsed.data.endpoints[1].provider_name.as_ref().map(|n| n.as_str()), Some("Bar Provider"));
-        assert!(parsed.data.endpoints[1].context_length.is_none());
+        assert!((parsed.data.endpoints[0].context_length - 8192.0).abs() < 1e-10);
+        assert!(parsed.data.endpoints[0].supports_tools());
+        assert_eq!(
+            parsed.data.endpoints[1].provider_name,
+            ProviderNameStr("Bar Provider".to_string())
+        );
+        assert!(!parsed.data.endpoints[1].supports_tools());
     }
 
     #[test]
     fn default_fields_do_not_panic() {
-        let minimal = serde_json::json!({"data": {"endpoints": []}});
-        let parsed: crate::llm::openrouter::model_provider::EndpointsResponse = serde_json::from_value(minimal).unwrap();
+        let minimal = serde_json::json!({
+            "data": {
+                "id": "test/model",
+                "name": "Test Model", 
+                "created": 1234567890.0,
+                "description": "A test model",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"], 
+                    "tokenizer": "GPT"
+                },
+                "endpoints": []
+            }
+        });
+        let parsed: EndpointsResponse = serde_json::from_value(minimal).unwrap();
         assert!(parsed.data.endpoints.is_empty());
     }
 }

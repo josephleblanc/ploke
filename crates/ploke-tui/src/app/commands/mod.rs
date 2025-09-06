@@ -1,17 +1,17 @@
-mod exec;
+pub(crate) mod exec;
 mod exec_live_tests;
 mod exec_real_tools_live_tests;
 pub mod parser;
 
 use crate::app::App;
 
-/// Entry point for command handling: parse then execute.
-pub fn execute_command(app: &mut App) {
-    let style = app.command_style;
-    let cmd = app.input_buffer.clone();
-    let command = parser::parse(app, &cmd, style);
-    exec::execute(app, command);
-}
+// /// Entry point for command handling: parse then execute.
+// pub fn execute_command(app: &mut App) {
+//     let style = app.command_style;
+//     let cmd = app.input_buffer.clone();
+//     let command = parser::parse(app, &cmd, style);
+//     exec::execute(app, command);
+// }
 
 /// Shared help text for commands
 #[doc = "User-visible help covering supported commands and keybindings."]

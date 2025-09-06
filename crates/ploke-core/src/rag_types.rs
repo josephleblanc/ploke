@@ -89,7 +89,7 @@ impl From<ContextPart> for ConciseContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct NodeFilepath(pub String);
 
@@ -105,7 +105,7 @@ impl PartialEq for NodeFilepath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq,  PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
@@ -121,7 +121,7 @@ impl PartialEq for CanonPath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ConciseContext {
     pub file_path: NodeFilepath,
     pub canon_path: CanonPath,

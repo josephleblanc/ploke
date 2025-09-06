@@ -9,9 +9,6 @@
 //!   while save/load provide persistence with optional secret redaction.
 
 
-use std::collections::HashMap;
-
-use color_eyre::eyre::eyre;
 use lazy_static::lazy_static;
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
@@ -52,8 +49,6 @@ pub struct UserConfig {
     pub editing: EditingConfig,
     #[serde(default)]
     pub ploke_editor: Option<String>,
-    #[serde(default)]
-    pub keys: HashMap<ProviderType, Option<String>>,
 }
 
 impl UserConfig {
@@ -196,9 +191,9 @@ pub struct ModelRegistry {
     #[serde(default = "default_active_model_config")]
     pub active_model_config: String,
     #[serde(default)]
-    pub aliases: HashMap<String, String>,
+    pub aliases: std::collections::HashMap<String, String>,
     #[serde(skip)]
-    pub capabilities: HashMap<String, ModelCapabilities>,
+    pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
     #[serde(default = "default_strictness")]
     pub strictness: ModelRegistryStrictness,
     #[serde(default)]
@@ -210,9 +205,14 @@ pub struct ModelRegistry {
 pub struct ModelConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
+    /// The API key for this specific provider
+    pub api_key: String,
     /// Optional: upstream provider slug (for OpenRouter routing preferences)
     #[serde(default)]
     pub provider_slug: Option<ProviderSlug>,
+    /// Optional: provider-specific environment variable name for API key
+    #[serde(default)]
+    pub api_key_env: Option<String>,
     /// The base URL for the API endpoint.
     /// For OpenRouter, this would be "https://openrouter.ai/api/v1".
     #[serde(default = "default_base_url")]
@@ -228,12 +228,9 @@ pub struct ModelConfig {
     /// Optional per-provider LLM parameters (temperature, top-p, etc.)
     #[serde(default)]
     pub llm_params: Option<crate::llm::LLMParameters>,
-    /// API key for this provider (can be empty if using env vars)
-    #[serde(default)]
-    pub api_key: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 /// Provider type used for request formatting and env-var resolution.
 pub enum ProviderType {
     #[default]
@@ -261,19 +258,45 @@ pub fn default_strictness() -> ModelRegistryStrictness {
 
 impl ModelConfig {
     /// Resolve the actual API key to use, considering env vars and defaults
-    pub fn resolve_api_key(&self) -> color_eyre::Result<String> {
-        // 1. Check provider-type specific env vars
-        let key = match self.provider_type {
-            ProviderType::OpenRouter => std::env::var("OPENROUTER_API_KEY"),
-            ProviderType::OpenAI => std::env::var("OPENAI_API_KEY"),
-            ProviderType::Anthropic => std::env::var("ANTHROPIC_API_KEY"),
+    pub fn resolve_api_key(&self) -> String {
+        // 1. Check provider-specific env var if specified
+        if let Some(env_var) = &self.api_key_env {
+            if let Ok(key) = std::env::var(env_var) {
+                return key;
+            }
+        }
+
+        // 2. Check provider-type specific env vars
+        match self.provider_type {
+            ProviderType::OpenRouter => {
+                if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+                    return key;
+                }
+            }
+            ProviderType::OpenAI => {
+                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                    return key;
+                }
+            }
+            ProviderType::Anthropic => {
+                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                    return key;
+                }
+            }
             ProviderType::Custom => {
                 // Check generic env vars
-                std::env::var("LLM_API_KEY")
+                if let Ok(key) = std::env::var("LLM_API_KEY") {
+                    return key;
+                }
             }
-        };
-        
-        key.map_err(|_| eyre!("Failed to resolve API key for provider: {}", self.id))
+        }
+
+        // 3. Fall back to the explicitly configured key
+        self.api_key.clone()
+    }
+    pub fn with_api_key(mut self) -> Self {
+        self.api_key = self.resolve_api_key();
+        self
     }
 }
 
@@ -316,7 +339,52 @@ impl ModelRegistry {
         self
     }
 
+    // TODO: Update doc tests with new fields
     /// Attempts to switch the active provider.
+    ///
+    /// # Returns
+    /// `true` if the provider id or alias was found and the switch succeeded,
+    /// `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use ploke_tui::user_config::{ModelRegistry, ModelConfig, ProviderType};
+    /// # use std::collections::HashMap;
+    /// let mut registry = ModelRegistry {
+    ///     providers: vec![
+    ///         ModelConfig {
+    ///             id: "gpt4".into(),
+    ///             api_key: "key".into(),
+    ///             base_url: "https://openrouter.ai/api/v1".into(),
+    ///             model: "openai/gpt-4".into(),
+    ///             display_name: Some("GPT-4".into()),
+    ///             provider_type: ProviderType::OpenRouter,
+    ///         },
+    ///         ModelConfig {
+    ///             id: "claude".into(),
+    ///             api_key: "key".into(),
+    ///             base_url: "https://openrouter.ai/api/v1".into(),
+    ///             model: "anthropic/claude-3".into(),
+    ///             display_name: Some("Claude 3".into()),
+    ///             provider_type: ProviderType::OpenRouter,
+    ///         },
+    ///     ],
+    ///     active_model_config: "gpt4".into(),
+    ///     aliases: HashMap::from([("gpt".into(), "gpt4".into())]),
+    /// };
+    ///
+    /// assert!(registry.set_active("claude"));
+    /// assert_eq!(registry.active_model_config, "claude");
+    ///
+    /// // Switch via alias
+    /// assert!(registry.set_active("gpt"));
+    /// assert_eq!(registry.active_model_config, "gpt4");
+    ///
+    /// // Unknown id fails
+    /// assert!(!registry.set_active("unknown"));
+    /// ```
+    // - LLM Generated, reviewed by - JL 25-07-17
     pub fn set_active(&mut self, id_or_alias: &str) -> bool {
         let provider_id = self
             .aliases
@@ -363,26 +431,10 @@ impl ModelRegistry {
     }
 
     /// Ensure all providers have their API keys loaded from environment variables
-    pub fn load_api_keys(&mut self) -> color_eyre::Result<()> {
-        let mut keys_found = 0;
-        
+    pub fn load_api_keys(&mut self) {
         for provider in &mut self.providers {
-            match provider.resolve_api_key() {
-                Ok(key) => {
-                    provider.api_key = key;
-                    keys_found += 1;
-                }
-                Err(err) => {
-                    tracing::warn!("Failed to resolve API key for provider '{}': {}", provider.id, err);
-                }
-            }
+            provider.api_key = provider.resolve_api_key();
         }
-        
-        if keys_found == 0 {
-            return Err(eyre!("No API keys found in environment variables"));
-        }
-        
-        Ok(())
     }
 
     /// Ensure all providers have their API keys loaded from environment variables
@@ -414,7 +466,16 @@ impl ModelRegistry {
             .providers
             .iter()
             .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
-            .map(|p| p.resolve_api_key());
+            .map(|p| p.resolve_api_key())
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .unwrap_or_default();
+
+        if api_key.is_empty() {
+            tracing::warn!(
+                "OPENROUTER_API_KEY not set and no OpenRouter provider configured; skipping model registry refresh"
+            );
+            return Ok(());
+        }
 
         let client = Client::new();
         let models =
@@ -433,23 +494,25 @@ impl ModelRegistry {
                 .map(|v| v.supports_tools())
                 .unwrap_or(false);
 
-            let provider_tools = m.providers.as_ref().is_some_and(|v| v.iter().any(|p| p.supports_tools()));
-
-            let supports_tools = model_level_tools
-                || provider_tools
-                || m.capabilities
-                    .as_ref()
-                    .and_then(|c| c.tools)
-                    .unwrap_or(false);
+            let supports_tools = m.supported_parameters
+                .as_ref().is_some_and(|p| p.supports_tools());
 
             let caps = ModelCapabilities {
                 supports_tools,
                 context_length: m
-                    .context_length
-                    .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
-                input_cost_per_million: m.pricing.as_ref().map(|p| p.prompt),
-                output_cost_per_million: m.pricing.as_ref().map(|p| p.completion),
+                    .context_length,
+                input_cost_per_million: Some( m.pricing.prompt * 1_000_000.0 ),
+                output_cost_per_million: Some( m.pricing.completion * 1_000_000.0 )
             };
+
+            // let caps = ModelCapabilities {
+            //     supports_tools,
+            //     context_length: m
+            //         .context_length
+            //         .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
+            //     input_cost_per_million: m.pricing.as_ref().map(|p| p.prompt),
+            //     output_cost_per_million: m.pricing.as_ref().map(|p| p.completion),
+            // };
             self.capabilities.insert(m.id, caps);
         }
         Ok(())
@@ -500,6 +563,7 @@ impl Default for ModelRegistry {
         let mut registry = Self {
             providers: vec![ModelConfig {
                 id: default_model_id(),
+                api_key: String::new(),
                 provider_slug: None,
                 base_url: default_base_url(),
                 model: default_model(),
@@ -508,6 +572,7 @@ impl Default for ModelRegistry {
                 llm_params: Some(crate::llm::LLMParameters {
                     ..Default::default()
                 }),
+                api_key_env: Some("OPENROUTER_API_KEY".to_string()),
             }],
             active_model_config: default_active_model_config(),
             aliases: std::collections::HashMap::new(),

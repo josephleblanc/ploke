@@ -75,8 +75,8 @@ async fn e2e_gat_request_code_context_complex() -> color_eyre::Result<()> {
     let params: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(&json_args)
         .expect("Failed to deserialize RequestCodeContext params");
     
-    assert_eq!(params.search_term.as_ref().map(|s| s.as_ref()), Some("SimpleStruct implementation"));
-    assert_eq!(params.token_budget, 1500);
+    assert_eq!(params.search_term, "SimpleStruct implementation");
+    assert_eq!(params.token_budget, Some( 1500 ));
     
     // Test actual tool execution through GAT system
     let ctx = Ctx {
@@ -178,7 +178,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
     // Build and send request
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
-    use ploke_tui::user_config::{ModelConfig, ProviderType};
+    use ploke_tui::user_config::{ModelConfig, ApiKey};
     
     let params = LLMParameters {
         max_tokens: Some(500),
@@ -194,7 +194,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
         base_url: env.base_url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
-        provider_type: ProviderType::OpenRouter,
+        provider_type: ApiKey::OpenRouter,
         llm_params: None,
     };
     
@@ -314,7 +314,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
                                         "tool": "request_code_context",
                                         "success": true,
                                         "token_budget": params.token_budget,
-                                        "search_term": params.search_term.as_ref().map(|s| s.as_ref()),
+                                        "search_term": params.search_term,
                                         "error": null
                                     })
                                 },
@@ -495,14 +495,14 @@ async fn e2e_gat_deserialization_validation() {
     let small_budget = r#"{"token_budget": 100, "search_term": "test"}"#;
     let params3: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(small_budget)
         .expect("Failed to deserialize small budget");
-    assert_eq!(params3.token_budget, 100);
-    assert_eq!(params3.search_term.as_ref().map(|s| s.as_ref()), Some("test"));
+    assert_eq!(params3.token_budget, Some(100));
+    assert_eq!(params3.search_term, "test");
     
-    let large_budget = r#"{"token_budget": 5000}"#;
+    let large_budget = r#"{"search_term": "test_two"}"#;
     let params4: RequestCodeContextParams = RequestCodeContextGat::deserialize_params(large_budget)
         .expect("Failed to deserialize large budget");
-    assert_eq!(params4.token_budget, 5000);
-    assert!(params4.search_term.is_none());
+    assert!(params4.token_budget.is_none());
+    assert_eq!(params4.search_term, "test_two");
     
     println!("✓ GAT deserialization validated with various JSON inputs");
 }

@@ -16,7 +16,7 @@ use ploke_tui::llm::{RequestMessage, Role};
 use ploke_tui::test_harness::{default_headers, openrouter_env};
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::tools::{FunctionMarker, Tool};
-use ploke_tui::user_config::{ModelConfig, ProviderType};
+use ploke_tui::user_config::{ModelConfig, ApiKey};
 
 fn ai_temp_dir() -> PathBuf {
     let p = PathBuf::from("ai_temp_data/live");
@@ -41,7 +41,7 @@ async fn live_tool_call_request_code_context() {
         // Choose a model likely to have tool-capable endpoints
         model: "qwen/qwen-2.5-7b-instruct".to_string(),
         display_name: None,
-        provider_type: ProviderType::OpenRouter,
+        provider_type: ApiKey::OpenRouter,
         llm_params: None,
     };
 
@@ -49,12 +49,7 @@ async fn live_tool_call_request_code_context() {
     if let Ok(eps) =
         fetch_model_endpoints(&client, env.base_url.clone(), &env.key, &provider.model).await
     {
-        if let Some(p) = eps.iter().find(|e| {
-            e.supported_parameters
-                .as_ref()
-                .map(|sp| sp.iter().any(|s| s == "tools"))
-                .unwrap_or(false)
-        }) {
+        if let Some(p) = eps.iter().find(|e| e.supports_tools()) {
             provider.provider_slug = Some(ProviderSlug::from_str(&p.id).expect("provider_slug"));
         } else {
             let dir =
@@ -68,7 +63,10 @@ async fn live_tool_call_request_code_context() {
             return;
         }
     } else {
-        panic!("unable to fetch models via fetch_model_endpoints using ModelConfig:\n{:#?}", provider);
+        panic!(
+            "unable to fetch models via fetch_model_endpoints using ModelConfig:\n{:#?}",
+            provider
+        );
         // Unable to fetch endpoints; should fail to avoid false positive
     }
 

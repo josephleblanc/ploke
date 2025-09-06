@@ -67,6 +67,7 @@ pub enum ProviderName {
     InferenceNet,
     Inception,
     Nebius,
+    Nvidia,
     Alibaba,
     Friendli,
     Chutes,
@@ -165,6 +166,7 @@ impl ProviderName {
             ProviderName::Meta => ProviderSlug::meta,
             ProviderName::Parasail => ProviderSlug::parasail,
             ProviderName::GMICloud => ProviderSlug::gmicloud,
+            ProviderName::Nvidia => ProviderSlug::nvidia,
         }
     }
 }
@@ -241,6 +243,7 @@ pub enum ProviderSlug {
     meta,
     parasail,
     gmicloud,
+    nvidia,
 }
 
 impl Display for ProviderSlug {
@@ -320,6 +323,7 @@ impl ProviderSlug {
             ProviderSlug::meta => ProviderName::Meta,
             ProviderSlug::parasail => ProviderName::Parasail,
             ProviderSlug::gmicloud => ProviderName::GMICloud,
+            ProviderSlug::nvidia => ProviderName::Nvidia,
         }
     }
 }
@@ -390,6 +394,7 @@ impl std::str::FromStr for ProviderSlug {
             "meta" => Ok(ProviderSlug::meta),
             "parasail" => Ok(ProviderSlug::parasail),
             "gmicloud" => Ok(ProviderSlug::gmicloud),
+            "nvidia" => Ok(ProviderSlug::nvidia),
             _ => Err(()),
         }
     }
@@ -441,14 +446,14 @@ mod tests {
         let providers_response: ProvidersResponse = serde_json::from_value(body)?;
 
         let count_providers = providers_response.data.len();
-        assert_eq!(61, count_providers);
+        assert_eq!(62, count_providers);
 
         let count_tos = providers_response
             .data
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(54, count_tos);
+        assert_eq!(55, count_tos);
 
         let count_status_page = providers_response
             .data
@@ -462,7 +467,7 @@ mod tests {
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(54, count_pp);
+        assert_eq!(55, count_pp);
         Ok(())
     }
 }

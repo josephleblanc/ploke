@@ -10,28 +10,33 @@
 //! This module intentionally fetches only the minimal subset of fields we need to
 //! keep the TUI responsive and reduce payload/deserialize costs.
 
+use crate::utils::se_de::string_or_f64;
+use crate::utils::se_de::string_or_f64_opt;
+use crate::utils::se_de::string_to_f64_opt_zero;
+use ploke_core::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use crate::utils::se_de::string_or_f64_opt;
-use crate::utils::se_de::string_or_f64;
 
-use super::provider_endpoints::SupportedParameters;
 use super::model_provider as or_ep;
+use super::model_provider::Endpoint;
+use super::model_provider::EndpointData;
+use super::provider_endpoints::ModelsEndpoint;
+use super::provider_endpoints::ModelsEndpointsData;
+use super::provider_endpoints::SupportedParameters;
+use super::provider_endpoints::SupportsTools;
+use super::providers::Provider;
+use super::providers::ProviderName;
 
 #[derive(Deserialize, Debug)]
-/// OpenRouter `/models` response container.
+/// OpenRouter `https://openrouter.ai/api/v1/models` response container.
 pub struct ModelsResponse {
     /// List of models with minimal fields needed by the TUI.
     pub data: Vec<ModelEntry>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
-/// Represents a single model endpoint from OpenRouter's API.
+/// Represents a single model entry.
 ///
-/// After doing some analysis on the data on Aug 29, 2025, the following fields have some nuance:
-///     - hugging_face_id: missing for 43/323 models
-///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
-///     - architecture.instruct_type: missing for most (~65%), 208/323
 pub struct ModelEntry {
     /// Canonical model identifier, e.g. "openai/gpt-4o".
     pub id: String,
@@ -47,9 +52,6 @@ pub struct ModelEntry {
     /// Input/output pricing; maps from OpenRouter's prompt/completion when present.
     #[serde(default)]
     pub pricing: Option<ModelPricing>,
-    /// Raw capability flags (currently tools). Note: many models expose "supported_parameters" instead.
-    #[serde(default)]
-    pub capabilities: Option<ModelCapabilitiesRaw>,
     /// OpenRouter model-level "supported_parameters" (e.g., includes "tools" when tool-calling is supported).
     /// e.g. frequency_penalty, logit_bias, max_tokens, min_p, presence_penalty,
     /// repetition_penalty, stop, temperature, tool_choice, tools, top_k, top_p
@@ -57,61 +59,99 @@ pub struct ModelEntry {
     pub supported_parameters: Option<Vec<SupportedParameters>>,
     /// Provider-specific entries under this model (pricing, tools, context).
     #[serde(default)]
-    pub providers: Option<Vec<ProviderEntry>>,
+    pub providers: Option<Vec<Provider>>,
 }
 
 #[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Deserialize)]
 /// Pricing information for a model.
 /// USD per token
 pub struct ModelPricing {
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
-    pub audio: Option<f64>,
-    // Price per token in USD for generated tokens
-    // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
-    #[serde(default, deserialize_with = "string_or_f64")]
-    pub completion: f64,
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
-    pub image: Option<f64>,
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
-    pub input_cache_read: Option<f64>,
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
-    pub input_cache_write: Option<f64>,
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
-    pub internal_reasoning: Option<f64>,
     // Price per token in USD for system(?) prompt
     // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
     #[serde(default, deserialize_with = "string_or_f64")]
     pub prompt: f64,
+    // Price per token in USD for generated tokens
+    // All models at https://openrouter.ai/api/v1/models have this (323/323 tested)
+    #[serde(default, deserialize_with = "string_or_f64")]
+    pub completion: f64,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audio: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub image: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_cache_read: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_cache_write: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub internal_reasoning: Option<f64>,
     // Price per token in USD for system(?) prompt
     // Most have this, 322/323 have it, so all but one
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub request: Option<f64>,
     // Again all but one have this
-    #[serde(default, deserialize_with = "string_or_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub web_search: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_to_f64_opt_zero",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub discount: Option<f64>,
 }
 
 impl Default for ModelPricing {
     fn default() -> Self {
         Self {
-            audio: None,
+            prompt: 0.0,
             completion: 0.0,
+            audio: None,
             image: None,
             input_cache_read: None,
             input_cache_write: None,
             internal_reasoning: None,
-            prompt: 0.0,
             request: None,
             web_search: None,
+            discount: None,
         }
     }
 }
 
 impl ModelPricing {
-    pub fn prompt_or_default(&self) -> f64 { self.prompt }
-    pub fn completion_or_default(&self) -> f64 { self.completion }
+    pub fn prompt_or_default(&self) -> f64 {
+        self.prompt
+    }
+    pub fn completion_or_default(&self) -> f64 {
+        self.completion
+    }
 }
-
 
 #[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
 /// Capability flags as exposed by OpenRouter.
@@ -134,31 +174,45 @@ pub struct TopProviderInfo {
 }
 
 /// Provider-specific entry beneath a model in the catalog.
+/// While not `Copy`, this is cheap to clone due to `ArcStr` being a convenience struct for
+/// `Arc<str>`, making this an inexpensive way to show the summary of model endpoint info before
+/// fetching more details (either locally or from the API) if needed.
 #[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
-pub struct ProviderEntry {
-    /// Provider identifier (varies by endpoint shape).
-    /// Endpoints may expose "id", "provider", "slug", or a human-readable "name".
-    // WARN: Not sure about the above claim, try deleting this and test again.
-    #[serde(
-        default,
-        alias = "provider",
-        alias = "name",
-        alias = "slug",
-        alias = "provider_slug"
-    )]
-    pub id: String,
+pub struct ProviderSummary {
+    /// Human-friendly name in the form "Provider | model id"
+    /// e.g. "name": "DeepInfra | deepseek/deepseek-chat-v3.1",
+    pub ep_name: ArcStr,
     /// Context length for this provider if known
     #[serde(default)]
-    pub context_length: Option<u32>,
+    pub ep_context_length: u32,
     /// Pricing for this provider/model combo. Accepts {input,output} or {prompt,completion}.
     #[serde(default)]
-    pub pricing: Option<ModelPricing>,
+    pub ep_pricing_prompt: f64,
+    /// Pricing for this provider/model combo. Accepts {input,output} or {prompt,completion}.
+    #[serde(default)]
+    pub ep_pricing_completion: f64,
     /// Capability flags; many providers expose tools here
     #[serde(default)]
-    pub capabilities: Option<ModelCapabilitiesRaw>,
-    /// OpenRouter "supported_parameters" array for this provider (e.g., contains "tools")
-    #[serde(default)]
-    pub supported_parameters: Option<Vec<String>>,
+    pub tool_use: bool,
+}
+
+impl ProviderSummary {
+    pub fn from_endpoint(ep: &Endpoint) -> Self {
+        let Endpoint {
+            name,
+            context_length,
+            pricing,
+            supported_parameters,
+            ..
+        } = ep;
+        Self {
+            ep_name: name.clone(),
+            ep_context_length: *context_length as u32,
+            ep_pricing_prompt: pricing.prompt,
+            ep_pricing_completion: pricing.completion,
+            tool_use: supported_parameters.supports_tools(),
+        }
+    }
 }
 
 /// Fetch the list of available models from OpenRouter with minimal fields needed
@@ -167,7 +221,7 @@ pub async fn fetch_models(
     client: &reqwest::Client,
     base_url: reqwest::Url,
     api_key: &str,
-) -> color_eyre::Result<Vec<ModelEntry>> {
+) -> color_eyre::Result<Vec<ModelsEndpoint>> {
     // Use public models endpoint (same as working tests)
     let url = base_url
         .join("models") // must be "models", not "/models"
@@ -180,14 +234,8 @@ pub async fn fetch_models(
         .error_for_status()?;
 
     let body = resp.text().await?;
-    let parsed: ModelsResponse = serde_json::from_str(&body)?;
+    let parsed: ModelsEndpointsData= serde_json::from_str(&body)?;
     Ok(parsed.data)
-}
-
-/// OpenRouter `/models/:author/:slug/endpoints` for provider-level details.
-#[derive(Deserialize, Debug)]
-struct EndpointsResponse {
-    data: Vec<ProviderEntry>,
 }
 
 /// Some catalog IDs include a variant suffix (e.g., ":free") that is not accepted by the
@@ -202,7 +250,7 @@ pub async fn fetch_model_endpoints(
     base_url: reqwest::Url,
     api_key: &str,
     model_id: &str,
-) -> color_eyre::Result<Vec<ProviderEntry>> {
+) -> color_eyre::Result<EndpointData> {
     let model_path = canonicalize_model_id_for_endpoints(model_id);
     let (author, slug) = model_path
         .split_once('/')
@@ -222,102 +270,10 @@ pub async fn fetch_model_endpoints(
         .await?
         .error_for_status()?;
 
-    let body = resp.text().await?;
+    // let body = resp.json().await?;
     // Parse with stronger typed endpoint shape first
-    let parsed: or_ep::EndpointsResponse = serde_json::from_str(&body)?;
+    let parsed: or_ep::EndpointsResponse = serde_json::from_value(resp.json().await?)?;
 
-    // Map typed Endpoint -> ProviderEntry expected by UI
-    let providers: Vec<ProviderEntry> = parsed
-        .data
-        .endpoints
-        .into_iter()
-        .map(|e| ProviderEntry {
-            id: e.preferred_provider_slug(),
-            context_length: e.context_length,
-            pricing: Some(e.pricing),
-            capabilities: None,
-            supported_parameters: e
-                .supported_parameters
-                .map(|v| v.into_iter().map(|p| serde_json::to_string(&p).unwrap().trim_matches('"').to_string()).collect()),
-        })
-        .collect();
 
-    Ok(providers)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn test_pricing_deser_from_strings() {
-        let body = r#"{
-            "data": [
-                {
-                    "id": "openai",
-                    "context_length": 128000,
-                    "pricing": { "prompt": "0.000001", "completion": "0.000002" },
-                    "supported_parameters": ["tools"],
-                    "capabilities": { "tools": true }
-                }
-            ]
-        }"#;
-        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
-        assert_eq!(parsed.data.len(), 1);
-        let p = &parsed.data[0];
-        assert_eq!(p.id, "openai");
-        let pr = p.pricing.as_ref().expect("pricing exists");
-        assert!((pr.prompt - 0.000001).abs() < 1e-12);
-        assert!((pr.completion - 0.000002).abs() < 1e-12);
-        assert_eq!(p.supported_parameters.as_ref().unwrap()[0], "tools");
-        assert_eq!(p.capabilities.as_ref().unwrap().tools, Some(true));
-    }
-
-    #[test]
-    #[cfg(feature = "xxx")]
-    fn test_pricing_deser_from_numbers() {
-        let body = r#"{
-            "data": [
-                {
-                    "id": "novita",
-                    "context_length": 64000,
-                    "pricing": { "input": 0.000003, "output": 0.000004 }
-                }
-            ]
-        }"#;
-        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
-        let p = &parsed.data[0];
-        let pr = p.pricing.as_ref().unwrap();
-        assert!((pr.input.unwrap() - 0.000003).abs() < 1e-12);
-        assert!((pr.output.unwrap() - 0.000004).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_alias_id_from_name() {
-        // Some endpoints respond with "name" (human-readable) instead of "id"/"provider"
-        let body = r#"{
-            "data": [
-                {
-                    "name": "OpenAI",
-                    "context_length": 128000,
-                    "pricing": { "prompt": "0.000001", "completion": "0.000002" }
-                }
-            ]
-        }"#;
-        let parsed: EndpointsResponse = serde_json::from_str(body).expect("parse endpoints");
-        assert_eq!(parsed.data[0].id, "OpenAI");
-    }
-
-    #[test]
-    fn test_canonicalize_model_id_for_endpoints() {
-        assert_eq!(
-            canonicalize_model_id_for_endpoints("deepseek/deepseek-r1-0528-qwen3-8b:free"),
-            "deepseek/deepseek-r1-0528-qwen3-8b"
-        );
-        assert_eq!(
-            canonicalize_model_id_for_endpoints("qwen/qwen-2.5-72b-instruct"),
-            "qwen/qwen-2.5-72b-instruct"
-        );
-    }
+    Ok(parsed.data)
 }

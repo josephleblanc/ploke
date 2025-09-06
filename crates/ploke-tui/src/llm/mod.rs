@@ -2,6 +2,7 @@ pub mod registry;
 pub mod openrouter;
 pub mod session;
 
+use itertools::Itertools;
 pub use openrouter::*;
 
 use ploke_rag::TokenCounter as _;
@@ -406,7 +407,7 @@ pub async fn llm_manager(
                 };
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
             }
-            AppEvent::ModelEndpointsRequest { model_id } => {
+            AppEvent::ModelsEndpointsRequest { model_id } => {
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
                 let client = client.clone();
@@ -433,7 +434,7 @@ pub async fn llm_manager(
                             model_id
                         );
                         // Unblock the UI: return an empty provider list so the overlay stops loading.
-                        event_bus.send(AppEvent::ModelEndpointsResults {
+                        event_bus.send(AppEvent::ModelsEndpointsResults {
                             model_id,
                             providers: Vec::new(),
                         });
@@ -448,17 +449,21 @@ pub async fn llm_manager(
                     )
                     .await
                     {
+
                         Ok(providers) => {
-                            event_bus.send(AppEvent::ModelEndpointsResults {
+                            let provider_summaries = providers.endpoints.iter().map(ProviderSummary::from_endpoint)
+                                .collect_vec();
+                            event_bus.send(AppEvent::ModelsEndpointsResults {
                                 model_id,
-                                providers,
+                                providers: provider_summaries,
                             });
                         }
                         Err(e) => {
                             tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
                             // Unblock the UI even on error with an empty provider list.
-                            event_bus.send(AppEvent::ModelEndpointsResults {
+                            event_bus.send(AppEvent::ModelsEndpointsResults {
                                 model_id,
+                                // TODO: Change to none and update UI to handle None case
                                 providers: Vec::new(),
                             });
                         }

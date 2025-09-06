@@ -36,8 +36,12 @@ mod harness;
 
 use harness::AppHarness;
 use lazy_static::lazy_static;
+use ploke_core::ArcStr;
+use ploke_tui::llm::model_provider::{Endpoint, EndpointsResponse};
 use ploke_tui::llm::openrouter_catalog::ModelsResponse;
-use ploke_tui::llm::provider_endpoints::{ModelEndpoint, ModelEndpointsResponse, SupportedParameters};
+use ploke_tui::llm::provider_endpoints::{
+    ModelsEndpoint, ModelsEndpointResponse, SupportedParameters
+};
 use ploke_tui::llm::providers::ProvidersResponse;
 use ploke_tui::test_harness::openrouter_env;
 use ploke_tui::tracing_setup::init_tracing_tests;
@@ -46,7 +50,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::collections::HashMap;
 use std::fs;
 use tokio::time::Duration;
-use tracing::{info, warn, Level};
+use tracing::{Level, info, warn};
 
 // Ensure a realistic App initialization occurs (settings/env seeded).
 // We don't yet drive the in-app event loops, but this simulates runtime config.
@@ -83,7 +87,7 @@ fn default_headers() -> HeaderMap {
 }
 
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
-fn endpoint_price_hint(ep: &ModelEndpoint) -> f64 {
+fn endpoint_price_hint(ep: &ModelsEndpoint) -> f64 {
     ep.pricing.prompt_or_default() + ep.pricing.completion_or_default()
 }
 
@@ -98,7 +102,7 @@ async fn choose_tools_endpoint_for_model(
 ) -> Option<(
     String, /*author*/
     String, /*slug*/
-    ModelEndpoint,
+    Endpoint,
     Option<String>, /*provider slug hint*/
 )> {
     let parts: Vec<&str> = model_id.split('/').collect();
@@ -116,30 +120,26 @@ async fn choose_tools_endpoint_for_model(
         .await
         .and_then(|r| r.error_for_status())
         .ok()?
-        .json::<ModelEndpointsResponse>()
+        .json::<EndpointsResponse>()
         .await
         .inspect(|resp| tracing::trace!("url: {url}\nResponse:\n{:#?}", resp))
         .ok()?;
 
-    let mut candidates: Vec<ModelEndpoint> = payload
+    let mut candidates: Vec<Endpoint> = payload
         .data
         .endpoints
         .into_iter()
         .filter(|ep| {
-            ep.supported_parameters
-                .iter()
-                .any(|p| matches!(p, SupportedParameters::Tools))
+            ep.supported_parameters.contains(&SupportedParameters::ToolChoice)
                 && ep
-                    .supported_parameters
-                    .iter()
-                    .any(|p| matches!(p, SupportedParameters::ToolChoice))
+                    .supported_parameters.contains(&SupportedParameters::Tools)
         })
         .inspect(|cand| tracing::trace!("candidate: {:#?}", cand))
         .collect();
 
     // Cache tools-capable endpoint names for later reference/diagnostics
     if let Ok(mut map) = TOOL_ENDPOINT_CANDIDATES.lock() {
-        let names: Vec<String> = candidates.iter().map(|ep| ep.name.clone()).collect();
+        let names: Vec<String> = candidates.iter().map(|ep| ep.name.to_string()).collect();
         map.insert(model_id.to_string(), names);
     }
     tracing::info!(
@@ -157,13 +157,12 @@ async fn choose_tools_endpoint_for_model(
         return None;
     }
     candidates.sort_by(|a, b| {
-        endpoint_price_hint(a)
-            .partial_cmp(&endpoint_price_hint(b))
+            a.pricing.partial_cmp(&b.pricing)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     let chosen = candidates.remove(0);
-    let slug_hint = providers_map.get(&chosen.name).cloned().or_else(|| {
+    let slug_hint = providers_map.get(chosen.name.as_ref()).cloned().or_else(|| {
         // Derive a conservative fallback slug from the provider display name
         let derived = chosen
             .name
@@ -198,9 +197,7 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
         .default_headers(default_headers())
         .build()
         .expect("client");
-    let url = base_url
-        .join("models")
-        .expect("Malformed models url");
+    let url = base_url.join("models").expect("Malformed models url");
     let resp = client
         .get(url)
         .bearer_auth(&op.key)
@@ -210,18 +207,18 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
 
     let body: serde_json::Value = resp.json().await?;
 
-    let parsed: ModelsResponse = serde_json::from_value(body).unwrap();
+    let parsed: ModelsEndpointResponse = serde_json::from_value(body).unwrap();
     // Best-effort capability refresh so tools are considered for models that advertise them.
     {
         let mut cfg = h.state.config.write().await;
         cfg.model_registry.refresh_from_openrouter().await?;
     }
 
-
-
     // Fetch catalog filtered by user allowances
     let models = match ploke_tui::llm::openrouter_catalog::fetch_models(
-        &client, op.base_url.clone(), &op.key,
+        &client,
+        op.base_url.clone(),
+        &op.key,
     )
     .await
     {
@@ -279,8 +276,10 @@ async fn e2e_openrouter_tools_with_app_and_db() -> color_eyre::Result<()> {
         .and_then(|r| r.error_for_status())?;
     let providers_response: ProvidersResponse = resp.json().await?;
     tracing::debug!("providers_map:\n{:#?}", providers_response);
-    let count = providers_response.data.iter()
-        .inspect(|p| println!("{:#?}", p) )
+    let count = providers_response
+        .data
+        .iter()
+        .inspect(|p| println!("{:#?}", p))
         .count();
     println!("count: {}", count);
     // Request a clean shutdown of the UI loop

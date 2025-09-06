@@ -18,71 +18,7 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 
 // Example json response for 
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
-//
-// {
-//   "data": {
-//     "id": "deepseek/deepseek-chat-v3.1",
-//     "name": "DeepSeek: DeepSeek V3.1",
-//     "created": 1755779628,
-//     "description": "DeepSeek-V3.1 is a large hybrid reasoning model (671B parameters, 37B active) that supports both thinking and non-thinking modes via prompt templates. It extends the DeepSeek-V3 base with a two-phase long-context training process, reaching up to 128K tokens, and uses FP8 microscaling for efficient inference. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)\n\nThe model improves tool use, code generation, and reasoning efficiency, achieving performance comparable to DeepSeek-R1 on difficult benchmarks while responding more quickly. It supports structured tool calling, code agents, and search agents, making it suitable for research, coding, and agentic workflows. \n\nIt succeeds the [DeepSeek V3-0324](/deepseek/deepseek-chat-v3-0324) model and performs well on a variety of tasks.",
-//     "architecture": {
-//       "tokenizer": "DeepSeek",
-//       "instruct_type": "deepseek-v3.1",
-//       "modality": "text->text",
-//       "input_modalities": [
-//         "text"
-//       ],
-//       "output_modalities": [
-//         "text"
-//       ]
-//     },
-//     "endpoints": [
-//       {
-//         "name": "Chutes | deepseek/deepseek-chat-v3.1",
-//         "model_name": "DeepSeek: DeepSeek V3.1",
-//         "context_length": 163840,
-//         "pricing": {
-//           "prompt": "0.0000002",
-//           "completion": "0.0000008",
-//           "request": "0",
-//           "image": "0",
-//           "image_output": "0",
-//           "web_search": "0",
-//           "internal_reasoning": "0",
-//           "discount": 0
-//         },
-//         "provider_name": "Chutes",
-//         "tag": "chutes",
-//         "quantization": null,
-//         "max_completion_tokens": null,
-//         "max_prompt_tokens": null,
-//         "supported_parameters": [
-//           "tools",
-//           "tool_choice",
-//           "reasoning",
-//           "include_reasoning",
-//           "max_tokens",
-//           "temperature",
-//           "top_p",
-//           "stop",
-//           "frequency_penalty",
-//           "presence_penalty",
-//           "seed",
-//           "top_k",
-//           "min_p",
-//           "repetition_penalty",
-//           "logprobs",
-//           "logit_bias",
-//           "top_logprobs"
-//         ],
-//         "status": 0,
-//         "uptime_last_30m": 99.33169971040321,
-//         "supports_implicit_caching": false
-//       },
-//       
-//       // more here
-//      }
-//  }
+// is shown in the test below for a simple sanity check `test_example_json_deserialize`
 
 use crate::llm::openrouter::provider_endpoints::ProvEnd;
 use crate::llm::openrouter::provider_endpoints::SupportedParameters;
@@ -210,7 +146,7 @@ pub struct Endpoint {
     /// computer-friendly provider slug, e.g. "chutes", "z-ai", "deepseek"
     /// We translate these into an enum, e.g. "z-ai" becomes `ProviderSlug::z_ai`
     ///     "provider_name": "Chutes",
-    pub tag: ProviderSlug,
+    pub tag: ProviderSlugStr,
 
     /// The level of quantization of the endpoint, e.g. 
     ///     "quantization": "fp4",
@@ -271,6 +207,7 @@ pub enum Quant {
     int8,
     fp4,
     fp6,
+    fp8,
     fp16,
     bf16,
     fp32,
@@ -306,6 +243,8 @@ pub struct EndpointsResponse {
 /// Contained within the `EndPointsResponse` as an object,
 /// this has some basic model information and then provides a list of the endpoints that support
 /// the models.
+// NOTE: Common fields between this and the `/models` endpoint are:
+// - id, name, created, description, architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointData {
     /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
@@ -684,6 +623,8 @@ mod tests {
 
     #[test]
     fn test_example_json_deserialize() {
+        // Example json response for 
+        // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
         let example_json = json!({
             "data": {
                 "id": "deepseek/deepseek-chat-v3.1",
