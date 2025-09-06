@@ -1,17 +1,3 @@
-// Defines the typed response received when calling for a model provider endpoint using `ProvEnd`
-// in `provider_endpoint.rs`.
-//
-// Plans (in progress)
-// The typed response, `Endpoint`, should implement Serialize and Deserialize for ergonomic
-// deserializeation of the response from the call for all of the available endpoints for a
-// specific model.
-// This information should (if we understand the API structure correctly) be the data required to
-// call into the `chat/completions` endpoints to request a generated response from the OpenRouter
-// API.
-//  - See `crates/ploke-tui/docs/openrouter/request_structure.md` for the OpenRouter official
-//  documentation on the request structure.
-//
-// Desired functionality:
 //  - We should take the typed response, `Endpoint`, and be capable of transforming it into a
 //  `CompReq`, a completion request to the OpenRouter API, ideally through `Serialize`.
 //      - NOTE: The `CompReq` will deprecate the `llm::`
@@ -25,56 +11,86 @@ use std::sync::Arc;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
-use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::llm::ProviderPreferences;
+use crate::tools::{FunctionMarker, ToolDefinition};
+use crate::utils::se_de::string_or_f64;
+use crate::utils::se_de::string_to_f64_opt_zero;
 
-// Example json response to /endpoints:
+// AI: Write a test at the end of this file in the test mod to deserialize the below example from a
+// serde_json::json! to provide a sanity check AI!
+
+// Example json response for 
+// `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 //
 // {
-//   "context_length": 262144,
-//   "max_completion_tokens": null,
-//   "max_prompt_tokens": null,
-//   "model_name": "Qwen: Qwen3 30B A3B Thinking 2507",
-//   "name": "Nebius | qwen/qwen3-30b-a3b-thinking-2507",
-//   "pricing": {
-//     "completion": "0.0000003",
-//     "discount": 0,
-//     "image": "0",
-//     "image_output": "0",
-//     "internal_reasoning": "0",
-//     "prompt": "0.0000001",
-//     "request": "0",
-//     "web_search": "0"
-//   },
-//   "provider_name": "Nebius",
-//   "quantization": "fp8",
-//   "status": 0,
-//   "supported_parameters": [
-//     "tools",
-//     "tool_choice",
-//     "reasoning",
-//     "include_reasoning",
-//     "max_tokens",
-//     "temperature",
-//     "top_p",
-//     "stop",
-//     "frequency_penalty",
-//     "presence_penalty",
-//     "seed",
-//     "top_k",
-//     "logit_bias",
-//     "logprobs",
-//     "top_logprobs"
-//   ],
-//   "supports_implicit_caching": false,
-//   "tag": "nebius/fp8",
-//   "uptime_last_30m": null
-// },
+//   "data": {
+//     "id": "deepseek/deepseek-chat-v3.1",
+//     "name": "DeepSeek: DeepSeek V3.1",
+//     "created": 1755779628,
+//     "description": "DeepSeek-V3.1 is a large hybrid reasoning model (671B parameters, 37B active) that supports both thinking and non-thinking modes via prompt templates. It extends the DeepSeek-V3 base with a two-phase long-context training process, reaching up to 128K tokens, and uses FP8 microscaling for efficient inference. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)\n\nThe model improves tool use, code generation, and reasoning efficiency, achieving performance comparable to DeepSeek-R1 on difficult benchmarks while responding more quickly. It supports structured tool calling, code agents, and search agents, making it suitable for research, coding, and agentic workflows. \n\nIt succeeds the [DeepSeek V3-0324](/deepseek/deepseek-chat-v3-0324) model and performs well on a variety of tasks.",
+//     "architecture": {
+//       "tokenizer": "DeepSeek",
+//       "instruct_type": "deepseek-v3.1",
+//       "modality": "text->text",
+//       "input_modalities": [
+//         "text"
+//       ],
+//       "output_modalities": [
+//         "text"
+//       ]
+//     },
+//     "endpoints": [
+//       {
+//         "name": "Chutes | deepseek/deepseek-chat-v3.1",
+//         "model_name": "DeepSeek: DeepSeek V3.1",
+//         "context_length": 163840,
+//         "pricing": {
+//           "prompt": "0.0000002",
+//           "completion": "0.0000008",
+//           "request": "0",
+//           "image": "0",
+//           "image_output": "0",
+//           "web_search": "0",
+//           "internal_reasoning": "0",
+//           "discount": 0
+//         },
+//         "provider_name": "Chutes",
+//         "tag": "chutes",
+//         "quantization": null,
+//         "max_completion_tokens": null,
+//         "max_prompt_tokens": null,
+//         "supported_parameters": [
+//           "tools",
+//           "tool_choice",
+//           "reasoning",
+//           "include_reasoning",
+//           "max_tokens",
+//           "temperature",
+//           "top_p",
+//           "stop",
+//           "frequency_penalty",
+//           "presence_penalty",
+//           "seed",
+//           "top_k",
+//           "min_p",
+//           "repetition_penalty",
+//           "logprobs",
+//           "logit_bias",
+//           "top_logprobs"
+//         ],
+//         "status": 0,
+//         "uptime_last_30m": 99.33169971040321,
+//         "supports_implicit_caching": false
+//       },
+//       
+//       // more here
+//      }
+//  }
 
 use crate::llm::openrouter::provider_endpoints::ProvEnd;
 use crate::llm::openrouter::provider_endpoints::SupportedParameters;
 use crate::llm::openrouter_catalog::ModelPricing;
-use crate::llm::providers::{ProviderSlug, ProviderName as ProviderNameEnum};
+use crate::llm::providers::{ProviderName as ProviderNameEnum, ProviderSlug};
 
 /// Raw model id as returned by APIs (may contain a variant suffix after ':').
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -108,7 +124,10 @@ impl CanonicalSlug {
         let (author, model) = s.split_once('/')?;
         // Validate author via enum mapping, but store as slug string for routing stability.
         let _ = ProviderSlug::from_str(author).ok()?;
-        Some(ProvEnd { author: ArcStr::from(author), model: ArcStr::from(model) })
+        Some(ProvEnd {
+            author: ArcStr::from(author),
+            model: ArcStr::from(model),
+        })
     }
 }
 
@@ -135,7 +154,13 @@ impl ProviderNameStr {
     pub fn normalized_slug(&self) -> String {
         self.0
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>()
     }
     /// Attempt conversion via enum ProviderName, then map to ProviderSlug; fall back to normalized slug parse.
@@ -151,6 +176,7 @@ impl ProviderNameStr {
 
 /// Provider id (raw), aliased across different shapes (id/provider/name/slug/provider_slug).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ProviderIdRaw(pub String);
 impl ProviderIdRaw {
     pub fn as_str(&self) -> &str {
@@ -158,178 +184,149 @@ impl ProviderIdRaw {
     }
 }
 
+use crate::utils::se_de::{de_arc_str, se_arc_str};
+
+use super::provider_endpoints::Architecture;
+
 /// Typed Endpoint entry from `/models/:author/:slug/endpoints`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Endpoint {
-    /// Raw provider identifier with aliases.
-    pub provider_id: ProviderIdRaw,
-    /// Optional explicit slug or name if provided.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_slug: Option<ProviderSlugStr>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_name: Option<ProviderNameStr>,
+    /// Human-friendly name in the form "Provider | model id"
+    /// e.g. "name": "DeepInfra | deepseek/deepseek-chat-v3.1",
+    pub name: ArcStr,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_completion_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_prompt_tokens: Option<u32>,
+    /// Human-friendly name of the model, e.g.
+    /// e.g. "model_name": "DeepSeek: DeepSeek V3.1",
+    pub model_name: ArcStr,
 
-    #[serde(default)]
+    /// Context length of model served, distinct from prompt/completion limits
+    pub context_length: f64,
+
+    /// Pricing for different kinds of tokens, natively in dollars/token,
+    /// See `ModelPricing`
     pub pricing: ModelPricing,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub supported_parameters: Option<Vec<SupportedParameters>>,
+    /// Human-readable provider name, e.g. "Chutes", "Z.AI", "DeepSeek"
+    ///     "provider_name": "Chutes",
+    pub provider_name: ProviderNameStr,
 
-    /// Optional canonical identity (author/model) for convenience when present.
+    /// computer-friendly provider slug, e.g. "chutes", "z-ai", "deepseek"
+    /// We translate these into an enum, e.g. "z-ai" becomes `ProviderSlug::z_ai`
+    ///     "provider_name": "Chutes",
+    pub tag: ProviderSlug,
+
+    /// The level of quantization of the endpoint, e.g. 
+    ///     "quantization": "fp4",
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub canonical: Option<CanonicalSlug>,
-    /// Full raw id if carried alongside endpoint entries.
+    pub quantization: Option<Quant>,
+
+    /// Parameters supported as options by this endpoint, includes things like:
+    /// - tools
+    /// - top_k
+    /// - stop
+    /// - include_reasoning
+    /// See SupportedParameters for full enum of observed values.
+    pub supported_parameters: Vec<SupportedParameters>,
+
+    /// Max completion tokens supported by this endpoint, may be less than context length +
+    /// max_prompt tokens, may be null, e.g.
+    ///     "max_completion_tokens": null,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_id: Option<ModelIdRaw>,
+    pub max_completion_tokens: Option<f64>,
+
+    /// Max prompt tokens supported by this endpoint, may be less than context length +
+    /// max_completion tokens, may be null, e.g.
+    ///     "max_prompt_tokens": null,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_prompt_tokens: Option<f64>,
+
+    /// Not sure what this is, not documented on the website
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<i32>,
+
+    /// Not documented, but self-explanatory, e.g. 
+    ///     "uptime_last_30m": 100,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "uptime_last_30m")]
+    pub uptime: Option<f64>,
+
+    /// Unsure what this is exactly, not documented on OpenRouter
+    ///     "supports_implicit_caching": false
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_implicit_caching: Option<bool>,
 }
 
-impl<'de> serde::Deserialize<'de> for Endpoint {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{Error as DeError, MapAccess, Visitor};
-        use serde_json::Value;
-
-        struct EpVisitor;
-        impl<'de> Visitor<'de> for EpVisitor {
-            type Value = Endpoint;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("an OpenRouter endpoint object")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut provider_id: Option<ProviderIdRaw> = None;
-                let mut provider_slug: Option<ProviderSlugStr> = None;
-                let mut provider_name: Option<ProviderNameStr> = None;
-                let mut context_length: Option<u32> = None;
-                let mut max_completion_tokens: Option<u32> = None;
-                let mut max_prompt_tokens: Option<u32> = None;
-                let mut pricing: Option<ModelPricing> = None;
-                let mut supported_parameters: Option<Vec<SupportedParameters>> = None;
-                let mut canonical: Option<CanonicalSlug> = None;
-                let mut raw_id: Option<ModelIdRaw> = None;
-
-                while let Some((k, v)) = map.next_entry::<String, Value>()? {
-                    match k.as_str() {
-                        // Provider identity can appear under multiple keys
-                        "id" | "provider" => {
-                            let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            if provider_id.is_none() {
-                                provider_id = Some(ProviderIdRaw(s));
-                            }
-                        }
-                        "provider_slug" | "slug" => {
-                            let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            provider_slug = Some(ProviderSlugStr(s.clone()));
-                            if provider_id.is_none() {
-                                provider_id = Some(ProviderIdRaw(s));
-                            }
-                        }
-                        "provider_name" | "name" => {
-                            let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            provider_name = Some(ProviderNameStr(s.clone()));
-                            if provider_id.is_none() {
-                                provider_id = Some(ProviderIdRaw(s));
-                            }
-                        }
-                        // Numeric/meta fields
-                        "context_length" => {
-                            context_length = serde_json::from_value(v).map_err(DeError::custom)?;
-                        }
-                        "max_completion_tokens" => {
-                            max_completion_tokens = serde_json::from_value(v).map_err(DeError::custom)?;
-                        }
-                        "max_prompt_tokens" => {
-                            max_prompt_tokens = serde_json::from_value(v).map_err(DeError::custom)?;
-                        }
-                        // Pricing can be either numbers or strings; delegate to typed struct
-                        "pricing" => {
-                            pricing = Some(serde_json::from_value(v).map_err(DeError::custom)?);
-                        }
-                        // Enum list
-                        "supported_parameters" => {
-                            supported_parameters = Some(serde_json::from_value(v).map_err(DeError::custom)?);
-                        }
-                        // Canonical slug may not exist in endpoint entries, but accept if present
-                        "canonical_slug" => {
-                            let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            canonical = Some(CanonicalSlug(s));
-                        }
-                        // Let raw ids pass through if provided under a distinct key
-                        "raw_id" => {
-                            let s: String = serde_json::from_value(v).map_err(DeError::custom)?;
-                            raw_id = Some(ModelIdRaw(s));
-                        }
-                        // Ignore other fields (status, uptime, transforms, etc.)
-                        _ => {
-                            // no-op
-                        }
-                    }
-                }
-
-                let provider_id = provider_id.ok_or_else(|| DeError::custom("missing provider identity (id/provider/provider_slug/slug/name)"))?;
-
-                Ok(Endpoint {
-                    provider_id,
-                    provider_slug,
-                    provider_name,
-                    context_length,
-                    max_completion_tokens,
-                    max_prompt_tokens,
-                    pricing: pricing.unwrap_or_default(),
-                    supported_parameters,
-                    canonical,
-                    raw_id,
-                })
-            }
-        }
-
-        deserializer.deserialize_map(EpVisitor)
-    }
+// From the official docs at openrouter:
+// - `int4`: Integer (4 bit)
+// - `int8`: Integer (8 bit)
+// - `fp4`: Floating point (4 bit)
+// - `fp6`: Floating point (6 bit)
+// - `fp8`: Floating point (8 bit)
+// - `fp16`: Floating point (16 bit)
+// - `bf16`: Brain floating point (16 bit)
+// - `fp32`: Floating point (32 bit)
+// - `unknown`: Unknown
+/// The level of quantization of the endpoint, e.g. 
+///     "quantization": "fp4",
+#[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, PartialOrd)]
+#[allow(non_camel_case_types)]
+pub enum Quant {
+    int4,
+    int8,
+    fp4,
+    fp6,
+    fp16,
+    bf16,
+    fp32,
+    unknown
 }
 
 impl Endpoint {
-    pub fn preferred_provider_slug(&self) -> String {
-        if let Some(s) = &self.provider_slug {
-            return s.0.clone();
-        }
-        if let Some(n) = &self.provider_name {
-            return n.normalized_slug();
-        }
-        self.provider_id.0.clone()
-    }
+    // pub fn preferred_provider_slug(&self) -> String {
+    //     if let Some(s) = &self.provider_slug {
+    //         return s.0.clone();
+    //     }
+    //     if let Some(n) = &self.provider_name {
+    //         return n.normalized_slug();
+    //     }
+    //     self.provider_id.0.clone()
+    // }
     pub fn supports_tools(&self) -> bool {
         self.supported_parameters
-            .as_ref()
-            .map(|v| v.iter().any(|p| matches!(p, SupportedParameters::Tools)))
-            .unwrap_or(false)
+            .contains(&SupportedParameters::Tools)
     }
 }
 
 /// Wrapper for the OpenRouter endpoints API response shape:
 /// { "data": { "endpoints": [ Endpoint, ... ] } }
+///
+/// Response from `/models/:author/:slug/endpoints`.
+/// e.g. https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointsResponse {
-    pub data: EndpointList,
+    pub data: EndpointData,
 }
 
+/// Contained within the `EndPointsResponse` as an object,
+/// this has some basic model information and then provides a list of the endpoints that support
+/// the models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EndpointList {
+pub struct EndpointData {
+    /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
+    pub id: ArcStr,
+    /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
+    pub name: ArcStr,
+    /// Unix timestamp, e.g. 1755779628
+    pub created: f64,
+    /// User-facing description. Kind of long.
+    pub description: ArcStr,
+    /// Things like tokenizer, modality, etc. See `Architecture` struct.
+    pub architecture: Architecture,
+    /// A list of endpoints that provide completion for this model.
     pub endpoints: Vec<Endpoint>,
 }
 
+/// Completion request for the OpenRouter url at 
+/// - https://openrouter.ai/api/v1/chat/completions
 #[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct CompReq<'a> {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
@@ -482,7 +479,11 @@ impl<'de> Deserialize<'de> for JsonObjMarker {
                         }
                     }
                 }
-                if found { Ok(JsonObjMarker) } else { Err(serde::de::Error::custom("invalid response_format")) }
+                if found {
+                    Ok(JsonObjMarker)
+                } else {
+                    Err(serde::de::Error::custom("invalid response_format"))
+                }
             }
         }
         deserializer.deserialize_map(V)
@@ -517,7 +518,11 @@ impl<'de> Deserialize<'de> for FallbackMarker {
             where
                 E: serde::de::Error,
             {
-                if v == "fallback" { Ok(FallbackMarker) } else { Err(E::custom("expected 'fallback'")) }
+                if v == "fallback" {
+                    Ok(FallbackMarker)
+                } else {
+                    Err(E::custom("expected 'fallback'"))
+                }
             }
         }
         deserializer.deserialize_str(V)
@@ -530,7 +535,10 @@ impl<'de> Deserialize<'de> for FallbackMarker {
 pub enum ToolChoice {
     None,
     Auto,
-    Function { r#type: FunctionMarker, function: ToolChoiceFunction },
+    Function {
+        r#type: FunctionMarker,
+        function: ToolChoiceFunction,
+    },
 }
 
 impl Serialize for ToolChoice {
@@ -582,18 +590,23 @@ impl<'de> Deserialize<'de> for ToolChoice {
                 while let Some((k, v)) = map.next_entry::<String, serde_json::Value>()? {
                     match k.as_str() {
                         "type" => {
-                            let m: FunctionMarker = serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+                            let m: FunctionMarker =
+                                serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                             type_seen = Some(m);
                         }
                         "function" => {
-                            let f: ToolChoiceFunction = serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+                            let f: ToolChoiceFunction =
+                                serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                             function_seen = Some(f);
                         }
                         _ => {}
                     }
                 }
                 match (type_seen, function_seen) {
-                    (Some(m), Some(f)) => Ok(ToolChoice::Function { r#type: m, function: f }),
+                    (Some(m), Some(f)) => Ok(ToolChoice::Function {
+                        r#type: m,
+                        function: f,
+                    }),
                     _ => Err(serde::de::Error::custom("invalid ToolChoice object")),
                 }
             }
@@ -610,7 +623,7 @@ pub struct ToolChoiceFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[test]
     fn json_obj_marker_serde_roundtrip() {
@@ -637,13 +650,19 @@ mod tests {
     fn tool_choice_serde_variants() {
         // none
         let none: ToolChoice = serde_json::from_str("\"none\"").expect("none deser");
-        match none { ToolChoice::None => {}, _ => panic!("expected None"), }
+        match none {
+            ToolChoice::None => {}
+            _ => panic!("expected None"),
+        }
         let s = serde_json::to_string(&none).unwrap();
         assert_eq!(s, "\"none\"");
 
         // auto
         let auto: ToolChoice = serde_json::from_str("\"auto\"").expect("auto deser");
-        match auto { ToolChoice::Auto => {}, _ => panic!("expected Auto"), }
+        match auto {
+            ToolChoice::Auto => {}
+            _ => panic!("expected Auto"),
+        }
         let s = serde_json::to_string(&auto).unwrap();
         assert_eq!(s, "\"auto\"");
 
@@ -654,7 +673,10 @@ mod tests {
         });
         let fc: ToolChoice = serde_json::from_value(func_json.clone()).expect("function deser");
         match &fc {
-            ToolChoice::Function { r#type: _, function } => {
+            ToolChoice::Function {
+                r#type: _,
+                function,
+            } => {
                 assert_eq!(function.name, "apply_code_edit");
             }
             _ => panic!("expected Function variant"),
@@ -674,26 +696,14 @@ mod tests {
         assert_eq!(p2.normalized_slug(), "deepinfra-turbo");
     }
 
-    #[test]
-    fn endpoint_min_deserialize() {
-        let body = json!({
-            "provider_slug": "nebius",
-            "context_length": 262144,
-            "pricing": { "prompt": "0.0000001", "completion": "0.0000003" },
-            "supported_parameters": ["tools", "max_tokens"]
-        });
-        let ep: Endpoint = serde_json::from_value(body).expect("endpoint deser");
-        assert_eq!(ep.preferred_provider_slug(), "nebius");
-        assert!(ep.supports_tools());
-        assert!(ep.pricing.prompt_or_default() > 0.0);
-        assert!(ep.pricing.completion_or_default() > 0.0);
-    }
-
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_fetch_smoke() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd {
+            author: ArcStr::from("deepseek"),
+            model: ArcStr::from("deepseek-chat-v3.1"),
+        };
         let v = pe.call_endpoint_raw().await?;
         assert!(v.get("data").is_some(), "response missing 'data' key");
         Ok(())
@@ -703,141 +713,142 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd {
+            author: ArcStr::from("deepseek"),
+            model: ArcStr::from("deepseek-chat-v3.1"),
+        };
         let v = pe.call_endpoint_raw().await?;
+        // eprintln!("{:#?}", v);
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned");
-        let has_id = parsed.data.endpoints.iter().all(|e| !e.provider_id.0.is_empty());
+        let has_id = parsed.data.endpoints.iter().all(|e| !e.name.0.is_empty());
         assert!(has_id, "provider_id must be present");
         for e in &parsed.data.endpoints {
-            assert!(e.pricing.prompt_or_default() >= 0.0);
-            assert!(e.pricing.completion_or_default() >= 0.0);
-        }        Ok(())
+            let p = &e.pricing;
+            assert!(p.request >= Some( 0.0 ));
+            assert!(p.image >= Some( 0.0 ));
+            assert!(p.prompt >= 0.0);
+            assert!(p.completion >= 0.0);
+        }
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    async fn live_endpoints_into_endpoint_qwen() -> color_eyre::Result<()> {
+    async fn live_endpoints_into_endpoint_deepseek() -> color_eyre::Result<()> {
         use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
+        let pe = ProvEnd {
+            author: ArcStr::from("deepseek"),
+            model: ArcStr::from("deepseek-chat-v3.1"),
+        };
         let v = pe.call_endpoint_raw().await?;
+        // eprintln!("{:#?}", v);
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
-        assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned for qwen");
+        assert!(
+            !parsed.data.endpoints.is_empty(),
+            "no endpoints returned for qwen"
+        );
         Ok(())
     }
 }
 
-    #[tokio::test]
-    #[cfg(feature = "live_api_tests")]
-    async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
-        use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let Some(_op) = crate::test_harness::openrouter_env() else {
-            eprintln!("Skipping live tests: OPENROUTER_API_KEY not set");
-            return Ok(());
+#[tokio::test]
+#[cfg(feature = "live_api_tests")]
+async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
+    use crate::llm::openrouter::provider_endpoints::ProvEnd;
+    let Some(_op) = crate::test_harness::openrouter_env() else {
+        panic!("Skipping live tests: OPENROUTER_API_KEY not set");
+    };
+    let candidates: &[(&str, &str)] = &[
+        ("qwen", "qwen3-30b-a3b-thinking-2507"),
+        ("meta-llama", "llama-3.1-8b-instruct"),
+        ("x-ai", "grok-2"),
+    ];
+    let mut successes = 0usize;
+    for (author, model) in candidates {
+        let pe = ProvEnd {
+            author: ArcStr::from(*author),
+            model: ArcStr::from(*model),
         };
-        let candidates: &[(&str, &str)] = &[
-            ("qwen", "qwen3-30b-a3b-thinking-2507"),
-            ("meta-llama", "llama-3.1-8b-instruct"),
-            ("x-ai", "grok-2"),
-        ];
-        let mut successes = 0usize;
-        for (author, model) in candidates {
-            let pe = ProvEnd { author: ArcStr::from(*author), model: ArcStr::from(*model) };
-            match pe.call_endpoint_raw().await {
-                Ok(v) => {
-                    if v.get("data").is_some() {
-                        // Try full typed path as well
-                        if let Ok(parsed) = serde_json::from_value::<EndpointsResponse>(v) {
-                            if !parsed.data.endpoints.is_empty() { successes += 1; }
-                        } else {
-                            successes += 1; // still count a data-bearing response
+        match pe.call_endpoint_raw().await {
+            Ok(v) => {
+                if v.get("data").is_some() {
+                    // Try full typed path as well
+                    if let Ok(parsed) = serde_json::from_value::<EndpointsResponse>(v) {
+                        if !parsed.data.endpoints.is_empty() {
+                            successes += 1;
                         }
+                    } else {
+                        successes += 1; // still count a data-bearing response
                     }
                 }
-                Err(e) => {
-                    eprintln!("live endpoint fetch failed for {}/{}: {}", author, model, e);
-                }
+            }
+            Err(e) => {
+                eprintln!("live endpoint fetch failed for {}/{}: {}", author, model, e);
             }
         }
-        assert!(successes >= 1, "at least one candidate model should succeed");
-        Ok(())
     }
+    assert!(
+        successes >= 1,
+        "at least one candidate model should succeed"
+    );
+    Ok(())
+}
 
-    #[tokio::test]
-    #[cfg(feature = "live_api_tests")]
-    async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
-        use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd { author: ArcStr::from("deepseek"), model: ArcStr::from("deepseek-chat-v3.1") };
-        let raw = pe.call_endpoint_raw().await?;
+#[tokio::test]
+#[cfg(feature = "live_api_tests")]
+async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
+    use crate::llm::openrouter::provider_endpoints::ProvEnd;
+    let pe = ProvEnd {
+        author: ArcStr::from("deepseek"),
+        model: ArcStr::from("deepseek-chat-v3.1"),
+    };
+    let raw = pe.call_endpoint_raw().await?;
+    // eprintln!("{:#?}", raw);
 
-        let typed: EndpointsResponse = serde_json::from_value(raw.clone())?;
-        assert!(!typed.data.endpoints.is_empty(), "no endpoints returned");
+    let data = raw.get("data").unwrap();
+    let ep = data.get("endpoints").unwrap();
+    let first_ep = ep.get(0).unwrap();
+    let pricing = first_ep.get("pricing").unwrap();
+    
+    let completion = pricing.get("completion").unwrap();
+    str_or_num_to_f64(completion);
+    let image = pricing.get("image").unwrap();
+    str_or_num_to_f64(image);
+    let discount = pricing.get("discount").unwrap();
+    let de_discount = crate::utils::se_de::string_to_f64_opt_zero(discount);
+    // eprintln!("de_discount:\n{:?}", de_discount);
+    let _ = de_discount?;
 
-        let typed_json = serde_json::to_value(&typed).expect("serialize typed");
-        // Full equality is not expected (we omit unknown fields; numeric normalization)
-        assert!(typed_json != raw);
+    let typed: EndpointsResponse = serde_json::from_value(raw.clone())?;
+    assert!(!typed.data.endpoints.is_empty(), "no endpoints returned");
 
-        // Subset equality on key fields
-        let raw_eps = raw.get("data").and_then(|d| d.get("endpoints")).and_then(|v| v.as_array()).expect("raw endpoints array");
-        assert_eq!(typed.data.endpoints.len(), raw_eps.len());
+    let typed_json = serde_json::to_value(&typed).expect("serialize typed");
+    // Full equality is not expected (we omit unknown fields; numeric normalization)
+    assert!(typed_json != raw);
 
-        fn str_or_num_to_f64(v: &serde_json::Value) -> Option<f64> {
-            match v {
-                serde_json::Value::Number(n) => n.as_f64(),
-                serde_json::Value::String(s) => s.parse::<f64>().ok(),
-                _ => None,
-            }
-        }
+    // Subset equality on key fields
+    let raw_eps = raw
+        .get("data")
+        .and_then(|d| d.get("endpoints"))
+        .and_then(|v| v.as_array())
+        .expect("raw endpoints array");
+    assert_eq!(typed.data.endpoints.len(), raw_eps.len());
 
-        for (t, r) in typed.data.endpoints.iter().zip(raw_eps.iter()) {
-            let r_obj = r.as_object().expect("raw ep object");
-            let raw_pid = r_obj.get("provider_slug")
-                .or_else(|| r_obj.get("slug"))
-                .or_else(|| r_obj.get("id"))
-                .or_else(|| r_obj.get("provider"))
-                .or_else(|| r_obj.get("name"))
-                .and_then(|v| v.as_str());
-            if let Some(pid) = raw_pid {
-                let used_name_only = r_obj.get("provider_slug").is_none()
-                    && r_obj.get("slug").is_none()
-                    && r_obj.get("id").is_none()
-                    && r_obj.get("provider").is_none()
-                    && r_obj.get("name").is_some();
-                let expected = if used_name_only {
-                    let left = pid.split('|').next().unwrap_or(pid).trim();
-                    left.chars()
-                        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-                        .collect::<String>()
+    fn str_or_num_to_f64(v: &serde_json::Value) -> Option<f64> {
+        match v {
+            serde_json::Value::Number(n) => n.as_f64()
+            .or_else(|| {
+                if n.as_u64().unwrap_or_default() == 0 {
+                    Some(0.0)
                 } else {
-                    pid.to_string()
-                };
-                assert_eq!(t.preferred_provider_slug(), expected);
-            }
-
-            if let Some(p_raw) = r_obj.get("pricing").and_then(|v| v.as_object()) {
-                if let Some(tp) = Some(t.pricing.prompt_or_default()) {
-                    if let Some(rp) = p_raw.get("prompt").and_then(str_or_num_to_f64) {
-                        assert!((tp - rp).abs() < 1e-9);
-                    }
+                    panic!("Invalid State: not f64 AND u64")
                 }
-                if let Some(tc) = Some(t.pricing.completion_or_default()) {
-                    if let Some(rc) = p_raw.get("completion").and_then(str_or_num_to_f64) {
-                        assert!((tc - rc).abs() < 1e-9);
-                    }
-                }
-            }
-
-            if let Some(cl_raw) = r_obj.get("context_length").and_then(|v| v.as_u64()) {
-                if let Some(cl) = t.context_length { assert_eq!(cl as u64, cl_raw); }
-            }
-
-            if let Some(sp_raw) = r_obj.get("supported_parameters").and_then(|v| v.as_array()) {
-                let raw_set: std::collections::HashSet<String> = sp_raw.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                if let Some(tsp) = &t.supported_parameters {
-                    let typed_set: std::collections::HashSet<String> = tsp.iter().map(|p| serde_json::to_string(p).unwrap().trim_matches('"').to_string()).collect();
-                    assert!(typed_set.is_subset(&raw_set));
-                }
-            }        }
-
-        Ok(())
+            }),
+            serde_json::Value::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        }
     }
+
+    Ok(())
+}
