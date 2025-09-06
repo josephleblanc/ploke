@@ -16,9 +16,6 @@ use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;
 use crate::utils::se_de::string_to_f64_opt_zero;
 
-// AI: Write a test at the end of this file in the test mod to deserialize the below example from a
-// serde_json::json! to provide a sanity check AI!
-
 // Example json response for 
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 //
@@ -683,6 +680,77 @@ mod tests {
         }
         let back = serde_json::to_value(fc).unwrap();
         assert_eq!(back, func_json);
+    }
+
+    #[test]
+    fn test_example_json_deserialize() {
+        let example_json = json!({
+            "data": {
+                "id": "deepseek/deepseek-chat-v3.1",
+                "name": "DeepSeek: DeepSeek V3.1",
+                "created": 1755779628,
+                "description": "DeepSeek-V3.1 is a large hybrid reasoning model ...",
+                "architecture": {
+                    "tokenizer": "DeepSeek",
+                    "instruct_type": "deepseek-v3.1",
+                    "modality": "text->text",
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"]
+                },
+                "endpoints": [
+                    {
+                        "name": "Chutes | deepseek/deepseek-chat-v3.1",
+                        "model_name": "DeepSeek: DeepSeek V3.1",
+                        "context_length": 163840,
+                        "pricing": {
+                            "prompt": "0.0000002",
+                            "completion": "0.0000008",
+                            "request": 0,
+                            "image": 0,
+                            "image_output": 0,
+                            "web_search": 0,
+                            "internal_reasoning": 0,
+                            "discount": 0
+                        },
+                        "provider_name": "Chutes",
+                        "tag": "chutes",
+                        "quantization": null,
+                        "max_completion_tokens": null,
+                        "max_prompt_tokens": null,
+                        "supported_parameters": [
+                            "tools",
+                            "tool_choice",
+                            "reasoning",
+                            "include_reasoning",
+                            "max_tokens",
+                            "temperature",
+                            "top_p",
+                            "stop",
+                            "frequency_penalty",
+                            "presence_penalty",
+                            "seed",
+                            "top_k",
+                            "min_p",
+                            "repetition_penalty",
+                            "logprobs",
+                            "logit_bias",
+                            "top_logprobs"
+                        ],
+                        "status": 0,
+                        "uptime_last_30m": 99.33169971040321,
+                        "supports_implicit_caching": false
+                    }
+                ]
+            }
+        });
+
+        let parsed: EndpointsResponse =
+            serde_json::from_value(example_json).expect("deserialize example JSON");
+        assert_eq!(parsed.data.id.as_ref(), "deepseek/deepseek-chat-v3.1");
+        assert_eq!(parsed.data.endpoints.len(), 1);
+        let ep = &parsed.data.endpoints[0];
+        assert_eq!(ep.provider_name.as_str(), "Chutes");
+        assert!(ep.supports_tools());
     }
 
     #[test]
