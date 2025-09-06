@@ -9,7 +9,7 @@ fn comp_req_with_tools_and_provider_prefs() {
     use ploke_tui::llm::{RequestMessage, Role};
     use ploke_tui::tools::{FunctionMarker, Tool};
     use ploke_tui::tools::request_code_context::RequestCodeContextGat;
-    use ploke_tui::user_config::{ModelConfig, ApiKey};
+    use ploke_tui::user_config::{ModelConfig, ProviderType};
 
     let provider = ModelConfig {
         id: "unit-provider".into(),
@@ -19,7 +19,7 @@ fn comp_req_with_tools_and_provider_prefs() {
         base_url: "https://openrouter.ai/api/v1".into(),
         model: "openai/gpt-5".into(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
     let msgs = vec![

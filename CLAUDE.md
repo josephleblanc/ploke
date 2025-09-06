@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Ploke is building a production-ready agentic system that can autonomously implement user goals via code edits, while preserving user control, observability, and correctness. The system features a powerful terminal UI (TUI) for LLM interaction, backed by a comprehensive Retrieval-Augmented Generation (RAG) system with a code graph built by parsing Rust crates.
 
-### Current Focus: Agentic System Development
+### Current High-Level Focus: Agentic System Development
 
 The project is actively developing an agentic workflow with these principles:
 - **Autonomy with control**: Human-in-the-loop by default with progressive autonomy
@@ -14,6 +14,12 @@ The project is actively developing an agentic workflow with these principles:
 - **Validity**: Automated checks (diff preview, compile, test, lint) before changes
 - **Composability**: Modular tools, agents, and workflows; LLMs can call tools and other LLMs
 - **Safety-first editing**: Staged edits with verified file hashes, atomic application
+
+### Current Low-Level Focus: Model Picker in Terminal User Interface
+
+After recently finishing internal SDK for OpenRouter API, we are expanding our UI
+- Updating our model picker overlay with expanded functionality
+- See TODO list at the end of this document.
 
 ## Build Commands
 
@@ -378,7 +384,9 @@ Test fixtures are located in `tests/fixture_crates/` for realistic parsing scena
 ## General guidelines
 
 - Use ArcStr over Arc<str> or String across threads, defined in ploke_core::ArcStr
-- Do not prefer ArcStr over &'static str
+  - located in `crates/ploke-core/src/arc_str.rs` from workspace root
+  - re-exported as `ploke_core::ArcStr`
+- Do not prefer ArcStr over &'static str for static strings
 - Testing in `ploke-tui`
 Use more crate-local tests instead of having a folder with tests outside of src, since it
 forces us to make our data structures public.
@@ -388,3 +396,92 @@ providing public-visibility functions to other applications.
 In short, `ploke-tui` is a binary, first, not a lib.
 - If you have an "Error editing file", check your spelling on "openai-codx", it should be "openai-codex"
 - If you have an "Error reading file", check your spelling on "openai-codx", it should be "openai-codex"
+
+## TODO
+
+1. Generate summary and full data flow for existing UX and state changes
+- create new documents with reports in `crates/ploke-tui/docs/reports/` (directory empty to start)
+- [ ] UI:
+  - [ ] App startup and initialization
+    - [ ] loading user config 
+      - what does it contain? 
+      - what are loaded as defaults?
+      - what is the order of preference overwriting?
+    - [ ] rebuilding bm25
+    - [ ] loading backup db crate with `/load crate <name>`
+    - [ ] summarize: What is the system state after these actions? Include:
+      - vector embedding data (present, not present?) 
+      - hnsw index (indexed, not indexed?)
+      - synced to local files?
+      - selected model?
+      - selected provider?
+  - [ ] Initial user query + query dataflow + API
+    - [ ] Trace dataflow from user query lifecycle
+      -> User message appearing in UI
+      -> LLM message appearing in UI
+      - What other intermediate messages appear in the UI?
+      - How is the API query formed?
+      - Given that this occurs after app startup and initialization, what happens?
+      - Supposing this occurs *before* app startup and initialization, what happens?
+  - [ ] Trace data flow for user commands, assuming App startup and initialization success:
+    - [ ] `model` commands:
+      - [ ] model list 
+      - [ ] model info 
+      - [ ] model use <name> 
+      - [ ] model refresh
+      - [ ] model load [path]
+      - [ ] model save [path]
+      - [ ] model search <keyword>
+        - [ ] UI + events dataflow
+        - [ ] state changes
+        - [ ] queries to OpenRouter API at `/models`
+          - [ ] data structures used for deserialization
+        - [ ] queries to OpenRouter API at `/:author/:model/endpoints`
+          - [ ] data structures used for deserialization
+      - [ ] model providers <model_id>
+    - [ ] `provider` commands (somewhat confusing name, refers to provider endpoint through OpenRouter, e.g. `DeepInfra` for `deepinfra/deepseek-r1` or `deepinfra/fp4/deepseek-r1`)
+      - [ ] provider strictness <openrouter-only|allow-custom|allow-any>
+      - [ ] provider tools-only <on|off>
+      - [ ] provider select <model_id> <provider_slug> 
+      - [ ] provider pin <model_id> <provider_slug>
+- [ ] Event flow summaries:
+  - [ ] user query to LLM
+  - [ ] user model selection
+  - [ ] entering model picker overlay and selecting a model
+
+2. Implement UI/UX improvements
+- [ ] Improve model selection
+  - [ ] Cache OpenRouter endpoints `Endpoints` for each model after user search
+    - [ ] add `EndpointsCache`, keyed by `model_id`, e.g. `moonshotai/kimi-k2-0905`
+    - [ ] update model picker to use cache when searching, before querying OpenRouter
+- [ ] Expand model picker window functionality
+  - [ ] Add scrolling functionality to model picker window
+  - [ ] Add a way to select from among the provider list in window UI
+  - [ ] Descend down into the list of endpoints with `l` or `RightArrow`
+  - [ ] Ascend back up to list of models with `h` or `LeftArrow`
+  - [ ] Select a model with `s` from model list (implemented), and select an
+  endpoint from the list of endpoints with `s`
+    - [ ] Selection should leave model picker window for model selection
+    - [ ] Selection should not leave model picker window for endpoint selection
+      - [ ] Instead, add a new data structure `SelectedEndpoints`, map `model_id` to `Endpoint`
+      - `SelectedEndpoints` will be used during request to OpenRouter using
+      `CompReq` formation in `session.rs` or `llm/mod.rs`
+      - [ ] Selecting an endpoint will 
+        - set `use_fallback` (forgetting exact name) to false by default
+        - change `active_model` to endpoint's model name
+    - [ ] Add a new command to remove a model from the `SelectedEndpoint` with `r`
+- [ ] Revisit `ModelRegistry`
+- [ ] Add Improve feedback for tool items in the conversation
+  - [ ] new trait item: summary, with short summary of tool results
+  - [ ] implement for each tool in `ploke-tui/src/tools/`
+    - [ ] code edit
+    - [ ] get file metadata
+    - [ ] request code context
+  - [ ] update tool results to include both a summary and the full results
+  - [ ] when tool results are received in `session.rs`, change the added tool
+  message to show summary
+  - [ ] Full results are sent to a new struct that wraps a map,
+  `ToolResultsCache`, mapping the summary message id to their `String` of json
+  output
+    - [ ] also included is any metadata about the tool call (e.g. `stats` from `AssembledContext` for `request_code_context`)
+    - [ ] change `context`

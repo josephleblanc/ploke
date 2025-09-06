@@ -178,7 +178,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
     // Build and send request
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
-    use ploke_tui::user_config::{ModelConfig, ApiKey};
+    use ploke_tui::user_config::{ModelConfig, ProviderType};
     
     let params = LLMParameters {
         max_tokens: Some(500),
@@ -194,7 +194,7 @@ async fn e2e_live_gat_tool_call_with_persistence() -> color_eyre::Result<()> {
         base_url: env.base_url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
     

@@ -136,7 +136,7 @@ async fn e2e_completion_request_serialization_compliance() -> color_eyre::Result
     // Build a CompReq using our existing builder logic
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
-    use ploke_tui::user_config::{ModelConfig, ApiKey};
+    use ploke_tui::user_config::{ModelConfig, ProviderType};
     
     let params = LLMParameters {
         max_tokens: Some(1000),
@@ -152,7 +152,7 @@ async fn e2e_completion_request_serialization_compliance() -> color_eyre::Result
         base_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
     
@@ -215,7 +215,7 @@ async fn e2e_live_api_request_response_types() -> color_eyre::Result<()> {
     
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
-    use ploke_tui::user_config::{ModelConfig, ApiKey};
+    use ploke_tui::user_config::{ModelConfig, ProviderType};
     
     let params = LLMParameters {
         max_tokens: Some(50),
@@ -231,7 +231,7 @@ async fn e2e_live_api_request_response_types() -> color_eyre::Result<()> {
         base_url: env.base_url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
     
@@ -311,7 +311,7 @@ async fn e2e_live_api_tool_call_types() -> color_eyre::Result<()> {
     
     use ploke_tui::llm::session::build_comp_req;
     use ploke_tui::llm::LLMParameters;
-    use ploke_tui::user_config::{ModelConfig, ApiKey};
+    use ploke_tui::user_config::{ModelConfig, ProviderType};
     
     let params = LLMParameters {
         max_tokens: Some(500),
@@ -327,7 +327,7 @@ async fn e2e_live_api_tool_call_types() -> color_eyre::Result<()> {
         base_url: env.base_url.to_string(),
         model: "openai/gpt-4o-mini".to_string(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
     

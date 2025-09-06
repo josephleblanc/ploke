@@ -244,22 +244,20 @@ async fn e2e_conversation_context_persistence() {
         .expect("Failed to spawn harness with fixture");
     
     // Send multiple messages to build context
-    let messages = vec![
-        "I'm working on understanding this Rust codebase",
+    let messages = ["I'm working on understanding this Rust codebase",
         "I need help with the main data structures",
-        "Can you identify the key modules and their purposes?",
-    ];
+        "Can you identify the key modules and their purposes?"];
     
     for (i, message) in messages.iter().enumerate() {
-        println!("🔄 Sending message {}: {}", i + 1, message);
-        let tracker = harness.send_user_message(message).await;
+        eprintln!("🔄 Sending message {}: {}", i + 1, message);
+        let _tracker = harness.send_user_message(message).await;
         
         // Wait briefly for processing (no need for full response in context test)
         tokio::time::sleep(Duration::from_millis(500)).await;
         
         // Check that message was added to conversation
         let history = harness.get_conversation_history().await;
-        println!("  Conversation length after message {}: {}", i + 1, history.len());
+        eprintln!("  Conversation length after message {}: {}", i + 1, history.len());
         
         // Should have at least the root message plus our sent messages
         assert!(history.len() >= i + 2, "Message should be in conversation history");
@@ -267,7 +265,7 @@ async fn e2e_conversation_context_persistence() {
     
     // Verify final conversation state
     let final_history = harness.get_conversation_history().await;
-    println!("Final conversation state: {} messages", final_history.len());
+    eprintln!("Final conversation state: {} messages", final_history.len());
     
     // Validate messages are preserved with correct content
     let user_messages: Vec<_> = final_history.iter()

@@ -16,7 +16,7 @@ use ploke_tui::llm::{RequestMessage, Role};
 use ploke_tui::test_harness::{default_headers, openrouter_env};
 use ploke_tui::tools::request_code_context::RequestCodeContextGat;
 use ploke_tui::tools::{FunctionMarker, Tool};
-use ploke_tui::user_config::{ModelConfig, ApiKey};
+use ploke_tui::user_config::{ModelConfig, ProviderType};
 
 fn ai_temp_dir() -> PathBuf {
     let p = PathBuf::from("ai_temp_data/live");
@@ -41,7 +41,7 @@ async fn live_tool_call_request_code_context() {
         // Choose a model likely to have tool-capable endpoints
         model: "qwen/qwen-2.5-7b-instruct".to_string(),
         display_name: None,
-        provider_type: ApiKey::OpenRouter,
+        provider_type: ProviderType::OpenRouter,
         llm_params: None,
     };
 
@@ -49,8 +49,8 @@ async fn live_tool_call_request_code_context() {
     if let Ok(eps) =
         fetch_model_endpoints(&client, env.base_url.clone(), &env.key, &provider.model).await
     {
-        if let Some(p) = eps.iter().find(|e| e.supports_tools()) {
-            provider.provider_slug = Some(ProviderSlug::from_str(&p.id).expect("provider_slug"));
+        if let Some(p) = eps.endpoints.iter().find(|e| e.supports_tools()) {
+            provider.provider_slug = Some(ProviderSlug::from_str(&p.name).expect("provider_slug"));
         } else {
             let dir =
                 ai_temp_dir().join(format!("openrouter-{}", Utc::now().format("%Y%m%d-%H%M%S")));
