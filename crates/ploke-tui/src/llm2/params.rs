@@ -41,6 +41,7 @@ pub(crate) struct LLMParameters {
     pub(crate) top_a: Option<f32>,
 }
 
+// AI: Add docs for the below methods similar to the field docs AI!
 impl LLMParameters {
     pub fn max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
