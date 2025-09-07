@@ -48,7 +48,20 @@ impl ProviderPreferences {
         self.deny = deny.map(|i| i.into_iter().collect());
         self
     }
-    // AI: Add a `validate` function to verify no intersection of allow and deny AI!
+
+    /// Validate that there is no intersection between allow and deny lists.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if let (Some(allow), Some(deny)) = (&self.allow, &self.deny) {
+            let intersection: Vec<_> = allow.iter()
+                .filter(|slug| deny.contains(slug))
+                .collect();
+            
+            if !intersection.is_empty() {
+                return Err("ProviderPreferences allow and deny lists have overlapping entries");
+            }
+        }
+        Ok(())
+    }
 }
 
 // --- common types ---
