@@ -12,7 +12,7 @@ use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::ProviderPreferences;
-use crate::llm2::Architecture;
+use crate::llm2::{Architecture, SupportedParameters};
 use crate::llm2::enums::Quant;
 use crate::llm2::newtypes::*;
 use crate::tools::{FunctionMarker, ToolDefinition};

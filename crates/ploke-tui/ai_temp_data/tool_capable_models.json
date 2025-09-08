@@ -5602,50 +5602,6 @@
     ]
   },
   {
-    "id": "anthropic/claude-3.5-haiku",
-    "name": "Anthropic: Claude 3.5 Haiku",
-    "created": 1730678400,
-    "description": "Claude 3.5 Haiku features offers enhanced capabilities in speed, coding accuracy, and tool use. Engineered to excel in real-time applications, it delivers quick response times that are essential for dynamic tasks such as chat interactions and immediate coding suggestions.\n\nThis makes it highly suitable for environments that demand both speed and precision, such as software development, customer service bots, and data management systems.\n\nThis model is currently pointing to [Claude 3.5 Haiku (2024-10-22)](/anthropic/claude-3-5-haiku-20241022).",
-    "architecture": {
-      "input_modalities": [
-        "text",
-        "image"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "Claude"
-    },
-    "top_provider": {
-      "is_moderated": true,
-      "context_length": 200000,
-      "max_completion_tokens": 8192
-    },
-    "pricing": {
-      "prompt": 8e-7,
-      "completion": 4e-6,
-      "image": 0.0,
-      "input_cache_read": 8e-8,
-      "input_cache_write": 1e-6,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.01
-    },
-    "canonical_slug": "anthropic/claude-3-5-haiku",
-    "context_length": 200000,
-    "hugging_face_id": null,
-    "per_request_limits": null,
-    "supported_parameters": [
-      "max_tokens",
-      "stop",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_p"
-    ]
-  },
-  {
     "id": "anthropic/claude-3.5-haiku-20241022",
     "name": "Anthropic: Claude 3.5 Haiku (2024-10-22)",
     "created": 1730678400,
@@ -5677,6 +5633,50 @@
       "web_search": 0.0
     },
     "canonical_slug": "anthropic/claude-3-5-haiku-20241022",
+    "context_length": 200000,
+    "hugging_face_id": null,
+    "per_request_limits": null,
+    "supported_parameters": [
+      "max_tokens",
+      "stop",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ]
+  },
+  {
+    "id": "anthropic/claude-3.5-haiku",
+    "name": "Anthropic: Claude 3.5 Haiku",
+    "created": 1730678400,
+    "description": "Claude 3.5 Haiku features offers enhanced capabilities in speed, coding accuracy, and tool use. Engineered to excel in real-time applications, it delivers quick response times that are essential for dynamic tasks such as chat interactions and immediate coding suggestions.\n\nThis makes it highly suitable for environments that demand both speed and precision, such as software development, customer service bots, and data management systems.\n\nThis model is currently pointing to [Claude 3.5 Haiku (2024-10-22)](/anthropic/claude-3-5-haiku-20241022).",
+    "architecture": {
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "Claude"
+    },
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 200000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "prompt": 8e-7,
+      "completion": 4e-6,
+      "image": 0.0,
+      "input_cache_read": 8e-8,
+      "input_cache_write": 1e-6,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.01
+    },
+    "canonical_slug": "anthropic/claude-3-5-haiku",
     "context_length": 200000,
     "hugging_face_id": null,
     "per_request_limits": null,
@@ -6084,51 +6084,6 @@
     ]
   },
   {
-    "id": "cohere/command-r-plus-08-2024",
-    "name": "Cohere: Command R+ (08-2024)",
-    "created": 1724976000,
-    "description": "command-r-plus-08-2024 is an update of the [Command R+](/models/cohere/command-r-plus) with roughly 50% higher throughput and 25% lower latencies as compared to the previous Command R+ version, while keeping the hardware footprint the same.\n\nRead the launch post [here](https://docs.cohere.com/changelog/command-gets-refreshed).\n\nUse of this model is subject to Cohere's [Usage Policy](https://docs.cohere.com/docs/usage-policy) and [SaaS Agreement](https://cohere.com/saas-agreement).",
-    "architecture": {
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "Cohere"
-    },
-    "top_provider": {
-      "is_moderated": true,
-      "context_length": 128000,
-      "max_completion_tokens": 4000
-    },
-    "pricing": {
-      "prompt": 2.5e-6,
-      "completion": 0.00001,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "canonical_slug": "cohere/command-r-plus-08-2024",
-    "context_length": 128000,
-    "hugging_face_id": null,
-    "per_request_limits": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tools",
-      "top_k",
-      "top_p"
-    ]
-  },
-  {
     "id": "cohere/command-r-08-2024",
     "name": "Cohere: Command R (08-2024)",
     "created": 1724976000,
@@ -6156,6 +6111,51 @@
       "web_search": 0.0
     },
     "canonical_slug": "cohere/command-r-08-2024",
+    "context_length": 128000,
+    "hugging_face_id": null,
+    "per_request_limits": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tools",
+      "top_k",
+      "top_p"
+    ]
+  },
+  {
+    "id": "cohere/command-r-plus-08-2024",
+    "name": "Cohere: Command R+ (08-2024)",
+    "created": 1724976000,
+    "description": "command-r-plus-08-2024 is an update of the [Command R+](/models/cohere/command-r-plus) with roughly 50% higher throughput and 25% lower latencies as compared to the previous Command R+ version, while keeping the hardware footprint the same.\n\nRead the launch post [here](https://docs.cohere.com/changelog/command-gets-refreshed).\n\nUse of this model is subject to Cohere's [Usage Policy](https://docs.cohere.com/docs/usage-policy) and [SaaS Agreement](https://cohere.com/saas-agreement).",
+    "architecture": {
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "Cohere"
+    },
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4000
+    },
+    "pricing": {
+      "prompt": 2.5e-6,
+      "completion": 0.00001,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "canonical_slug": "cohere/command-r-plus-08-2024",
     "context_length": 128000,
     "hugging_face_id": null,
     "per_request_limits": null,
@@ -6318,58 +6318,6 @@
     ]
   },
   {
-    "id": "meta-llama/llama-3.1-8b-instruct",
-    "name": "Meta: Llama 3.1 8B Instruct",
-    "created": 1721692800,
-    "description": "Meta's latest class of model (Llama 3.1) launched with a variety of sizes & flavors. This 8B instruct-tuned version is fast and efficient.\n\nIt has demonstrated strong performance compared to leading closed-source models in human evaluations.\n\nTo read more about the model release, [click here](https://ai.meta.com/blog/meta-llama-3-1/). Usage of this model is subject to [Meta's Acceptable Use Policy](https://llama.meta.com/llama3/use-policy/).",
-    "architecture": {
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "Llama3",
-      "instruct_type": "llama3"
-    },
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 131072,
-      "max_completion_tokens": 16384
-    },
-    "pricing": {
-      "prompt": 1.5e-8,
-      "completion": 2e-8,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "canonical_slug": "meta-llama/llama-3.1-8b-instruct",
-    "context_length": 131072,
-    "hugging_face_id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-    "per_request_limits": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "min_p",
-      "presence_penalty",
-      "repetition_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_logprobs",
-      "top_p"
-    ]
-  },
-  {
     "id": "meta-llama/llama-3.1-405b-instruct",
     "name": "Meta: Llama 3.1 405B Instruct",
     "created": 1721692800,
@@ -6452,6 +6400,58 @@
     "canonical_slug": "meta-llama/llama-3.1-70b-instruct",
     "context_length": 131072,
     "hugging_face_id": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+    "per_request_limits": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_logprobs",
+      "top_p"
+    ]
+  },
+  {
+    "id": "meta-llama/llama-3.1-8b-instruct",
+    "name": "Meta: Llama 3.1 8B Instruct",
+    "created": 1721692800,
+    "description": "Meta's latest class of model (Llama 3.1) launched with a variety of sizes & flavors. This 8B instruct-tuned version is fast and efficient.\n\nIt has demonstrated strong performance compared to leading closed-source models in human evaluations.\n\nTo read more about the model release, [click here](https://ai.meta.com/blog/meta-llama-3-1/). Usage of this model is subject to [Meta's Acceptable Use Policy](https://llama.meta.com/llama3/use-policy/).",
+    "architecture": {
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "Llama3",
+      "instruct_type": "llama3"
+    },
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 131072,
+      "max_completion_tokens": 16384
+    },
+    "pricing": {
+      "prompt": 1.5e-8,
+      "completion": 2e-8,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "canonical_slug": "meta-llama/llama-3.1-8b-instruct",
+    "context_length": 131072,
+    "hugging_face_id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
     "per_request_limits": null,
     "supported_parameters": [
       "frequency_penalty",
@@ -6949,6 +6949,57 @@
     ]
   },
   {
+    "id": "openai/gpt-4o-2024-05-13",
+    "name": "OpenAI: GPT-4o (2024-05-13)",
+    "created": 1715558400,
+    "description": "GPT-4o (\"o\" for \"omni\") is OpenAI's latest AI model, supporting both text and image inputs with text outputs. It maintains the intelligence level of [GPT-4 Turbo](/models/openai/gpt-4-turbo) while being twice as fast and 50% more cost-effective. GPT-4o also offers improved performance in processing non-English languages and enhanced visual capabilities.\n\nFor benchmarking against other models, it was briefly called [\"im-also-a-good-gpt2-chatbot\"](https://twitter.com/LiamFedus/status/1790064963966370209)\n\n#multimodal",
+    "architecture": {
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "GPT"
+    },
+    "top_provider": {
+      "is_moderated": true,
+      "context_length": 128000,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "prompt": 5e-6,
+      "completion": 0.000015,
+      "image": 0.007225,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "canonical_slug": "openai/gpt-4o-2024-05-13",
+    "context_length": 128000,
+    "hugging_face_id": null,
+    "per_request_limits": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "web_search_options"
+    ]
+  },
+  {
     "id": "openai/gpt-4o",
     "name": "OpenAI: GPT-4o",
     "created": 1715558400,
@@ -7052,54 +7103,54 @@
     ]
   },
   {
-    "id": "openai/gpt-4o-2024-05-13",
-    "name": "OpenAI: GPT-4o (2024-05-13)",
-    "created": 1715558400,
-    "description": "GPT-4o (\"o\" for \"omni\") is OpenAI's latest AI model, supporting both text and image inputs with text outputs. It maintains the intelligence level of [GPT-4 Turbo](/models/openai/gpt-4-turbo) while being twice as fast and 50% more cost-effective. GPT-4o also offers improved performance in processing non-English languages and enhanced visual capabilities.\n\nFor benchmarking against other models, it was briefly called [\"im-also-a-good-gpt2-chatbot\"](https://twitter.com/LiamFedus/status/1790064963966370209)\n\n#multimodal",
+    "id": "meta-llama/llama-3-70b-instruct",
+    "name": "Meta: Llama 3 70B Instruct",
+    "created": 1713398400,
+    "description": "Meta's latest class of model (Llama 3) launched with a variety of sizes & flavors. This 70B instruct-tuned version was optimized for high quality dialogue usecases.\n\nIt has demonstrated strong performance compared to leading closed-source models in human evaluations.\n\nTo read more about the model release, [click here](https://ai.meta.com/blog/meta-llama-3/). Usage of this model is subject to [Meta's Acceptable Use Policy](https://llama.meta.com/llama3/use-policy/).",
     "architecture": {
       "input_modalities": [
-        "text",
-        "image",
-        "file"
+        "text"
       ],
       "output_modalities": [
         "text"
       ],
-      "tokenizer": "GPT"
+      "tokenizer": "Llama3",
+      "instruct_type": "llama3"
     },
     "top_provider": {
-      "is_moderated": true,
-      "context_length": 128000,
-      "max_completion_tokens": 4096
+      "is_moderated": false,
+      "context_length": 8192,
+      "max_completion_tokens": 16384
     },
     "pricing": {
-      "prompt": 5e-6,
-      "completion": 0.000015,
-      "image": 0.007225,
+      "prompt": 3e-7,
+      "completion": 4e-7,
+      "image": 0.0,
       "internal_reasoning": 0.0,
       "request": 0.0,
       "web_search": 0.0
     },
-    "canonical_slug": "openai/gpt-4o-2024-05-13",
-    "context_length": 128000,
-    "hugging_face_id": null,
+    "canonical_slug": "meta-llama/llama-3-70b-instruct",
+    "context_length": 8192,
+    "hugging_face_id": "meta-llama/Meta-Llama-3-70B-Instruct",
     "per_request_limits": null,
     "supported_parameters": [
       "frequency_penalty",
       "logit_bias",
       "logprobs",
       "max_tokens",
+      "min_p",
       "presence_penalty",
+      "repetition_penalty",
       "response_format",
       "seed",
       "stop",
-      "structured_outputs",
       "temperature",
       "tool_choice",
       "tools",
+      "top_k",
       "top_logprobs",
-      "top_p",
-      "web_search_options"
+      "top_p"
     ]
   },
   {
@@ -7148,57 +7199,6 @@
       "tool_choice",
       "tools",
       "top_k",
-      "top_p"
-    ]
-  },
-  {
-    "id": "meta-llama/llama-3-70b-instruct",
-    "name": "Meta: Llama 3 70B Instruct",
-    "created": 1713398400,
-    "description": "Meta's latest class of model (Llama 3) launched with a variety of sizes & flavors. This 70B instruct-tuned version was optimized for high quality dialogue usecases.\n\nIt has demonstrated strong performance compared to leading closed-source models in human evaluations.\n\nTo read more about the model release, [click here](https://ai.meta.com/blog/meta-llama-3/). Usage of this model is subject to [Meta's Acceptable Use Policy](https://llama.meta.com/llama3/use-policy/).",
-    "architecture": {
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "Llama3",
-      "instruct_type": "llama3"
-    },
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 8192,
-      "max_completion_tokens": 16384
-    },
-    "pricing": {
-      "prompt": 3e-7,
-      "completion": 4e-7,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "canonical_slug": "meta-llama/llama-3-70b-instruct",
-    "context_length": 8192,
-    "hugging_face_id": "meta-llama/Meta-Llama-3-70B-Instruct",
-    "per_request_limits": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "min_p",
-      "presence_penalty",
-      "repetition_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_logprobs",
       "top_p"
     ]
   },
@@ -7254,52 +7254,6 @@
     ]
   },
   {
-    "id": "google/gemini-pro-1.5",
-    "name": "Google: Gemini 1.5 Pro",
-    "created": 1712620800,
-    "description": "Google's latest multimodal model, supports image and video[0] in text or chat prompts.\n\nOptimized for language tasks including:\n\n- Code generation\n- Text generation\n- Text editing\n- Problem solving\n- Recommendations\n- Information extraction\n- Data extraction or generation\n- AI agents\n\nUsage of Gemini is subject to Google's [Gemini Terms of Use](https://ai.google.dev/terms).\n\n* [0]: Video input is not available through OpenRouter at this time.",
-    "architecture": {
-      "input_modalities": [
-        "text",
-        "image"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "Gemini"
-    },
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 2000000,
-      "max_completion_tokens": 8192
-    },
-    "pricing": {
-      "prompt": 1.25e-6,
-      "completion": 5e-6,
-      "image": 0.0006575,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "canonical_slug": "google/gemini-pro-1.5",
-    "context_length": 2000000,
-    "hugging_face_id": null,
-    "per_request_limits": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_p"
-    ]
-  },
-  {
     "id": "openai/gpt-4-turbo",
     "name": "OpenAI: GPT-4 Turbo",
     "created": 1712620800,
@@ -7345,6 +7299,52 @@
       "tool_choice",
       "tools",
       "top_logprobs",
+      "top_p"
+    ]
+  },
+  {
+    "id": "google/gemini-pro-1.5",
+    "name": "Google: Gemini 1.5 Pro",
+    "created": 1712620800,
+    "description": "Google's latest multimodal model, supports image and video[0] in text or chat prompts.\n\nOptimized for language tasks including:\n\n- Code generation\n- Text generation\n- Text editing\n- Problem solving\n- Recommendations\n- Information extraction\n- Data extraction or generation\n- AI agents\n\nUsage of Gemini is subject to Google's [Gemini Terms of Use](https://ai.google.dev/terms).\n\n* [0]: Video input is not available through OpenRouter at this time.",
+    "architecture": {
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "Gemini"
+    },
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 2000000,
+      "max_completion_tokens": 8192
+    },
+    "pricing": {
+      "prompt": 1.25e-6,
+      "completion": 5e-6,
+      "image": 0.0006575,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "canonical_slug": "google/gemini-pro-1.5",
+    "context_length": 2000000,
+    "hugging_face_id": null,
+    "per_request_limits": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
       "top_p"
     ]
   },
@@ -7662,54 +7662,6 @@
     ]
   },
   {
-    "id": "openai/gpt-3.5-turbo-0613",
-    "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
-    "created": 1706140800,
-    "description": "GPT-3.5 Turbo is OpenAI's fastest model. It can understand and generate natural language or code, and is optimized for chat and traditional completion tasks.\n\nTraining data up to Sep 2021.",
-    "architecture": {
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "tokenizer": "GPT"
-    },
-    "top_provider": {
-      "is_moderated": false,
-      "context_length": 4095,
-      "max_completion_tokens": 4096
-    },
-    "pricing": {
-      "prompt": 1e-6,
-      "completion": 2e-6,
-      "image": 0.0,
-      "internal_reasoning": 0.0,
-      "request": 0.0,
-      "web_search": 0.0
-    },
-    "canonical_slug": "openai/gpt-3.5-turbo-0613",
-    "context_length": 4095,
-    "hugging_face_id": null,
-    "per_request_limits": null,
-    "supported_parameters": [
-      "frequency_penalty",
-      "logit_bias",
-      "logprobs",
-      "max_tokens",
-      "presence_penalty",
-      "response_format",
-      "seed",
-      "stop",
-      "structured_outputs",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_logprobs",
-      "top_p"
-    ]
-  },
-  {
     "id": "openai/gpt-4-turbo-preview",
     "name": "OpenAI: GPT-4 Turbo Preview",
     "created": 1706140800,
@@ -7738,6 +7690,54 @@
     },
     "canonical_slug": "openai/gpt-4-turbo-preview",
     "context_length": 128000,
+    "hugging_face_id": null,
+    "per_request_limits": null,
+    "supported_parameters": [
+      "frequency_penalty",
+      "logit_bias",
+      "logprobs",
+      "max_tokens",
+      "presence_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_logprobs",
+      "top_p"
+    ]
+  },
+  {
+    "id": "openai/gpt-3.5-turbo-0613",
+    "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
+    "created": 1706140800,
+    "description": "GPT-3.5 Turbo is OpenAI's fastest model. It can understand and generate natural language or code, and is optimized for chat and traditional completion tasks.\n\nTraining data up to Sep 2021.",
+    "architecture": {
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "tokenizer": "GPT"
+    },
+    "top_provider": {
+      "is_moderated": false,
+      "context_length": 4095,
+      "max_completion_tokens": 4096
+    },
+    "pricing": {
+      "prompt": 1e-6,
+      "completion": 2e-6,
+      "image": 0.0,
+      "internal_reasoning": 0.0,
+      "request": 0.0,
+      "web_search": 0.0
+    },
+    "canonical_slug": "openai/gpt-3.5-turbo-0613",
+    "context_length": 4095,
     "hugging_face_id": null,
     "per_request_limits": null,
     "supported_parameters": [
@@ -8041,10 +8041,10 @@
     ]
   },
   {
-    "id": "openai/gpt-3.5-turbo",
-    "name": "OpenAI: GPT-3.5 Turbo",
+    "id": "openai/gpt-4-0314",
+    "name": "OpenAI: GPT-4 (older v0314)",
     "created": 1685232000,
-    "description": "GPT-3.5 Turbo is OpenAI's fastest model. It can understand and generate natural language or code, and is optimized for chat and traditional completion tasks.\n\nTraining data up to Sep 2021.",
+    "description": "GPT-4-0314 is the first version of GPT-4 released, with a context length of 8,192 tokens, and was supported until June 14. Training data: up to Sep 2021.",
     "architecture": {
       "input_modalities": [
         "text"
@@ -8056,19 +8056,19 @@
     },
     "top_provider": {
       "is_moderated": true,
-      "context_length": 16385,
+      "context_length": 8191,
       "max_completion_tokens": 4096
     },
     "pricing": {
-      "prompt": 5e-7,
-      "completion": 1.5e-6,
+      "prompt": 0.00003,
+      "completion": 0.00006,
       "image": 0.0,
       "internal_reasoning": 0.0,
       "request": 0.0,
       "web_search": 0.0
     },
-    "canonical_slug": "openai/gpt-3.5-turbo",
-    "context_length": 16385,
+    "canonical_slug": "openai/gpt-4-0314",
+    "context_length": 8191,
     "hugging_face_id": null,
     "per_request_limits": null,
     "supported_parameters": [
@@ -8137,10 +8137,10 @@
     ]
   },
   {
-    "id": "openai/gpt-4-0314",
-    "name": "OpenAI: GPT-4 (older v0314)",
+    "id": "openai/gpt-3.5-turbo",
+    "name": "OpenAI: GPT-3.5 Turbo",
     "created": 1685232000,
-    "description": "GPT-4-0314 is the first version of GPT-4 released, with a context length of 8,192 tokens, and was supported until June 14. Training data: up to Sep 2021.",
+    "description": "GPT-3.5 Turbo is OpenAI's fastest model. It can understand and generate natural language or code, and is optimized for chat and traditional completion tasks.\n\nTraining data up to Sep 2021.",
     "architecture": {
       "input_modalities": [
         "text"
@@ -8152,19 +8152,19 @@
     },
     "top_provider": {
       "is_moderated": true,
-      "context_length": 8191,
+      "context_length": 16385,
       "max_completion_tokens": 4096
     },
     "pricing": {
-      "prompt": 0.00003,
-      "completion": 0.00006,
+      "prompt": 5e-7,
+      "completion": 1.5e-6,
       "image": 0.0,
       "internal_reasoning": 0.0,
       "request": 0.0,
       "web_search": 0.0
     },
-    "canonical_slug": "openai/gpt-4-0314",
-    "context_length": 8191,
+    "canonical_slug": "openai/gpt-3.5-turbo",
+    "context_length": 16385,
     "hugging_face_id": null,
     "per_request_limits": null,
     "supported_parameters": [

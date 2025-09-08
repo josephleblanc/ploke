@@ -128,9 +128,7 @@ impl<'de> Deserialize<'de> for EndpointTag {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = EndpointTag;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(
-                    "a string in format \"provider_slug\" or \"provider_slug/quantization\"",
-                )
+                f.write_str("a string in format \"provider_slug\" or \"provider_slug/quantization\"")
             }
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
@@ -167,6 +165,7 @@ impl<'de> Deserialize<'de> for EndpointTag {
         deserializer.deserialize_str(Visitor)
     }
 }
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct BaseUrl(#[serde(with = "serde_url")] Url);
@@ -237,20 +236,17 @@ pub(crate) struct ModelKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ModelKeyExtra {
-    #[serde(rename = "free")]
+    #[serde( rename = "free" )]
     Free,
-    #[serde(rename = "")]
-    Empty,
     #[default]
-    Unknown,
+    Unknown
 }
 
 impl ModelKeyExtra {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            Self::Free => "free",
-            Self::Empty => "",
-            Self::Unknown => "unknown",
+    pub(crate) fn as_str(&self) {
+        match s {
+            Self::Free => "free"                                           ,
+             Self::Unknown => "unknown"
         }
     }
 }
@@ -258,10 +254,10 @@ impl ModelKeyExtra {
 impl From<&str> for ModelKeyExtra {
     fn from(s: &str) -> Self {
         match s {
-            "free" => Self::Free,
-            "" => Self::Empty,
-            other => Self::Unknown,
+            "free" =>Self::Free,
+            other => Self::Unknown
         }
+        
     }
 }
 
@@ -275,11 +271,7 @@ impl ModelKey {
         })
     }
 
-    pub(crate) fn from_author_slug_extra(
-        author: &str,
-        slug: &str,
-        extra: &str,
-    ) -> Result<Self, IdError> {
+    pub(crate) fn from_author_slug_extra(author: &str, slug: &str, extra: &str) -> Result<Self, IdError> {
         Ok(Self {
             author: Author::new(author)?,
             slug: ModelSlug::new(slug)?,
@@ -292,27 +284,22 @@ impl ModelKey {
         format!("{}/{}", self.author.as_str(), self.slug.as_str())
     }
 
-    /// Input must be of the form 'author/slug:extra', where 'extra' is optional
+    /// Input must be of the form `{author}/{model}`
     pub(crate) fn from_string(model_id: String) -> Result<Self, IdError> {
-        let mut parts = model_id.trim().split('/');
+        let mut parts = model_id.trim().split([ '/', ':' ]);
         let author = parts
             .next()
             .ok_or(IdError::Invalid("missing author in model ID"))?;
-        let mut second_split = parts.next()
-            .ok_or(IdError::Invalid("missing model slug in model ID"))?
-            .splitn(2, ':');
-        let slug = second_split
+        let slug = parts
             .next()
             .ok_or(IdError::Invalid("missing model slug in model ID"))?;
-        if slug.is_empty() {
-            return Err(IdError::Invalid("missing model slug in model ID"));
-        }
-        let maybe_extra = second_split.next().map(ModelKeyExtra::from);
+        let maybe_extra = parts
+            .next().map(ModelKeyExtra::from);
 
-        // // Ensure there are no extra parts
+        // Ensure there are no extra parts
         if parts.next().is_some() {
             return Err(IdError::Invalid(
-                "model ID should be in format 'author/slug:extra', where 'extra' is optional",
+                "model ID should be in format 'author/slug'",
             ));
         }
 
@@ -320,7 +307,7 @@ impl ModelKey {
             author: Author::new(author)?,
             slug: ModelSlug::new(slug)?,
             id: ModelId::new(model_id),
-            extra: maybe_extra.unwrap_or(ModelKeyExtra::Empty),
+            extra: maybe_extra.unwrap_or_default(),
         })
     }
 }
@@ -367,15 +354,15 @@ mod tests {
     fn test_model_key_from_string_invalid_format() {
         // Missing slash
         assert!(ModelKey::from_string("invalid-format".to_string()).is_err());
-
+        
         // Too many slashes
         assert!(ModelKey::from_string("author/model/extra".to_string()).is_err());
-
+        
         // Empty parts
         assert!(ModelKey::from_string("/".to_string()).is_err());
         assert!(ModelKey::from_string("author/".to_string()).is_err());
         assert!(ModelKey::from_string("/model".to_string()).is_err());
-
+        
         // Empty string
         assert!(ModelKey::from_string("".to_string()).is_err());
     }
@@ -393,7 +380,7 @@ mod tests {
         // Test invalid author
         assert!(ModelKey::from_author_slug("", "model").is_err());
         assert!(ModelKey::from_author_slug("invalid author", "model").is_err());
-
+        
         // Test invalid slug
         assert!(ModelKey::from_author_slug("author", "").is_err());
         assert!(ModelKey::from_author_slug("author", "invalid slug").is_err());
@@ -402,36 +389,9 @@ mod tests {
     #[test]
     fn test_model_key_extra_simple() {
         // Leading/trailing whitespace should be trimmed
-        let key =
-            ModelKey::from_string("nousresearch/deephermes-3-llama-3-8b-preview:free".to_string())
-                .unwrap();
+        let key = ModelKey::from_string("nousresearch/deephermes-3-llama-3-8b-preview:free".to_string()).unwrap();
         assert_eq!(key.author.as_str(), "nousresearch");
-        assert_eq!(key.slug.as_str(), "deephermes-3-llama-3-8b-preview");
-        assert_eq!(key.extra.as_str(), "free");
-        assert_eq!(key.extra, ModelKeyExtra::Free)
-    }
-
-    #[test]
-    fn test_model_key_extra_empty() {
-        // Leading/trailing whitespace should be trimmed
-        let key =
-            ModelKey::from_string("nousresearch/deephermes-3-llama-3-8b-preview".to_string())
-                .unwrap();
-        assert_eq!(key.author.as_str(), "nousresearch");
-        assert_eq!(key.slug.as_str(), "deephermes-3-llama-3-8b-preview");
-        assert_eq!(key.extra.as_str(), "");
-        assert_eq!(key.extra, ModelKeyExtra::Empty);
-    }
-
-    #[test]
-    fn test_model_key_extra_unknown() {
-        // Leading/trailing whitespace should be trimmed
-        let key =
-            ModelKey::from_string("nousresearch/deephermes-3-llama-3-8b-preview:asdf".to_string())
-                .unwrap();
-        assert_eq!(key.author.as_str(), "nousresearch");
-        assert_eq!(key.slug.as_str(), "deephermes-3-llama-3-8b-preview");
-        assert_eq!(key.extra.as_str(), "unknown");
-        assert_eq!(key.extra, ModelKeyExtra::Unknown);
+        assert_eq!(key.slug.as_str(), "gpt-4");
+        assert_eq!(key.extra.as_str(), "free")
     }
 }

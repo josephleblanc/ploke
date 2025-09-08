@@ -13,7 +13,7 @@
 
 use ploke_core::ArcStr;
 use ploke_tui::tools::Tool;
-use ploke_tui::tracing_setup::{init_tracing, init_tracing_to_file_ai};
+use ploke_tui::tracing_setup::init_tracing;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -134,7 +134,7 @@ async fn e2e_tool_execution_event_flow() -> color_eyre::Result<()> {
 /// Test multi-step conversation with sequential tool calls
 #[tokio::test]
 async fn e2e_multi_step_tool_conversation() -> color_eyre::Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_multi_step_tool_conversation");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Step 1: User asks for file metadata
@@ -216,7 +216,7 @@ async fn e2e_conversation_with_tool_errors() -> color_eyre::Result<()> {
 ///     - 4 total generation requests
 #[tokio::test]
 async fn e2e_conversation_state_persistence() -> Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_conversation_state_persistence");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Add multiple messages to build conversation context
@@ -364,7 +364,7 @@ async fn e2e_conversation_context_for_tools() -> color_eyre::Result<()> {
 /// Verifies that messages are correctly received and deserialized into strongly-typed structures
 #[tokio::test]
 async fn e2e_message_receipt_and_deserialization() -> Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_message_receipt_and_deserialization");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Add a message that will trigger an API call
@@ -444,7 +444,7 @@ async fn e2e_message_receipt_and_deserialization() -> Result<()> {
 /// tool results are properly formatted, and error handling works correctly
 #[tokio::test]
 async fn e2e_tool_calls_and_return_output() -> Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_tool_calls_and_return_output");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Configure the model to support tools by adding capability
@@ -564,7 +564,7 @@ async fn e2e_tool_calls_and_return_output() -> Result<()> {
 /// with proper structure and expected field values
 #[tokio::test]
 async fn e2e_tool_output_sent_to_api() -> Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_tool_output_sent_to_api");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Configure the model to support tools by adding capability
@@ -753,7 +753,7 @@ async fn e2e_tool_output_sent_to_api() -> Result<()> {
 /// including StateCommand processing order and event bus message routing
 #[tokio::test]
 async fn e2e_workflow_compliance_validation() -> Result<()> {
-    let _g = init_tracing_to_file_ai("e2e_workflow_compliance_validation");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Configure the model to support tools by adding capability
@@ -930,7 +930,7 @@ async fn e2e_api_response_deserialization_and_gat_validation() -> Result<()> {
     use ploke_tui::app_state::events::SystemEvent;
     use tokio_test::assert_ok;
 
-    let _g = init_tracing_to_file_ai("e2e_api_response_deserialization_gat_validation");
+    let _g = init_tracing();
     let harness = AppHarness::spawn().await?;
 
     // Subscribe to API responses before triggering any requests

@@ -108,25 +108,6 @@ impl<'de> Deserialize<'de> for ProvEnd {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        // splits to return at most three items, since the pattern is like:
-        // `deepinfra/fp8/deepseek-r1`
-
-        // let (author_str, rem) = s.split_n('/');
-        // let (maybe_quant, model_str) = s
-        //     .rsplit_once('/')
-        //     .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
-
-        // let author_str = parts
-        //     .next()
-        //     .ok_or_else(|| serde::de::Error::custom("missing author in canonical_slug"))?;
-        // let model_str = parts
-        //     .next()
-        //     .ok_or_else(|| serde::de::Error::custom("missing model in canonical_slug"))?;
-
-        // splits to return at most three items, since the pattern can be like:
-        // `deepinfra/fp8/deepseek-chat-v3`
-        //  or 
-        // `novita/deepseek-chat-v3`
         let mut parts = s.split('/');
         let author_str = parts
             .next()

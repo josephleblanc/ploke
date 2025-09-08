@@ -91,6 +91,12 @@ pub struct ModelPricing {
         deserialize_with = "string_or_f64_opt",
         skip_serializing_if = "Option::is_none"
     )]
+    pub image_output: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub input_cache_read: Option<f64>,
     #[serde(
         default,
@@ -140,6 +146,7 @@ impl Default for ModelPricing {
             request: None,
             web_search: None,
             discount: None,
+            image_output: None,
         }
     }
 }

@@ -6,7 +6,7 @@ use itertools::Itertools;
 use openrouter::{FallbackMarker, MiddleOutMarker, Transform};
 use serde::{Deserialize, Serialize};
 
-use crate::tools::ToolDefinition;
+use crate::{llm2::chat_msg::Role, tools::ToolDefinition};
 
 use super::{
     LLMParameters, ModelKey,
@@ -27,7 +27,7 @@ mod anthropic {
 pub(crate) trait Router {
     type CompletionFields: ApiRoute;
     const BASE_URL: &str;
-    const COMPLETION_TAIL: &str;
+    const COMPLETION_URL: &str;
     const MODELS_URL: &str;
     const ENDPOINTS_TAIL: &str;
     const API_KEY_NAME: &str;
@@ -39,9 +39,14 @@ pub(crate) trait Router {
     }
 
     fn endpoints_url_string(model_key: ModelKey) -> String {
-        [Self::BASE_URL, model_key.id.as_str(), Self::ENDPOINTS_TAIL]
-            .into_iter()
-            .join("/")
+        // NOTE: This uses MODELS_URL for the base part, not the simple base
+        [
+            Self::MODELS_URL,
+            model_key.id.as_str(),
+            Self::ENDPOINTS_TAIL,
+        ]
+        .into_iter()
+        .join("/")
     }
 }
 
@@ -51,7 +56,7 @@ pub(crate) struct OpenRouter;
 impl Router for OpenRouter {
     type CompletionFields = openrouter::ChatCompFields;
     const BASE_URL: &str = "https://openrouter.ai/api/v1";
-    const COMPLETION_TAIL: &str = "chat/completions";
+    const COMPLETION_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
     const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
     const ENDPOINTS_TAIL: &str = "endpoints";
     const API_KEY_NAME: &str = "OPENROUTER_API_KEY";
@@ -67,9 +72,9 @@ pub(crate) trait ApiRoute: Sized + Default {
         tool_choice: Option<ToolChoice>,
     ) -> ChatCompRequest<Self> {
         ChatCompRequest::<Self> {
+            model: req.model,
             messages: req.messages,
             prompt: req.prompt,
-            model: req.model,
             response_format: req.response_format,
             stop: req.stop,
             stream: req.stream,
@@ -112,15 +117,37 @@ pub(crate) trait ApiRoute: Sized + Default {
         }
     }
 }
+use serde_json::{Value, json};
+use std::sync::OnceLock;
+
+static DEFAULT_MODEL: OnceLock<String> = OnceLock::new();
+pub(crate) fn default_model() -> String {
+    DEFAULT_MODEL
+        .get_or_init(|| "moonshotai/kimi-k2".to_string())
+        .clone()
+}
+
+static DEFAULT_MESSAGE: OnceLock<Vec<RequestMessage>> = OnceLock::new();
+pub(crate) fn default_messages() -> Vec<RequestMessage> {
+    DEFAULT_MESSAGE
+        .get_or_init(|| {
+            vec![RequestMessage {
+                role: Role::System,
+                content: "You are a helpful assistant, please help the user with their requests.".to_string(),
+                tool_call_id: None,
+            }]
+        })
+        .clone()
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub(crate) struct ChatCompRequest<R: ApiRoute> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) messages: Option<Vec<RequestMessage>>,
+    #[serde(default = "default_model")]
+    pub(crate) model: String,
+    #[serde(default = "default_messages")]
+    pub(crate) messages: Vec<RequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) response_format: Option<JsonObjMarker>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,11 +170,12 @@ pub(crate) struct ChatCompRequest<R: ApiRoute> {
 
 #[cfg(test)]
 pub(crate) const MODELS_JSON_RAW: &str = "crates/ploke-tui/data/models/all_raw.json";
+pub(crate) const ENDPOINTS_JSON_DIR: &str = "crates/ploke-tui/data/endpoints/";
+pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_completions/";
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-
 
     use crate::{llm::LlmError, llm2::newtypes::ModelId};
 
@@ -155,7 +183,7 @@ mod tests {
     #[test]
     fn show_openrouter_json2() {
         let req = ChatCompRequest::<openrouter::ChatCompFields> {
-            messages: Some(vec![]),
+            messages: Default::default(),
             router: openrouter::ChatCompFields::default()
                 .with_route(FallbackMarker)
                 .with_transforms(Transform::MiddleOut([MiddleOutMarker])),
@@ -168,12 +196,15 @@ mod tests {
     use color_eyre::Result;
     use reqwest::Client;
     #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
     async fn test_simple_query_models() -> Result<()> {
+        use ploke_test_utils::workspace_root;
+
         let url = OpenRouter::MODELS_URL;
         let key = OpenRouter::resolve_api_key()?;
 
         let response = Client::new()
-            .post(url)
+            .get(url)
             .bearer_auth(key)
             .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
             .send()
@@ -181,10 +212,187 @@ mod tests {
             .map_err(|e| LlmError::Request(e.to_string()))?;
 
         let response_json = response.text().await?;
-        
+
         if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
-            std::fs::write(MODELS_JSON_RAW, response_json)?;
+            let mut dir = workspace_root();
+            dir.push(MODELS_JSON_RAW);
+            println!("Writing '/models' raw response to:\n{}", dir.display());
+            std::fs::write(dir, response_json)?;
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn test_default_query_endpoints() -> Result<()> {
+        use std::path::PathBuf;
+
+        use ploke_test_utils::workspace_root;
+
+        use crate::llm2::chat_msg::Role;
+
+        // TODO: we need to handle more items like the below, which the `ModelKey` doesn't
+        // currently handle:
+        // - nousresearch/deephermes-3-llama-3-8b-preview:free
+        // - Should turn into a raw curl request like:
+        //  https://openrouter.ai/api/v1/models/nousresearch/deephermes-3-llama-3-8b-preview%3Afree/endpoints
+
+        let model_key = ModelKey::from_string(String::from("qwen/qwen3-30b-a3b"))?;
+        let url = OpenRouter::endpoints_url_string(model_key);
+        eprintln!(
+            "Constructed url to query `/:author/:model/endpoints at\n{}",
+            url
+        );
+        assert_eq!(
+            "https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b/endpoints",
+            url
+        );
+        let key = OpenRouter::resolve_api_key()?;
+        let mut dir = workspace_root();
+        dir.push(ENDPOINTS_JSON_DIR);
+
+        let response = Client::new()
+            .get(url)
+            .bearer_auth(key)
+            .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| LlmError::Request(e.to_string()))?;
+
+        let is_success = response.status().is_success();
+        eprintln!("is_success: {}", is_success);
+        eprintln!("status: {}", response.status());
+        let response_text = response.text().await?;
+
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+
+        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
+            let response_raw_pretty = serde_json::to_string_pretty(&response_value)?;
+            std::fs::create_dir_all(&dir)?;
+            dir.push("endpoints.json");
+            println!("Writing raw json reponse to: {}", dir.display());
+            std::fs::write(dir, response_raw_pretty)?;
+        }
+        assert!(is_success);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn test_free_query_endpoints() -> Result<()> {
+        use std::path::PathBuf;
+
+        use ploke_test_utils::workspace_root;
+
+        use crate::llm2::chat_msg::Role;
+
+        let model_key = ModelKey::from_string(String::from(
+            "nousresearch/deephermes-3-llama-3-8b-preview:free",
+        ))?;
+        let url = OpenRouter::endpoints_url_string(model_key);
+        eprintln!(
+            "Constructed url to query `/:author/:model/endpoints at\n{}",
+            url
+        );
+        assert_eq!(
+            "https://openrouter.ai/api/v1/models/nousresearch/deephermes-3-llama-3-8b-preview:free/endpoints",
+            url
+        );
+        let key = OpenRouter::resolve_api_key()?;
+        let mut dir = workspace_root();
+        dir.push(ENDPOINTS_JSON_DIR);
+
+        let response = Client::new()
+            .get(url)
+            .bearer_auth(key)
+            .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| LlmError::Request(e.to_string()))?;
+
+        let is_success = response.status().is_success();
+        eprintln!("is_success: {}", is_success);
+        eprintln!("status: {}", response.status());
+        let response_text = response.text().await?;
+
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+
+        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
+            let response_raw_pretty = serde_json::to_string_pretty(&response_value)?;
+            std::fs::create_dir_all(&dir)?;
+            dir.push("free_model.json");
+            println!("Writing raw json reponse to: {}", dir.display());
+            std::fs::write(dir, response_raw_pretty)?;
+        }
+        assert!(is_success);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn test_default_post_completions() -> Result<()> {
+        use std::path::PathBuf;
+
+        use ploke_test_utils::workspace_root;
+
+        use crate::llm2::chat_msg::Role;
+
+        let model_key = ModelKey::from_string(String::from("qwen/qwen3-30b-a3b-thinking-2507"))?;
+        let key = OpenRouter::resolve_api_key()?;
+        println!("key: {}", key);
+        let url = OpenRouter::COMPLETION_URL;
+        let mut dir = workspace_root();
+        dir.push(COMPLETION_JSON_SIMPLE_DIR);
+
+        let content = String::from("Hello, can you tell me about lifetimes in Rust?");
+        let msg = RequestMessage {
+            role: Role::User,
+            content,
+            tool_call_id: None,
+        };
+
+        let req = ChatCompRequest::<openrouter::ChatCompFields> {
+            messages: vec![msg],
+            model: model_key.id(),
+            router: openrouter::ChatCompFields::default(),
+            ..Default::default()
+        };
+
+        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
+            let pretty = serde_json::to_string_pretty(&req)?;
+            dir.push("request_se.json");
+            println!("Writing serialized request to: {}", dir.display());
+            std::fs::write(&dir, pretty)?;
+        }
+
+        let response = Client::new()
+            .post(url)
+            .bearer_auth(key)
+            .json(&req)
+            .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| LlmError::Request(e.to_string()))?;
+        let is_success = response.status().is_success();
+        eprintln!("is_success: {}", is_success);
+        eprintln!("status: {}", response.status());
+
+        let response_text = response.text().await?;
+
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+
+        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
+            let response_raw_pretty = serde_json::to_string_pretty(&response_value)?;
+            dir.pop();
+            dir.push("response_raw.json");
+            println!("Writing raw json reponse to: {}", dir.display());
+            std::fs::write(dir, response_raw_pretty)?;
+        }
+        assert!(is_success);
+        assert!(response_text.contains("help"));
+
         Ok(())
     }
 }

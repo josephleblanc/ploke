@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{enums::Quant, ProviderSlug};
+use crate::llm2::{ProviderSlug, enums::Quant, newtypes::ModelId};
 
 /// Provider-specific information about the model.
 /// - Unique type only used by OpenRouter
@@ -49,17 +49,18 @@ pub(crate) struct ChatCompFields {
     /// From `https://openrouter.ai/docs/features/model-routing`
     ///  The models parameter lets you automatically try other models if the primary model’s
     ///  providers are down, rate-limited, or refuse to reply due to content moderation.
-    /// 
+    ///
     /// corresponding json: `models?: string[];`
-    /// example from OpenRouter: 
+    /// example from OpenRouter:
     /// ```ignore
     ///  {
     ///    "models": ["anthropic/claude-3.5-sonnet", "gryphe/mythomax-l2-13b"],
     ///    ... // Other params
     ///  }
     /// ```
+    /// Note that models here are in the form of canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) models: Option<Vec<String>>,
+    pub(crate) models: Option<Vec<ModelId>>,
     /// the docs literally just have the string 'fallback' here. No idea what this means, maybe they
     /// read the string as a bool?
     /// corresponding json: `route?: 'fallback';`
@@ -82,7 +83,7 @@ impl ChatCompFields {
     }
 
     /// Set the models parameter for fallback routing.
-    pub fn with_models<I: IntoIterator<Item = String>>(mut self, models: I) -> Self {
+    pub fn with_models<I: IntoIterator<Item = ModelId>>(mut self, models: I) -> Self {
         self.models = Some(models.into_iter().collect());
         self
     }
@@ -107,9 +108,10 @@ impl ChatCompFields {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(untagged)]
 pub(crate) enum Transform {
     MiddleOut([MiddleOutMarker; 1]),
-    Disable([&'static str;0])
+    Disable([&'static str; 0]),
 }
 
 // Marker for route -> "middle-out"
@@ -151,7 +153,6 @@ impl<'de> Deserialize<'de> for MiddleOutMarker {
     }
 }
 
-
 // Marker for route -> "fallback"
 #[derive(Debug, Clone, Copy)]
 pub struct FallbackMarker;
@@ -190,7 +191,6 @@ impl<'de> Deserialize<'de> for FallbackMarker {
         deserializer.deserialize_str(V)
     }
 }
-
 
 /// OpenRouter "provider" routing preferences (typed).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -303,4 +303,3 @@ impl ProviderPreferences {
         Ok(())
     }
 }
-

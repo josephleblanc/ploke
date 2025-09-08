@@ -19,6 +19,7 @@ pub mod error;
 pub mod event_bus;
 pub mod file_man;
 pub mod llm;
+mod llm2;
 pub mod observability;
 pub mod parser;
 pub mod tracing_setup;

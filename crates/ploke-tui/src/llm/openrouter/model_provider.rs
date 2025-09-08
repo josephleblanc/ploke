@@ -263,8 +263,8 @@ pub struct EndpointData {
 
 /// Completion request for the OpenRouter url at 
 /// - https://openrouter.ai/api/v1/chat/completions
-#[derive(Serialize, Debug, Deserialize, Clone)]
-pub struct CompReq<'a> {
+#[derive(Serialize, Debug, Deserialize, Clone, Default)]
+pub struct CompReq {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
     // corresponding json: `messages?: Message[];`
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -280,8 +280,10 @@ pub struct CompReq<'a> {
     //  that fulfill our (in ploke) filtering requirements (e.g. for tool-calling), this can lead
     //  to no models being available for the requests we send.
     // corresponding json: `model?: string;`
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub model: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<&'a str>,
+    pub model: Option<String>,
     // TODO: We should create a Marker struct for this, similar to `FunctionMarker` in
     // `crates/ploke-tui/src/tools/mod.rs`, since this is a constant value
     // corresponding json: `response_format?: { type: 'json_object' };`

@@ -1,5 +1,5 @@
-pub mod registry;
 pub mod openrouter;
+pub mod registry;
 pub mod session;
 
 use itertools::Itertools;
@@ -20,7 +20,10 @@ use crate::app_state::{AppState, StateCommand};
 use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
-use crate::tools::{FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall, ToolDefinition, ToolFunctionDef, ToolName};
+use crate::tools::{
+    FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall,
+    ToolDefinition, ToolFunctionDef, ToolName,
+};
 use crate::utils::consts::DEBUG_TOOLS;
 use crate::{AppEvent, EventBus};
 use crate::{
@@ -30,22 +33,48 @@ use crate::{
 
 // API and Config
 
-use self::providers::ProviderSlug;
+pub(crate) use self::providers::ProviderSlug;
 
 use super::*;
 
 #[derive(Serialize, Debug, Clone, Default, Deserialize)]
 pub struct ProviderPreferences {
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub allow: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub deny: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub order: Vec<ProviderSlug>,
-    // Gate to enforce provider-side parameter availability (per docs)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub allow: Option<Vec<ProviderSlug>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub deny: Option<Vec<ProviderSlug>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub order: Option<Vec<ProviderSlug>>,
+    /// Gate to enforce provider-side parameter availability (per docs)
     pub require_parameters: bool,
 }
 
+impl ProviderPreferences {
+    /// Convenience: build an "allow-only" preference list.
+    pub fn allow<I>(slugs: I) -> Self
+    where
+        I: IntoIterator<Item = ProviderSlug>,
+    {
+        Self {
+            allow: Some( slugs.into_iter().collect() ),
+            deny: None,
+            order: None,
+            require_parameters: true,
+        }
+    }
+
+    /// Add an ordering preference.
+    pub fn with_order(mut self, ordered: Vec<ProviderSlug>) -> Self {
+        self.order = Some(ordered);
+        self
+    }
+
+    /// Add a deny list.
+    pub fn with_deny<I: IntoIterator<Item = ProviderSlug>>(mut self, deny: I) -> Self {
+        self.deny = Some( deny.into_iter().collect() );
+        self
+    }
+}
 
 // Lightweight tool to fetch current file metadata (tracking hash and basics)
 #[deprecated = "use tools::GetFileMetadata::tool_def() instead"]
@@ -178,7 +207,7 @@ impl From<MessageKind> for Role {
 pub struct OpenAiResponse {
     #[serde(default)]
     id: String,
-    #[serde( default)]
+    #[serde(default)]
     choices: Vec<Choices>,
     #[serde(default)]
     created: i64,
@@ -403,7 +432,7 @@ pub async fn llm_manager(
                     event_bus,
                     request_id,
                     parent_id,
-                    call_id: tool_call.call_id.clone()
+                    call_id: tool_call.call_id.clone(),
                 };
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
             }
@@ -449,9 +478,11 @@ pub async fn llm_manager(
                     )
                     .await
                     {
-
                         Ok(providers) => {
-                            let provider_summaries = providers.endpoints.iter().map(ProviderSummary::from_endpoint)
+                            let provider_summaries = providers
+                                .endpoints
+                                .iter()
+                                .map(ProviderSummary::from_endpoint)
                                 .collect_vec();
                             event_bus.send(AppEvent::ModelsEndpointsResults {
                                 model_id,
@@ -721,7 +752,9 @@ async fn prepare_and_run_llm_call(
             parent_id,
             supports_tools_opt,
             require_tools,
-        }) {fut.await.ok();};
+        }) {
+            fut.await.ok();
+        };
 
         return Err(LlmError::Api {
             status: 412,
@@ -738,7 +771,7 @@ or disable enforcement with ':provider tools-only off'.",
         vec![
             RequestCodeContextGat::tool_def(),
             GatCodeEdit::tool_def(),
-            GetFileMetadata::tool_def()
+            GetFileMetadata::tool_def(),
         ]
     } else {
         Vec::new()
@@ -882,9 +915,7 @@ fn log_tool_use(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Re
     }
 }
 
-fn log_tool_reason(
-    ctx: LogToolUseCtx,
-) -> Option<impl Future<Output = tokio::io::Result<()>>> {
+fn log_tool_reason(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
     let LogToolUseCtx {
         provider,
         parent_id,
@@ -1127,10 +1158,9 @@ impl From<LlmError> for ploke_error::Error {
             LlmError::ToolCall(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", msg)),
             ),
-            LlmError::Unknown(msg) => 
-            ploke_error::Error::Internal(
+            LlmError::Unknown(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
-            )
+            ),
         }
     }
 }
@@ -1326,36 +1356,46 @@ pub struct ResponseParseSummary {
 /// Attempt to parse a provider response body into our OpenAI-compatible types and summarize.
 #[cfg(feature = "test_harness")]
 pub fn test_parse_response_summary(body: &str) -> Result<ResponseParseSummary, String> {
-    let parsed: OpenAiResponse = serde_json::from_str(body)
-        .map_err(|e| format!("typed parse failed: {}", e))?;
+    let parsed: OpenAiResponse =
+        serde_json::from_str(body).map_err(|e| format!("typed parse failed: {}", e))?;
     let mut choices_cnt = 0usize;
     let mut tool_calls_total = 0usize;
     let mut has_message = false;
     let mut has_content = false;
     for ch in parsed.choices.iter() {
         choices_cnt += 1;
-        
+
         // Check for message-based response
         if let Some(message) = &ch.message {
             has_message = true;
-            if message.content.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            if message
+                .content
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+            {
                 has_content = true;
             }
             if let Some(tcs) = &message.tool_calls {
                 tool_calls_total += tcs.len();
             }
         }
-        
+
         // Check for text-based response
         if let Some(text) = &ch.text {
-            if !text.is_empty() { 
-                has_content = true; 
+            if !text.is_empty() {
+                has_content = true;
             }
         }
-        
+
         // Streaming delta responses would be handled here if needed
     }
-    Ok(ResponseParseSummary { choices: choices_cnt, tool_calls_total, has_message, has_content })
+    Ok(ResponseParseSummary {
+        choices: choices_cnt,
+        tool_calls_total,
+        has_message,
+        has_content,
+    })
 }
 
 #[cfg(test)]
@@ -1368,7 +1408,7 @@ mod tests {
         let role = Role::Tool;
         let serialized = serde_json::to_string(&role).unwrap();
         assert_eq!(serialized, "\"tool\"");
-        
+
         // Test deserialization
         let deserialized: Role = serde_json::from_str("\"tool\"").unwrap();
         assert_eq!(deserialized, Role::Tool);
@@ -1382,10 +1422,10 @@ mod tests {
         assert_eq!(tool_msg.role, Role::Tool);
         assert_eq!(tool_msg.content, "result content");
         assert_eq!(tool_msg.tool_call_id, Some(call_123));
-        
+
         // Test validation passes for valid tool message
         assert!(tool_msg.validate().is_ok());
-        
+
         // Test other constructors don't have tool_call_id
         let user_msg = RequestMessage::new_user("hello".to_string());
         assert_eq!(user_msg.role, Role::User);
@@ -1399,7 +1439,7 @@ mod tests {
         let call_id = ArcStr::from("call_id");
         let valid_tool = RequestMessage::new_tool("content".to_string(), call_id.clone());
         assert!(valid_tool.validate().is_ok());
-        
+
         // Invalid tool message (missing tool_call_id)
         let invalid_tool = RequestMessage {
             role: Role::Tool,
@@ -1407,7 +1447,12 @@ mod tests {
             tool_call_id: None,
         };
         assert!(invalid_tool.validate().is_err());
-        assert!(invalid_tool.validate().unwrap_err().contains("tool_call_id"));
+        assert!(
+            invalid_tool
+                .validate()
+                .unwrap_err()
+                .contains("tool_call_id")
+        );
     }
 
     #[test]
@@ -1415,7 +1460,7 @@ mod tests {
         let call_id = ArcStr::from("call_abc");
         let tool_msg = RequestMessage::new_tool("test result".to_string(), call_id);
         let serialized = serde_json::to_string(&tool_msg).unwrap();
-        
+
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed["role"], "tool");
         assert_eq!(parsed["content"], "test result");

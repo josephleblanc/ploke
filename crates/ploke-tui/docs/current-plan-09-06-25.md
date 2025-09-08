@@ -361,3 +361,61 @@ impl<I: CatalogImporter, S: CatalogStore> RegistryService<I, S> {
 ---
 
 if you want, I can sketch the OpenRouter importer that populates these canonical records (mapping from your existing `ModelsEndpoint`/`Endpoint` types), plus a tiny in-mem store so you can integrate the picker right away.
+
+```mermaid
+flowchart TD
+  subgraph TUI["TUI: Model Picker & Runner"]
+    U1[Search models]
+    U2[Expand model → endpoints]
+    U3[Select providers/endpoints]
+    U4[Pick profile / sweep]
+  end
+
+  subgraph RegistryService["RegistryService"]
+    RS1[route_plan()]
+    RS2[to_comp_req()]
+  end
+
+  subgraph Store["CatalogStore (cache)"]
+    S1[(models)]
+    S2[(endpoints)]
+  end
+
+  subgraph Importer["CatalogImporter (OpenRouter adapter)"]
+    I1[refresh_models()]
+    I2[refresh_endpoints(model)]
+  end
+
+  subgraph Prefs["RegistryPrefs (from UserConfig)"]
+    P1[ModelPrefs]
+    P2[Profiles (LLMParameters)]
+  end
+
+  subgraph OpenRouter["OpenRouter API"]
+    OR1[/GET /models/]
+    OR2[/GET /models/:author/:slug/endpoints/]
+    OR3[/POST /chat/completions/]
+  end
+
+  %% flows
+  U1 -->|search_models(q)| RS1
+  U2 -->|expand(model)| RS1
+  U3 --> RS1
+  U4 --> RS1
+
+  RS1 -->|read/write| S1
+  RS1 -->|read/write| S2
+  RS1 --->|uses| P1
+  P1 ---> P2
+
+  RS1 -->|if stale| I1
+  RS1 -->|if stale| I2
+  I1 --> OR1
+  I2 --> OR2
+  I1 -->|normalized ModelRecord[]| S1
+  I2 -->|normalized EndpointRecord[]| S2
+
+  RS2 -->|build CompReq| OR3
+  U3 -->|run| RS2
+```
+

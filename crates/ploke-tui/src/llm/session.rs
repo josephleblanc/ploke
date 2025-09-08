@@ -377,13 +377,13 @@ pub fn build_comp_req<'a>(
     tools: Option<Vec<crate::tools::ToolDefinition>>,
     use_tools: bool,
     require_parameters: bool,
-) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+) -> crate::llm::openrouter::model_provider::CompReq {
     use crate::llm::openrouter::model_provider::{CompReq, ToolChoice};
     tracing::debug!(model = %provider.model, use_tools = use_tools, messages = messages.len(), "build_comp_req");
     CompReq {
         messages: Some(messages),
         prompt: None,
-        model: Some(provider.model.as_str()),
+        model: Some(provider.model.clone()),
         response_format: None,
         stop: None,
         stream: Some(false),
@@ -412,7 +412,7 @@ pub fn build_comp_req<'a>(
             provider
                 .provider_slug
                 .map(|p| crate::llm::ProviderPreferences {
-                    order: vec![p],
+                    order: Some( vec![p] ),
                     require_parameters,
                     ..Default::default()
                 })
@@ -431,7 +431,7 @@ pub fn build_openai_request<'a>(
     tools: Option<Vec<crate::tools::ToolDefinition>>,
     use_tools: bool,
     require_parameters: bool,
-) -> crate::llm::openrouter::model_provider::CompReq<'a> {
+) -> crate::llm::openrouter::model_provider::CompReq {
     build_comp_req(
         provider,
         messages,
