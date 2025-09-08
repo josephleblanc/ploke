@@ -180,8 +180,11 @@ mod tests {
             .await
             .map_err(|e| LlmError::Request(e.to_string()))?;
 
-        // AI: add a check for an environmental variable, "WRITE_MODE", and if it equals 1, then
-        // write the response json to `MODELS_JSON_RAW` AI!
+        let response_json = response.text().await?;
+        
+        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
+            std::fs::write(MODELS_JSON_RAW, response_json)?;
+        }
         Ok(())
     }
 }
