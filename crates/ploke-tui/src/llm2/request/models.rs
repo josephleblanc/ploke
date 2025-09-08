@@ -1,11 +1,26 @@
+#![allow(clippy::bool_assert_comparison)]
 use std::collections::HashMap;
 
 use ploke_core::ArcStr;
+use ploke_test_utils::workspace_root;
 use serde::{Deserialize, Serialize};
 
 use crate::llm2::{
     Architecture, SupportedParameters, newtypes::ModelId, router_only::openrouter::TopProvider,
 };
+
+use once_cell::sync::Lazy;
+use serde_json::Value;
+
+pub static EXAMPLE_JSON: Lazy<Value> = Lazy::new(|| {
+    // Read at compile-time, parse at runtime once.
+    static RAW: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/api/data/models/all_raw.json"
+));
+
+    serde_json::from_str(RAW).expect("valid test JSON")
+});
 
 use super::ModelPricing;
 
@@ -151,7 +166,7 @@ mod tests {
         assert_eq!(model.id.as_str(), "deepcogito/cogito-v2-preview-llama-109b-moe");
         assert_eq!(model.name.as_ref(), "Cogito V2 Preview Llama 109B");
         assert_eq!(model.created, 1756831568);
-        assert_eq!(model.description.as_ref(), "An instruction-tuned, hybrid-reasoning Mixture-of-Experts model built on Llama-4-Scout-17B-16E. Cogito v2 can answer directly or engage an extended \"thinking\" phase, with alignment guided by Iterated Distillation & Amplification (IDA). It targets coding, STEM, instruction following, and general helpfulness, with stronger multilingual, tool-calling, and reasoning performance than size-equivalent baselines. The model supports long-context use (up to 10M tokens) and standard Transformers workflows. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)");
+        assert_eq!(model.description.as_ref(), "An instruction-tuned, hybrid-reasoning Mixture-of-Experts model built on Llama-4-Scout-17B-16E. Cogito v2 can answer directly or engage an extended “thinking” phase, with alignment guided by Iterated Distillation & Amplification (IDA). It targets coding, STEM, instruction following, and general helpfulness, with stronger multilingual, tool-calling, and reasoning performance than size-equivalent baselines. The model supports long-context use (up to 10M tokens) and standard Transformers workflows. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)");
         assert_eq!(model.canonical.as_ref().unwrap().as_str(), "deepcogito/cogito-v2-preview-llama-109b-moe");
         
         // Test metadata
@@ -196,4 +211,10 @@ mod tests {
         assert_eq!(model.top_provider.is_moderated, false);
         assert_eq!(model.top_provider.max_completion_tokens, None);
     }
+
+    // AI: Use the saved fixture `EXAMPLE_JSON`, which contains a saved API call response of the
+    // same shape as the previous test above, but has many more response objects in the `data`
+    // field, to test the we are deserializing each entry. None of the values need to be verified,
+    // but we want to ensure we can handle all the variations in the example by deserializing each
+    // of the items in the `data` array. AI!
 }
