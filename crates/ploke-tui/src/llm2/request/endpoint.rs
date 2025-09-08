@@ -12,19 +12,18 @@ use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::ProviderPreferences;
-use crate::llm2::enums::Quant;
-use crate::llm2::newtypes::ModelId;
 use crate::llm2::Architecture;
+use crate::llm2::enums::Quant;
+use crate::llm2::newtypes::*;
 use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;
 use crate::utils::se_de::string_to_f64_opt_zero;
 
-// Example json response for 
+// Example json response for
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
 
 use crate::llm::openrouter::provider_endpoints::ProvEnd;
-use crate::llm::openrouter::provider_endpoints::SupportedParameters;
 use crate::llm::openrouter_catalog::ModelPricing;
 use crate::llm::providers::{ProviderName as ProviderNameEnum, ProviderSlug};
 
@@ -134,9 +133,9 @@ pub(crate) struct Endpoint {
     /// computer-friendly provider slug, e.g. "chutes", "z-ai", "deepseek"
     /// We translate these into an enum, e.g. "z-ai" becomes `ProviderSlug::z_ai`
     ///     "provider_name": "Chutes",
-    pub(crate) tag: ProviderSlugStr,
+    pub(crate) tag: EndpointTag,
 
-    /// The level of quantization of the endpoint, e.g. 
+    /// The level of quantization of the endpoint, e.g.
     ///     "quantization": "fp4",
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) quantization: Option<Quant>,
@@ -165,7 +164,7 @@ pub(crate) struct Endpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) status: Option<i32>,
 
-    /// Not documented, but self-explanatory, e.g. 
+    /// Not documented, but self-explanatory, e.g.
     ///     "uptime_last_30m": 100,
     #[serde(skip_serializing_if = "Option::is_none", rename = "uptime_last_30m")]
     pub(crate) uptime: Option<f64>,
@@ -398,6 +397,8 @@ pub(crate) struct ToolChoiceFunction {
 
 #[cfg(test)]
 mod tests {
+    use crate::llm2::{enums::{InstructType, Modality, Tokenizer}, SupportedParameters};
+
     use super::*;
     use serde_json::{Value, json};
 
@@ -463,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_example_json_deserialize() {
-        // Example json response for 
+        // Example json response for
         // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
         let example_json = json!({
             "data": {
@@ -530,43 +531,65 @@ mod tests {
         assert_eq!(parsed.data.id.as_str(), "deepseek/deepseek-chat-v3.1");
         assert_eq!(parsed.data.endpoints.len(), 1);
         let ep = &parsed.data.endpoints[0];
-        
+
         // Test EndpointData fields
-        assert_eq!(parsed.data.name.as_str(), "DeepSeek: DeepSeek V3.1");
+        assert_eq!(parsed.data.name.as_ref(), "DeepSeek: DeepSeek V3.1");
         assert_eq!(parsed.data.created, 1755779628.0);
-        assert!(parsed.data.description.as_str().starts_with("DeepSeek-V3.1 is a large hybrid reasoning model"));
-        assert_eq!(parsed.data.architecture.tokenizer, "DeepSeek");
-        assert_eq!(parsed.data.architecture.instruct_type, "deepseek-v3.1");
-        assert_eq!(parsed.data.architecture.modality, "text->text");
-        
+        assert!(
+            parsed
+                .data
+                .description
+                .starts_with("DeepSeek-V3.1 is a large hybrid reasoning model")
+        );
+        assert_eq!(parsed.data.architecture.tokenizer, Tokenizer::DeepSeek);
+        assert_eq!(
+            parsed.data.architecture.instruct_type,
+            Some(InstructType::DeepSeekV31)
+        );
+        assert_eq!(parsed.data.architecture.modality, Modality::TextToText);
+
         // Test Endpoint fields
-        assert_eq!(ep.name.as_str(), "Chutes | deepseek/deepseek-chat-v3.1");
-        assert_eq!(ep.model_name.as_str(), "DeepSeek: DeepSeek V3.1");
+        assert_eq!(ep.name.as_ref(), "Chutes | deepseek/deepseek-chat-v3.1");
+        assert_eq!(ep.model_name.as_ref(), "DeepSeek: DeepSeek V3.1");
         assert_eq!(ep.context_length, 163840.0);
         assert_eq!(ep.provider_name.as_str(), "Chutes");
-        assert_eq!(ep.tag.as_str(), "chutes");
+        assert_eq!(ep.tag.provider_name.as_str(), "chutes");
+        assert_eq!(ep.tag.quantization, None);
         assert_eq!(ep.quantization, None);
         assert_eq!(ep.max_completion_tokens, None);
         assert_eq!(ep.max_prompt_tokens, None);
         assert_eq!(ep.status, Some(0));
-        assert_eq!(ep.uptime, Some(99.33169971040321));
+        assert!(ep.uptime.unwrap() - 99.33169971040321 <= 0e-5);
         assert_eq!(ep.supports_implicit_caching, Some(false));
         assert!(ep.supports_tools());
-        
+
         // Test pricing
-        assert_eq!(ep.pricing.prompt, 0.0000002);
-        assert_eq!(ep.pricing.completion, 0.0000008);
+        assert!(ep.pricing.prompt - 0.0000002 <= 0e-8);
+        assert!(ep.pricing.completion - 0.0000008 <= 0e-8);
         assert_eq!(ep.pricing.request, Some(0.0));
         assert_eq!(ep.pricing.image, Some(0.0));
         assert_eq!(ep.pricing.image_output, Some(0.0));
         assert_eq!(ep.pricing.web_search, Some(0.0));
         assert_eq!(ep.pricing.internal_reasoning, Some(0.0));
         assert_eq!(ep.pricing.discount, Some(0.0));
-        
+
+        // AI: Add the rest of the supported parameters to ensure we are catching all of them AI!
         // Test supported parameters
-        assert!(ep.supported_parameters.contains(&SupportedParameters::Tools));
-        assert!(ep.supported_parameters.contains(&SupportedParameters::MaxTokens));
-        assert!(ep.supported_parameters.contains(&SupportedParameters::Temperature));
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Tools)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::MaxTokens)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Temperature)
+        );
+        assert_eq!(
+            ep.supported_parameters.len(), 17
+        );
     }
 
     #[test]
@@ -609,8 +632,8 @@ mod tests {
         assert!(has_id, "provider_id must be present");
         for e in &parsed.data.endpoints {
             let p = &e.pricing;
-            assert!(p.request >= Some( 0.0 ));
-            assert!(p.image >= Some( 0.0 ));
+            assert!(p.request >= Some(0.0));
+            assert!(p.image >= Some(0.0));
             assert!(p.prompt >= 0.0);
             assert!(p.completion >= 0.0);
         }
@@ -694,7 +717,7 @@ async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
     let ep = data.get("endpoints").unwrap();
     let first_ep = ep.get(0).unwrap();
     let pricing = first_ep.get("pricing").unwrap();
-    
+
     let completion = pricing.get("completion").unwrap();
     str_or_num_to_f64(completion);
     let image = pricing.get("image").unwrap();
@@ -721,8 +744,7 @@ async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
 
     fn str_or_num_to_f64(v: &serde_json::Value) -> Option<f64> {
         match v {
-            serde_json::Value::Number(n) => n.as_f64()
-            .or_else(|| {
+            serde_json::Value::Number(n) => n.as_f64().or_else(|| {
                 if n.as_u64().unwrap_or_default() == 0 {
                     Some(0.0)
                 } else {
