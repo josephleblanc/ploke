@@ -165,14 +165,22 @@ impl ModelKey {
     }
 
     /// Input must be of the form `{author}/{model}`
-    pub(crate) fn from_string(model_id: String) -> Result< Self, IdError > {
-        let mut parts = model_id.trim()
-            .split('/');
-        // AI: Fill in the following todo items AI!
-        let author = parts.next().unwrap_or_else( todo!("return an error") );
-        let slug = parts.next().unwrap_or_else( todo!("return an error") );
+    pub(crate) fn from_string(model_id: String) -> Result<Self, IdError> {
+        let mut parts = model_id.trim().split('/');
+        let author = parts.next().ok_or(IdError::Invalid("missing author in model ID"))?;
+        let slug = parts.next().ok_or(IdError::Invalid("missing model slug in model ID"))?;
+        
+        // Ensure there are no extra parts
+        if parts.next().is_some() {
+            return Err(IdError::Invalid("model ID should be in format 'author/slug'"));
+        }
+        
         let id = ModelId::new(model_id);
-        Ok(Self { author: Author::new(author)?, slug: ModelSlug::new( slug )?, id })
+        Ok(Self { 
+            author: Author::new(author)?, 
+            slug: ModelSlug::new(slug)?, 
+            id 
+        })
     }
 }
 
