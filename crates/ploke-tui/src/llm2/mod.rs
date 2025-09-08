@@ -51,13 +51,8 @@ impl ProviderPreferences {
 
     /// Validate that there is no intersection between allow and deny lists.
     pub fn validate(&self) -> Result<(), &'static str> {
-        // AI: Do it without intermediate allocations AI!
         if let (Some(allow), Some(deny)) = (&self.allow, &self.deny) {
-            let intersection: Vec<_> = allow.iter()
-                .filter(|slug| deny.contains(slug))
-                .collect();
-            
-            if !intersection.is_empty() {
+            if allow.iter().any(|slug| deny.contains(slug)) {
                 return Err("ProviderPreferences allow and deny lists have overlapping entries");
             }
         }
