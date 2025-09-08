@@ -173,22 +173,21 @@ mod tests {
         assert_eq!(pricing.discount, None);
         
         // Test supported parameters
-        // AI: Change these into the strongly typed versions from the SupportedParameters enum AI!
         let expected_params = vec![
-            "frequency_penalty",
-            "include_reasoning",
-            "logit_bias",
-            "max_tokens",
-            "min_p",
-            "presence_penalty",
-            "reasoning",
-            "repetition_penalty",
-            "stop",
-            "temperature",
-            "tool_choice",
-            "tools",
-            "top_k",
-            "top_p"
+            SupportedParameters::FrequencyPenalty,
+            SupportedParameters::IncludeReasoning,
+            SupportedParameters::LogitBias,
+            SupportedParameters::MaxTokens,
+            SupportedParameters::MinP,
+            SupportedParameters::PresencePenalty,
+            SupportedParameters::Reasoning,
+            SupportedParameters::RepetitionPenalty,
+            SupportedParameters::Stop,
+            SupportedParameters::Temperature,
+            SupportedParameters::ToolChoice,
+            SupportedParameters::Tools,
+            SupportedParameters::TopK,
+            SupportedParameters::TopP
         ];
         assert_eq!(model.supported_parameters.as_ref().unwrap(), &expected_params);
         
