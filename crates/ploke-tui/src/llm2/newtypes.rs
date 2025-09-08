@@ -212,4 +212,59 @@ pub(crate) struct EndpointKey {
     pub(crate) provider: ProviderKey,
 }
 
-// AI: Add unit tests to ensure that `ModelKey` is of the form described in its doc comments AI!
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_key_from_author_slug_valid() {
+        let key = ModelKey::from_author_slug("openai", "gpt-4").unwrap();
+        assert_eq!(key.author.as_str(), "openai");
+        assert_eq!(key.slug.as_str(), "gpt-4");
+        assert_eq!(key.id(), "openai/gpt-4");
+    }
+
+    #[test]
+    fn test_model_key_from_string_valid() {
+        let key = ModelKey::from_string("anthropic/claude-3".to_string()).unwrap();
+        assert_eq!(key.author.as_str(), "anthropic");
+        assert_eq!(key.slug.as_str(), "claude-3");
+        assert_eq!(key.id(), "anthropic/claude-3");
+    }
+
+    #[test]
+    fn test_model_key_from_string_invalid_format() {
+        // Missing slash
+        assert!(ModelKey::from_string("invalid-format".to_string()).is_err());
+        
+        // Too many slashes
+        assert!(ModelKey::from_string("author/model/extra".to_string()).is_err());
+        
+        // Empty parts
+        assert!(ModelKey::from_string("/".to_string()).is_err());
+        assert!(ModelKey::from_string("author/".to_string()).is_err());
+        assert!(ModelKey::from_string("/model".to_string()).is_err());
+        
+        // Empty string
+        assert!(ModelKey::from_string("".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_model_key_from_string_whitespace_handling() {
+        // Leading/trailing whitespace should be trimmed
+        let key = ModelKey::from_string("  openai/gpt-4  ".to_string()).unwrap();
+        assert_eq!(key.author.as_str(), "openai");
+        assert_eq!(key.slug.as_str(), "gpt-4");
+    }
+
+    #[test]
+    fn test_model_key_author_slug_validation() {
+        // Test invalid author
+        assert!(ModelKey::from_author_slug("", "model").is_err());
+        assert!(ModelKey::from_author_slug("invalid author", "model").is_err());
+        
+        // Test invalid slug
+        assert!(ModelKey::from_author_slug("author", "").is_err());
+        assert!(ModelKey::from_author_slug("author", "invalid slug").is_err());
+    }
+}
