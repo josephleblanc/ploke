@@ -212,9 +212,20 @@ mod tests {
         assert_eq!(model.top_provider.max_completion_tokens, None);
     }
 
-    // AI: Use the saved fixture `EXAMPLE_JSON`, which contains a saved API call response of the
-    // same shape as the previous test above, but has many more response objects in the `data`
-    // field, to test the we are deserializing each entry. None of the values need to be verified,
-    // but we want to ensure we can handle all the variations in the example by deserializing each
-    // of the items in the `data` array. AI!
+    #[test]
+    fn test_deserialization_with_fixture() {
+        // Use the saved fixture to test deserialization of all variations
+        let response: ModelsResponse = serde_json::from_value(EXAMPLE_JSON.clone()).unwrap();
+        
+        // Ensure we can deserialize all items in the data array
+        assert!(!response.data.is_empty());
+        
+        // Verify each item can be deserialized without errors
+        for model in &response.data {
+            // Just ensure we have the basic fields accessible
+            assert!(!model.id.as_str().is_empty());
+            assert!(!model.name.as_ref().is_empty());
+            assert!(model.created > 0);
+        }
+    }
 }
