@@ -530,9 +530,43 @@ mod tests {
         assert_eq!(parsed.data.id.as_str(), "deepseek/deepseek-chat-v3.1");
         assert_eq!(parsed.data.endpoints.len(), 1);
         let ep = &parsed.data.endpoints[0];
-        // AI: test each of the fields of `EndpointData` AI!
+        
+        // Test EndpointData fields
+        assert_eq!(parsed.data.name.as_str(), "DeepSeek: DeepSeek V3.1");
+        assert_eq!(parsed.data.created, 1755779628.0);
+        assert!(parsed.data.description.as_str().starts_with("DeepSeek-V3.1 is a large hybrid reasoning model"));
+        assert_eq!(parsed.data.architecture.tokenizer, "DeepSeek");
+        assert_eq!(parsed.data.architecture.instruct_type, "deepseek-v3.1");
+        assert_eq!(parsed.data.architecture.modality, "text->text");
+        
+        // Test Endpoint fields
+        assert_eq!(ep.name.as_str(), "Chutes | deepseek/deepseek-chat-v3.1");
+        assert_eq!(ep.model_name.as_str(), "DeepSeek: DeepSeek V3.1");
+        assert_eq!(ep.context_length, 163840.0);
         assert_eq!(ep.provider_name.as_str(), "Chutes");
+        assert_eq!(ep.tag.as_str(), "chutes");
+        assert_eq!(ep.quantization, None);
+        assert_eq!(ep.max_completion_tokens, None);
+        assert_eq!(ep.max_prompt_tokens, None);
+        assert_eq!(ep.status, Some(0));
+        assert_eq!(ep.uptime, Some(99.33169971040321));
+        assert_eq!(ep.supports_implicit_caching, Some(false));
         assert!(ep.supports_tools());
+        
+        // Test pricing
+        assert_eq!(ep.pricing.prompt, 0.0000002);
+        assert_eq!(ep.pricing.completion, 0.0000008);
+        assert_eq!(ep.pricing.request, Some(0.0));
+        assert_eq!(ep.pricing.image, Some(0.0));
+        assert_eq!(ep.pricing.image_output, Some(0.0));
+        assert_eq!(ep.pricing.web_search, Some(0.0));
+        assert_eq!(ep.pricing.internal_reasoning, Some(0.0));
+        assert_eq!(ep.pricing.discount, Some(0.0));
+        
+        // Test supported parameters
+        assert!(ep.supported_parameters.contains(&SupportedParameters::Tools));
+        assert!(ep.supported_parameters.contains(&SupportedParameters::MaxTokens));
+        assert!(ep.supported_parameters.contains(&SupportedParameters::Temperature));
     }
 
     #[test]
