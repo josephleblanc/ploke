@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::ProviderSlug;
+use crate::llm2::{enums::Quant, ProviderSlug};
 
 /// Provider-specific information about the model.
 /// - Unique type only used by OpenRouter
@@ -12,29 +12,94 @@ pub(crate) struct TopProvider {
     pub(crate) max_completion_tokens: Option<u64>,
 }
 
+// AI: Add builder methods for this struct AI!
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct ChatCompFields {
-    // OpenRouter docs: See "Prompt Transforms" section: openrouter.ai/docs/transforms
-    // corresponding json: `transforms?: string[];`
+    /// OpenRouter docs: See "Prompt Transforms" section: openrouter.ai/docs/transforms
+    /// From `https://openrouter.ai/docs/features/message-transforms`
+    ///  This can be useful for situations where perfect recall is not required. The transform works
+    ///  by removing or truncating messages from the middle of the prompt, until the prompt fits
+    ///  within the model’s context window.
+    /// Further, there is a note:
+    ///  All OpenRouter endpoints with 8k (8,192 tokens) or less context length will default to
+    ///  using middle-out. To disable this, set transforms: [] in the request body.
+    /// corresponding json: `transforms?: string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) transforms: Option<Vec<String>>,
-    // OpenRouter docs: See "Model Routing" section: openrouter.ai/docs/model-routing
-    // corresponding json: `models?: string[];`
+    pub(crate) transforms: Option<Transform>,
+    /// OpenRouter docs: See "Model Routing" section: openrouter.ai/docs/model-routing
+    /// From `https://openrouter.ai/docs/features/model-routing`
+    ///  The models parameter lets you automatically try other models if the primary model’s
+    ///  providers are down, rate-limited, or refuse to reply due to content moderation.
+    /// 
+    /// corresponding json: `models?: string[];`
+    /// example from OpenRouter: 
+    /// ```ignore
+    ///  {
+    ///    "models": ["anthropic/claude-3.5-sonnet", "gryphe/mythomax-l2-13b"],
+    ///    ... // Other params
+    ///  }
+    /// ```
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) models: Option<Vec<String>>,
-    // the docs literally just have the string 'fallback' here. No idea what this means, maybe they
-    // read the string as a bool?
-    // corresponding json: `route?: 'fallback';`
+    /// the docs literally just have the string 'fallback' here. No idea what this means, maybe they
+    /// read the string as a bool?
+    /// corresponding json: `route?: 'fallback';`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) route: Option<FallbackMarker>,
-    // OpenRouter docs: See "Provider Routing" section: openrouter.ai/docs/provider-routing
-    // corresponding json: `provider?: ProviderPreferences;`
+    /// OpenRouter docs: See "Provider Routing" section: openrouter.ai/docs/provider-routing
+    /// corresponding json: `provider?: ProviderPreferences;`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) provider: Option<ProviderPreferences>,
-    // corresponding json: `user?: string; // A stable identifier for your end-users. Used to help detect and prevent abuse.`
+    /// corresponding json: `user?: string; // A stable identifier for your end-users. Used to help detect and prevent abuse.`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) user: Option<String>,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) enum Transform {
+    MiddleOut([MiddleOutMarker; 1]),
+    Disable([&'static str;0])
+}
+
+// Marker for route -> "middle-out"
+#[derive(Debug, Clone, Copy)]
+pub struct MiddleOutMarker;
+
+impl Serialize for MiddleOutMarker {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str("middle-out")
+    }
+}
+
+impl<'de> Deserialize<'de> for MiddleOutMarker {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = MiddleOutMarker;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("the string \"middle-out\"")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "middle-out" {
+                    Ok(MiddleOutMarker)
+                } else {
+                    Err(E::custom("expected 'middle-out'"))
+                }
+            }
+        }
+        deserializer.deserialize_str(V)
+    }
+}
+
 
 // Marker for route -> "fallback"
 #[derive(Debug, Clone, Copy)]
@@ -85,24 +150,25 @@ pub(crate) struct ProviderPreferences {
     pub allow_fallbacks: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_parameters: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub data_collection: Option<DataCollection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub only: Option<Vec<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore: Option<Vec<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quantizations: Option<Vec<String>>,
+    pub quantizations: Option<Vec<Quant>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort: Option<SortBy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_price: Option<MaxPrice>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DataCollection {
     Allow,
+    #[default]
     Deny,
 }
 
@@ -111,6 +177,7 @@ pub(crate) enum DataCollection {
 pub(crate) enum SortBy {
     Price,
     Throughput,
+    Latency,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,7 +225,7 @@ impl ProviderPreferences {
     }
 
     /// Add quantizations filter.
-    pub fn with_quantizations<I: IntoIterator<Item = String>>(mut self, quantizations: I) -> Self {
+    pub fn with_quantizations<I: IntoIterator<Item = Quant>>(mut self, quantizations: I) -> Self {
         self.quantizations = Some(quantizations.into_iter().collect());
         self
     }
