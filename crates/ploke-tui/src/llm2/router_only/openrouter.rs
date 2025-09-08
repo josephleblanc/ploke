@@ -12,7 +12,26 @@ pub(crate) struct TopProvider {
     pub(crate) max_completion_tokens: Option<u64>,
 }
 
-// AI: Add builder methods for this struct AI!
+impl TopProvider {
+    /// Set whether this model is subject to content moderation.
+    pub fn with_moderated(mut self, moderated: bool) -> Self {
+        self.is_moderated = moderated;
+        self
+    }
+
+    /// Set the context length for this model.
+    pub fn with_context_length(mut self, length: u32) -> Self {
+        self.context_length = Some(length);
+        self
+    }
+
+    /// Set the maximum completion tokens for this model.
+    pub fn with_max_completion_tokens(mut self, tokens: u64) -> Self {
+        self.max_completion_tokens = Some(tokens);
+        self
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct ChatCompFields {
     /// OpenRouter docs: See "Prompt Transforms" section: openrouter.ai/docs/transforms
@@ -53,6 +72,38 @@ pub(crate) struct ChatCompFields {
     /// corresponding json: `user?: string; // A stable identifier for your end-users. Used to help detect and prevent abuse.`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) user: Option<String>,
+}
+
+impl ChatCompFields {
+    /// Set the transforms parameter.
+    pub fn with_transforms(mut self, transforms: Transform) -> Self {
+        self.transforms = Some(transforms);
+        self
+    }
+
+    /// Set the models parameter for fallback routing.
+    pub fn with_models<I: IntoIterator<Item = String>>(mut self, models: I) -> Self {
+        self.models = Some(models.into_iter().collect());
+        self
+    }
+
+    /// Set the route parameter.
+    pub fn with_route(mut self, route: FallbackMarker) -> Self {
+        self.route = Some(route);
+        self
+    }
+
+    /// Set the provider preferences.
+    pub fn with_provider(mut self, provider: ProviderPreferences) -> Self {
+        self.provider = Some(provider);
+        self
+    }
+
+    /// Set the user identifier.
+    pub fn with_user(mut self, user: String) -> Self {
+        self.user = Some(user);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
