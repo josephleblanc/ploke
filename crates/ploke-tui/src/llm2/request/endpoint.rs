@@ -573,11 +573,22 @@ mod tests {
         assert_eq!(ep.pricing.internal_reasoning, Some(0.0));
         assert_eq!(ep.pricing.discount, Some(0.0));
 
-        // AI: Add the rest of the supported parameters to ensure we are catching all of them AI!
         // Test supported parameters
         assert!(
             ep.supported_parameters
                 .contains(&SupportedParameters::Tools)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::ToolChoice)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Reasoning)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::IncludeReasoning)
         );
         assert!(
             ep.supported_parameters
@@ -586,6 +597,50 @@ mod tests {
         assert!(
             ep.supported_parameters
                 .contains(&SupportedParameters::Temperature)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::TopP)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Stop)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::FrequencyPenalty)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::PresencePenalty)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Seed)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::TopK)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::MinP)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::RepetitionPenalty)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::Logprobs)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::LogitBias)
+        );
+        assert!(
+            ep.supported_parameters
+                .contains(&SupportedParameters::TopLogprobs)
         );
         assert_eq!(
             ep.supported_parameters.len(), 17
