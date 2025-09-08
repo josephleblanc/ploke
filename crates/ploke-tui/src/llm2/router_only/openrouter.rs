@@ -76,44 +76,106 @@ impl<'de> Deserialize<'de> for FallbackMarker {
 }
 
 
-// AI: Use the following spec to complete the `ProviderPreferences` below, including builder
-// pattern methods. Each of the following items is optional. AI!
-// From the OpenRouter docs:
-// | Field | Type | Default | Description |
-// | --- | --- | --- | --- |
-// | `order` | string[] | - | List of provider slugs to try in order (e.g. `["anthropic", "openai"]`). [Learn more](#ordering-specific-providers) |
-// | `allow_fallbacks` | boolean | `true` | Whether to allow backup providers when the primary is unavailable. [Learn more](#disabling-fallbacks) |
-// | `require_parameters` | boolean | `false` | Only use providers that support all parameters in your request. [Learn more](#requiring-providers-to-support-all-parameters-beta) |
-// | `data_collection` | "allow" \| "deny" | "allow" | Control whether to use providers that may store data. [Learn more](#requiring-providers-to-comply-with-data-policies) |
-// | `only` | string[] | - | List of provider slugs to allow for this request. [Learn more](#allowing-only-specific-providers) |
-// | `ignore` | string[] | - | List of provider slugs to skip for this request. [Learn more](#ignoring-providers) |
-// | `quantizations` | string[] | - | List of quantization levels to filter by (e.g. `["int4", "int8"]`). [Learn more](#quantization) |
-// | `sort` | string | - | Sort providers by price or throughput. (e.g. `"price"` or `"throughput"`). [Learn more](#provider-sorting) |
-// | `max_price` | object | - | The maximum pricing you want to pay for this request. [Learn more](#maximum-price) |
-
 /// OpenRouter "provider" routing preferences (typed).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<ProviderSlug>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_fallbacks: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_parameters: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_collection: Option<DataCollection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub only: Option<Vec<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore: Option<Vec<ProviderSlug>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantizations: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<SortBy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_price: Option<MaxPrice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DataCollection {
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SortBy {
+    Price,
+    Throughput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct MaxPrice {
+    pub prompt_tokens: Option<f64>,
+    pub completion_tokens: Option<f64>,
+    pub request: Option<f64>,
 }
 
 impl ProviderPreferences {
+    /// Add an order preference.
+    pub fn with_order<I: IntoIterator<Item = ProviderSlug>>(mut self, order: I) -> Self {
+        self.order = Some(order.into_iter().collect());
+        self
+    }
+
+    /// Set allow_fallbacks preference.
+    pub fn with_allow_fallbacks(mut self, allow: bool) -> Self {
+        self.allow_fallbacks = Some(allow);
+        self
+    }
+
+    /// Set require_parameters preference.
+    pub fn with_require_parameters(mut self, require: bool) -> Self {
+        self.require_parameters = Some(require);
+        self
+    }
+
+    /// Set data_collection preference.
+    pub fn with_data_collection(mut self, collection: DataCollection) -> Self {
+        self.data_collection = Some(collection);
+        self
+    }
+
     /// Add an allow preference.
     pub fn with_only<I: IntoIterator<Item = ProviderSlug>>(mut self, allow: I) -> Self {
-        self.only = Some( allow.into_iter().collect() );
+        self.only = Some(allow.into_iter().collect());
         self
     }
 
-    /// Add a ignore list.
-    pub fn with_ignore<I: IntoIterator<Item = ProviderSlug>>(mut self, ignore: I ) -> Self {
-        self.ignore = Some( ignore.into_iter().collect() );
+    /// Add an ignore list.
+    pub fn with_ignore<I: IntoIterator<Item = ProviderSlug>>(mut self, ignore: I) -> Self {
+        self.ignore = Some(ignore.into_iter().collect());
         self
     }
 
-    /// Validate that there is no intersection between allow and deny lists.
+    /// Add quantizations filter.
+    pub fn with_quantizations<I: IntoIterator<Item = String>>(mut self, quantizations: I) -> Self {
+        self.quantizations = Some(quantizations.into_iter().collect());
+        self
+    }
+
+    /// Set sort preference.
+    pub fn with_sort(mut self, sort: SortBy) -> Self {
+        self.sort = Some(sort);
+        self
+    }
+
+    /// Set max_price preference.
+    pub fn with_max_price(mut self, max_price: MaxPrice) -> Self {
+        self.max_price = Some(max_price);
+        self
+    }
+
+    /// Validate that there is no intersection between only and ignore lists.
     pub fn validate(&self) -> Result<(), &'static str> {
         if let (Some(only), Some(ignore)) = (&self.only, &self.ignore) {
             if only.iter().any(|slug| ignore.contains(slug)) {
