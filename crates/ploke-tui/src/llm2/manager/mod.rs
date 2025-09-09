@@ -617,45 +617,49 @@ async fn prepare_and_run_llm_call(
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
     tracing::info!(has_context = %context.is_some(), "prepare_and_run_llm_call start");
-    // Get the conversation history from AppState
+    // 1) Build conversation messages from ChatHistory (root -> current)
+    //    Use the new llm2-native mapping API to avoid old llm types.
     let history_guard = state.chat.0.read().await;
-    let path = history_guard.get_current_path();
-
-    let context_path = if path.len() > 1 {
-        &path[..path.len() - 1]
-    } else {
-        &path[..]
-    };
-
-    let mut messages: Vec<RequestMessage> = Vec::new();
+    let mut messages: Vec<RequestMessage> = history_guard.current_path_as_llm2_request_messages();
     drop(history_guard);
 
-    // Get parameters
+    // 2) Incorporate constructed prompt context, if provided (e.g., new user input or system preface)
+    if let Some(ChatEvt::PromptConstructed { prompt, .. }) = context {
+        for (kind, content) in prompt {
+            match kind {
+                MessageKind::User => messages.push(RequestMessage::new_user(content)),
+                MessageKind::Assistant => messages.push(RequestMessage::new_assistant(content)),
+                MessageKind::System => {
+                    if !content.trim().is_empty() {
+                        messages.push(RequestMessage::new_system(content))
+                    }
+                }
+                // Skip UI-only messages and tool messages here (tool requires tool_call_id wiring)
+                MessageKind::SysInfo | MessageKind::Tool => {}
+            }
+        }
+    }
 
-    // Defaults for tool handling
+    // 3) Apply simple history capping (char budget). Token-based capping available as well.
+    const DEFAULT_HISTORY_CHAR_BUDGET: usize = 12_000;
+    messages = cap_messages_by_chars(&messages, DEFAULT_HISTORY_CHAR_BUDGET);
 
-    // Prepend system prompt if provided
+    // 4) Parameters (placeholder: use defaults until llm2 registry/prefs are wired)
+    //    When registry is available, merge model/user defaults into LLMParameters.
+    let _llm_params = crate::llm2::LLMParameters::default();
 
-    // Append the rest of the conversation as `RequestMessage`, and map onto Roles
-
-    // Decide tool usage based on registry capabilities and enforcement policy
-
-    // Concise plan log: shows what we think about tool support and enforcement
-
-
+    // 5) Tool selection. For now, expose a fixed set of tools.
+    //    Later, query registry caps and enforcement policy for tool_choice.
     let tools: Vec<ToolDefinition> = vec![
-            RequestCodeContextGat::tool_def(),
-            GatCodeEdit::tool_def(),
-            GetFileMetadata::tool_def(),
+        RequestCodeContextGat::tool_def(),
+        GatCodeEdit::tool_def(),
+        GetFileMetadata::tool_def(),
     ];
 
-    // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis.
-    let log_fut = log_tool_use(LogToolUseCtx {
-        provider,
-        parent_id,
-        supports_tools_opt,
-        require_tools,
-    });
+    // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
+    let log_fut: Option<_> = None;
+
+    // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
     // Delegate the per-request loop to RequestSession
     let session = session::RequestSession {

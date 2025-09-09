@@ -16,18 +16,26 @@ Scope: Implement a clean API on `ChatHistory` to retrieve the selected conversat
 3. Map `User`/`Assistant`/`System` kinds; skip `SysInfo`. For `System`, drop empty content (root sentinel).
 4. Defer `Tool` kind mapping (requires `tool_call_id` we don’t have in `Message`); skip for now and document.
 5. Add a focused unit test covering mapping order, filtering, and content.
-6. Leave `llm2::manager::prepare_and_run_llm_call` unchanged for now; next step is to wire this method in once stable.
+6. Wire into `llm2::manager::prepare_and_run_llm_call` to build `messages` via the new API; then cap history and prepare tools.
 
 ## Reasoning & Decisions
 - Order: Chat APIs expect oldest→newest. Using `current_path_ids()` ensures we only include context up to the currently selected parent message (branching point).
 - Filtering: `SysInfo` is UI/diagnostic; not part of the conversational context. `Tool` requires a `tool_call_id`, which `Message` lacks; including a tool message without an ID would violate the OpenRouter contract. We skip for now; tool results are added via dedicated tool flow in the request session pipeline.
 - System message handling: A root-empty system message is a structural sentinel; omitting avoids sending empty content.
 
-## Next Steps (Follow-up)
-- Replace ad-hoc path handling in `prepare_and_run_llm_call` with this new method.
-- Consider exposing a variant that includes `Tool` messages when we attach/propagate `tool_call_id` in `Message` or related metadata.
-- Evaluate moving `RequestMessage`/`Role` definitions to a single module (e.g., `llm2::chat_msg`) to eliminate duplication.
-
 ## Changes Log
-- 2025-09-09 1/2: Added plan.
-- 2025-09-09 2/2: Implemented `ChatHistory::current_path_as_llm2_request_messages()` and unit test `current_path_as_llm2_request_messages_maps_and_filters`.
+- 2025-09-09 1/3: Added plan.
+- 2025-09-09 2/3: Implemented `ChatHistory::current_path_as_llm2_request_messages()` and unit test `current_path_as_llm2_request_messages_maps_and_filters`.
+- 2025-09-09 3/3: Updated `prepare_and_run_llm_call` to:
+  - Build `messages` via new ChatHistory API
+  - Append `PromptConstructed` context pairs (skipping `SysInfo`/`Tool`)
+  - Apply simple char-budget capping
+  - Keep tools fixed for now; defer registry integration
+  - Temporarily disable provider-bound diagnostics
+
+## To-Do / Reminders
+- When registry (`llm2::registry`) is ready, plumb model preferences into `LLMParameters` and re-enable diagnostics with provider metadata.
+- Consider consolidating `RequestMessage`/`Role` to a single module (now that `llm2/chat_msg.rs` is removed).
+- Continue filling in the rest of the pipeline (`RequestSession` execution path) and add unit tests.
+
+(Please keep updating this document as you proceed.)
