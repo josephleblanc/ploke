@@ -9,14 +9,20 @@ use serde::{Deserialize, Serialize};
 use crate::{llm2::chat_msg::Role, tools::ToolDefinition};
 
 use super::{
-    chat_msg::RequestMessage, request::{
-        endpoint::{EndpointData, ToolChoice}, models, ChatCompReqCore, JsonObjMarker
-    }, EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey
+    EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
+    chat_msg::RequestMessage,
+    registry::user_prefs::RegistryPrefs,
+    request::{
+        ChatCompReqCore, JsonObjMarker,
+        endpoint::{EndpointData, ToolChoice},
+        models,
+    },
+    types::model_types::ModelVariant,
 };
 mod anthropic {
     use super::*;
     // Note: Placeholder, just an example for now
-    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Hash, Eq)]
     pub(crate) struct Anthropic;
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -29,7 +35,7 @@ mod anthropic {
 
 pub(crate) trait HasModelId {
     fn model_id(&self) -> ModelId;
-} 
+}
 
 pub(crate) trait HasModels: Router {
     // Models response
@@ -56,10 +62,10 @@ pub(crate) trait HasModels: Router {
         Ok(parsed)
     }
 
-    async fn fetch_models_iter(client: &reqwest::Client) -> color_eyre::Result<impl IntoIterator<Item = Self::Models>> {
-        Self::fetch_models(client).await
-            .map(|r| r.into_iter())
-
+    async fn fetch_models_iter(
+        client: &reqwest::Client,
+    ) -> color_eyre::Result<impl IntoIterator<Item = Self::Models>> {
+        Self::fetch_models(client).await.map(|r| r.into_iter())
     }
 }
 
@@ -69,7 +75,7 @@ pub(crate) trait HasEndpoint: Router {
 
     async fn fetch_model_endpoints(
         client: &reqwest::Client,
-        model: Self::ModelId,
+        model: Self::RouterModelId,
     ) -> color_eyre::Result<Self::EpResponse> {
         let url = Self::endpoints_url(model);
         let api_key = Self::resolve_api_key()?;
@@ -86,19 +92,25 @@ pub(crate) trait HasEndpoint: Router {
 
         // let body = resp.json().await?;
         // Parse with stronger typed endpoint shape first
-        let parsed  = resp.json::<Self::EpResponse>().await?;
+        let parsed = resp.json::<Self::EpResponse>().await?;
 
         Ok(parsed)
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Hash, Eq)]
 pub(crate) enum RouterVariants {
     OpenRouter(openrouter::OpenRouter),
     Anthropic(anthropic::Anthropic),
 }
 
-pub(crate) trait RouterModelId {
+impl Default for RouterVariants {
+    fn default() -> Self {
+        Self::OpenRouter(openrouter::OpenRouter)
+    }
+}
+
+pub(crate) trait RouterModelId: From<ModelId> {
     fn into_key(self) -> ModelKey;
     fn key(&self) -> &ModelKey;
     fn into_url_format(self) -> String;
@@ -106,7 +118,7 @@ pub(crate) trait RouterModelId {
 
 pub(crate) trait Router {
     type CompletionFields: ApiRoute;
-    type ModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
+    type RouterModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
     const BASE_URL: &str;
     const COMPLETION_URL: &str;
     const MODELS_URL: &str;
@@ -120,15 +132,15 @@ pub(crate) trait Router {
         std::env::var(key_name)
     }
 
-    fn endpoints_url(model: Self::ModelId) -> String {
+    fn endpoints_url(model: Self::RouterModelId) -> String {
         // OpenRouter’s models path treats ':' as a reserved char → percent-encode
         // Use a lightweight escape because only ':' needs it for your case
         let base = model.into_url_format();
         format!("{}/{}/{}", Self::MODELS_URL, base, Self::ENDPOINTS_TAIL)
     }
 
-    fn tranform_endpoint_key(&self, endpoint_key: EndpointKey) -> Self::ModelId {
-        Self::ModelId::from(endpoint_key)
+    fn tranform_endpoint_key(&self, endpoint_key: EndpointKey) -> Self::RouterModelId {
+        Self::RouterModelId::from(endpoint_key)
     }
 
     fn enpoint_to_url(&self, endpoint_key: EndpointKey) -> String {
@@ -138,47 +150,55 @@ pub(crate) trait Router {
 }
 
 pub(crate) trait ApiRoute: Sized + Default {
+    type Parent: TryFrom<RouterVariants> + Into<RouterVariants> + Default;
+    fn parent() -> Self::Parent {
+        Self::Parent::default()
+    }
+    fn router_variant() -> RouterVariants {
+        Self::parent().into()
+    }
     fn completion_all_fields(
         self,
-        req: ChatCompReqCore,
+        core: ChatCompReqCore,
         tools: Option<Vec<ToolDefinition>>,
+        llm_params: LLMParameters,
         tool_choice: Option<ToolChoice>,
     ) -> ChatCompRequest<Self> {
         ChatCompRequest::<Self> {
-            model: req.model,
-            messages: req.messages,
-            prompt: req.prompt,
-            response_format: req.response_format,
-            stop: req.stop,
-            stream: req.stream,
-            llm_params: req.llm_params,
+            model_key: Some(core.model.key.clone()),
+            core,
+            llm_params,
             tools,
             tool_choice,
             router: self,
         }
     }
-    fn completion_core(self, req: ChatCompReqCore) -> ChatCompRequest<Self> {
+    fn completion_core(self, core: ChatCompReqCore) -> ChatCompRequest<Self> {
         ChatCompRequest::<Self> {
-            messages: req.messages,
-            prompt: req.prompt,
-            model: req.model,
-            response_format: req.response_format,
-            stop: req.stop,
-            stream: req.stream,
-            llm_params: req.llm_params,
+            model_key: Some(core.model.key),
             router: self,
             ..Default::default()
         }
     }
-    fn completion_core_with_tools(self, req: ChatCompReqCore) -> ChatCompRequest<Self> {
+    fn completion_core_with_params(
+        self,
+        llm_params: LLMParameters,
+        core: ChatCompReqCore,
+    ) -> ChatCompRequest<Self> {
         ChatCompRequest::<Self> {
-            messages: req.messages,
-            prompt: req.prompt,
-            model: req.model,
-            response_format: req.response_format,
-            stop: req.stop,
-            stream: req.stream,
-            llm_params: req.llm_params,
+            model_key: Some(core.model.key),
+            llm_params,
+            router: self,
+            ..Default::default()
+        }
+    }
+    fn completion_core_with_tools(
+        self,
+        core: ChatCompReqCore,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> ChatCompRequest<Self> {
+        ChatCompRequest::<Self> {
+            model_key: Some(core.model.key),
             router: self,
             ..Default::default()
         }
@@ -216,19 +236,22 @@ pub(crate) fn default_messages() -> Vec<RequestMessage> {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub(crate) struct ChatCompRequest<R: ApiRoute> {
-    #[serde(default = "default_model")]
-    pub(crate) model: String,
-    #[serde(default = "default_messages")]
-    pub(crate) messages: Vec<RequestMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) response_format: Option<JsonObjMarker>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stop: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stream: Option<bool>,
-
+    #[serde(skip, default)]
+    pub(crate) model_key: Option<ModelKey>,
+    // Trying a new pattern where these are contained in ChatCompReqCore
+    //
+    // #[serde(default = "default_messages")]
+    // pub(crate) messages: Vec<RequestMessage>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub(crate) prompt: Option<String>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub(crate) response_format: Option<JsonObjMarker>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub(crate) stop: Option<Vec<String>>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub(crate) stream: Option<bool>,
+    #[serde(flatten)]
+    pub(crate) core: ChatCompReqCore,
     #[serde(flatten)]
     pub(crate) llm_params: LLMParameters,
 
@@ -240,6 +263,25 @@ pub(crate) struct ChatCompRequest<R: ApiRoute> {
     // Router-specific fields merged at the top level
     #[serde(flatten)]
     pub(crate) router: R,
+}
+
+impl<R: ApiRoute> ChatCompRequest<R> {
+    pub(crate) fn params_union(mut self, prefs: &RegistryPrefs) -> Self {
+        let model_prefs = self.model_key.as_ref().and_then(|m| prefs.models.get(&m));
+        if let Some(pref) = model_prefs.and_then(|mp| mp.get_default_profile()) {
+            self.llm_params = self.llm_params.merge_some(&pref.params);
+        }
+        self
+    }
+
+    /// Set the messages for the completion request
+    pub fn with_messages(mut self, messages: Vec<RequestMessage>) -> Self {
+        self.core = self.core.with_messages(messages);
+        self
+    }
+
+    // AI: Add more builder items surfaced from `self.core` AI!
+
 }
 
 #[cfg(test)]
@@ -259,7 +301,6 @@ mod tests {
     #[test]
     fn show_openrouter_json2() {
         let req = ChatCompRequest::<openrouter::ChatCompFields> {
-            messages: Default::default(),
             router: openrouter::ChatCompFields::default()
                 .with_route(FallbackMarker)
                 .with_transforms(Transform::MiddleOut([MiddleOutMarker])),
@@ -404,13 +445,15 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_default_post_completions() -> Result<()> {
+        use crate::llm2::ModelId;
+        use openrouter::OpenRouterModelId;
         use std::path::PathBuf;
 
         use ploke_test_utils::workspace_root;
 
         use crate::llm2::chat_msg::Role;
 
-        let model_key = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
+        let model_id = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
         let key = OpenRouter::resolve_api_key()?;
         let url = OpenRouter::COMPLETION_URL;
         let mut dir = workspace_root();
@@ -424,9 +467,11 @@ mod tests {
         };
 
         let req = ChatCompRequest::<openrouter::ChatCompFields> {
-            messages: vec![msg],
-            model: model_key.to_string(),
             router: openrouter::ChatCompFields::default(),
+            core: ChatCompReqCore {
+                messages: vec![msg],
+                ..Default::default()
+            },
             ..Default::default()
         };
 
