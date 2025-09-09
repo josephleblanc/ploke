@@ -32,6 +32,17 @@ pub(crate) struct Response {
     pub data: Vec<ResponseItem>,
 }
 
+impl IntoIterator for Response {
+    type Item = ResponseItem;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.into_iter()
+    }
+
+    // AI: Complete this implementation AI!
+    type IntoIter;
+}
+
 /// Represents a single model endpoint from OpenRouter's API.
 ///
 /// This is the response shape from: `https://openrouter.ai/api/v1/models`
