@@ -42,14 +42,16 @@ pub(crate) struct ChatCompReqCore {
     ///    to no models being available for the requests we send.
     ///
     /// corresponding json: `model?: string;`
-    /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
-    #[serde(default = "default_model")]
-    pub(crate) model: String,
+    /// canonical endpoint name `{ author }/{slug}:{variant}`, e.g. 
+    /// - deepseek/deepseek-chat-v3.1
+    /// - can also have variant, deepseek/deepseek-chat-v3.1:free
+    #[serde(default)]
+    pub(crate) model: ModelId,
     /// TODO: We should create a Marker struct for this, similar to `FunctionMarker` in
     /// `crates/ploke-tui/src/tools/mod.rs`, since this is a constant value
     /// corresponding json: `response_format?: { type: 'json_object' };`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) response_format: Option<JsonObjMarker>, // TODO
+    pub(crate) response_format: Option<JsonObjMarker>,
 
     /// corresponding json: `stop?: string | string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,7 +60,6 @@ pub(crate) struct ChatCompReqCore {
     /// corresponding json: `stream?: boolean;`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream: Option<bool>,
-
-    #[serde(flatten)]
-    pub(crate) llm_params: LLMParameters,
 }
+
+// AI: Implement builder methods AI!
