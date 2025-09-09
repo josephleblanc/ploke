@@ -2,7 +2,8 @@ use crate::AppEvent;
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
 
-use std::collections::HashMap;
+use fxhash::FxHashMap as HashMap;
+use std::hash::RandomState;
 use std::fmt;
 use std::io::Write as _;
 
@@ -337,8 +338,7 @@ impl ChatHistory {
             kind: MessageKind::System,
         };
         let root_id = root.id;
-
-        let mut messages = HashMap::new();
+        let mut messages = HashMap::default();
         messages.insert(root.id, root);
         Self {
             messages,

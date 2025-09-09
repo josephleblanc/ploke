@@ -47,7 +47,7 @@ where
     let ids = models
         .into_iter()
         .map(|m| m.model_id())
-        .map(T::ModelId::from);
+        .map(T::RouterModelId::from);
 
     // Bounded concurrency over endpoint fetches; cancel-safe if caller drops the future
     let responses: Vec<T::EpResponse> = stream::iter(ids)

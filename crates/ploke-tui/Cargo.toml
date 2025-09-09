@@ -75,6 +75,8 @@ futures = "0.3" # For .fuse() on streams
 
 lazy_static = { workspace = true } # Added lazy_static
 
+fxhash = { workspace = true }
+
 # string interning
 lasso = { workspace = true }
 
@@ -96,12 +98,11 @@ quote = { workspace = true }
 syn = { workspace = true }
 smol_str = "0.3.2"
 arrayvec = "0.7"
-fxhash = "0.2"
 percent-encoding = "2"
 
 [features]
-default = ["test_harness", "live_api_tests"]
-custom_list = []
+default = ["test_harness", "live_api_tests", "llm_refactor"]
+llm_refactor = []
 live_api_tests = []
 test_harness = []
 json_visitor = []

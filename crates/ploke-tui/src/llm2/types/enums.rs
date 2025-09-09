@@ -140,7 +140,7 @@ pub(crate) enum InstructType {
 // - `unknown`: Unknown
 /// The level of quantization of the endpoint, e.g. 
 ///     "quantization": "fp4",
-#[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, PartialOrd, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, PartialOrd, Eq, Hash)]
 #[allow(non_camel_case_types)]
 pub(crate) enum Quant {
     int4,

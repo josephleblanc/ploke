@@ -1,33 +1,59 @@
 use crate::{
-    llm2::{error::LlmError, request::endpoint::EndpointsResponse, router_only::{Router, RouterVariants}, types::meta::LLMMetadata}, EventPriority
+    EventPriority,
+    llm2::{
+        error::LlmError,
+        request::endpoint::EndpointsResponse,
+        router_only::{Router, RouterVariants},
+        types::meta::LLMMetadata,
+    },
 };
 
 use super::*;
 
 #[derive(Clone, Debug)]
 pub(crate) enum LlmEvent {
-    ChatCompletion(LlmChatEvent),
-    Completion(LlmChatEvent),
+    ChatCompletion(ChatEvt),
+    Completion(ChatEvt),
     Endpoint(endpoint::Event),
     Models(models::Event),
+    Status(status::Event),
+}
+
+pub(crate) mod status {
+    use serde_json::Value;
+    use uuid::Uuid;
+
+    use crate::{chat_history::MessageKind, tools::ToolName};
+
+    #[derive(Clone, Debug, Copy)]
+    pub(crate) enum Event {
+        /// Status update
+        Update {
+            active_requests: usize, // Current workload
+            queue_depth: usize,     // Pending requests
+        },
+    }
 }
 
 pub(crate) mod endpoint {
+    use crate::llm2::types::model_types::ModelVariant;
+
     use super::*;
 
     #[derive(Clone, Debug)]
     pub(crate) enum Event {
         Request {
             parent_id: Uuid,
-            model: ModelKey, // e.g., "gpt-4-turbo"
+            model_key: ModelKey, // e.g., "gpt-4-turbo"
             // Larger response, make an Arc to hold it
-            endpoints: Arc<EndpointsResponse>,
+            router: RouterVariants,
+            variant: Option<ModelVariant>,
         },
         Response {
             parent_id: Uuid,
-            model: ModelKey, // e.g., "gpt-4-turbo"
+            model_key: ModelKey, // e.g., "gpt-4-turbo"
             // Larger response, make an Arc to hold it
-            endpoints: Arc<EndpointsResponse>,
+            endpoints: Option<Arc<EndpointsResponse>>,
         },
         Error {
             request_id: Uuid,
@@ -47,7 +73,7 @@ pub(crate) mod models {
         /// `:{variant}` is optional.
         Request {
             parent_id: Uuid,
-            router: RouterVariants
+            router: RouterVariants,
         },
         /// Response with the full returned values for the models.
         Response {
@@ -57,7 +83,7 @@ pub(crate) mod models {
             /// - Caches the owned deserialized values in-memory, then persist with 12-hour update
             /// cycles.
             // Larger response, make an Arc to hold it
-            models: Arc<request::models::Response>,
+            models: Option<Arc<request::models::Response>>,
         },
         Error {
             request_id: Uuid,
@@ -67,7 +93,7 @@ pub(crate) mod models {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum LlmChatEvent {
+pub(crate) enum ChatEvt {
     /// Request to generate content from an LLM
     Request {
         request_id: Uuid,          // Unique tracking ID
@@ -85,24 +111,6 @@ pub(crate) enum LlmChatEvent {
         model: String,   // e.g., "gpt-4-turbo"
         metadata: LLMMetadata,
         usage: UsageMetrics, // Tokens/timing
-    },
-
-    EndpointRequest {
-        parent_id: Uuid,
-        // Is expecting a more loosely typed `ModelId` here, whatever generic kind has been
-        // returned by the `/models` endpoint, e.g. OpenRouter might have
-        // - nousresearch/deephermes-3-llama-3-8b-preview:free
-        //
-        // which is of the form {author}/{model}:{variant} as opposed to the more standard
-        // {author}/{model}
-        model_id: ModelId, // e.g., "openai/gpt-4-turbo"
-        // Add Router as well to know where to send it and how to interpret the ModelId
-        router: RouterVariants,
-    },
-
-    RequestModels {
-        // no models needed to query all models
-        parent_id: Uuid,
     },
 
     /// Partial response (streaming)

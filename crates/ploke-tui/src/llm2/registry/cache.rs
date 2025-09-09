@@ -4,13 +4,11 @@ use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{
-    EndpointsResponse, ModelId, ModelKey,
+use crate::llm2::{
     request::{
         endpoint::{Endpoint, EndpointData},
         models,
-    },
-    router_only::{HasEndpoint, HasModelId, HasModels, Router},
+    }, router_only::{HasEndpoint, HasModelId, HasModels, Router}, EndpointsResponse, ModelId, ModelKey
 };
 
 /// Cache for items from OpenRouter's `{author}/{slug}:{variant}/endpoints` API
@@ -166,7 +164,7 @@ impl ApiCache for EndpointCache {
         let ids = models
             .into_iter()
             .map(|m| m.model_id())
-            .map(T::ModelId::from);
+            .map(T::RouterModelId::from);
 
         // Bounded concurrency over endpoint fetches; cancel-safe if caller drops the future
         let responses: Vec<T::EpResponse> = stream::iter(ids)

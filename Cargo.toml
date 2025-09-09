@@ -64,6 +64,9 @@ crossbeam-channel = "0.5.15"
 # string interning
 lasso = { version = "0.7.3", features = ["multi-threaded", "serialize"] }
 
+# faster hash
+fxhash = "0.2.1"
+
 # Data structures and algorithms
 cozo = "0.7.6"
 uuid = { version = "1.16.0", features = ["v5", "v4", "atomic"] }

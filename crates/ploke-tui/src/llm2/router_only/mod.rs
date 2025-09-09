@@ -211,7 +211,7 @@ pub(crate) trait ApiRoute: Sized + Default {
     }
 }
 use serde_json::{Value, json};
-use std::sync::OnceLock;
+use std::{str::FromStr as _, sync::OnceLock};
 
 static DEFAULT_MODEL: OnceLock<String> = OnceLock::new();
 pub(crate) fn default_model() -> String {

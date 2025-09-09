@@ -9,12 +9,18 @@ use crate::llm2::request::endpoint::EndpointsResponse;
 use crate::llm2::types::model_types::ModelVariant;
 use crate::llm2::{Author, EndpointKey, IdError, ModelKey, ModelSlug, ProviderSlug, Quant};
 
-use super::{ApiRoute, HasEndpoint, Router, RouterModelId};
+use super::{ApiRoute, HasEndpoint, HasModels, Router, RouterModelId, RouterVariants};
 
 pub(crate) mod providers;
 
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Hash, Eq)]
 pub(crate) struct OpenRouter;
+
+impl HasModels for OpenRouter {
+    type Response = crate::llm2::request::models::Response;
+    type Models = crate::llm2::request::models::ResponseItem;
+    type Error = ploke_error::Error;
+}
 
 impl Router for OpenRouter {
     type CompletionFields = ChatCompFields;
@@ -27,7 +33,28 @@ impl Router for OpenRouter {
     const PROVIDERS_URL: &str = "https://openrouter.ai/api/v1/providers";
 }
 
-impl ApiRoute for ChatCompFields {}
+impl TryFrom<RouterVariants> for OpenRouter {
+    type Error = LlmError;
+
+    fn try_from(value: RouterVariants) -> Result<Self, Self::Error> {
+        match value {
+            RouterVariants::OpenRouter(open_router) => Ok(OpenRouter),
+            RouterVariants::Anthropic(anthropic) => Err(LlmError::Conversion(String::from(
+                "Invalid conversion from Anthropic to OpenRouter",
+            ))),
+        }
+    }
+}
+
+impl Into<RouterVariants> for OpenRouter {
+    fn into(self) -> RouterVariants {
+        RouterVariants::OpenRouter(self)
+    }
+}
+
+impl ApiRoute for ChatCompFields {
+    type Parent = OpenRouter;
+}
 
 impl HasEndpoint for OpenRouter {
     type EpResponse = EndpointsResponse;
@@ -266,8 +293,15 @@ pub(crate) struct ChatCompFields {
 
 impl ChatCompFields {
     /// Adds user model preferences
-    pub(crate) fn with_preferences(mut self, pref: &RegistryPrefs) -> Self {
-        todo!()
+    // TODO: Try getting this into the `ApiRoute` trait
+    pub(crate) fn preferences_union(mut self, pref: &RegistryPrefs) -> Self {
+        if let Some(openrouter_prefs) = pref
+            .router_prefs
+            .get(&RouterVariants::OpenRouter(OpenRouter))
+        {
+            self.provider = self.provider.map(|p| p.merge_union(openrouter_prefs));
+        }
+        self
     }
 
     /// Set the transforms parameter.
@@ -402,14 +436,14 @@ pub(crate) struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) ignore: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) quantizations: Option<Vec<Quant>>,
+    pub(crate) quantizations: Option<HashSet<Quant>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sort: Option<SortBy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) max_price: Option<MaxPrice>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DataCollection {
     Allow,
@@ -417,7 +451,7 @@ pub(crate) enum DataCollection {
     Deny,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SortBy {
     Price,
@@ -425,7 +459,7 @@ pub(crate) enum SortBy {
     Latency,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub(crate) struct MaxPrice {
     pub(crate) prompt_tokens: Option<f64>,
     pub(crate) completion_tokens: Option<f64>,
@@ -448,8 +482,8 @@ impl ProviderPreferences {
         if let Some(require_parameters) = other.require_parameters {
             self.require_parameters = other.require_parameters;
         }
-        if let Some(data_collection) = other.data_collection.as_ref() {
-            self.data_collection = Some(data_collection.clone());
+        if let Some(data_collection) = other.data_collection {
+            self.data_collection = other.data_collection;
         }
         if let Some(only) = other.only.as_ref() {
             self.only = self.only.map(|o| {
@@ -469,14 +503,14 @@ impl ProviderPreferences {
         }
         if let Some(quantizations) = other.quantizations.as_ref() {
             self.quantizations = self.quantizations.map(|q| {
-                q.iter()
+                q.union(quantizations)
+                    .into_iter()
                     .cloned()
-                    .chain(quantizations.iter().cloned())
-                    .collect::<Vec<_>>()
+                    .collect::<HashSet<Quant>>()
             });
         }
-        if let Some(sort) = other.sort.as_ref() {
-            self.sort = Some(sort.clone());
+        if let Some(sort) = other.sort {
+            self.sort = other.sort;
         }
         if let Some(max_price) = other.max_price.as_ref() {
             self.max_price = Some(max_price.clone());

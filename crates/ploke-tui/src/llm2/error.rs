@@ -5,6 +5,8 @@ use super::*;
 /// Represents errors that can occur during LLM interactions.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LlmError {
+    #[error("Invalid Conversion: {0}")]
+    Conversion(String),
     /// Error related to network connectivity or the HTTP request itself.
     #[error("Network request failed: {0}")]
     Request(String),
@@ -90,6 +92,9 @@ impl From<LlmError> for ploke_error::Error {
             }
             LlmError::ToolCall(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", msg)),
+            ),
+            LlmError::Conversion(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("{}", msg)),
             ),
             LlmError::Unknown(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),

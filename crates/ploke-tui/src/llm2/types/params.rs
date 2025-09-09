@@ -42,7 +42,7 @@ pub(crate) struct LLMParameters {
 }
 
 impl LLMParameters {
-    pub fn merge_some(mut self, mut other: Self) -> Self {
+    pub(crate) fn merge_some(mut self, other: &Self) -> Self {
         if let Some(max_tokens) = other.max_tokens {
             self.max_tokens = Some(max_tokens);
         }
@@ -67,8 +67,8 @@ impl LLMParameters {
         if let Some(repetition_penalty) = other.repetition_penalty {
             self.repetition_penalty = Some(repetition_penalty);
         }
-        if let Some(logit_bias) = other.logit_bias {
-            self.logit_bias = Some(logit_bias);
+        if let Some(logit_bias) = other.logit_bias.as_ref() {
+            self.logit_bias = Some(logit_bias.clone());
         }
         if let Some(top_logprobs) = other.top_logprobs {
             self.top_logprobs = Some(top_logprobs);

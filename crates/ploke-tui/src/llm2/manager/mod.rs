@@ -1,15 +1,19 @@
+mod commands;
 mod events;
 mod session;
-mod commands;
 
-use crate::llm2::error::LlmError;
 use crate::HashMap;
 use crate::SystemEvent;
 use crate::app_state::handlers::chat::add_msg_immediate;
 use crate::error::ResultExt as _;
+use crate::llm2::error::LlmError;
 use crate::llm2::router_only::HasEndpoint;
+use crate::llm2::router_only::HasModels;
 use crate::tools;
+use events::ChatEvt;
 pub(crate) use events::LlmEvent;
+use events::endpoint;
+use events::models;
 use itertools::Itertools;
 use ploke_core::ArcStr;
 
@@ -45,7 +49,6 @@ use super::response::TokenUsage;
 use super::router_only::openrouter::OpenRouter;
 use super::router_only::openrouter::OpenRouterModelId;
 use super::*;
-
 
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct RequestMessage {
@@ -275,13 +278,13 @@ pub async fn llm_manager(
     //      - AppEvent::Llm(Event::PromptConstructed)
     while let Ok(event) = event_rx.recv().await {
         match event {
-            AppEvent::Llm2(
-                request @ LlmEvent::Request {
+            AppEvent::Llm2(LlmEvent::ChatCompletion(
+                request @ ChatEvt::Request {
                     parent_id,
                     new_msg_id,
                     ..
                 },
-            ) => {
+            )) => {
                 tracing::info!(
                     "Received LLM request for parent_id: {}\nnew_msg_id: {}",
                     parent_id,
@@ -292,7 +295,9 @@ pub async fn llm_manager(
                 // NOTE: May want to optimize by adding an array buffer for in-memory handling
                 pending_requests.push(request);
             }
-            AppEvent::Llm2(context @ LlmEvent::PromptConstructed { parent_id, .. }) => {
+            AppEvent::Llm2(LlmEvent::ChatCompletion(
+                context @ ChatEvt::PromptConstructed { parent_id, .. },
+            )) => {
                 tracing::info!("Received context for parent_id: {}", parent_id);
                 ready_contexts.insert(parent_id, context);
 
@@ -311,7 +316,7 @@ pub async fn llm_manager(
                 drop(guard);
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
-                    if let LlmEvent::Request {
+                    if let ChatEvt::Request {
                         parent_id: req_parent,
                         ..
                     } = req.clone()
@@ -331,11 +336,12 @@ pub async fn llm_manager(
                             //      processed by `process_llm_request`?
                             //  - may want to spawn with a timeout or something to prevent leaks(?)
                             tokio::spawn(process_llm_request(
-                                req.clone(),
+                                *req,
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
                                 event_bus.clone(),
+                                #[cfg(not(feature = "llm_refactor"))]
                                 provider_config.to_owned(),
                                 Some(context),
                             ));
@@ -383,90 +389,48 @@ pub async fn llm_manager(
                 };
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
             }
-            AppEvent::Llm2( LlmEvent::EndpointRequest { parent_id, model_id, router } ) => {
-                use std::str::FromStr;
-                // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
-                // the typed version for that specific router before making the request.
-                // + make model_id typed as ModelKey
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-                let typed_model = match OpenRouterModelId::from_str(model_id.as_str()) {
-                    Ok(ty_model) => ty_model,
-                    err @ Err(e) => {
-                        err.emit_warning();
-                        add_msg_immediate(
-                            &state,
-                            &event_bus,
-                            Uuid::new_v4(),
-                            e.to_string(),
-                            MessageKind::SysInfo,
-                        );
-                        return;
-                    }
-                };
-                let client = client.clone();
-                tokio::task::spawn(async move {
-                    match OpenRouter::fetch_model_endpoints(&client, typed_model).await {
-                        Ok(endpoints) => {
-                            event_bus.send(AppEvent::Llm2(LlmEvent::EndpointResponse {
-                                parent_id,
-                                model_key,
-                                endpoints: Arc::new(endpoints),
-                            }));
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
-                            // Unblock the UI even on error with an empty provider list.
-                            event_bus.send(AppEvent::ModelsEndpointsResults {
-                                model_id,
-                                // TODO: Change to none and update UI to handle None case
-                                providers: Vec::new(),
-                            });
-                        }
-                    }
-                });
+            AppEvent::Llm2(LlmEvent::Endpoint(endpoint::Event::Request {
+                parent_id,
+                model_key,
+                variant,
+                router,
+            })) => {
+                handle_endpoint_request(
+                    state.clone(),
+                    event_bus.clone(),
+                    client.clone(),
+                    model_key,
+                    variant,
+                    parent_id,
+                );
             }
-            AppEvent::Llm2( LlmEvent::ModelRequest { parent_id, model_id, router } ) => {
+            AppEvent::Llm2(LlmEvent::Models(models::Event::Request { parent_id, router })) => {
                 use std::str::FromStr;
                 // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
                 // the typed version for that specific router before making the request.
                 // + make model_id typed as ModelKey
                 let state = Arc::clone(&state);
                 let event_bus = Arc::clone(&event_bus);
-                let typed_model = match OpenRouterModelId::from_str(model_id.as_str()) {
-                    Ok(ty_model) => ty_model,
-                    err @ Err(e) => {
-                        err.emit_warning();
-                        add_msg_immediate(
-                            &state,
-                            &event_bus,
-                            Uuid::new_v4(),
-                            e.to_string(),
-                            MessageKind::SysInfo,
-                        );
-                        return;
-                    }
-                };
                 let client = client.clone();
+
                 tokio::task::spawn(async move {
-                    match OpenRouter::fetch_model_endpoints(&client, typed_model).await {
-                        Ok(endpoints) => {
-                            event_bus.send(AppEvent::Llm2(LlmEvent::EndpointResponse {
-                                parent_id,
-                                model_key,
-                                endpoints: Arc::new(endpoints),
-                            }));
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to fetch endpoints for {}: {}", model_id, e);
+                    use models::Event;
+                    let result = OpenRouter::fetch_models(&client)
+                        .await
+                        .map(|m| Arc::new(m))
+                        .inspect_err(|e| {
+                            let msg = format!("Failed to fetch models from API: {}", e);
+                            tracing::warn!(msg);
                             // Unblock the UI even on error with an empty provider list.
-                            event_bus.send(AppEvent::ModelsEndpointsResults {
-                                model_id,
-                                // TODO: Change to none and update UI to handle None case
-                                providers: Vec::new(),
-                            });
-                        }
-                    }
+                            event_bus.send(AppEvent::Llm2(LlmEvent::Models(Event::Response {
+                                parent_id,
+                                models: None,
+                            })));
+                        });
+                    event_bus.send(AppEvent::Llm2(LlmEvent::Models(Event::Response {
+                        parent_id,
+                        models: result.ok(),
+                    })));
                 });
             }
             _ => {}
@@ -474,23 +438,52 @@ pub async fn llm_manager(
     }
 }
 
-#[instrument(skip_all,
-    fields(
-        model = %provider_config.model
-    )
-)]
+fn handle_endpoint_request(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    client: Client,
+    model_key: ModelKey,
+    variant: Option<types::model_types::ModelVariant>,
+    parent_id: Uuid,
+) {
+    use std::str::FromStr;
+    // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
+    // the typed version for that specific router before making the request.
+    // + make model_id typed as ModelKey
+    tokio::task::spawn(async move {
+        use endpoint::Event;
+        let model_id = ModelId::from_parts(model_key.clone(), variant);
+        let typed_model = OpenRouterModelId::from(model_id);
+        let result = OpenRouter::fetch_model_endpoints(&client, typed_model.clone())
+            .await
+            .map(|ep| Arc::new(ep))
+            .inspect_err(|e| {
+                let msg = format!("Failed to fetch endpoints for {}: {:?}", typed_model, e);
+                tracing::warn!(msg);
+                // TODO: send a response with an error
+            })
+            .ok();
+        event_bus.send(AppEvent::Llm2(LlmEvent::Endpoint(Event::Response {
+            parent_id,
+            model_key,
+            endpoints: result,
+        })));
+    });
+}
+
+#[instrument(skip_all)]
 /// The worker function that processes a single LLM request.
 pub async fn process_llm_request(
-    request: LlmEvent,
+    request: ChatEvt,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     event_bus: Arc<EventBus>,
-    provider_config: crate::user_config::ModelConfig,
-    context: Option<LlmEvent>,
+    #[cfg(not(feature = "llm_refactor"))] provider_config: crate::user_config::ModelConfig,
+    context: Option<ChatEvt>,
 ) {
     let parent_id = match request {
-        LlmEvent::Request {
+        ChatEvt::Request {
             parent_id,
             new_msg_id: _,
             ..
@@ -539,6 +532,7 @@ pub async fn process_llm_request(
     let result = prepare_and_run_llm_call(
         &state,
         &client,
+        #[cfg(not(feature = "llm_refactor"))]
         &provider_config,
         context,
         event_bus.clone(),
@@ -613,20 +607,16 @@ pub async fn process_llm_request(
         .await;
 }
 
-#[instrument(skip_all,
-    fields(
-        provider_params = ?cfg.llm_params
-    )
-)]
+#[instrument(skip_all)]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
-    cfg: &ModelConfig,
-    context: Option<LlmEvent>,
+    #[cfg(not(feature = "llm_refactor"))] _cfg: &ModelConfig,
+    context: Option<ChatEvt>,
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
-    tracing::info!(model = %cfg.model, has_context = %context.is_some(), "prepare_and_run_llm_call start");
+    tracing::info!(has_context = %context.is_some(), "prepare_and_run_llm_call start");
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
     let path = history_guard.get_current_path();
@@ -638,119 +628,26 @@ async fn prepare_and_run_llm_call(
     };
 
     let mut messages: Vec<RequestMessage> = Vec::new();
-
-    // Get parameters from provider
-    let params = match provider.llm_params.as_ref().cloned() {
-        Some(p) => p,
-        None => {
-            tracing::warn!("LLMParameters falling back to defaults.");
-            LLMParameters::default()
-        }
-    };
-
-    // Defaults for tool handling
-    let max_retries: u32 = params.tool_max_retries.unwrap_or(crate::TOOL_RETRIES);
-    let token_limit: u32 = params.tool_token_limit.unwrap_or(crate::TOKEN_LIMIT);
-
-    // Prepend system prompt if provided
-    // NOTE: I don't think we are actually using this anywhere, and I'm not sure I like this here.
-    if let Some(sys) = params.system_prompt.as_ref() {
-        messages.push(RequestMessage::new_system(sys.clone()));
-    }
-
-    // Append the rest of the conversation
-    let conversation_messages = if let Some(Event::PromptConstructed { prompt, .. }) = context {
-        prompt
-            .into_iter()
-            .map(|(k, c)| RequestMessage {
-                role: k.into(),
-                content: c,
-                tool_call_id: None,
-            })
-            .collect::<Vec<_>>()
-    } else {
-        context_path
-            .iter()
-            .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
-            .map(|msg| RequestMessage {
-                role: msg.kind.into(),
-                content: msg.content.clone(),
-                tool_call_id: None,
-            })
-            .collect::<Vec<_>>()
-    };
-
-    messages.extend(conversation_messages);
-
-    tracing::trace!(
-        "Sending conversation history message with content: {:#?}",
-        messages
-    );
-    // Release the lock before the network call
     drop(history_guard);
 
+    // Get parameters
+
+    // Defaults for tool handling
+
+    // Prepend system prompt if provided
+
+    // Append the rest of the conversation as `RequestMessage`, and map onto Roles
+
     // Decide tool usage based on registry capabilities and enforcement policy
-    // NOTE: Need to experiment more with this. Not sure if it is working correctly to distinguish
-    // models that support tools, and then to use the right kind of API call to OpenRouter to
-    // ensure the call is being routed to only those providers that support tool use.
-    let (supports_tools_opt, require_tools) = {
-        let cfg = state.config.read().await;
-        (
-            cfg.model_registry.model_supports_tools(&provider.model),
-            cfg.model_registry.require_tool_support,
-        )
-    };
 
     // Concise plan log: shows what we think about tool support and enforcement
-    tracing::debug!(
-        model = %provider.model,
-        base_url = %provider.base_url,
-        provider_type = ?provider.provider_type,
-        provider_slug = ?provider.provider_slug,
-        supports_tools_cache = ?supports_tools_opt,
-        require_tool_support = require_tools,
-        "llm_request_plan"
-    );
 
-    if require_tools && (supports_tools_opt != Some(true)) {
-        // Persist a concise decision record explaining why the call is aborted
-        if let Some(fut) = log_tool_use(LogToolUseCtx {
-            provider,
-            parent_id,
-            supports_tools_opt,
-            require_tools,
-        }) {
-            fut.await.ok();
-        };
 
-        return Err(LlmError::Api {
-            status: 412,
-            message: format!(
-                "Active model '{}' is not marked as tool-capable in the capabilities cache. \
-Run ':model refresh' to update the registry, select a tool-capable provider via the model browser, \
-or disable enforcement with ':provider tools-only off'.",
-                provider.model
-            ),
-        });
-    }
-
-    let tools: Vec<ToolDefinition> = if supports_tools_opt.unwrap_or(false) {
-        vec![
+    let tools: Vec<ToolDefinition> = vec![
             RequestCodeContextGat::tool_def(),
             GatCodeEdit::tool_def(),
             GetFileMetadata::tool_def(),
-        ]
-    } else {
-        Vec::new()
-    };
-
-    // Summarize tools we will include for this request
-    let tool_names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
-    tracing::debug!(
-        "llm_request_tools:\n\tuse_tools: {}\n\ttool_names: {}",
-        !tools.is_empty(),
-        tool_names.join(","),
-    );
+    ];
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis.
     let log_fut = log_tool_use(LogToolUseCtx {
@@ -760,15 +657,13 @@ or disable enforcement with ':provider tools-only off'.",
         require_tools,
     });
 
-    // Delegate the per-request loop to RequestSession (Milestone 2 extraction)
+    // Delegate the per-request loop to RequestSession
     let session = session::RequestSession {
         client,
-        provider,
         event_bus,
         parent_id,
         messages,
         tools,
-        params,
         fallback_on_404: false,
         attempts: 3,
     };

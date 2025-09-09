@@ -137,13 +137,6 @@ impl ChatCompReqCore {
         self.with_streaming(false)
     }
 
-    /// Apply LLM parameters to the request
-    pub fn with_parameters(mut self, params: &LLMParameters) -> Self {
-        // Note: ChatCompReqCore doesn't have temperature, top_p, max_tokens directly
-        // These would be handled by the router-specific completion fields
-        self
-    }
-
     /// Build the request (identity function for consistency)
     pub fn build(self) -> Self {
         self
