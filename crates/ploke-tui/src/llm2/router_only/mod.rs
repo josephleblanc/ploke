@@ -338,6 +338,8 @@ impl<R: ApiRoute> ChatCompRequest<R> {
         self.with_streaming(false)
     }
 
+    // AI: add more builder methods surfaced from `LLMParamters` AI!
+
 }
 
 #[cfg(test)]
