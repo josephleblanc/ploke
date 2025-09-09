@@ -2,8 +2,7 @@ use std::str::FromStr;
 
 use url::Url;
 
-use super::chat_msg::RequestMessage;
-
+use super::manager::RequestMessage;
 use super::router_only::openrouter::{self, OpenRouterModelId, ProviderPreferences};
 use super::router_only::{ChatCompRequest, openrouter::OpenRouter};
 use super::*;

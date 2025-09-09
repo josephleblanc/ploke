@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::tools::ToolCall;
 
-use super::{chat_msg::Role, *};
+use super::{manager::Role, *};
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct OpenAiResponse {

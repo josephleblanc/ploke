@@ -321,6 +321,37 @@ pub struct ChatHistory {
 }
 
 impl ChatHistory {
+    /// Returns the conversation path (root → current) mapped to llm2 RequestMessage.
+    ///
+    /// Rules:
+    /// - Includes User, Assistant, and System messages.
+    /// - Skips System messages with empty content (root sentinel).
+    /// - Skips SysInfo (UI/diagnostic) messages.
+    /// - Skips Tool messages for now (requires tool_call_id which is not tracked here).
+    pub fn current_path_as_llm2_request_messages(
+        &self,
+    ) -> Vec<crate::llm2::manager::RequestMessage> {
+        use crate::llm2::manager::RequestMessage as ReqMsg;
+
+        self.current_path_ids()
+            .filter_map(|id| self.messages.get(&id))
+            .filter_map(|m| match m.kind {
+                MessageKind::User => Some(ReqMsg::new_user(m.content.clone())),
+                MessageKind::Assistant => Some(ReqMsg::new_assistant(m.content.clone())),
+                MessageKind::System => {
+                    if m.content.trim().is_empty() {
+                        None
+                    } else {
+                        Some(ReqMsg::new_system(m.content.clone()))
+                    }
+                }
+                // Tool messages require a tool_call_id at the wire level; omit here.
+                MessageKind::Tool => None,
+                // UI/system info messages are not part of the API payload; omit.
+                MessageKind::SysInfo => None,
+            })
+            .collect()
+    }
     /// Creates a new ChatHistory with an empty root message.
     ///
     /// The root message serves as the starting point for all conversations.
@@ -891,6 +922,7 @@ pub(crate) async fn atomic_write(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use crate::llm2::manager::Role as Llm2Role;
 
     #[test]
     fn delete_root_returns_none_and_no_changes() {
@@ -1196,5 +1228,73 @@ mod tests {
 
         let read = std::fs::read_to_string(&path).unwrap();
         assert_eq!(read, expected);
+    }
+
+    #[test]
+    fn current_path_as_llm2_request_messages_maps_and_filters() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        // Add a visible system message (non-empty) – should be included
+        let sys1 = Uuid::new_v4();
+        ch.add_message_system(
+            root,
+            sys1,
+            MessageKind::System,
+            "You are a helpful assistant.".to_string(),
+        )
+        .unwrap();
+
+        // Add a user message
+        let u1 = Uuid::new_v4();
+        ch.add_child(root, u1, "Hello?", MessageStatus::Completed, MessageKind::User)
+            .unwrap();
+
+        // Add an assistant message
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "Hi! How can I help?",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+        )
+        .unwrap();
+
+        // Add a SysInfo message – should be excluded
+        let info = Uuid::new_v4();
+        ch.add_child(
+            a1,
+            info,
+            "(diagnostic) not part of request",
+            MessageStatus::Completed,
+            MessageKind::SysInfo,
+        )
+        .unwrap();
+
+        // Add a Tool message – currently excluded (missing tool_call_id context)
+        let tool = Uuid::new_v4();
+        ch.add_child(
+            info,
+            tool,
+            "tool-output",
+            MessageStatus::Completed,
+            MessageKind::Tool,
+        )
+        .unwrap();
+
+        // Select the assistant message as current (root→sys1→u1→a1)
+        ch.current = a1;
+        ch.rebuild_path_cache();
+
+        let msgs = ch.current_path_as_llm2_request_messages();
+        // Expect: [System(non-empty), User, Assistant]
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, Llm2Role::System);
+        assert_eq!(msgs[0].content, "You are a helpful assistant.");
+        assert_eq!(msgs[1].role, Llm2Role::User);
+        assert_eq!(msgs[1].content, "Hello?");
+        assert_eq!(msgs[2].role, Llm2Role::Assistant);
+        assert_eq!(msgs[2].content, "Hi! How can I help?");
     }
 }

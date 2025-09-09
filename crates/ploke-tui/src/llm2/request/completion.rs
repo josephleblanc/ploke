@@ -1,3 +1,4 @@
+use crate::llm2::manager::RequestMessage;
 pub(crate) use crate::llm2::router_only::default_model;
 pub(crate) use crate::llm2::router_only::default_messages;
 use std::collections::BTreeMap;
@@ -7,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     llm2::{
         LLMParameters,
-        chat_msg::RequestMessage,
         ModelId,
         router_only::{
             ApiRoute,

@@ -2,15 +2,16 @@
 
 pub(crate) mod openrouter;
 
+use crate::llm2::manager::Role;
+use crate::llm2::manager::RequestMessage;
 use itertools::Itertools;
 use openrouter::{FallbackMarker, MiddleOutMarker, OpenRouterModelId, Transform};
 use serde::{Deserialize, Serialize};
 
-use crate::{llm2::chat_msg::Role, tools::ToolDefinition};
+use crate::tools::ToolDefinition;
 
 use super::{
     EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
-    chat_msg::RequestMessage,
     registry::user_prefs::RegistryPrefs,
     request::{
         ChatCompReqCore, JsonObjMarker,
@@ -418,7 +419,7 @@ pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_
 
 #[cfg(test)]
 mod tests {
-    use crate::llm2::{chat_msg::Role, router_only::openrouter::OpenRouter};
+    use crate::llm2::router_only::openrouter::OpenRouter;
     use std::time::Duration;
 
     use crate::{llm2::ModelId, llm2::error::LlmError};
@@ -525,7 +526,6 @@ mod tests {
     async fn test_free_query_endpoints() -> Result<()> {
         use ploke_test_utils::workspace_root;
 
-        use crate::llm2::chat_msg::Role;
 
         let model_key =
             OpenRouterModelId::from_str("nousresearch/deephermes-3-llama-3-8b-preview:free")?;
@@ -578,7 +578,6 @@ mod tests {
 
         use ploke_test_utils::workspace_root;
 
-        use crate::llm2::chat_msg::Role;
 
         let model_id = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
         let key = OpenRouter::resolve_api_key()?;
