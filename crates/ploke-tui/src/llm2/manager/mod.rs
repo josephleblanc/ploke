@@ -649,25 +649,24 @@ async fn prepare_and_run_llm_call(
     let _llm_params = crate::llm2::LLMParameters::default();
 
     // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
-    //      This demonstrates the intended construction path without relying on legacy llm types.
-    {
-        use crate::llm2::router_only;
-        use crate::llm2::router_only::openrouter;
-        // Default model key for now (can be replaced by registry selection)
-        let default_model = router_only::default_model();
-        // Build request: set model and messages; leave params/tool_choice to session for now
-        let _req_plan = openrouter::ChatCompFields::default()
-            .completion_core(crate::llm2::request::ChatCompReqCore::default())
-            .with_model_str(&default_model)
-            .map(|r| r.with_messages(messages.clone()))
-            .unwrap_or_else(|_| {
-                // Fallback: just attach messages if model parse fails
-                openrouter::ChatCompFields::default()
-                    .completion_core(crate::llm2::request::ChatCompReqCore::default())
-                    .with_messages(messages.clone())
-            });
-        // Note: we aren't submitting _req_plan yet; RequestSession still owns dispatch.
-    }
+    //      Construct a concrete request object that RequestSession will dispatch.
+    use crate::llm2::router_only;
+    use crate::llm2::router_only::openrouter;
+    use crate::llm2::request::endpoint::ToolChoice;
+    let default_model = router_only::default_model();
+    let mut req = openrouter::ChatCompFields::default()
+        .completion_core(crate::llm2::request::ChatCompReqCore::default())
+        .with_model_str(&default_model)
+        .map(|r| r.with_messages(messages.clone()))
+        .unwrap_or_else(|_| {
+            openrouter::ChatCompFields::default()
+                .completion_core(crate::llm2::request::ChatCompReqCore::default())
+                .with_messages(messages.clone())
+        });
+    // Plug in params and tools
+    req.llm_params = _llm_params.clone();
+    req.tools = Some(tools.clone());
+    req.tool_choice = Some(ToolChoice::Auto);
 
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
@@ -683,12 +682,11 @@ async fn prepare_and_run_llm_call(
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
     // Delegate the per-request loop to RequestSession
-    let session = session::RequestSession {
+    let session = session::RequestSession::<openrouter::ChatCompFields> {
         client,
         event_bus,
         parent_id,
-        messages,
-        tools,
+        req,
         fallback_on_404: false,
         attempts: 3,
     };
