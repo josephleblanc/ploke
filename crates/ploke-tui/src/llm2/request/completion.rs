@@ -16,6 +16,7 @@ use crate::{
     },
     tools::ToolDefinition,
 };
+use std::str::FromStr;
 
 use super::{
     endpoint::{FallbackMarker, ToolChoice},
@@ -62,4 +63,89 @@ pub(crate) struct ChatCompReqCore {
     pub(crate) stream: Option<bool>,
 }
 
-// AI: Implement builder methods AI!
+impl ChatCompReqCore {
+    /// Create a new `ChatCompReqCore` with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the messages for the completion request
+    pub fn with_messages(mut self, messages: Vec<RequestMessage>) -> Self {
+        self.messages = messages;
+        self
+    }
+
+    /// Set a single message for the completion request
+    pub fn with_message(mut self, message: RequestMessage) -> Self {
+        self.messages = vec![message];
+        self
+    }
+
+    /// Set the prompt for the completion request (alternative to messages)
+    pub fn with_prompt(mut self, prompt: String) -> Self {
+        self.prompt = Some(prompt);
+        self.messages = Vec::new(); // Clear messages when using prompt
+        self
+    }
+
+    /// Set the model for the completion request
+    pub fn with_model(mut self, model: ModelId) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// Set the model by string (parses into ModelId)
+    pub fn with_model_str(self, model_str: &str) -> Result<Self, crate::llm2::IdError> {
+        let model = ModelId::from_str(model_str)?;
+        Ok(self.with_model(model))
+    }
+
+    /// Set the response format to JSON object
+    pub fn with_json_response(mut self) -> Self {
+        self.response_format = Some(JsonObjMarker);
+        self
+    }
+
+    /// Set the stop sequences
+    pub fn with_stop(mut self, stop: Vec<String>) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// Add a single stop sequence
+    pub fn with_stop_sequence(mut self, stop: String) -> Self {
+        match &mut self.stop {
+            Some(stops) => stops.push(stop),
+            None => self.stop = Some(vec![stop]),
+        }
+        self
+    }
+
+    /// Enable or disable streaming
+    pub fn with_streaming(mut self, stream: bool) -> Self {
+        self.stream = Some(stream);
+        self
+    }
+
+    /// Enable streaming (convenience method)
+    pub fn streaming(self) -> Self {
+        self.with_streaming(true)
+    }
+
+    /// Disable streaming (convenience method)
+    pub fn non_streaming(self) -> Self {
+        self.with_streaming(false)
+    }
+
+    /// Apply LLM parameters to the request
+    pub fn with_parameters(mut self, params: &LLMParameters) -> Self {
+        // Note: ChatCompReqCore doesn't have temperature, top_p, max_tokens directly
+        // These would be handled by the router-specific completion fields
+        self
+    }
+
+    /// Build the request (identity function for consistency)
+    pub fn build(self) -> Self {
+        self
+    }
+}
