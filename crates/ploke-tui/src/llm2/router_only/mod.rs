@@ -280,7 +280,63 @@ impl<R: ApiRoute> ChatCompRequest<R> {
         self
     }
 
-    // AI: Add more builder items surfaced from `self.core` AI!
+    /// Set a single message for the completion request
+    pub fn with_message(mut self, message: RequestMessage) -> Self {
+        self.core = self.core.with_message(message);
+        self
+    }
+
+    /// Set the prompt for the completion request (alternative to messages)
+    pub fn with_prompt(mut self, prompt: String) -> Self {
+        self.core = self.core.with_prompt(prompt);
+        self
+    }
+
+    /// Set the model for the completion request
+    pub fn with_model(mut self, model: ModelId) -> Self {
+        self.core = self.core.with_model(model);
+        self
+    }
+
+    /// Set the model by string (parses into ModelId)
+    pub fn with_model_str(self, model_str: &str) -> Result<Self, crate::llm2::IdError> {
+        let model = ModelId::from_str(model_str)?;
+        Ok(self.with_model(model))
+    }
+
+    /// Set the response format to JSON object
+    pub fn with_json_response(mut self) -> Self {
+        self.core = self.core.with_json_response();
+        self
+    }
+
+    /// Set the stop sequences
+    pub fn with_stop(mut self, stop: Vec<String>) -> Self {
+        self.core = self.core.with_stop(stop);
+        self
+    }
+
+    /// Add a single stop sequence
+    pub fn with_stop_sequence(mut self, stop: String) -> Self {
+        self.core = self.core.with_stop_sequence(stop);
+        self
+    }
+
+    /// Enable or disable streaming
+    pub fn with_streaming(mut self, stream: bool) -> Self {
+        self.core = self.core.with_streaming(stream);
+        self
+    }
+
+    /// Enable streaming (convenience method)
+    pub fn streaming(self) -> Self {
+        self.with_streaming(true)
+    }
+
+    /// Disable streaming (convenience method)
+    pub fn non_streaming(self) -> Self {
+        self.with_streaming(false)
+    }
 
 }
 
