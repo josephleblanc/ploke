@@ -648,6 +648,27 @@ async fn prepare_and_run_llm_call(
     //    When registry is available, merge model/user defaults into LLMParameters.
     let _llm_params = crate::llm2::LLMParameters::default();
 
+    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
+    //      This demonstrates the intended construction path without relying on legacy llm types.
+    {
+        use crate::llm2::router_only;
+        use crate::llm2::router_only::openrouter;
+        // Default model key for now (can be replaced by registry selection)
+        let default_model = router_only::default_model();
+        // Build request: set model and messages; leave params/tool_choice to session for now
+        let _req_plan = openrouter::ChatCompFields::default()
+            .completion_core(crate::llm2::request::ChatCompReqCore::default())
+            .with_model_str(&default_model)
+            .map(|r| r.with_messages(messages.clone()))
+            .unwrap_or_else(|_| {
+                // Fallback: just attach messages if model parse fails
+                openrouter::ChatCompFields::default()
+                    .completion_core(crate::llm2::request::ChatCompReqCore::default())
+                    .with_messages(messages.clone())
+            });
+        // Note: we aren't submitting _req_plan yet; RequestSession still owns dispatch.
+    }
+
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tools: Vec<ToolDefinition> = vec![
@@ -920,5 +941,48 @@ mod tests {
         assert_eq!(parsed["role"], "tool");
         assert_eq!(parsed["content"], "test result");
         assert_eq!(parsed["tool_call_id"], "call_abc");
+    }
+
+    #[test]
+    fn test_cap_messages_by_chars_keeps_latest_even_if_over_budget() {
+        let m1 = RequestMessage::new_user("a".into());     // 1
+        let m2 = RequestMessage::new_user("bb".into());    // 2
+        let m3 = RequestMessage::new_user("ccc".into());   // 3
+        let m4 = RequestMessage::new_user("dddd".into());  // 4 (tail)
+        let all = vec![m1, m2, m3, m4.clone()];
+
+        // Budget smaller than last message; policy keeps at least the most recent
+        let kept = cap_messages_by_chars(&all, 3);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].content, m4.content);
+
+        // Budget that fits last two (3 + 4 > 6), but logic walks tail-first and stops when over
+        let kept2 = cap_messages_by_chars(&all, 7);
+        // Tail first (4), then preceding (3) fits → 4 + 3 = 7
+        assert_eq!(kept2.len(), 2);
+        assert_eq!(kept2[0].content, "ccc");
+        assert_eq!(kept2[1].content, "dddd");
+    }
+
+    #[test]
+    fn test_cap_messages_by_tokens_behaves_reasonably() {
+        // We cannot assert exact token counts without knowing tokenizer internals,
+        // but we can validate ordering and non-empty behavior.
+        let m1 = RequestMessage::new_user("short".into());
+        let m2 = RequestMessage::new_user("a bit longer".into());
+        let m3 = RequestMessage::new_user("the longest content in this small set".into());
+        let all = vec![m1.clone(), m2.clone(), m3.clone()];
+
+        // With a tiny budget, we still keep at least the latest
+        let kept = cap_messages_by_tokens(&all, 1);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].content, m3.content);
+
+        // With a generous budget, we keep all in original order
+        let kept_all = cap_messages_by_tokens(&all, 10_000);
+        assert_eq!(kept_all.len(), 3);
+        assert_eq!(kept_all[0].content, m1.content);
+        assert_eq!(kept_all[1].content, m2.content);
+        assert_eq!(kept_all[2].content, m3.content);
     }
 }

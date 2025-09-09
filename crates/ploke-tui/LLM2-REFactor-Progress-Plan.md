@@ -24,18 +24,21 @@ Scope: Implement a clean API on `ChatHistory` to retrieve the selected conversat
 - System message handling: A root-empty system message is a structural sentinel; omitting avoids sending empty content.
 
 ## Changes Log
-- 2025-09-09 1/3: Added plan.
-- 2025-09-09 2/3: Implemented `ChatHistory::current_path_as_llm2_request_messages()` and unit test `current_path_as_llm2_request_messages_maps_and_filters`.
-- 2025-09-09 3/3: Updated `prepare_and_run_llm_call` to:
+- 2025-09-09 1/4: Added plan.
+- 2025-09-09 2/4: Implemented `ChatHistory::current_path_as_llm2_request_messages()` and unit test `current_path_as_llm2_request_messages_maps_and_filters`.
+- 2025-09-09 3/4: Updated `prepare_and_run_llm_call` to:
   - Build `messages` via new ChatHistory API
   - Append `PromptConstructed` context pairs (skipping `SysInfo`/`Tool`)
   - Apply simple char-budget capping
   - Keep tools fixed for now; defer registry integration
   - Temporarily disable provider-bound diagnostics
+- 2025-09-09 4/4: Added tests for `cap_messages_by_chars`/`cap_messages_by_tokens` in `llm2::manager` tests.
+  - Added a first build of a router-generic `ChatCompRequest` (OpenRouter) inside `prepare_and_run_llm_call` to demonstrate builder usage; not yet submitted to transport.
 
 ## To-Do / Reminders
 - When registry (`llm2::registry`) is ready, plumb model preferences into `LLMParameters` and re-enable diagnostics with provider metadata.
-- Consider consolidating `RequestMessage`/`Role` to a single module (now that `llm2/chat_msg.rs` is removed).
-- Continue filling in the rest of the pipeline (`RequestSession` execution path) and add unit tests.
+- Consolidate `RequestMessage`/`Role` to a single module now that `llm2/chat_msg.rs` is removed.
+- Wire `ChatCompRequest` into the request transport once `RequestSession` is ported to `llm2`.
+- Continue refactoring the remaining pipeline around the manager (endpoint/model selection with `llm2::router_only`).
 
 (Please keep updating this document as you proceed.)
