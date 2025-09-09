@@ -338,8 +338,77 @@ impl<R: ApiRoute> ChatCompRequest<R> {
         self.with_streaming(false)
     }
 
-    // AI: add more builder methods surfaced from `LLMParamters` AI!
+    /// Set max tokens parameter - Range: [1, context_length)
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.llm_params = self.llm_params.with_max_tokens(max_tokens);
+        self
+    }
 
+    /// Set temperature parameter - Range: [0, 2]
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.llm_params = self.llm_params.with_temperature(temperature);
+        self
+    }
+
+    /// Set seed parameter - Integer only
+    pub fn with_seed(mut self, seed: i64) -> Self {
+        self.llm_params = self.llm_params.with_seed(seed);
+        self
+    }
+
+    /// Set top_p parameter - Range: (0, 1]
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.llm_params = self.llm_params.with_top_p(top_p);
+        self
+    }
+
+    /// Set top_k parameter - Range: [1, Infinity) Not available for OpenAI models
+    pub fn with_top_k(mut self, top_k: f32) -> Self {
+        self.llm_params = self.llm_params.with_top_k(top_k);
+        self
+    }
+
+    /// Set frequency_penalty parameter - Range: [-2, 2]
+    pub fn with_frequency_penalty(mut self, frequency_penalty: f32) -> Self {
+        self.llm_params = self.llm_params.with_frequency_penalty(frequency_penalty);
+        self
+    }
+
+    /// Set presence_penalty parameter - Range: [-2, 2]
+    pub fn with_presence_penalty(mut self, presence_penalty: f32) -> Self {
+        self.llm_params = self.llm_params.with_presence_penalty(presence_penalty);
+        self
+    }
+
+    /// Set repetition_penalty parameter - Range: (0, 2]
+    pub fn with_repetition_penalty(mut self, repetition_penalty: f32) -> Self {
+        self.llm_params = self.llm_params.with_repetition_penalty(repetition_penalty);
+        self
+    }
+
+    /// Set logit_bias parameter - { [key: number]: number }
+    pub fn with_logit_bias(mut self, logit_bias: std::collections::BTreeMap<i32, f32>) -> Self {
+        self.llm_params = self.llm_params.with_logit_bias(logit_bias);
+        self
+    }
+
+    /// Set top_logprobs parameter - Integer only
+    pub fn with_top_logprobs(mut self, top_logprobs: i32) -> Self {
+        self.llm_params = self.llm_params.with_top_logprobs(top_logprobs);
+        self
+    }
+
+    /// Set min_p parameter - Range: [0, 1]
+    pub fn with_min_p(mut self, min_p: f32) -> Self {
+        self.llm_params = self.llm_params.with_min_p(min_p);
+        self
+    }
+
+    /// Set top_a parameter - Range: [0, 1]
+    pub fn with_top_a(mut self, top_a: f32) -> Self {
+        self.llm_params = self.llm_params.with_top_a(top_a);
+        self
+    }
 }
 
 #[cfg(test)]
