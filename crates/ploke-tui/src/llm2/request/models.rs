@@ -39,8 +39,7 @@ impl IntoIterator for Response {
         self.data.into_iter()
     }
 
-    // AI: Complete this implementation AI!
-    type IntoIter;
+    type IntoIter = std::vec::IntoIter<ResponseItem>;
 }
 
 /// Represents a single model endpoint from OpenRouter's API.
