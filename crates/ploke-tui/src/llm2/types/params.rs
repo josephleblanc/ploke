@@ -44,12 +44,41 @@ pub(crate) struct LLMParameters {
 impl LLMParameters {
     pub fn merge_some(mut self, mut other: Self) -> Self {
         if let Some(max_tokens) = other.max_tokens {
-            self.with_max_tokens(max_tokens);
+            self.max_tokens = Some(max_tokens);
         }
-        if let Some(temperature) = other.temperature{
-            self.with_temperature(temperature);
+        if let Some(temperature) = other.temperature {
+            self.temperature = Some(temperature);
         }
-        // fill out rest AI!
+        if let Some(seed) = other.seed {
+            self.seed = Some(seed);
+        }
+        if let Some(top_p) = other.top_p {
+            self.top_p = Some(top_p);
+        }
+        if let Some(top_k) = other.top_k {
+            self.top_k = Some(top_k);
+        }
+        if let Some(frequency_penalty) = other.frequency_penalty {
+            self.frequency_penalty = Some(frequency_penalty);
+        }
+        if let Some(presence_penalty) = other.presence_penalty {
+            self.presence_penalty = Some(presence_penalty);
+        }
+        if let Some(repetition_penalty) = other.repetition_penalty {
+            self.repetition_penalty = Some(repetition_penalty);
+        }
+        if let Some(logit_bias) = other.logit_bias {
+            self.logit_bias = Some(logit_bias);
+        }
+        if let Some(top_logprobs) = other.top_logprobs {
+            self.top_logprobs = Some(top_logprobs);
+        }
+        if let Some(min_p) = other.min_p {
+            self.min_p = Some(min_p);
+        }
+        if let Some(top_a) = other.top_a {
+            self.top_a = Some(top_a);
+        }
 
         self
     }
