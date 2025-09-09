@@ -115,7 +115,16 @@ pub(crate) enum OpenRouterModelVariant {
 
 impl From<ModelVariant> for OpenRouterModelVariant {
     fn from(value: ModelVariant) -> Self {
-        // Please implement AI!
+        match value {
+            ModelVariant::Free => Self::Free,
+            ModelVariant::Beta => Self::Beta,
+            ModelVariant::Extended => Self::Extended,
+            ModelVariant::Thinking => Self::Thinking,
+            ModelVariant::Online => Self::Online,
+            ModelVariant::Nitro => Self::Nitro,
+            ModelVariant::Floor => Self::Floor,
+            ModelVariant::Other(s) => Self::Other(s),
+        }
     }
 }
 
