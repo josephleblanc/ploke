@@ -445,7 +445,42 @@ impl ProviderPreferences {
         if let Some(allow_fallbacks) = other.allow_fallbacks {
             self.allow_fallbacks = other.allow_fallbacks;
         }
-        // AI: Fill out the rest AI!
+        if let Some(require_parameters) = other.require_parameters {
+            self.require_parameters = other.require_parameters;
+        }
+        if let Some(data_collection) = other.data_collection.as_ref() {
+            self.data_collection = Some(data_collection.clone());
+        }
+        if let Some(only) = other.only.as_ref() {
+            self.only = self.only.map(|o| {
+                o.union(only)
+                    .into_iter()
+                    .cloned()
+                    .collect::<HashSet<ProviderSlug>>()
+            });
+        }
+        if let Some(ignore) = other.ignore.as_ref() {
+            self.ignore = self.ignore.map(|i| {
+                i.union(ignore)
+                    .into_iter()
+                    .cloned()
+                    .collect::<HashSet<ProviderSlug>>()
+            });
+        }
+        if let Some(quantizations) = other.quantizations.as_ref() {
+            self.quantizations = self.quantizations.map(|q| {
+                q.iter()
+                    .cloned()
+                    .chain(quantizations.iter().cloned())
+                    .collect::<Vec<_>>()
+            });
+        }
+        if let Some(sort) = other.sort.as_ref() {
+            self.sort = Some(sort.clone());
+        }
+        if let Some(max_price) = other.max_price.as_ref() {
+            self.max_price = Some(max_price.clone());
+        }
 
         self
     }
