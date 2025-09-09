@@ -46,9 +46,9 @@ sha2 = "0.10"
 cozo = { workspace = true }
 
 # config
-toml = "0.8"
-dirs = "5.0"
-config = { version = "0.14", features = ["toml"] }
+toml = "0.9"
+dirs = "6.0"
+config = { version = "0.15", features = ["toml"] }
 dotenvy = "0.15"
 
 # file io
@@ -75,6 +75,9 @@ futures = "0.3" # For .fuse() on streams
 
 lazy_static = { workspace = true } # Added lazy_static
 
+# string interning
+lasso = { workspace = true }
+
 # global state
 once_cell = "1.19"
 ploke-test-utils = { path = "../test-utils" }
@@ -88,9 +91,13 @@ cozo = { workspace = true }
 rand = "0.9"
 insta = { version = "1.39.0", features = ["redactions"] }
 regex = "1"
-criterion = "0.7"
+criterion = { version = "0.7", features = ["async_tokio"] }
 quote = { workspace = true }
 syn = { workspace = true }
+smol_str = "0.3.2"
+arrayvec = "0.7"
+fxhash = "0.2"
+percent-encoding = "2"
 
 [features]
 default = ["test_harness", "live_api_tests"]
@@ -100,6 +107,19 @@ test_harness = []
 json_visitor = []
 xxx = []
 
+[profile.bench]
+debug = false
+lto = "thin"
+codegen-units = 1
+
 [[bench]]
 name = "ui_measure"
+harness = false
+
+[[bench]]
+name = "model_id"
+harness = false
+
+[[bench]]
+name = "model_id_tokio"
 harness = false

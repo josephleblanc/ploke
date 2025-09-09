@@ -11,9 +11,6 @@ use crate::{EventBus, llm};
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
-// How can we add tracking during our test so we can ensure we see the expected outcomes? For now
-// we just want to be able to see what the LLM is doing when we send the tool call request, but we
-// would also like to find a way of actually testing that the tool runs as expected. Let's start by
 #[instrument(skip(state, event_bus, update), fields(msg_id = %id, new_status = ?update.status))]
 pub async fn update_message(
     state: &Arc<AppState>,

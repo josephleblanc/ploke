@@ -75,7 +75,7 @@ impl From<ModelId> for OpenRouterModelId {
         Self {
             key,
             variant: variant
-                .map(|v| OpenRouterModelVariant::from_str(v.as_str()).expect("must match")),
+                .map(|v| OpenRouterModelVariant::from(v)),
         }
     }
 }

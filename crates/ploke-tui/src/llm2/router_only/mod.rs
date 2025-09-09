@@ -3,18 +3,21 @@
 pub(crate) mod openrouter;
 
 use itertools::Itertools;
-use openrouter::{FallbackMarker, MiddleOutMarker, Transform};
+use openrouter::{FallbackMarker, MiddleOutMarker, OpenRouterModelId, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::{llm2::chat_msg::Role, tools::ToolDefinition};
 
 use super::{
-    LLMParameters, ModelKey,
-    chat_msg::RequestMessage,
-    request::{ChatCompReqCore, JsonObjMarker, endpoint::ToolChoice},
+    chat_msg::RequestMessage, request::{
+        endpoint::{EndpointData, ToolChoice}, models, ChatCompReqCore, JsonObjMarker
+    }, EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey
 };
 mod anthropic {
     use super::*;
+    // Note: Placeholder, just an example for now
+    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+    pub(crate) struct Anthropic;
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
     // Note: Placeholder, just an example for now
@@ -24,13 +27,92 @@ mod anthropic {
     }
 }
 
+pub(crate) trait HasModelId {
+    fn model_id(&self) -> ModelId;
+} 
+
+pub(crate) trait HasModels: Router {
+    // Models response
+    type Response: for<'a> Deserialize<'a> + IntoIterator<Item = Self::Models>;
+    type Models: for<'a> Deserialize<'a> + HasModelId + Into<models::ResponseItem>;
+    type Error;
+
+    async fn fetch_models(client: &reqwest::Client) -> color_eyre::Result<Self::Response> {
+        let url = Self::MODELS_URL;
+        let api_key = Self::resolve_api_key()?;
+
+        let resp = client
+            .get(url)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+            .header("X-Title", "Ploke TUI")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let parsed = resp.json::<Self::Response>().await?;
+
+        Ok(parsed)
+    }
+
+    async fn fetch_models_iter(client: &reqwest::Client) -> color_eyre::Result<impl IntoIterator<Item = Self::Models>> {
+        Self::fetch_models(client).await
+            .map(|r| r.into_iter())
+
+    }
+}
+
+pub(crate) trait HasEndpoint: Router {
+    type EpResponse: for<'a> Deserialize<'a> + Into<EndpointsResponse>;
+    type Error;
+
+    async fn fetch_model_endpoints(
+        client: &reqwest::Client,
+        model: Self::ModelId,
+    ) -> color_eyre::Result<Self::EpResponse> {
+        let url = Self::endpoints_url(model);
+        let api_key = Self::resolve_api_key()?;
+
+        let resp = client
+            .get(url)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+            .header("X-Title", "Ploke TUI")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        // let body = resp.json().await?;
+        // Parse with stronger typed endpoint shape first
+        let parsed  = resp.json::<Self::EpResponse>().await?;
+
+        Ok(parsed)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub(crate) enum RouterVariants {
+    OpenRouter(openrouter::OpenRouter),
+    Anthropic(anthropic::Anthropic),
+}
+
+pub(crate) trait RouterModelId {
+    fn into_key(self) -> ModelKey;
+    fn key(&self) -> &ModelKey;
+    fn into_url_format(self) -> String;
+}
+
 pub(crate) trait Router {
     type CompletionFields: ApiRoute;
+    type ModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
     const BASE_URL: &str;
     const COMPLETION_URL: &str;
     const MODELS_URL: &str;
     const ENDPOINTS_TAIL: &str;
     const API_KEY_NAME: &str;
+    const PROVIDERS_URL: &str;
 
     fn resolve_api_key() -> Result<String, std::env::VarError> {
         // 1. Check provider-specific env var if specified
@@ -38,31 +120,22 @@ pub(crate) trait Router {
         std::env::var(key_name)
     }
 
-    fn endpoints_url_string(model_key: ModelKey) -> String {
-        // NOTE: This uses MODELS_URL for the base part, not the simple base
-        [
-            Self::MODELS_URL,
-            model_key.id.as_str(),
-            Self::ENDPOINTS_TAIL,
-        ]
-        .into_iter()
-        .join("/")
+    fn endpoints_url(model: Self::ModelId) -> String {
+        // OpenRouter’s models path treats ':' as a reserved char → percent-encode
+        // Use a lightweight escape because only ':' needs it for your case
+        let base = model.into_url_format();
+        format!("{}/{}/{}", Self::MODELS_URL, base, Self::ENDPOINTS_TAIL)
+    }
+
+    fn tranform_endpoint_key(&self, endpoint_key: EndpointKey) -> Self::ModelId {
+        Self::ModelId::from(endpoint_key)
+    }
+
+    fn enpoint_to_url(&self, endpoint_key: EndpointKey) -> String {
+        let model_id = self.tranform_endpoint_key(endpoint_key);
+        Self::endpoints_url(model_id)
     }
 }
-
-#[derive(Default, Copy, Clone, Debug)]
-pub(crate) struct OpenRouter;
-
-impl Router for OpenRouter {
-    type CompletionFields = openrouter::ChatCompFields;
-    const BASE_URL: &str = "https://openrouter.ai/api/v1";
-    const COMPLETION_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-    const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
-    const ENDPOINTS_TAIL: &str = "endpoints";
-    const API_KEY_NAME: &str = "OPENROUTER_API_KEY";
-}
-
-impl ApiRoute for openrouter::ChatCompFields {}
 
 pub(crate) trait ApiRoute: Sized + Default {
     fn completion_all_fields(
@@ -133,7 +206,8 @@ pub(crate) fn default_messages() -> Vec<RequestMessage> {
         .get_or_init(|| {
             vec![RequestMessage {
                 role: Role::System,
-                content: "You are a helpful assistant, please help the user with their requests.".to_string(),
+                content: "You are a helpful assistant, please help the user with their requests."
+                    .to_string(),
                 tool_call_id: None,
             }]
         })
@@ -163,7 +237,7 @@ pub(crate) struct ChatCompRequest<R: ApiRoute> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<ToolChoice>,
 
-    // ⬇️ Router-specific fields merged at the top level
+    // Router-specific fields merged at the top level
     #[serde(flatten)]
     pub(crate) router: R,
 }
@@ -175,9 +249,11 @@ pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_
 
 #[cfg(test)]
 mod tests {
+    use crate::llm2::{chat_msg::Role, router_only::openrouter::OpenRouter};
     use std::time::Duration;
 
-    use crate::{llm::LlmError, llm2::newtypes::ModelId};
+    use crate::{llm2::ModelId, llm2::error::LlmError};
+    use std::{path::PathBuf, str::FromStr as _};
 
     use super::*;
     #[test]
@@ -225,11 +301,9 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_default_query_endpoints() -> Result<()> {
-        use std::path::PathBuf;
+        use std::{path::PathBuf, str::FromStr as _};
 
         use ploke_test_utils::workspace_root;
-
-        use crate::llm2::chat_msg::Role;
 
         // TODO: we need to handle more items like the below, which the `ModelKey` doesn't
         // currently handle:
@@ -237,8 +311,8 @@ mod tests {
         // - Should turn into a raw curl request like:
         //  https://openrouter.ai/api/v1/models/nousresearch/deephermes-3-llama-3-8b-preview%3Afree/endpoints
 
-        let model_key = ModelKey::from_string(String::from("qwen/qwen3-30b-a3b"))?;
-        let url = OpenRouter::endpoints_url_string(model_key);
+        let model_key = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b")?;
+        let url = OpenRouter::endpoints_url(model_key);
         eprintln!(
             "Constructed url to query `/:author/:model/endpoints at\n{}",
             url
@@ -281,16 +355,13 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_free_query_endpoints() -> Result<()> {
-        use std::path::PathBuf;
-
         use ploke_test_utils::workspace_root;
 
         use crate::llm2::chat_msg::Role;
 
-        let model_key = ModelKey::from_string(String::from(
-            "nousresearch/deephermes-3-llama-3-8b-preview:free",
-        ))?;
-        let url = OpenRouter::endpoints_url_string(model_key);
+        let model_key =
+            OpenRouterModelId::from_str("nousresearch/deephermes-3-llama-3-8b-preview:free")?;
+        let url = OpenRouter::endpoints_url(model_key);
         eprintln!(
             "Constructed url to query `/:author/:model/endpoints at\n{}",
             url
@@ -339,9 +410,8 @@ mod tests {
 
         use crate::llm2::chat_msg::Role;
 
-        let model_key = ModelKey::from_string(String::from("qwen/qwen3-30b-a3b-thinking-2507"))?;
+        let model_key = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
         let key = OpenRouter::resolve_api_key()?;
-        println!("key: {}", key);
         let url = OpenRouter::COMPLETION_URL;
         let mut dir = workspace_root();
         dir.push(COMPLETION_JSON_SIMPLE_DIR);
@@ -355,7 +425,7 @@ mod tests {
 
         let req = ChatCompRequest::<openrouter::ChatCompFields> {
             messages: vec![msg],
-            model: model_key.id(),
+            model: model_key.to_string(),
             router: openrouter::ChatCompFields::default(),
             ..Default::default()
         };

@@ -31,6 +31,12 @@ pub mod tools;
 #[cfg(test)]
 mod tests;
 
+// --- tempoarary llm2 items, replace llm items later ---
+
+use llm2::EndpointsResponse;
+
+// --- end temporary --- 
+
 pub mod test_utils;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -315,6 +321,7 @@ pub enum RagEvent {
 pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::Event),
+    Llm2(llm2::LlmEvent),
     LlmTool(llm::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
@@ -328,11 +335,19 @@ pub enum AppEvent {
         items: Vec<ModelsEndpoint>,
     },
     ModelsEndpointsRequest {
+        // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
+        // the typed version for that specific router before making the request.
+        // + make model_id typed as ModelKey
         model_id: String,
     },
+    #[deprecated = "Use ModelEndpointsResultsFull isntead, then delete this variant"]
     ModelsEndpointsResults {
         model_id: String,
         providers: Vec<ProviderSummary>,
+    },
+    EndpointsResults {
+        model_id: String,
+        endpoints: EndpointsResponse,
     },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
@@ -379,6 +394,7 @@ impl AppEvent {
             AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
             AppEvent::ModelsEndpointsRequest { .. } => EventPriority::Background,
             AppEvent::ModelsEndpointsResults { .. } => EventPriority::Realtime,
+            AppEvent::EndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
@@ -393,6 +409,12 @@ impl AppEvent {
             AppEvent::Rag(_) => EventPriority::Background,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
+            AppEvent::Llm2(llm_event) => EventPriority::Background,
+
+            // events sent to llm backend are background priority
+            // AppEvent::Llm2(event) if event.is_realtime() => EventPriority::Background,
+            // events sent back to the UI are realtime priority
+            // AppEvent::Llm2(ui_event) if ui_event.is_background() => EventPriority::Realtime,
         }
     }
     pub fn is_system(&self) -> bool {

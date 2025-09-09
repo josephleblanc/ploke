@@ -52,7 +52,7 @@ proc-macro-error = "1.0"                                       # For better erro
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ron = "0.8"
+ron = "0.11"
 
 # Concurrency and parallelism
 rayon = "1.10.0"
@@ -60,6 +60,9 @@ flume = "0.11.1"
 tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
 crossbeam-channel = "0.5.15"
+
+# string interning
+lasso = { version = "0.7.3", features = ["multi-threaded", "serialize"] }
 
 # Data structures and algorithms
 cozo = "0.7.6"

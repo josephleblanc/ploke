@@ -1,33 +1,23 @@
-mod newtypes;
 mod chat_msg;
 mod wire;
-mod request;
+pub(crate) mod request;
 mod router_only;
-mod enums;
-mod params;
+mod response;
+mod types;
+mod error;
+mod manager;
+mod registry;
 
-use crate::llm2::enums::*;
-pub(crate) use newtypes::{
-    ApiKeyEnv, Author, BaseUrl, EndpointKey, ModelKey, ProviderKey, ProviderName, ProviderSlug,
+pub(crate) use types::model_types::{ ModelId, ModelKey };
+pub(crate) use crate::llm2::types::enums::*;
+pub(crate) use types::newtypes::{
+    ApiKeyEnv, Author, BaseUrl, EndpointKey, ProviderKey, ProviderName, ProviderSlug,
     ModelSlug, IdError, Transport, ProviderConfig
 };
 pub(crate) use chat_msg::OaiChatReq;
 pub(crate) use wire::WireRequest;
-pub(crate) use enums::SupportedParameters;
-pub(crate) use params::LLMParameters;
+pub(crate) use types::params::LLMParameters;
+pub(crate) use request::endpoint::EndpointsResponse;
+pub(crate) use manager::LlmEvent;
 
 use serde::{Deserialize, Serialize};
-
-// --- common types ---
-/// Architecture details of a model, including input/output modalities and tokenizer info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Architecture {
-    /// Input modalities supported by this model (text, image, audio, video).
-    pub input_modalities: Vec<InputModality>,
-    pub modality: Modality,
-    pub output_modalities: Vec<OutputModality>,
-    pub tokenizer: Tokenizer,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub instruct_type: Option<InstructType>,
-}
-

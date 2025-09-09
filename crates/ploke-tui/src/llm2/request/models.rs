@@ -5,9 +5,9 @@ use ploke_core::ArcStr;
 use ploke_test_utils::workspace_root;
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{
-    Architecture, SupportedParameters, newtypes::ModelId, router_only::openrouter::TopProvider,
-};
+use crate::{llm::openrouter_catalog::ModelsResponse, llm2::{
+    router_only::{openrouter::TopProvider, HasModelId}, types::Architecture, ModelId, SupportedParameters, SupportsTools
+}};
 
 use once_cell::sync::Lazy;
 use serde_json::Value;
@@ -15,9 +15,9 @@ use serde_json::Value;
 pub static EXAMPLE_JSON: Lazy<Value> = Lazy::new(|| {
     // Read at compile-time, parse at runtime once.
     static RAW: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/api/data/models/all_raw.json"
-));
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/api/data/models/all_raw.json"
+    ));
 
     serde_json::from_str(RAW).expect("valid test JSON")
 });
@@ -27,9 +27,9 @@ use super::ModelPricing;
 /// Represents a model `/models` from OpenRouter's API.
 /// https://openrouter.ai/api/v1/models
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelsResponse {
+pub(crate) struct Response {
     /// List of available model endpoints from OpenRouter.
-    pub data: Vec<ModelResponseItem>,
+    pub data: Vec<ResponseItem>,
 }
 
 /// Represents a single model endpoint from OpenRouter's API.
@@ -40,8 +40,10 @@ pub struct ModelsResponse {
 ///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
 ///     - architecture.instruct_type: missing for most (~65%), 208/323
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelResponseItem {
-    /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
+pub(crate) struct ResponseItem {
+    /// canonical endpoint name ({author}/{slug}:{variant}), e.g. 
+    /// - deepseek/deepseek-chat-v3.1 
+    /// - but also possible: deepseek/deepseek-chat-v3.1:free
     pub id: ModelId,
     /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
     pub name: ArcStr,
@@ -84,13 +86,27 @@ pub struct ModelResponseItem {
     pub supported_parameters: Option<Vec<SupportedParameters>>,
 }
 
+impl HasModelId for ResponseItem {
+    fn model_id(&self) -> ModelId {
+        self.id.clone()
+    }
+}
+
+impl SupportsTools for ResponseItem {
+    fn supports_tools(&self) -> bool {
+        self.supported_parameters
+            .as_ref()
+            .is_some_and(|sp| sp.supports_tools())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use crate::llm2::{InputModality, Modality, OutputModality, SupportedParameters, Tokenizer};
     use ploke_core::ArcStr;
-    use crate::llm2::enums::{InputModality, Modality, OutputModality, Tokenizer};
+    use serde_json::json;
 
-    use super::*;
+    use super::super::models;
 
     #[test]
     fn test_deserialization_all() {
@@ -149,31 +165,49 @@ mod tests {
             },
           ]
         });
-        
-        let response: ModelsResponse = serde_json::from_value(js).unwrap();
+
+        let response: models::Response = serde_json::from_value(js).unwrap();
         assert_eq!(response.data.len(), 1);
-        
+
         let model = &response.data[0];
-        
+
         // Test architecture fields
-        assert_eq!(model.architecture.input_modalities, vec![InputModality::Image, InputModality::Text]);
+        assert_eq!(
+            model.architecture.input_modalities,
+            vec![InputModality::Image, InputModality::Text]
+        );
         assert_eq!(model.architecture.modality, Modality::TextImageToText);
-        assert_eq!(model.architecture.output_modalities, vec![OutputModality::Text]);
+        assert_eq!(
+            model.architecture.output_modalities,
+            vec![OutputModality::Text]
+        );
         assert_eq!(model.architecture.tokenizer, Tokenizer::Llama4);
         assert_eq!(model.architecture.instruct_type, None);
-        
+
         // Test model identification
-        assert_eq!(model.id.as_str(), "deepcogito/cogito-v2-preview-llama-109b-moe");
+        assert_eq!(
+            model.id.to_string(),
+            "deepcogito/cogito-v2-preview-llama-109b-moe"
+        );
         assert_eq!(model.name.as_ref(), "Cogito V2 Preview Llama 109B");
         assert_eq!(model.created, 1756831568);
-        assert_eq!(model.description.as_ref(), "An instruction-tuned, hybrid-reasoning Mixture-of-Experts model built on Llama-4-Scout-17B-16E. Cogito v2 can answer directly or engage an extended “thinking” phase, with alignment guided by Iterated Distillation & Amplification (IDA). It targets coding, STEM, instruction following, and general helpfulness, with stronger multilingual, tool-calling, and reasoning performance than size-equivalent baselines. The model supports long-context use (up to 10M tokens) and standard Transformers workflows. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)");
-        assert_eq!(model.canonical.as_ref().unwrap().as_str(), "deepcogito/cogito-v2-preview-llama-109b-moe");
-        
+        assert_eq!(
+            model.description.as_ref(),
+            "An instruction-tuned, hybrid-reasoning Mixture-of-Experts model built on Llama-4-Scout-17B-16E. Cogito v2 can answer directly or engage an extended “thinking” phase, with alignment guided by Iterated Distillation & Amplification (IDA). It targets coding, STEM, instruction following, and general helpfulness, with stronger multilingual, tool-calling, and reasoning performance than size-equivalent baselines. The model supports long-context use (up to 10M tokens) and standard Transformers workflows. Users can control the reasoning behaviour with the `reasoning` `enabled` boolean. [Learn more in our docs](https://openrouter.ai/docs/use-cases/reasoning-tokens#enable-reasoning-with-default-config)"
+        );
+        assert_eq!(
+            model.canonical.as_ref().unwrap().to_string(),
+            "deepcogito/cogito-v2-preview-llama-109b-moe"
+        );
+
         // Test metadata
         assert_eq!(model.context_length, Some(32767));
-        assert_eq!(model.hugging_face_id.as_ref().unwrap(), "deepcogito/cogito-v2-preview-llama-109B-MoE");
+        assert_eq!(
+            model.hugging_face_id.as_ref().unwrap(),
+            "deepcogito/cogito-v2-preview-llama-109B-MoE"
+        );
         assert_eq!(model.per_request_limits, None);
-        
+
         // Test pricing
         let pricing = &model.pricing;
         assert_eq!(pricing.prompt, 0.00000018);
@@ -186,7 +220,7 @@ mod tests {
         assert_eq!(pricing.input_cache_read, None);
         assert_eq!(pricing.input_cache_write, None);
         assert_eq!(pricing.discount, None);
-        
+
         // Test supported parameters
         let expected_params = vec![
             SupportedParameters::FrequencyPenalty,
@@ -202,10 +236,13 @@ mod tests {
             SupportedParameters::ToolChoice,
             SupportedParameters::Tools,
             SupportedParameters::TopK,
-            SupportedParameters::TopP
+            SupportedParameters::TopP,
         ];
-        assert_eq!(model.supported_parameters.as_ref().unwrap(), &expected_params);
-        
+        assert_eq!(
+            model.supported_parameters.as_ref().unwrap(),
+            &expected_params
+        );
+
         // Test top provider
         assert_eq!(model.top_provider.context_length, Some(32767));
         assert_eq!(model.top_provider.is_moderated, false);
@@ -215,15 +252,15 @@ mod tests {
     #[test]
     fn test_deserialization_with_fixture() {
         // Use the saved fixture to test deserialization of all variations
-        let response: ModelsResponse = serde_json::from_value(EXAMPLE_JSON.clone()).unwrap();
-        
+        let response: models::Response = serde_json::from_value(models::EXAMPLE_JSON.clone()).unwrap();
+
         // Ensure we can deserialize all items in the data array
         assert!(!response.data.is_empty());
-        
+
         // Verify each item can be deserialized without errors
         for model in &response.data {
             // Just ensure we have the basic fields accessible
-            assert!(!model.id.as_str().is_empty());
+            assert!(!model.id.to_string().is_empty());
             assert!(!model.name.as_ref().is_empty());
             assert!(model.created > 0);
         }

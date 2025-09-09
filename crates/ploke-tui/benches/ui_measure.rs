@@ -1,4 +1,5 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ploke_tui::app::input::keymap::to_action;
 use ploke_tui::app::types::Mode;

@@ -506,13 +506,12 @@ pub async fn llm_manager(
     }
 }
 
-// The worker function that processes a single LLM request.
-// TODO: Add proper error handling if the `CreateAssistantMessage` fails
 #[instrument(skip_all,
     fields(
         model = %provider_config.model
     )
 )]
+/// The worker function that processes a single LLM request.
 pub async fn process_llm_request(
     request: Event,
     state: Arc<AppState>,

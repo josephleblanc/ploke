@@ -1,7 +1,10 @@
 mod completion;
 mod marker;
 pub(crate) mod endpoint;
-mod models;
+pub(crate) mod models;
+
+#[cfg(test)]
+mod tests;
 
 use crate::utils::se_de::string_to_f64_opt_zero;
 use crate::utils::se_de::string_or_f64_opt;
@@ -40,6 +43,12 @@ pub struct ModelPricing {
         skip_serializing_if = "Option::is_none"
     )]
     pub image: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "string_or_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub image_output: Option<f64>,
     #[serde(
         default,
         deserialize_with = "string_or_f64_opt",

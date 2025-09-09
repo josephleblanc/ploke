@@ -8,7 +8,7 @@ use crate::{
     llm2::{
         LLMParameters,
         chat_msg::RequestMessage,
-        newtypes::ModelId,
+        ModelId,
         router_only::{
             ApiRoute,
             openrouter::{self, ProviderPreferences, Transform},

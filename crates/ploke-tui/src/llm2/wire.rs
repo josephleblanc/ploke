@@ -4,8 +4,8 @@ use url::Url;
 
 use super::chat_msg::RequestMessage;
 
-use super::router_only::openrouter::{self, ProviderPreferences};
-use super::router_only::{ChatCompRequest, OpenRouter};
+use super::router_only::openrouter::{self, OpenRouterModelId, ProviderPreferences};
+use super::router_only::{ChatCompRequest, openrouter::OpenRouter};
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -16,8 +16,8 @@ pub struct WireRequest {
     pub content_type: &'static str, // "application/json"
 }
 
-pub fn build_openrouter_request<'a>(
-    kimi: &'a ModelKey,
+pub fn build_openrouter_request(
+    kimi: &OpenRouterModelId,
     prov: &ProviderConfig,                  // must be Transport::OpenRouter
     messages: Vec<RequestMessage>,
     prompt: Option<String>,
@@ -33,7 +33,7 @@ pub fn build_openrouter_request<'a>(
         messages,
         prompt,
         // route only within this model; also set provider allowlist via ProviderPreferences
-        model: kimi.id(),
+        model: kimi.to_string(),
         // map parameters
         llm_params: llm_params.clone(),
         // ...fill other fields you use...

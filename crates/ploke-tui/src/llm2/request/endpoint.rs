@@ -1,9 +1,3 @@
-//  - We should take the typed response, `Endpoint`, and be capable of transforming it into a
-//  `CompReq`, a completion request to the OpenRouter API, ideally through `Serialize`.
-//      - NOTE: The `CompReq` will deprecate the `llm::`
-//  - We can add the `Endpoint` to a cache of `Endpoint` that forms our official
-//  `ModelRegistry`.
-
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,10 +5,12 @@ use std::sync::Arc;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::ProviderPreferences;
-use crate::llm2::{Architecture, SupportedParameters};
-use crate::llm2::enums::Quant;
-use crate::llm2::newtypes::*;
+use crate::llm2::types::newtypes::EndpointTag;
+use crate::llm2::types::Architecture;
+use crate::llm2::Quant;
+use crate::llm2::*;
+use crate::llm2::router_only::openrouter::providers::{ProviderName, ProviderSlug};
+use crate::llm2::SupportedParameters;
 use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;
 use crate::utils::se_de::string_to_f64_opt_zero;
@@ -22,10 +18,6 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 // Example json response for
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
-
-use crate::llm::openrouter::provider_endpoints::ProvEnd;
-use crate::llm::openrouter_catalog::ModelPricing;
-use crate::llm::providers::{ProviderName as ProviderNameEnum, ProviderSlug};
 
 /// Raw model id as returned by APIs (may contain a variant suffix after ':').
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -88,7 +80,7 @@ impl ProviderNameStr {
     /// Attempt conversion via enum ProviderName, then map to ProviderSlug; fall back to normalized slug parse.
     pub(crate) fn to_author(&self) -> Option<ProviderSlug> {
         // Try precise enum parse via serde
-        let try_enum = serde_json::from_str::<ProviderNameEnum>(&format!("\"{}\"", self.0)).ok();
+        let try_enum = serde_json::from_str::<ProviderName>(&format!("\"{}\"", self.0)).ok();
         if let Some(pn) = try_enum {
             return Some(pn.to_slug());
         }
@@ -107,6 +99,8 @@ impl ProviderIdRaw {
 }
 
 use crate::utils::se_de::{de_arc_str, se_arc_str};
+
+use super::ModelPricing;
 
 /// Typed Endpoint entry from `/models/:author/:slug/endpoints`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +139,7 @@ pub(crate) struct Endpoint {
     /// - top_k
     /// - stop
     /// - include_reasoning
+    ///
     /// See SupportedParameters for full enum of observed values.
     pub(crate) supported_parameters: Vec<SupportedParameters>,
 
@@ -397,7 +392,11 @@ pub(crate) struct ToolChoiceFunction {
 
 #[cfg(test)]
 mod tests {
-    use crate::llm2::{enums::{InstructType, Modality, Tokenizer}, SupportedParameters};
+    use crate::llm2::{
+        SupportedParameters,
+        {InstructType, Modality, Tokenizer},
+        router_only::{openrouter::OpenRouter, Router, openrouter::OpenRouterModelVariant},
+    };
 
     use super::*;
     use serde_json::{Value, json};
@@ -528,7 +527,7 @@ mod tests {
 
         let parsed: EndpointsResponse =
             serde_json::from_value(example_json).expect("deserialize example JSON");
-        assert_eq!(parsed.data.id.as_str(), "deepseek/deepseek-chat-v3.1");
+        assert_eq!(parsed.data.id.to_string().as_str(), "deepseek/deepseek-chat-v3.1");
         assert_eq!(parsed.data.endpoints.len(), 1);
         let ep = &parsed.data.endpoints[0];
 
@@ -598,14 +597,8 @@ mod tests {
             ep.supported_parameters
                 .contains(&SupportedParameters::Temperature)
         );
-        assert!(
-            ep.supported_parameters
-                .contains(&SupportedParameters::TopP)
-        );
-        assert!(
-            ep.supported_parameters
-                .contains(&SupportedParameters::Stop)
-        );
+        assert!(ep.supported_parameters.contains(&SupportedParameters::TopP));
+        assert!(ep.supported_parameters.contains(&SupportedParameters::Stop));
         assert!(
             ep.supported_parameters
                 .contains(&SupportedParameters::FrequencyPenalty)
@@ -614,18 +607,9 @@ mod tests {
             ep.supported_parameters
                 .contains(&SupportedParameters::PresencePenalty)
         );
-        assert!(
-            ep.supported_parameters
-                .contains(&SupportedParameters::Seed)
-        );
-        assert!(
-            ep.supported_parameters
-                .contains(&SupportedParameters::TopK)
-        );
-        assert!(
-            ep.supported_parameters
-                .contains(&SupportedParameters::MinP)
-        );
+        assert!(ep.supported_parameters.contains(&SupportedParameters::Seed));
+        assert!(ep.supported_parameters.contains(&SupportedParameters::TopK));
+        assert!(ep.supported_parameters.contains(&SupportedParameters::MinP));
         assert!(
             ep.supported_parameters
                 .contains(&SupportedParameters::RepetitionPenalty)
@@ -642,9 +626,7 @@ mod tests {
             ep.supported_parameters
                 .contains(&SupportedParameters::TopLogprobs)
         );
-        assert_eq!(
-            ep.supported_parameters.len(), 17
-        );
+        assert_eq!(ep.supported_parameters.len(), 17);
     }
 
     #[test]
@@ -658,15 +640,16 @@ mod tests {
         assert_eq!(p2.normalized_slug(), "deepinfra-turbo");
     }
 
+    use crate::llm2::router_only::openrouter::OpenRouterModelId;
+    use std::str::FromStr;
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_fetch_smoke() -> color_eyre::Result<()> {
-        use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd {
-            author: ArcStr::from("deepseek"),
-            model: ArcStr::from("deepseek-chat-v3.1"),
+        let pe = ModelKey {
+            author: Author::new("deepseek")?,
+            slug: ModelSlug::new("deepseek-chat-v3.1")?,
         };
-        let v = pe.call_endpoint_raw().await?;
+        let v = call_openrouter_endpoint(pe, None).await?;
         assert!(v.get("data").is_some(), "response missing 'data' key");
         Ok(())
     }
@@ -674,12 +657,11 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
-        use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd {
-            author: ArcStr::from("deepseek"),
-            model: ArcStr::from("deepseek-chat-v3.1"),
+        let pe = ModelKey {
+            author: Author::new("deepseek")?,
+            slug: ModelSlug::new("deepseek-chat-v3.1")?,
         };
-        let v = pe.call_endpoint_raw().await?;
+        let v = call_openrouter_endpoint(pe, None).await?;
         // eprintln!("{:#?}", v);
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned");
@@ -695,15 +677,37 @@ mod tests {
         Ok(())
     }
 
+    async fn call_openrouter_endpoint(
+        mk: ModelKey,
+        variant: Option<OpenRouterModelVariant>,
+    ) -> color_eyre::Result<serde_json::Value> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .default_headers(crate::test_harness::default_headers())
+            .build()?;
+        let model_id = OpenRouterModelId { key: mk, variant };
+        let url = OpenRouter::endpoints_url(model_id);
+        let api_key = OpenRouter::resolve_api_key()?;
+
+        let resp = client
+            .get(url)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await?
+            .error_for_status()?;
+        let v = resp.json::<serde_json::Value>().await?;
+        Ok(v)
+    }
+
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_deepseek() -> color_eyre::Result<()> {
-        use crate::llm::openrouter::provider_endpoints::ProvEnd;
-        let pe = ProvEnd {
-            author: ArcStr::from("deepseek"),
-            model: ArcStr::from("deepseek-chat-v3.1"),
+        let pe = ModelKey {
+            author: Author::new("deepseek")?,
+            slug: ModelSlug::new("deepseek-chat-v3.1")?,
         };
-        let v = pe.call_endpoint_raw().await?;
+        let v = call_openrouter_endpoint(pe, None).await?;
         // eprintln!("{:#?}", v);
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(
@@ -712,104 +716,101 @@ mod tests {
         );
         Ok(())
     }
-}
-
-#[tokio::test]
-#[cfg(feature = "live_api_tests")]
-async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
-    use crate::llm::openrouter::provider_endpoints::ProvEnd;
-    let Some(_op) = crate::test_harness::openrouter_env() else {
-        panic!("Skipping live tests: OPENROUTER_API_KEY not set");
-    };
-    let candidates: &[(&str, &str)] = &[
-        ("qwen", "qwen3-30b-a3b-thinking-2507"),
-        ("meta-llama", "llama-3.1-8b-instruct"),
-        ("x-ai", "grok-2"),
-    ];
-    let mut successes = 0usize;
-    for (author, model) in candidates {
-        let pe = ProvEnd {
-            author: ArcStr::from(*author),
-            model: ArcStr::from(*model),
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
+        let Some(_op) = crate::test_harness::openrouter_env() else {
+            panic!("Skipping live tests: OPENROUTER_API_KEY not set");
         };
-        match pe.call_endpoint_raw().await {
-            Ok(v) => {
-                if v.get("data").is_some() {
-                    // Try full typed path as well
-                    if let Ok(parsed) = serde_json::from_value::<EndpointsResponse>(v) {
-                        if !parsed.data.endpoints.is_empty() {
-                            successes += 1;
+        let candidates: &[(&str, &str)] = &[
+            ("qwen", "qwen3-30b-a3b-thinking-2507"),
+            ("meta-llama", "llama-3.1-8b-instruct"),
+            ("x-ai", "grok-2"),
+        ];
+        let mut successes = 0usize;
+        for (author, model) in candidates {
+            let pe = ModelKey {
+                author: Author::new(*author)?,
+                slug: ModelSlug::new(*model)?,
+            };
+            match call_openrouter_endpoint(pe, None).await {
+                Ok(v) => {
+                    if v.get("data").is_some() {
+                        // Try full typed path as well
+                        if let Ok(parsed) = serde_json::from_value::<EndpointsResponse>(v) {
+                            if !parsed.data.endpoints.is_empty() {
+                                successes += 1;
+                            }
+                        } else {
+                            successes += 1; // still count a data-bearing response
                         }
-                    } else {
-                        successes += 1; // still count a data-bearing response
                     }
                 }
-            }
-            Err(e) => {
-                eprintln!("live endpoint fetch failed for {}/{}: {}", author, model, e);
-            }
-        }
-    }
-    assert!(
-        successes >= 1,
-        "at least one candidate model should succeed"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-#[cfg(feature = "live_api_tests")]
-async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
-    use crate::llm::openrouter::provider_endpoints::ProvEnd;
-    let pe = ProvEnd {
-        author: ArcStr::from("deepseek"),
-        model: ArcStr::from("deepseek-chat-v3.1"),
-    };
-    let raw = pe.call_endpoint_raw().await?;
-    // eprintln!("{:#?}", raw);
-
-    let data = raw.get("data").unwrap();
-    let ep = data.get("endpoints").unwrap();
-    let first_ep = ep.get(0).unwrap();
-    let pricing = first_ep.get("pricing").unwrap();
-
-    let completion = pricing.get("completion").unwrap();
-    str_or_num_to_f64(completion);
-    let image = pricing.get("image").unwrap();
-    str_or_num_to_f64(image);
-    let discount = pricing.get("discount").unwrap();
-    let de_discount = crate::utils::se_de::string_to_f64_opt_zero(discount);
-    // eprintln!("de_discount:\n{:?}", de_discount);
-    let _ = de_discount?;
-
-    let typed: EndpointsResponse = serde_json::from_value(raw.clone())?;
-    assert!(!typed.data.endpoints.is_empty(), "no endpoints returned");
-
-    let typed_json = serde_json::to_value(&typed).expect("serialize typed");
-    // Full equality is not expected (we omit unknown fields; numeric normalization)
-    assert!(typed_json != raw);
-
-    // Subset equality on key fields
-    let raw_eps = raw
-        .get("data")
-        .and_then(|d| d.get("endpoints"))
-        .and_then(|v| v.as_array())
-        .expect("raw endpoints array");
-    assert_eq!(typed.data.endpoints.len(), raw_eps.len());
-
-    fn str_or_num_to_f64(v: &serde_json::Value) -> Option<f64> {
-        match v {
-            serde_json::Value::Number(n) => n.as_f64().or_else(|| {
-                if n.as_u64().unwrap_or_default() == 0 {
-                    Some(0.0)
-                } else {
-                    panic!("Invalid State: not f64 AND u64")
+                Err(e) => {
+                    eprintln!("live endpoint fetch failed for {}/{}: {}", author, model, e);
                 }
-            }),
-            serde_json::Value::String(s) => s.parse::<f64>().ok(),
-            _ => None,
+            }
         }
+        assert!(
+            successes >= 1,
+            "at least one candidate model should succeed"
+        );
+        Ok(())
     }
 
-    Ok(())
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
+        let pe = ModelKey {
+            author: Author::new("deepseek")?,
+            slug: ModelSlug::new("deepseek-chat-v3.1")?,
+        };
+        let raw = call_openrouter_endpoint(pe, None).await?;
+        // eprintln!("{:#?}", raw);
+
+        let data = raw.get("data").unwrap();
+        let ep = data.get("endpoints").unwrap();
+        let first_ep = ep.get(0).unwrap();
+        let pricing = first_ep.get("pricing").unwrap();
+
+        let completion = pricing.get("completion").unwrap();
+        str_or_num_to_f64(completion);
+        let image = pricing.get("image").unwrap();
+        str_or_num_to_f64(image);
+        let discount = pricing.get("discount").unwrap();
+        let de_discount = crate::utils::se_de::string_to_f64_opt_zero(discount);
+        // eprintln!("de_discount:\n{:?}", de_discount);
+        let _ = de_discount?;
+
+        let typed: EndpointsResponse = serde_json::from_value(raw.clone())?;
+        assert!(!typed.data.endpoints.is_empty(), "no endpoints returned");
+
+        let typed_json = serde_json::to_value(&typed).expect("serialize typed");
+        // Full equality is not expected (we omit unknown fields; numeric normalization)
+        assert!(typed_json != raw);
+
+        // Subset equality on key fields
+        let raw_eps = raw
+            .get("data")
+            .and_then(|d| d.get("endpoints"))
+            .and_then(|v| v.as_array())
+            .expect("raw endpoints array");
+        assert_eq!(typed.data.endpoints.len(), raw_eps.len());
+
+        fn str_or_num_to_f64(v: &serde_json::Value) -> Option<f64> {
+            match v {
+                serde_json::Value::Number(n) => n.as_f64().or_else(|| {
+                    if n.as_u64().unwrap_or_default() == 0 {
+                        Some(0.0)
+                    } else {
+                        panic!("Invalid State: not f64 AND u64")
+                    }
+                }),
+                serde_json::Value::String(s) => s.parse::<f64>().ok(),
+                _ => None,
+            }
+        }
+
+        Ok(())
+    }
 }
