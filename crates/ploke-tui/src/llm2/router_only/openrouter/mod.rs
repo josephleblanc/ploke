@@ -1,22 +1,24 @@
+use fxhash::FxHashSet as HashSet;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::types::model_types::ModelVariant;
 use crate::llm2::ModelId;
 use crate::llm2::error::LlmError;
+use crate::llm2::registry::user_prefs::{ModelPrefs, RegistryPrefs};
 use crate::llm2::request::endpoint::EndpointsResponse;
+use crate::llm2::types::model_types::ModelVariant;
 use crate::llm2::{Author, EndpointKey, IdError, ModelKey, ModelSlug, ProviderSlug, Quant};
 
 use super::{ApiRoute, HasEndpoint, Router, RouterModelId};
 
 pub(crate) mod providers;
 
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default)]
 pub(crate) struct OpenRouter;
 
 impl Router for OpenRouter {
     type CompletionFields = ChatCompFields;
-    type ModelId = OpenRouterModelId;
+    type RouterModelId = OpenRouterModelId;
     const BASE_URL: &str = "https://openrouter.ai/api/v1";
     const COMPLETION_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
     const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
@@ -74,8 +76,7 @@ impl From<ModelId> for OpenRouterModelId {
         let ModelId { key, variant } = m;
         Self {
             key,
-            variant: variant
-                .map(|v| OpenRouterModelVariant::from(v)),
+            variant: variant.map(|v| OpenRouterModelVariant::from(v)),
         }
     }
 }
@@ -248,7 +249,7 @@ pub(crate) struct ChatCompFields {
     /// ```
     /// Note that models here are in the form of canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) models: Option<Vec<ModelId>>,
+    pub(crate) models: Option<Vec<OpenRouterModelId>>,
     /// the docs literally just have the string 'fallback' here. No idea what this means, maybe they
     /// read the string as a bool?
     /// corresponding json: `route?: 'fallback';`
@@ -264,6 +265,11 @@ pub(crate) struct ChatCompFields {
 }
 
 impl ChatCompFields {
+    /// Adds user model preferences
+    pub(crate) fn with_preferences(mut self, pref: &RegistryPrefs) -> Self {
+        todo!()
+    }
+
     /// Set the transforms parameter.
     pub(crate) fn with_transforms(mut self, transforms: Transform) -> Self {
         self.transforms = Some(transforms);
@@ -272,7 +278,7 @@ impl ChatCompFields {
 
     /// Set the models parameter for fallback routing.
     pub(crate) fn with_models<I: IntoIterator<Item = ModelId>>(mut self, models: I) -> Self {
-        self.models = Some(models.into_iter().collect());
+        self.models = Some(models.into_iter().map(Into::into).collect());
         self
     }
 
@@ -384,7 +390,7 @@ impl<'de> Deserialize<'de> for FallbackMarker {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) order: Option<Vec<ProviderSlug>>,
+    pub(crate) order: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) allow_fallbacks: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -392,9 +398,9 @@ pub(crate) struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) data_collection: Option<DataCollection>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) only: Option<Vec<ProviderSlug>>,
+    pub(crate) only: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) ignore: Option<Vec<ProviderSlug>>,
+    pub(crate) ignore: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) quantizations: Option<Vec<Quant>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -427,6 +433,23 @@ pub(crate) struct MaxPrice {
 }
 
 impl ProviderPreferences {
+    pub(crate) fn merge_union(mut self, other: &Self) -> Self {
+        if let Some(order) = other.order.as_ref() {
+            self.order = self.order.map(|ord| {
+                ord.union(order)
+                    .into_iter()
+                    .cloned()
+                    .collect::<HashSet<ProviderSlug>>()
+            });
+        }
+        if let Some(allow_fallbacks) = other.allow_fallbacks {
+            self.allow_fallbacks = other.allow_fallbacks;
+        }
+        // AI: Fill out the rest AI!
+
+        self
+    }
+
     /// Add an order preference.
     pub(crate) fn with_order<I: IntoIterator<Item = ProviderSlug>>(mut self, order: I) -> Self {
         self.order = Some(order.into_iter().collect());
