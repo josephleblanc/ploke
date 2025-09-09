@@ -88,3 +88,4 @@ docs/dependency_details/cozo/notes/vectors.md
 /local-target
 .serena/
 .scratch*
+crates/ploke-tui/local-target/
