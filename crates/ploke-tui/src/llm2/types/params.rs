@@ -84,45 +84,18 @@ impl LLMParameters {
     }
 
     pub(crate) fn apply_overrides(&mut self, other: &Self) {
-        // AI:
         self.max_tokens = other.max_tokens.or(self.max_tokens);
-        // Replace the following with this approach AI!
-        if let Some(max_tokens) = other.max_tokens {
-            self.max_tokens = Some(max_tokens);
-        }
-        if let Some(temperature) = other.temperature {
-            self.temperature = Some(temperature);
-        }
-        if let Some(seed) = other.seed {
-            self.seed = Some(seed);
-        }
-        if let Some(top_p) = other.top_p {
-            self.top_p = Some(top_p);
-        }
-        if let Some(top_k) = other.top_k {
-            self.top_k = Some(top_k);
-        }
-        if let Some(frequency_penalty) = other.frequency_penalty {
-            self.frequency_penalty = Some(frequency_penalty);
-        }
-        if let Some(presence_penalty) = other.presence_penalty {
-            self.presence_penalty = Some(presence_penalty);
-        }
-        if let Some(repetition_penalty) = other.repetition_penalty {
-            self.repetition_penalty = Some(repetition_penalty);
-        }
-        if let Some(logit_bias) = other.logit_bias.as_ref() {
-            self.logit_bias = Some(logit_bias.clone());
-        }
-        if let Some(top_logprobs) = other.top_logprobs {
-            self.top_logprobs = Some(top_logprobs);
-        }
-        if let Some(min_p) = other.min_p {
-            self.min_p = Some(min_p);
-        }
-        if let Some(top_a) = other.top_a {
-            self.top_a = Some(top_a);
-        }
+        self.temperature = other.temperature.or(self.temperature);
+        self.seed = other.seed.or(self.seed);
+        self.top_p = other.top_p.or(self.top_p);
+        self.top_k = other.top_k.or(self.top_k);
+        self.frequency_penalty = other.frequency_penalty.or(self.frequency_penalty);
+        self.presence_penalty = other.presence_penalty.or(self.presence_penalty);
+        self.repetition_penalty = other.repetition_penalty.or(self.repetition_penalty);
+        self.logit_bias = other.logit_bias.clone().or_else(|| self.logit_bias.clone());
+        self.top_logprobs = other.top_logprobs.or(self.top_logprobs);
+        self.min_p = other.min_p.or(self.min_p);
+        self.top_a = other.top_a.or(self.top_a);
     }
 
     pub(crate) fn fill_missing_from<T>(&mut self, other: T)
