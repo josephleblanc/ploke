@@ -244,20 +244,19 @@ mod tests {
     use color_eyre::Result;
     use super::*;
 
-    // complete for repeated testing AI!
     static LLM_TEST_PARAMS: LLMParameters = LLMParameters {
-        max_tokens: 8192,
-        temperature: todo!(),
-        seed: todo!(),
-        top_p: todo!(),
-        top_k: todo!(),
-        frequency_penalty: todo!(),
-        presence_penalty: todo!(),
-        repetition_penalty: todo!(),
-        logit_bias: todo!(),
-        top_logprobs: todo!(),
-        min_p: todo!(),
-        top_a: todo!(),
+        max_tokens: Some(8192),
+        temperature: Some(0.7),
+        seed: Some(42),
+        top_p: Some(0.9),
+        top_k: Some(50.0),
+        frequency_penalty: Some(0.1),
+        presence_penalty: Some(0.1),
+        repetition_penalty: Some(1.1),
+        logit_bias: None,
+        top_logprobs: Some(5),
+        min_p: Some(0.1),
+        top_a: Some(0.2),
     };
 
     #[test]
@@ -269,22 +268,126 @@ mod tests {
         p = p.with_max_tokens(max_tokens);
         assert_eq!(p.max_tokens, Some(8192));
 
-        // add other fields more here
+        assert_eq!(p.temperature, None);
+        p = p.with_temperature(0.7);
+        assert_eq!(p.temperature, Some(0.7));
+
+        assert_eq!(p.seed, None);
+        p = p.with_seed(42);
+        assert_eq!(p.seed, Some(42));
+
+        assert_eq!(p.top_p, None);
+        p = p.with_top_p(0.9);
+        assert_eq!(p.top_p, Some(0.9));
+
+        assert_eq!(p.top_k, None);
+        p = p.with_top_k(50.0);
+        assert_eq!(p.top_k, Some(50.0));
+
+        assert_eq!(p.frequency_penalty, None);
+        p = p.with_frequency_penalty(0.1);
+        assert_eq!(p.frequency_penalty, Some(0.1));
+
+        assert_eq!(p.presence_penalty, None);
+        p = p.with_presence_penalty(0.1);
+        assert_eq!(p.presence_penalty, Some(0.1));
+
+        assert_eq!(p.repetition_penalty, None);
+        p = p.with_repetition_penalty(1.1);
+        assert_eq!(p.repetition_penalty, Some(1.1));
+
+        assert_eq!(p.logit_bias, None);
+        let mut logit_bias = BTreeMap::new();
+        logit_bias.insert(123, 0.5);
+        p = p.with_logit_bias(logit_bias.clone());
+        assert_eq!(p.logit_bias, Some(logit_bias));
+
+        assert_eq!(p.top_logprobs, None);
+        p = p.with_top_logprobs(5);
+        assert_eq!(p.top_logprobs, Some(5));
+
+        assert_eq!(p.min_p, None);
+        p = p.with_min_p(0.1);
+        assert_eq!(p.min_p, Some(0.1));
+
+        assert_eq!(p.top_a, None);
+        p = p.with_top_a(0.2);
+        assert_eq!(p.top_a, Some(0.2));
     }
 
 
     #[test]
     fn test_with_overrides() {
-        // todo
+        let base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.5),
+            seed: Some(123),
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+        
+        let overrides = LLMParameters {
+            max_tokens: Some(2000),
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        
+        let result = base.with_overrides(&overrides);
+        
+        assert_eq!(result.max_tokens, Some(2000));
+        assert_eq!(result.temperature, Some(0.7));
+        assert_eq!(result.seed, Some(123)); // unchanged
+        assert_eq!(result.top_p, Some(0.8)); // unchanged
     }
 
     #[test]
     fn test_apply_overrides() {
-        // todo
+        let mut base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.5),
+            seed: Some(123),
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+        
+        let overrides = LLMParameters {
+            max_tokens: Some(2000),
+            temperature: Some(0.7),
+            seed: None, // Should not override
+            ..Default::default()
+        };
+        
+        base.apply_overrides(&overrides);
+        
+        assert_eq!(base.max_tokens, Some(2000));
+        assert_eq!(base.temperature, Some(0.7));
+        assert_eq!(base.seed, Some(123)); // unchanged because override is None
+        assert_eq!(base.top_p, Some(0.8)); // unchanged
     }
 
     #[test]
     fn test_fill_missing_from() {
-        // todo
+        let mut base = LLMParameters {
+            max_tokens: None,
+            temperature: Some(0.5),
+            seed: None,
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+        
+        let source = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.7),
+            seed: Some(42),
+            top_p: Some(0.9),
+            ..Default::default()
+        };
+        
+        base.fill_missing_from(&source);
+        
+        assert_eq!(base.max_tokens, Some(1000)); // filled from None
+        assert_eq!(base.temperature, Some(0.5)); // unchanged (not None)
+        assert_eq!(base.seed, Some(42)); // filled from None
+        assert_eq!(base.top_p, Some(0.8)); // unchanged (not None)
     }
 }
