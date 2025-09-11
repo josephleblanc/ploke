@@ -61,7 +61,6 @@ pub(crate) struct ModelCache {
     /// unix timestamp of last update
     last_update: u32,
 }
-// AI: Implement Deserialize for `ModelCache` AI!
 
 impl ModelCache {
     /// Create a new model cache with default TTL (12 hours)
