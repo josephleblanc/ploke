@@ -35,9 +35,7 @@ impl<'a> TryFrom<&'a str> for ModelKey {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-// AI: is there some way to leverage `FromStr` in serde if I want this to deserialize things like
-// "deepseek/deepseek-v3" and "deepseek/deepseek-v3:free" AI?
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
 pub(crate) struct ModelId {
     pub(crate) key: ModelKey,
     pub(crate) variant: Option<ModelVariant>,
@@ -98,6 +96,16 @@ impl fmt::Display for ModelId {
                 v.as_str()
             ),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ModelId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
