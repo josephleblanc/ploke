@@ -28,7 +28,60 @@ pub(crate) struct EndpointCache {
     last_update: u32,
 }
 
-// AI: implement a custom `Serialize` and `Deserialize` for `EndpointCache` AI!
+impl Serialize for EndpointCache {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct EndpointCacheHelper<'a> {
+            cache: HashMap<&'a ModelKey, Vec<&'a Endpoint>>,
+            ttl: Duration,
+            last_update: u32,
+        }
+
+        let helper = EndpointCacheHelper {
+            cache: self
+                .cache
+                .iter()
+                .map(|(key, value)| {
+                    (key, value.iter().map(|arc| arc.as_ref()).collect())
+                })
+                .collect(),
+            ttl: self.ttl,
+            last_update: self.last_update,
+        };
+
+        helper.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for EndpointCache {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct EndpointCacheHelper {
+            cache: HashMap<ModelKey, Vec<Endpoint>>,
+            ttl: Duration,
+            last_update: u32,
+        }
+
+        let helper = EndpointCacheHelper::deserialize(deserializer)?;
+        Ok(EndpointCache {
+            cache: helper
+                .cache
+                .into_iter()
+                .map(|(key, value)| {
+                    (key, value.into_iter().map(Arc::new).collect())
+                })
+                .collect(),
+            ttl: helper.ttl,
+            last_update: helper.last_update,
+        })
+    }
+}
 
 impl EndpointCache {
     /// Create a new endpoint cache with default TTL (30 minutes)
