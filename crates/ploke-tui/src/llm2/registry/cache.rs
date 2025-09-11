@@ -62,6 +62,11 @@ pub(crate) struct ModelCache {
     last_update: u32,
 }
 
+// AI: implement a custom Deserialize for `ModelCache`, since `Deserialize` is not implemented for
+// `Arc<models::ResponseItem>>`, so we get an error with the above derived Deserialize. And since
+// we can't implement foreign traits on foreign types, we can't implement Deserialize on 
+// `Arc<models::ResponseItem>` and need to instead implement deserialize on `ModelCache` AI!
+
 impl ModelCache {
     /// Create a new model cache with default TTL (12 hours)
     pub(crate) fn new() -> Self {
