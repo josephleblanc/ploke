@@ -1,7 +1,7 @@
 use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
 
 use super::*;
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub(crate) struct LLMParameters {
     // corresponding json: `max_tokens?: number; // Range: [1, context_length)`
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,6 +84,9 @@ impl LLMParameters {
     }
 
     pub(crate) fn apply_overrides(&mut self, other: &Self) {
+        // AI:
+        self.max_tokens = other.max_tokens.or(self.max_tokens);
+        // Replace the following with this approach AI!
         if let Some(max_tokens) = other.max_tokens {
             self.max_tokens = Some(max_tokens);
         }
@@ -122,12 +125,11 @@ impl LLMParameters {
         }
     }
 
-    pub(crate) fn fill_missing_from<T>(&mut self, other: T) 
+    pub(crate) fn fill_missing_from<T>(&mut self, other: T)
     where
         T: Borrow<Self>,
     {
         let other: &Self = other.borrow();
-
 
         self.max_tokens = self.max_tokens.or(other.max_tokens);
         self.temperature = self.temperature.or(other.temperature);
@@ -218,8 +220,8 @@ impl LLMParameters {
 
 #[cfg(test)]
 mod tests {
-    use color_eyre::Result;
     use super::*;
+    use color_eyre::Result;
 
     static LLM_TEST_PARAMS: LLMParameters = LLMParameters {
         max_tokens: Some(8192),
@@ -292,7 +294,6 @@ mod tests {
         assert_eq!(p.top_a, Some(0.2));
     }
 
-
     #[test]
     fn test_with_overrides() {
         let base = LLMParameters {
@@ -302,15 +303,15 @@ mod tests {
             top_p: Some(0.8),
             ..Default::default()
         };
-        
+
         let overrides = LLMParameters {
             max_tokens: Some(2000),
             temperature: Some(0.7),
             ..Default::default()
         };
-        
+
         let result = base.with_overrides(&overrides);
-        
+
         assert_eq!(result.max_tokens, Some(2000));
         assert_eq!(result.temperature, Some(0.7));
         assert_eq!(result.seed, Some(123)); // unchanged
@@ -326,7 +327,7 @@ mod tests {
             top_p: Some(0.8),
             ..Default::default()
         };
-        
+
         let overrides = LLMParameters {
             max_tokens: Some(2000),
             temperature: Some(0.7),
@@ -334,9 +335,9 @@ mod tests {
             ..Default::default()
         };
         assert_ne!(base, overrides);
-        
+
         base.apply_overrides(&overrides);
-        
+
         assert_eq!(base.max_tokens, Some(2000));
         assert_eq!(base.temperature, Some(0.7));
         assert_eq!(base.seed, Some(123)); // unchanged because override is None
@@ -352,7 +353,7 @@ mod tests {
             top_p: Some(0.8),
             ..Default::default()
         };
-        
+
         let source = LLMParameters {
             max_tokens: Some(1000),
             temperature: Some(0.7),
@@ -360,9 +361,9 @@ mod tests {
             top_p: Some(0.9),
             ..Default::default()
         };
-        
+
         base.fill_missing_from(&source);
-        
+
         assert_eq!(base.max_tokens, Some(1000)); // filled from None
         assert_eq!(base.temperature, Some(0.5)); // unchanged (not None)
         assert_eq!(base.seed, Some(42)); // filled from None
