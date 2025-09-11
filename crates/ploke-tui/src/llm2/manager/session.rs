@@ -8,7 +8,9 @@ use uuid::Uuid;
 use crate::AppEvent;
 use crate::EventBus;
 use crate::app_state::events::SystemEvent;
-use crate::llm2::manager::{ErrorResponse, OpenAiResponse, RequestMessage, ResponseMessage, StreamingDelta};
+use crate::llm2::manager::{
+    ErrorResponse, OpenAiResponse, RequestMessage, ResponseMessage, StreamingDelta,
+};
 use crate::llm2::request::endpoint::ToolChoice;
 use crate::llm2::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
@@ -30,7 +32,10 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown provider error");
             let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-            return Err(LlmError::Api { status: code as u16, message: msg.to_string() });
+            return Err(LlmError::Api {
+                status: code as u16,
+                message: msg.to_string(),
+            });
         }
     }
 
@@ -47,7 +52,9 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
         } else if let Some(text) = choice.text {
             return Ok(ParseOutcome::Content(text));
         } else if let Some(_delta) = choice.delta {
-            return Err(LlmError::Deserialization("Unexpected streaming delta".into()));
+            return Err(LlmError::Deserialization(
+                "Unexpected streaming delta".into(),
+            ));
         } else {
             return Err(LlmError::Deserialization("Empty choice".into()));
         }
@@ -59,8 +66,8 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
 /// Generic per-request session over a router-specific ApiRoute.
 pub(crate) struct RequestSession<'a, R>
 where
-    R: ApiRoute,
-    R::Parent: Router,
+    R: Router,
+    R::CompletionFields: ApiRoute,
 {
     pub client: &'a Client,
     pub event_bus: std::sync::Arc<EventBus>,
@@ -72,13 +79,13 @@ where
 
 impl<'a, R> RequestSession<'a, R>
 where
-    R: ApiRoute,
-    R::Parent: Router,
+    R: Router,
+    R::CompletionFields: ApiRoute,
 {
     pub async fn run(mut self) -> Result<String, LlmError> {
         // Use router-level constants for URL and API key
-        let url = <R::Parent as Router>::COMPLETION_URL;
-        let api_key = <R::Parent as Router>::resolve_api_key()
+        let url = R::COMPLETION_URL;
+        let api_key = R::resolve_api_key()
             .map_err(|e| LlmError::Request(format!("missing api key: {}", e)))?;
 
         // Determine whether to include tools
@@ -94,9 +101,6 @@ where
                 self.req.tool_choice = Some(ToolChoice::Auto);
             }
 
-            let body = serde_json::to_value(&self.req)
-                .map_err(|e| LlmError::Request(format!("serialize req: {}", e)))?;
-
             let response = self
                 .client
                 .post(url)
@@ -104,7 +108,7 @@ where
                 .header("Accept", "application/json")
                 .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
                 .header("X-Title", "Ploke TUI")
-                .json(&body)
+                .json(&self.req)
                 .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
                 .send()
                 .await
@@ -118,19 +122,28 @@ where
                     .unwrap_or_else(|_| "<no error body>".into());
 
                 // Heuristic: many providers respond with hints when tool calls are unsupported
-                if status == 404 && use_tools && text.to_lowercase().contains("support tool") {
-                    if self.fallback_on_404 && !tools_fallback_attempted {
-                        let notice = format!(
-                            "Notice: endpoint appears to lack tool support; retrying without tools.\n\n{}",
-                            text
-                        );
-                        self.req.core.messages.push(RequestMessage::new_system(notice));
-                        use_tools = false;
-                        tools_fallback_attempted = true;
-                        continue;
-                    }
+                if status == 404
+                    && use_tools
+                    && text.to_lowercase().contains("support tool")
+                    && self.fallback_on_404
+                    && !tools_fallback_attempted
+                {
+                    let notice = format!(
+                        "Notice: endpoint appears to lack tool support; retrying without tools.\n\n{}",
+                        text
+                    );
+                    self.req
+                        .core
+                        .messages
+                        .push(RequestMessage::new_system(notice));
+                    use_tools = false;
+                    tools_fallback_attempted = true;
+                    continue;
                 }
-                return Err(LlmError::Api { status, message: text });
+                return Err(LlmError::Api {
+                    status,
+                    message: text,
+                });
             }
 
             let body_text = response
@@ -140,61 +153,85 @@ where
 
             match parse_outcome(&body_text)? {
                 ParseOutcome::ToolCalls(tool_calls) => {
-                        // Dispatch tool calls through event bus
-                        let mut tasks = Vec::with_capacity(tool_calls.len());
-                        for call in tool_calls.into_iter() {
-                            let event_bus = self.event_bus.clone();
-                            let parent_id = self.parent_id;
-                            let request_id = Uuid::new_v4();
-                            let call_id = call.call_id.clone();
-                            // Subscribe before sending request event
-                            let mut rx = event_bus.realtime_tx.subscribe();
-                            event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                                tool_call: call,
-                                request_id,
-                                parent_id,
-                            }));
+                    // Dispatch tool calls through event bus
+                    let mut tasks = Vec::with_capacity(tool_calls.len());
+                    for call in tool_calls.into_iter() {
+                        let event_bus = self.event_bus.clone();
+                        let parent_id = self.parent_id;
+                        let request_id = Uuid::new_v4();
+                        let call_id = call.call_id.clone();
+                        // Subscribe before sending request event
+                        let mut rx = event_bus.realtime_tx.subscribe();
+                        event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+                            tool_call: call,
+                            request_id,
+                            parent_id,
+                        }));
 
-                            tasks.push(tokio::spawn(async move {
-                                // Await a correlated completion/failure
-                                let wait = async move {
-                                    while let Ok(evt) = rx.recv().await {
-                                        match evt {
-                                            AppEvent::System(SystemEvent::ToolCallCompleted { request_id: rid, call_id: cid, content, .. })
-                                                if rid == request_id && cid == call_id => return Ok(content),
-                                            AppEvent::System(SystemEvent::ToolCallFailed { request_id: rid, call_id: cid, error, .. })
-                                                if rid == request_id && cid == call_id => return Err(error),
-                                            _ => {}
+                        tasks.push(tokio::spawn(async move {
+                            // Await a correlated completion/failure
+                            let call_id_clone = call_id.clone();
+                            let wait = async move {
+                                while let Ok(evt) = rx.recv().await {
+                                    match evt {
+                                        AppEvent::System(SystemEvent::ToolCallCompleted {
+                                            request_id: rid,
+                                            call_id: cid,
+                                            content,
+                                            ..
+                                        }) if rid == request_id && cid == call_id => {
+                                            return Ok(content);
                                         }
+                                        AppEvent::System(SystemEvent::ToolCallFailed {
+                                            request_id: rid,
+                                            call_id: cid,
+                                            error,
+                                            ..
+                                        }) if rid == request_id && cid == call_id => {
+                                            return Err(error);
+                                        }
+                                        _ => {}
                                     }
-                                    Err("Event channel closed".to_string())
-                                };
-                                match tokio::time::timeout(Duration::from_secs(30), wait).await {
-                                    Ok(r) => (call_id, r),
-                                    Err(_) => (call_id, Err("Timed out waiting for tool result".into())),
                                 }
-                            }));
-                        }
-
-                        // Join and incorporate tool results
-                        let results = futures::future::join_all(tasks).await;
-                        for res in results.into_iter() {
-                            match res {
-                                Ok((cid, Ok(content))) => {
-                                    self.req.core.messages.push(RequestMessage::new_tool(content, cid));
-                                }
-                                Ok((cid, Err(err))) => {
-                                    let content = json!({"ok": false, "error": err}).to_string();
-                                    self.req.core.messages.push(RequestMessage::new_tool(content, cid));
-                                    return Err(LlmError::ToolCall("tool call failed".into()));
-                                }
-                                Err(join_err) => {
-                                    return Err(LlmError::ToolCall(format!("join error: {}", join_err)));
+                                Err("Event channel closed".to_string())
+                            };
+                            match tokio::time::timeout(Duration::from_secs(30), wait).await {
+                                Ok(r) => (call_id_clone, r),
+                                Err(_) => {
+                                    (call_id_clone, Err("Timed out waiting for tool result".into()))
                                 }
                             }
+                        }));
+                    }
+
+                    // Join and incorporate tool results
+                    let results = futures::future::join_all(tasks).await;
+                    for res in results.into_iter() {
+                        match res {
+                            Ok((cid, Ok(content))) => {
+                                self.req
+                                    .core
+                                    .messages
+                                    .push(RequestMessage::new_tool(content, cid));
+                            }
+                            Ok((cid, Err(err))) => {
+                                let content = json!({"ok": false, "error": err}).to_string();
+                                self.req
+                                    .core
+                                    .messages
+                                    .push(RequestMessage::new_tool(content, cid));
+                                return Err(LlmError::ToolCall("tool call failed".into()));
+                            }
+                            Err(join_err) => {
+                                return Err(LlmError::ToolCall(format!(
+                                    "join error: {}",
+                                    join_err
+                                )));
+                            }
                         }
-                        // Continue loop: after tool results added, allow next iteration
-                        continue;
+                    }
+                    // Continue loop: after tool results added, allow next iteration
+                    continue;
                 }
                 ParseOutcome::Content(content) => {
                     return Ok(content);
@@ -212,10 +249,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm2::router_only::openrouter::OpenRouter;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
-    use crate::tools::{FunctionMarker, FunctionCall, ToolCall, ToolName};
-    use tokio::time::{timeout, Duration};
+    use crate::tools::{FunctionCall, FunctionMarker, ToolCall, ToolName};
+    use tokio::time::{Duration, timeout};
 
     #[test]
     fn parse_outcome_content_message() {
@@ -274,14 +312,14 @@ mod tests {
     #[tokio::test]
     async fn request_session_tool_call_iteration_via_fixture() {
         // Build a minimal ChatCompRequest for OpenRouter
-        use crate::llm2::router_only::openrouter;
-        use crate::llm2::router_only::default_model;
-        use crate::llm2::request::ChatCompReqCore;
         use crate::llm2::manager::RequestMessage;
+        use crate::llm2::request::ChatCompReqCore;
+        use crate::llm2::router_only::default_model;
+        use crate::llm2::router_only::openrouter;
 
         let messages = vec![RequestMessage::new_user("hi".into())];
-        let req = openrouter::ChatCompFields::default()
-            .completion_core(ChatCompReqCore::default())
+        let req = ChatCompRequest::< OpenRouter >::default()
+            .with_core_bundle(ChatCompReqCore::default())
             .with_model_str(&default_model())
             .map(|r| r.with_messages(messages))
             .unwrap();
@@ -289,7 +327,7 @@ mod tests {
         let client = reqwest::Client::new();
         let event_bus = std::sync::Arc::new(EventBus::new(EventBusCaps::default()));
         let parent_id = Uuid::new_v4();
-        let session = RequestSession::<openrouter::ChatCompFields> {
+        let session = RequestSession::<OpenRouter> {
             client: &client,
             event_bus: event_bus.clone(),
             parent_id,
@@ -309,14 +347,21 @@ mod tests {
         tokio::spawn(async move {
             loop {
                 match rx_requests.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallRequested { request_id, parent_id, tool_call, .. })) => {
+                    Ok(AppEvent::System(SystemEvent::ToolCallRequested {
+                        request_id,
+                        parent_id,
+                        tool_call,
+                        ..
+                    })) => {
                         // immediately reply success for this call id
-                        let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                            request_id,
-                            parent_id,
-                            call_id: tool_call.call_id.clone(),
-                            content: "{\"ok\":true}".into(),
-                        }));
+                        let _ = event_bus.realtime_tx.send(AppEvent::System(
+                            SystemEvent::ToolCallCompleted {
+                                request_id,
+                                parent_id,
+                                call_id: tool_call.call_id.clone(),
+                                content: "{\"ok\":true}".into(),
+                            },
+                        ));
                     }
                     Ok(_) => {}
                     Err(_) => break,
@@ -325,10 +370,13 @@ mod tests {
         });
 
         // Local helper: run session using fixture bodies instead of HTTP
-        async fn run_with_fixture<R>(mut s: RequestSession<'_, R>, bodies: Vec<String>) -> Result<String, LlmError>
-        where
-            R: ApiRoute,
-            R::Parent: Router,
+        async fn run_with_fixture<R>(
+            mut s: RequestSession<'_, R>,
+            bodies: Vec<String>,
+        ) -> Result<String, LlmError>
+            where
+                R: Router,
+                R::CompletionFields: ApiRoute,
         {
             let mut iter = bodies.into_iter();
             loop {
@@ -351,19 +399,36 @@ mod tests {
                                 parent_id,
                             }));
                             tasks.push(tokio::spawn(async move {
+                                let call_id_clone = call_id.clone();
                                 let wait = async move {
                                     while let Ok(evt) = rx.recv().await {
                                         match evt {
-                                            AppEvent::System(SystemEvent::ToolCallCompleted { request_id: rid, call_id: cid, content, .. }) if rid == request_id && cid == call_id => return Ok(content),
-                                            AppEvent::System(SystemEvent::ToolCallFailed { request_id: rid, call_id: cid, error, .. }) if rid == request_id && cid == call_id => return Err(error),
+                                            AppEvent::System(SystemEvent::ToolCallCompleted {
+                                                request_id: rid,
+                                                call_id: cid,
+                                                content,
+                                                ..
+                                            }) if rid == request_id && cid == call_id => {
+                                                return Ok(content);
+                                            }
+                                            AppEvent::System(SystemEvent::ToolCallFailed {
+                                                request_id: rid,
+                                                call_id: cid,
+                                                error,
+                                                ..
+                                            }) if rid == request_id && cid == call_id => {
+                                                return Err(error);
+                                            }
                                             _ => {}
                                         }
                                     }
                                     Err("Event channel closed".to_string())
                                 };
                                 match tokio::time::timeout(Duration::from_secs(5), wait).await {
-                                    Ok(r) => (call_id, r),
-                                    Err(_) => (call_id, Err("Timed out waiting for tool result".into())),
+                                    Ok(r) => (call_id_clone, r),
+                                    Err(_) => {
+                                        (call_id_clone, Err("Timed out waiting for tool result".into()))
+                                    }
                                 }
                             }));
                         }
@@ -371,10 +436,18 @@ mod tests {
                         for res in results.into_iter() {
                             match res {
                                 Ok((cid, Ok(content))) => {
-                                    s.req.core.messages.push(RequestMessage::new_tool(content, cid));
+                                    s.req
+                                        .core
+                                        .messages
+                                        .push(RequestMessage::new_tool(content, cid));
                                 }
                                 Ok((_cid, Err(err))) => return Err(LlmError::ToolCall(err)),
-                                Err(join_err) => return Err(LlmError::ToolCall(format!("join error: {}", join_err))),
+                                Err(join_err) => {
+                                    return Err(LlmError::ToolCall(format!(
+                                        "join error: {}",
+                                        join_err
+                                    )));
+                                }
                             }
                         }
                         continue;

@@ -28,7 +28,7 @@ pub fn build_openrouter_request(
 
 
     // Build your existing CompReq<'a>
-    let comp = ChatCompRequest::< openrouter::ChatCompFields > {
+    let comp = ChatCompRequest::< OpenRouter > {
         // route only within this model; also set provider allowlist via ProviderPreferences
         // map parameters
         llm_params: llm_params.clone(),

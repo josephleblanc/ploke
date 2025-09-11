@@ -1,6 +1,7 @@
 use super::App;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
+use crate::llm2::LlmEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,13 +22,11 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::Quit => {
             app.quit();
         }
-        AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
-            app.sync_list_selection().await;
-        }
-        AppEvent::ModelSearchResults { keyword, items } => {
-            // Populate or update the Model Browser overlay with async results
-            app.open_model_browser(keyword, items);
-        }
+
+        AppEvent::Llm2(_llm_event) => {},
+
+        AppEvent::EndpointsResults { model_id, endpoints } => todo!(),
+
         AppEvent::ModelsEndpointsResults { model_id, providers } => {
             // Defer selection and overlay close until after we release the borrow on model_browser
             let mut select_after: Option<(String, ArcStr)> = None;
@@ -71,6 +70,13 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 app.apply_model_provider_selection(&mid, Some(&pid));
                 app.model_browser = None;
             }
+        }
+        AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
+            app.sync_list_selection().await;
+        }
+        AppEvent::ModelSearchResults { keyword, items } => {
+            // Populate or update the Model Browser overlay with async results
+            app.open_model_browser(keyword, items);
         }
         AppEvent::ModelsEndpointsRequest { .. } => {
             // Request event: handled by llm_manager; UI waits for ModelsEndpointsResults.

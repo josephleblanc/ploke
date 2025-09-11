@@ -6,6 +6,8 @@ use uuid::Uuid;
 
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
+use crate::llm2::manager::events::ChatEvt;
+use crate::llm2::LlmEvent;
 use crate::utils::helper::truncate_string;
 use crate::{EventBus, llm};
 
@@ -123,13 +125,13 @@ pub async fn create_assistant_message(
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     responder: oneshot::Sender<Uuid>,
+    new_assistant_msg_id: Uuid,
 ) {
     let mut chat_guard = state.chat.0.write().await;
-    let child_id = Uuid::new_v4();
     let status = MessageStatus::Generating;
     let kind = crate::chat_history::MessageKind::Assistant;
 
-    if let Ok(new_id) = chat_guard.add_child(parent_id, child_id, "Pending...", status, kind) {
+    if let Ok(new_id) = chat_guard.add_child(parent_id, new_assistant_msg_id, "Pending...", status, kind) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
         event_bus.send(MessageUpdatedEvent::new(new_id).into());
@@ -178,6 +180,12 @@ pub async fn add_msg_immediate(
         event_bus.send(MessageUpdatedEvent::new(message_id).into());
 
         if kind == MessageKind::User {
+            #[cfg(feature = "llm_refactor")]
+            let llm_request = AppEvent::Llm2(LlmEvent::ChatCompletion(ChatEvt::Request {
+                parent_id: message_id,
+                request_msg_id: Uuid::new_v4(),
+                }));
+            #[cfg(not(feature = "llm_refactor"))]
             let llm_request = AppEvent::Llm(llm::Event::Request {
                 request_id: Uuid::new_v4(),
                 parent_id: message_id,

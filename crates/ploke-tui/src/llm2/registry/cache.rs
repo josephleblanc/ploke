@@ -15,7 +15,7 @@ use crate::llm2::{
 // - Later will add other endpoints and make a generic set of items that should be included across
 // different routers/providers, maybe with extra fields per-router
 // - Serialize/Deserialize for persistence via local saved `.json`
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub(crate) struct EndpointCache {
     /// Keyed by {author}/{slug}, differentiate on optional `:{variant}` by checking `Endpoint`
     /// field

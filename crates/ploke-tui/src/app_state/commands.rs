@@ -50,7 +50,7 @@ pub enum StateCommand {
     },
     AddUserMessage {
         content: String,
-        new_msg_id: Uuid,
+        new_user_msg_id: Uuid,
         completion_tx: oneshot::Sender<()>,
     },
     UpdateMessage {
@@ -90,6 +90,7 @@ pub enum StateCommand {
     },
     CreateAssistantMessage {
         parent_id: Uuid,
+        new_assistant_msg_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
     IndexWorkspace {

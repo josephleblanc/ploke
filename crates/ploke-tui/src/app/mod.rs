@@ -955,15 +955,18 @@ impl App {
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
                     let (completion_tx, completion_rx) = oneshot::channel();
                     let (scan_tx, scan_rx) = oneshot::channel();
-                    let new_msg_id = Uuid::new_v4();
+                    let new_user_msg_id = Uuid::new_v4();
+                    let next_llm_msg_id = Uuid::new_v4();
+                    // TODO: Add new event with user + llm message ids to co-ordinate how they are
+                    // received in the llm loop
                     self.send_cmd(StateCommand::AddUserMessage {
                         content: self.input_buffer.clone(),
-                        new_msg_id,
+                        new_user_msg_id,
                         completion_tx,
                     });
                     self.send_cmd(StateCommand::ScanForChange { scan_tx });
                     self.send_cmd(StateCommand::EmbedMessage {
-                        new_msg_id,
+                        new_msg_id: new_user_msg_id,
                         completion_rx,
                         scan_rx,
                     });
@@ -971,8 +974,8 @@ impl App {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),
                         target: llm::ChatHistoryTarget::Main,
-                        parent_id: new_msg_id,
-                        child_id: Uuid::new_v4(),
+                        parent_id: new_user_msg_id,
+                        child_id: next_llm_msg_id,
                     });
                     // Snap to bottom to ensure the full assistant/system response is visible.
                     self.conversation.request_bottom();

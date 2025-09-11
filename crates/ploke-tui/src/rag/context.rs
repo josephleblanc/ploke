@@ -1,3 +1,4 @@
+use crate::llm2::{LlmEvent, manager::events::ChatEvt};
 use std::{
     ops::{ControlFlow, Deref},
     path::PathBuf,
@@ -12,6 +13,7 @@ use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
+    llm2::manager::RequestMessage,
 };
 
 use super::*;
@@ -45,6 +47,10 @@ static PROMPT_USER: &str = r#"
 
 "#;
 
+/// Reads the just-submitted user message and:
+/// - uses rag strategy to find similar items from the code graph
+/// - adds conversation history from tail of last submitted user message
+/// - forwards the complete and formatted messages to the system managing the API call
 pub async fn process_with_rag(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -84,7 +90,7 @@ pub async fn process_with_rag(
                 }
             }
         };
-        let messages: Vec<Message> = guard.clone_current_path_conv();
+        let messages: Vec<RequestMessage> = guard.current_path_as_llm2_request_messages();
         let budget = &state.budget;
         // TODO: Add this to the program config
         let top_k = TOP_K;
@@ -103,13 +109,62 @@ pub async fn process_with_rag(
         let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
 
         // TODO: Change this to LlmEvent and expand event_bus event types
+        #[cfg(not(feature = "llm_refactor"))]
         event_bus.send(AppEvent::Llm(augmented_prompt));
+        #[cfg(feature = "llm_refactor")]
+        event_bus.send(AppEvent::Llm2(augmented_prompt));
     } else {
         let msg = "No RAG configured";
         add_msg(msg).await;
     }
 }
 
+/// Reformats the different kinds (in this order) os messages from:
+///
+/// - System Prompt
+///     - system prompt (consts) -> System
+/// - Retrieved code context
+///     - retrieved code context -> System
+/// - Message History (newest to oldest)
+///     - User -> User
+///     - Assistant -> Assistant
+///     - SysInfo -> filtered
+///     - System -> filtered
+///
+/// Returns an event that is sent in the caller to the system managing the API call
+#[cfg(feature = "llm_refactor")]
+fn construct_context_from_rag(
+    ctx: AssembledContext,
+    messages: Vec<RequestMessage>,
+    parent_id: Uuid,
+) -> LlmEvent {
+    use RequestMessage as ReqMsg;
+
+    tracing::info!(
+        "constructing context (RAG) with {} parts and {} messages",
+        ctx.parts.len(),
+        messages.len()
+    );
+
+    let mut base: Vec<ReqMsg> = Vec::from([
+        (ReqMsg::new_system(String::from(PROMPT_HEADER))),
+        (ReqMsg::new_system(String::from(PROMPT_CODE))),
+    ]);
+
+    // Add assembled context parts as system messages
+    let text = ctx.parts.into_iter().map(|p| ReqMsg::new_system(p.text));
+    base.extend(text);
+
+    // Add conversation messages
+    base.extend(messages);
+
+    LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
+        parent_id,
+        formatted_prompt: base,
+    })
+}
+
+#[cfg(not(feature = "llm_refactor"))]
 fn construct_context_from_rag(
     ctx: AssembledContext,
     messages: Vec<Message>,

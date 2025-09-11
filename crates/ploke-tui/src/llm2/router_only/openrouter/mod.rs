@@ -471,7 +471,6 @@ impl ProviderPreferences {
         if let Some(order) = other.order.as_ref() {
             self.order = self.order.map(|ord| {
                 ord.union(order)
-                    .into_iter()
                     .cloned()
                     .collect::<HashSet<ProviderSlug>>()
             });
@@ -488,7 +487,6 @@ impl ProviderPreferences {
         if let Some(only) = other.only.as_ref() {
             self.only = self.only.map(|o| {
                 o.union(only)
-                    .into_iter()
                     .cloned()
                     .collect::<HashSet<ProviderSlug>>()
             });
@@ -496,7 +494,6 @@ impl ProviderPreferences {
         if let Some(ignore) = other.ignore.as_ref() {
             self.ignore = self.ignore.map(|i| {
                 i.union(ignore)
-                    .into_iter()
                     .cloned()
                     .collect::<HashSet<ProviderSlug>>()
             });
@@ -504,7 +501,6 @@ impl ProviderPreferences {
         if let Some(quantizations) = other.quantizations.as_ref() {
             self.quantizations = self.quantizations.map(|q| {
                 q.union(quantizations)
-                    .into_iter()
                     .cloned()
                     .collect::<HashSet<Quant>>()
             });
@@ -513,7 +509,7 @@ impl ProviderPreferences {
             self.sort = other.sort;
         }
         if let Some(max_price) = other.max_price.as_ref() {
-            self.max_price = Some(max_price.clone());
+            self.max_price = Some(*max_price);
         }
 
         self

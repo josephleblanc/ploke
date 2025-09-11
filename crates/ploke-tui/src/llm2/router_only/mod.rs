@@ -1,11 +1,19 @@
 //! Router-specific implementations
 
+mod cli;
 pub(crate) mod openrouter;
+pub(crate) use cli::{ 
+    COMPLETION_JSON_SIMPLE_DIR,
+    MODELS_JSON_IDS,
+    MODELS_JSON_RAW,
+    ENDPOINTS_JSON_DIR
+};
 
-use crate::llm2::manager::Role;
 use crate::llm2::manager::RequestMessage;
+use crate::llm2::manager::Role;
 use itertools::Itertools;
 use openrouter::{FallbackMarker, MiddleOutMarker, OpenRouterModelId, Transform};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::tools::ToolDefinition;
@@ -117,14 +125,59 @@ pub(crate) trait RouterModelId: From<ModelId> {
     fn into_url_format(self) -> String;
 }
 
-pub(crate) trait Router {
-    type CompletionFields: ApiRoute;
+pub(crate) trait Router:
+    Copy + Clone + PartialEq + PartialOrd + Serialize + DeserializeOwned + Eq + Default
+{
+    /// The `/chat/completions` fields that are unique to this router.
+    /// For example, for OpenRouter, there are unique fields like `transforms`, `models`, and
+    /// others, which are found in the associated type for this trait implementation of
+    /// `OpenRouter`
+    ///
+    /// These are fields that are not present for all routers.
+    //
+    // NOTE: If we find that there is a meaningful subset, we can create another trait for that
+    // subset by:
+    // 1. Creating a  Has* trait for that subset
+    // 2. Implementing builder patterns
+    // 3. Surface building patterns in the containing `ChatCompRequest<T>` struct for convenience.
+    type CompletionFields: ApiRoute + Serialize + Default;
+    /// Router-unique way of representing the model for this router.
+    /// For example, for OpenRouter there is a non-standard way of defining models by:
+    /// {author}/{model}:{variant}, where the `:{variant}` is optional, e.g.
+    /// - deepseek/deepseek-v3.1
+    /// - deepseek/deepseek-v3.1:free
+    /// See `OpenRouterVariants` and `RouterVariants` enums for possible values.
     type RouterModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
+    // This is where we would put other differentiating items, for example if there are
+    // OpenRouter-unique fields of `LLMParameters`, we would create something like:
+    // LlmParamFields: `RouterLlmParam + From<LlmParameters>
+    // - Would require a new trait, `RouterLlmParam`
+    // - Should implement `From<LlmParameters>` so we can keep overall process generic
+
+    /// Base url of router, e.g.
+    /// - "https://openrouter.ai/api/v1"
     const BASE_URL: &str;
+    /// Chat completion url of router, e.g.
+    /// - "https://openrouter.ai/api/v1/chat/completions"
     const COMPLETION_URL: &str;
+    /// Url to use for getting a list of available models, e.g.
+    /// - "https://openrouter.ai/api/v1/models"
     const MODELS_URL: &str;
+    /// When getting the endpoints from a router, this is the tail of the url string following a
+    /// final `/`, e.g.
+    /// - "endpoints"
+    /// - For e.g. OpenRouter becomes:
+    ///     - "https://openrouter.ai/api/v1/models/{author}/{model}:{variant}/endpoints", where
+    ///     `:{variant}` is optional, see note on `ChatCompletionFields` above
     const ENDPOINTS_TAIL: &str;
+    /// The expected name of the API key as in an exported env variable, e.g.
+    /// - "OPENROUTER_API_KEY"
     const API_KEY_NAME: &str;
+    /// The url for the providers for this router, e.g.
+    /// - "https://openrouter.ai/api/v1/providers"
+    // NOTE: We may remove this, as it is currently not really being used for anything. Evaluate
+    // once we have developed this module fully and are refactoring, as this may be the one field
+    // that is not common to both native model APIs like OpenAI and true routers like OpenRouter.
     const PROVIDERS_URL: &str;
 
     fn resolve_api_key() -> Result<String, std::env::VarError> {
@@ -136,6 +189,7 @@ pub(crate) trait Router {
     fn endpoints_url(model: Self::RouterModelId) -> String {
         // OpenRouter’s models path treats ':' as a reserved char → percent-encode
         // Use a lightweight escape because only ':' needs it for your case
+        // WARNING: above claim needs verification via testing + cite test
         let base = model.into_url_format();
         format!("{}/{}/{}", Self::MODELS_URL, base, Self::ENDPOINTS_TAIL)
     }
@@ -144,13 +198,33 @@ pub(crate) trait Router {
         Self::RouterModelId::from(endpoint_key)
     }
 
+    // TODO: Decide if we are really using this, since it may be confusing as in the case of
+    // OpenRouter this quietly ignores the `{:variant}` in `{author}/{model}:{variant}` formatting
+    // specific to OpenRouter, may be similar for other routers/native API providers
     fn enpoint_to_url(&self, endpoint_key: EndpointKey) -> String {
         let model_id = self.tranform_endpoint_key(endpoint_key);
         Self::endpoints_url(model_id)
     }
+
+    fn default_chat_completion() -> ChatCompRequest<Self> {
+        ChatCompRequest::<Self> {
+            router: Self::CompletionFields::default(),
+            ..Default::default()
+        }
+    }
+    fn completion_core(
+        fields: Self::CompletionFields,
+        core: ChatCompReqCore,
+    ) -> ChatCompRequest<Self> {
+        ChatCompRequest::<Self> {
+            model_key: Some(core.model.key),
+            router: fields,
+            ..Default::default()
+        }
+    }
 }
 
-pub(crate) trait ApiRoute: Sized + Default {
+pub(crate) trait ApiRoute: Sized + Default + Serialize {
     type Parent: TryFrom<RouterVariants> + Into<RouterVariants> + Default;
     fn parent() -> Self::Parent {
         Self::Parent::default()
@@ -158,58 +232,52 @@ pub(crate) trait ApiRoute: Sized + Default {
     fn router_variant() -> RouterVariants {
         Self::parent().into()
     }
-    fn completion_all_fields(
-        self,
-        core: ChatCompReqCore,
-        tools: Option<Vec<ToolDefinition>>,
-        llm_params: LLMParameters,
-        tool_choice: Option<ToolChoice>,
-    ) -> ChatCompRequest<Self> {
-        ChatCompRequest::<Self> {
-            model_key: Some(core.model.key.clone()),
-            core,
-            llm_params,
-            tools,
-            tool_choice,
-            router: self,
-        }
-    }
-    fn completion_core(self, core: ChatCompReqCore) -> ChatCompRequest<Self> {
-        ChatCompRequest::<Self> {
-            model_key: Some(core.model.key),
-            router: self,
-            ..Default::default()
-        }
-    }
-    fn completion_core_with_params(
-        self,
-        llm_params: LLMParameters,
-        core: ChatCompReqCore,
-    ) -> ChatCompRequest<Self> {
-        ChatCompRequest::<Self> {
-            model_key: Some(core.model.key),
-            llm_params,
-            router: self,
-            ..Default::default()
-        }
-    }
-    fn completion_core_with_tools(
-        self,
-        core: ChatCompReqCore,
-        tools: Option<Vec<ToolDefinition>>,
-    ) -> ChatCompRequest<Self> {
-        ChatCompRequest::<Self> {
-            model_key: Some(core.model.key),
-            router: self,
-            ..Default::default()
-        }
-    }
-    fn default_chat_completion() -> ChatCompRequest<Self> {
-        ChatCompRequest::<Self> {
-            router: Self::default(),
-            ..Default::default()
-        }
-    }
+    // fn completion_all_fields(
+    //     self,
+    //     core: ChatCompReqCore,
+    //     tools: Option<Vec<ToolDefinition>>,
+    //     llm_params: LLMParameters,
+    //     tool_choice: Option<ToolChoice>,
+    // ) -> ChatCompRequest<Self> {
+    //     ChatCompRequest::<Self> {
+    //         model_key: Some(core.model.key.clone()),
+    //         core,
+    //         llm_params,
+    //         tools,
+    //         tool_choice,
+    //         router: self,
+    //     }
+    // }
+    // fn completion_core(self, core: ChatCompReqCore) -> ChatCompRequest<Self> {
+    //     ChatCompRequest::<Self> {
+    //         model_key: Some(core.model.key),
+    //         router: self,
+    //         ..Default::default()
+    //     }
+    // }
+    // fn completion_core_with_params(
+    //     self,
+    //     llm_params: LLMParameters,
+    //     core: ChatCompReqCore,
+    // ) -> ChatCompRequest<Self> {
+    //     ChatCompRequest::<Self> {
+    //         model_key: Some(core.model.key),
+    //         llm_params,
+    //         router: self,
+    //         ..Default::default()
+    //     }
+    // }
+    // fn completion_core_with_tools(
+    //     self,
+    //     core: ChatCompReqCore,
+    //     tools: Option<Vec<ToolDefinition>>,
+    // ) -> ChatCompRequest<Self> {
+    //     ChatCompRequest::<Self> {
+    //         model_key: Some(core.model.key),
+    //         router: self,
+    //         ..Default::default()
+    //     }
+    // }
 }
 use serde_json::{Value, json};
 use std::{str::FromStr as _, sync::OnceLock};
@@ -235,8 +303,24 @@ pub(crate) fn default_messages() -> Vec<RequestMessage> {
         .clone()
 }
 
+// TODO: Add a GhostData field for validation or use a custom serde method to build the request
+// and use `Option` on the bundled fields we want to flatten.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub(crate) struct ChatCompRequest<R: ApiRoute> {
+pub(crate) struct ChatCompRequest<R>
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    /// The more general `model_key` used internally to determine the model, not actually sent in
+    /// the request to the API.
+    ///
+    /// The actual model identifier the API is expecting is in the generic type for `router` below,
+    /// as the identifier style may vary across routers.
+    ///
+    /// Note that `ModelKey` is in the form `{author}/{model}`, and will produced expected behavior
+    /// in all cases if used as the `model` in the API request. E.g. for OpenRouter, there is an
+    /// optional variant case, `{author}/{model}:{variant}` where `:{variant}` is optional, and so
+    /// using this `ModelKey` would remove this distinction in requests.
     #[serde(skip, default)]
     pub(crate) model_key: Option<ModelKey>,
     // Trying a new pattern where these are contained in ChatCompReqCore
@@ -251,27 +335,77 @@ pub(crate) struct ChatCompRequest<R: ApiRoute> {
     // pub(crate) stop: Option<Vec<String>>,
     // #[serde(skip_serializing_if = "Option::is_none")]
     // pub(crate) stream: Option<bool>,
+    /// Core copletion request items that are common to all routers. This field is flattened into
+    /// `ChatCompReq` so the common fields appear in the json request as fields of
+    /// `ChatCompRequest`, kept separate here for modularization of different kinds of parameters
+    /// that may vary differently across routers.
     #[serde(flatten)]
     pub(crate) core: ChatCompReqCore,
+    /// The parameters that may be set for this router. This is the set of LLMParameters that are
+    /// common to all routers.
+    ///
+    /// These are flattened into the `ChatCompRequest` during the serialization by `serde` for the
+    /// final request sent to the router API.
+    // NOTE: When adding our second router (after OpenRouter), consider splitting this into a
+    // `CommonLLMParams` and `RouterLlmParams` or something, where the router-specific options will
+    // follow a similar pattern to including the other router-specific parameters as in the
+    // `Router` trait.
     #[serde(flatten)]
     pub(crate) llm_params: LLMParameters,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tools: Option<Vec<ToolDefinition>>,
+    /// NOTE: The `ToolsChoice` used below may or may not be unique to OpenRouter, determine when
+    /// adding a new router/native API if we need to split `ToolChoice` off into another trait in
+    /// the same pattern as `ChatCompRequest<R: ApiRoute>`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<ToolChoice>,
 
     // Router-specific fields merged at the top level
     #[serde(flatten)]
-    pub(crate) router: R,
+    pub(crate) router: R::CompletionFields,
 }
 
-impl<R: ApiRoute> ChatCompRequest<R> {
-    pub(crate) fn params_union(mut self, prefs: &RegistryPrefs) -> Self {
+impl<R> ChatCompRequest<R>
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    pub(crate) fn with_core_bundle(mut self, core: ChatCompReqCore) -> Self {
+        self.core = core;
+        self
+    }
+
+    pub(crate) fn with_param_bundle(mut self, llm_params: LLMParameters) -> Self {
+        self.llm_params = llm_params;
+        self
+    }
+
+    pub(crate) fn with_model_key(mut self, model_key: Option<ModelKey>) -> Self {
+        self.model_key = model_key;
+        self
+    }
+
+    pub(crate) fn with_params_union(mut self, prefs: &RegistryPrefs) -> Self {
         let model_prefs = self.model_key.as_ref().and_then(|m| prefs.models.get(&m));
         if let Some(pref) = model_prefs.and_then(|mp| mp.get_default_profile()) {
-            self.llm_params = self.llm_params.merge_some(&pref.params);
+            self.llm_params.apply_union(&pref.params);
         }
+        self
+    }
+
+    /// Tool definitions we provide for the model to use, see the `Tool` trait.
+    pub(crate) fn with_tools(mut self, tools: Option<Vec<ToolDefinition>>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// Tool definitions we provide for the model to use, see the `Tool` trait.
+    ///
+    /// e.g. for OpenRouter
+    /// - Bridge format: "none" | "auto" | { type: "function", function: { name } }
+    pub(crate) fn with_tool_choice(mut self, tool_choice: Option<ToolChoice>) -> Self {
+        self.tool_choice = tool_choice;
         self
     }
 
@@ -413,13 +547,8 @@ impl<R: ApiRoute> ChatCompRequest<R> {
 }
 
 #[cfg(test)]
-pub(crate) const MODELS_JSON_RAW: &str = "crates/ploke-tui/data/models/all_raw.json";
-pub(crate) const ENDPOINTS_JSON_DIR: &str = "crates/ploke-tui/data/endpoints/";
-pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_completions/";
-
-#[cfg(test)]
 mod tests {
-    use crate::llm2::router_only::openrouter::OpenRouter;
+    use crate::{llm2::router_only::openrouter::OpenRouter, tools::Tool};
     use std::time::Duration;
 
     use crate::{llm2::ModelId, llm2::error::LlmError};
@@ -428,7 +557,7 @@ mod tests {
     use super::*;
     #[test]
     fn show_openrouter_json2() {
-        let req = ChatCompRequest::<openrouter::ChatCompFields> {
+        let req = ChatCompRequest::<OpenRouter> {
             router: openrouter::ChatCompFields::default()
                 .with_route(FallbackMarker)
                 .with_transforms(Transform::MiddleOut([MiddleOutMarker])),
@@ -444,6 +573,8 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     async fn test_simple_query_models() -> Result<()> {
         use ploke_test_utils::workspace_root;
+
+        use crate::llm2::router_only::cli::{MODELS_JSON_IDS, MODELS_JSON_RAW};
 
         let url = OpenRouter::MODELS_URL;
         let key = OpenRouter::resolve_api_key()?;
@@ -462,8 +593,19 @@ mod tests {
             let mut dir = workspace_root();
             dir.push(MODELS_JSON_RAW);
             println!("Writing '/models' raw response to:\n{}", dir.display());
-            std::fs::write(dir, response_json)?;
+            std::fs::write(dir, &response_json)?;
+
+            let parsed: models::Response = serde_json::from_str(&response_json)?;
+
+            let names = parsed.data.iter().map(|r| r.id.to_string()).join("\n");
+            let mut dir = workspace_root();
+            dir.push(MODELS_JSON_IDS);
+            println!("Writing '/models' id fields response to:\n{}", dir.display());
+            std::fs::write(dir, &names)?;
+
         }
+
+
         Ok(())
     }
 
@@ -492,7 +634,7 @@ mod tests {
         );
         let key = OpenRouter::resolve_api_key()?;
         let mut dir = workspace_root();
-        dir.push(ENDPOINTS_JSON_DIR);
+        dir.push(cli::ENDPOINTS_JSON_DIR);
 
         let response = Client::new()
             .get(url)
@@ -526,7 +668,6 @@ mod tests {
     async fn test_free_query_endpoints() -> Result<()> {
         use ploke_test_utils::workspace_root;
 
-
         let model_key =
             OpenRouterModelId::from_str("nousresearch/deephermes-3-llama-3-8b-preview:free")?;
         let url = OpenRouter::endpoints_url(model_key);
@@ -540,7 +681,7 @@ mod tests {
         );
         let key = OpenRouter::resolve_api_key()?;
         let mut dir = workspace_root();
-        dir.push(ENDPOINTS_JSON_DIR);
+        dir.push(cli::ENDPOINTS_JSON_DIR);
 
         let response = Client::new()
             .get(url)
@@ -572,12 +713,11 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_default_post_completions() -> Result<()> {
-        use crate::llm2::ModelId;
+        use crate::llm2::{router_only::cli::COMPLETION_JSON_SIMPLE_DIR, ModelId};
         use openrouter::OpenRouterModelId;
         use std::path::PathBuf;
 
         use ploke_test_utils::workspace_root;
-
 
         let model_id = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
         let key = OpenRouter::resolve_api_key()?;
@@ -592,7 +732,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let req = ChatCompRequest::<openrouter::ChatCompFields> {
+        let req = ChatCompRequest::<OpenRouter> {
             router: openrouter::ChatCompFields::default(),
             core: ChatCompReqCore {
                 messages: vec![msg],
@@ -639,10 +779,10 @@ mod tests {
 
     #[test]
     fn test_chat_comp_request_serialization_minimal() {
-        use crate::llm2::request::endpoint::ToolChoice;
-        use crate::llm2::request::ChatCompReqCore;
-        use crate::llm2::router_only::default_model;
         use crate::llm2::manager::RequestMessage;
+        use crate::llm2::request::ChatCompReqCore;
+        use crate::llm2::request::endpoint::ToolChoice;
+        use crate::llm2::router_only::default_model;
         use crate::tools::GetFileMetadata;
 
         let messages = vec![
@@ -651,13 +791,20 @@ mod tests {
         ];
 
         let default_model = default_model();
-        let req = openrouter::ChatCompFields::default()
-            .completion_core(ChatCompReqCore::default())
+        let req = ChatCompRequest::<OpenRouter>::default()
+            .with_core_bundle(ChatCompReqCore::default())
             .with_model_str(&default_model)
-            .map(|r| r.with_messages(messages))
             .unwrap()
+            .with_messages(messages)
             .with_temperature(0.0)
             .with_max_tokens(128);
+        // let req = openrouter::ChatCompFields::default()
+        //     .completion_core(ChatCompReqCore::default())
+        //     .with_model_str(&default_model)
+        //     .map(|r| r.with_messages(messages))
+        //     .unwrap()
+        //     .with_temperature(0.0)
+        //     .with_max_tokens(128);
         let mut req = req;
         req.tools = Some(vec![GetFileMetadata::tool_def()]);
         req.tool_choice = Some(ToolChoice::Auto);
@@ -665,15 +812,24 @@ mod tests {
         let v = serde_json::to_value(&req).expect("serialize ChatCompRequest");
         // Top-level fields present
         assert_eq!(v.get("tool_choice").and_then(|t| t.as_str()), Some("auto"));
-        assert_eq!(v.get("model").and_then(|m| m.as_str()), Some(default_model.as_str()));
+        assert_eq!(
+            v.get("model").and_then(|m| m.as_str()),
+            Some(default_model.as_str())
+        );
         // Messages array content
-        let msgs = v.get("messages").and_then(|m| m.as_array()).expect("messages");
+        let msgs = v
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .expect("messages");
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].get("role").and_then(|r| r.as_str()), Some("system"));
         assert_eq!(msgs[1].get("role").and_then(|r| r.as_str()), Some("user"));
         // Tools
         let tools = v.get("tools").and_then(|t| t.as_array()).expect("tools");
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].get("type").and_then(|s| s.as_str()), Some("function"));
+        assert_eq!(
+            tools[0].get("type").and_then(|s| s.as_str()),
+            Some("function")
+        );
     }
 }

@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::llm2::types::newtypes::EndpointTag;
 use crate::llm2::types::Architecture;
@@ -20,7 +20,7 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
 
 /// Raw model id as returned by APIs (may contain a variant suffix after ':').
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct ModelIdRaw(pub String);
 impl ModelIdRaw {
     pub(crate) fn as_str(&self) -> &str {
@@ -40,7 +40,7 @@ impl ModelIdRaw {
 }
 
 /// Canonical slug "author/model"; can convert to ProvEnd.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct CanonicalSlug(pub String);
 impl CanonicalSlug {
     pub(crate) fn as_str(&self) -> &str {
@@ -49,7 +49,7 @@ impl CanonicalSlug {
 }
 
 /// Provider slug (preferred stable identifier for routing).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct ProviderSlugStr(pub String);
 impl ProviderSlugStr {
     pub(crate) fn as_str(&self) -> &str {
@@ -58,7 +58,7 @@ impl ProviderSlugStr {
 }
 
 /// Provider display name (human-readable).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct ProviderNameStr(pub String);
 impl ProviderNameStr {
     pub(crate) fn as_str(&self) -> &str {
@@ -89,7 +89,7 @@ impl ProviderNameStr {
 }
 
 /// Provider id (raw), aliased across different shapes (id/provider/name/slug/provider_slug).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct ProviderIdRaw(pub String);
 impl ProviderIdRaw {
@@ -215,7 +215,7 @@ pub(crate) struct JsonObjMarker;
 impl Serialize for JsonObjMarker {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(1))?;
@@ -227,7 +227,7 @@ impl Serialize for JsonObjMarker {
 impl<'de> Deserialize<'de> for JsonObjMarker {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct V;
         impl<'de> serde::de::Visitor<'de> for V {
@@ -267,7 +267,7 @@ pub(crate) struct FallbackMarker;
 impl Serialize for FallbackMarker {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         serializer.serialize_str("fallback")
     }
@@ -276,7 +276,7 @@ impl Serialize for FallbackMarker {
 impl<'de> Deserialize<'de> for FallbackMarker {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct V;
         impl serde::de::Visitor<'_> for V {
@@ -314,7 +314,7 @@ pub(crate) enum ToolChoice {
 impl Serialize for ToolChoice {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         match self {
             ToolChoice::None => serializer.serialize_str("none"),
@@ -333,7 +333,7 @@ impl Serialize for ToolChoice {
 impl<'de> Deserialize<'de> for ToolChoice {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct V;
         impl<'de> serde::de::Visitor<'de> for V {

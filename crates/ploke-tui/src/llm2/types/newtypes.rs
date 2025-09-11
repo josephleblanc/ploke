@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::Arc};
 use url::Url;
 
-use super::{model_types::ModelKey, Quant};
+use super::{Quant, model_types::ModelKey};
 
 // ----- minimal error type -----
 #[derive(Debug, thiserror::Error)]
@@ -81,22 +81,6 @@ impl ModelSlug {
         &self.0
     }
 }
-
-// #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
-// #[serde(transparent)]
-// /// The canonical id in the form `author/model`, e.g.
-// /// but may also vary among routers/providers, and needs to be parsed further or passed along to
-// /// the routers parser.
-// pub(crate) struct ModelId(ArcStr);
-
-// impl ModelId {
-//     pub(crate) fn new(s: impl AsRef<str>) -> Self {
-//         Self(ArcStr::from(s.as_ref()))
-//     }
-//     pub(crate) fn as_str(&self) -> &str {
-//         &self.0
-//     }
-// }
 
 /// The "tag" field on endpoint requests in the form {provider_slug}/{quantization} where
 /// {provider_slug} is lowercase.
@@ -212,7 +196,6 @@ pub(crate) struct ProviderConfig {
     pub(crate) transport: Transport,
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct ProviderKey {
     pub(crate) slug: ProviderSlug,
@@ -233,45 +216,46 @@ pub(crate) struct EndpointKey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
+    // add a helper macro for testing
     #[test]
-    fn test_model_key_from_author_slug_valid() {
-        todo!()
+    fn test_model_id_basic() {
+        // Add tests for `ModelId` from the following items:
+        //
+        // "google/gemma-2-9b-it"
+        // "qwen/qwen-plus-2025-07-28"
+    }
+    #[test]
+    fn test_model_id_variants() {
+        // Add tests for `ModelId` from the following items:
+        //
+        // "google/gemma-2-9b-it:free"
+        // "qwen/qwen-plus-2025-07-28:thinking"
     }
 
     #[test]
-    fn test_model_key_from_string_valid() {
-        todo!()
+    fn test_model_id_trim() {
+        // Add tests for `ModelId` from the following items:
     }
 
     #[test]
-    fn test_model_key_from_string_invalid_format() {
-        todo!()
+    fn test_model_id_empty() {
+        // Add tests for `ModelId` from the following items:
     }
 
     #[test]
-    fn test_model_key_from_string_whitespace_handling() {
-        todo!()
+    fn test_model_id_invalid() {
+        // Add tests for `ModelId` from the following items:
     }
 
     #[test]
-    fn test_model_key_author_slug_validation() {
-        todo!()
-    }
+    fn test_model_ids_from_file() {
+        use ploke_test_utils::workspace_root;
+        use crate::llm2::router_only::MODELS_JSON_IDS;
 
-    #[test]
-    fn test_model_key_variant_simple() {
-        todo!()
-    }
-
-    #[test]
-    fn test_model_key_variant_empty() {
-        todo!()
-    }
-
-    #[test]
-    fn test_model_key_variant_unknown() {
-        todo!()
+        // text file with strings of serialized ModelId split by newlines
+        let text_file = MODELS_JSON_IDS;
+        // The file
+        // Add tests for `ModelId` for all items in the file
     }
 }

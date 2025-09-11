@@ -199,7 +199,7 @@ impl AppHarness {
             .cmd_tx
             .send(StateCommand::AddUserMessage {
                 content: content.into(),
-                new_msg_id,
+                new_user_msg_id: new_msg_id,
                 completion_tx,
             })
             .await;

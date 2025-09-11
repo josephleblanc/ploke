@@ -1,12 +1,14 @@
+use crate::llm2::router_only::{ApiRoute, Router};
 mod commands;
-mod events;
+pub(crate) mod events;
 mod session;
 
-use crate::HashMap;
 use crate::SystemEvent;
 use crate::app_state::handlers::chat::add_msg_immediate;
 use crate::error::ResultExt as _;
 use crate::llm2::error::LlmError;
+use crate::llm2::router_only::ApiRoute as _;
+use crate::llm2::router_only::ChatCompRequest;
 use crate::llm2::router_only::HasEndpoint;
 use crate::llm2::router_only::HasModels;
 use crate::tools;
@@ -14,6 +16,7 @@ use events::ChatEvt;
 pub(crate) use events::LlmEvent;
 use events::endpoint;
 use events::models;
+use fxhash::FxHashMap as HashMap;
 use itertools::Itertools;
 use ploke_core::ArcStr;
 
@@ -22,9 +25,11 @@ use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::ops::ControlFlow;
 use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::task::JoinSet;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -51,7 +56,7 @@ use super::router_only::openrouter::OpenRouterModelId;
 use super::*;
 
 #[derive(Serialize, Debug, Clone, Deserialize)]
-pub struct RequestMessage {
+pub(crate) struct RequestMessage {
     pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,7 +264,16 @@ pub struct ResponseMessage {
     reasoning: Option<String>,
 }
 
-// Removed legacy OpenAiToolCall and OpenAiToolFunctionCall in favor of tools::ToolCall<'a>
+/// Event id helper struct, uses the user's previous message (parent_id) and the new id that will
+/// be updated with the LLM's response (new_msg_id) to differentiate items in the queue.
+// note: This is super overkill, we don't really need two 128-bit keys for such a small set of
+// itmes.
+// TODO: We don't currently send the msg id of the newly generated Llm message placeholder to the
+// context initalization, find a good way to coordinate this.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct EvtKey {
+    parent_id: Uuid,
+}
 
 pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
@@ -269,8 +283,9 @@ pub async fn llm_manager(
     // providers: crate::user_config::ModelRegistry,
 ) {
     let client = Client::new();
-    let mut pending_requests = Vec::new();
-    let mut ready_contexts = std::collections::HashMap::new();
+    let mut pending_requests: HashMap<EvtKey, ChatEvt> = HashMap::default();
+    let mut ready_contexts: HashMap<EvtKey, ChatEvt> = HashMap::default();
+    let mut js: JoinSet<()> = JoinSet::new();
 
     // Enters loop every time there is a new event.
     //  - Currently only receives:
@@ -281,86 +296,35 @@ pub async fn llm_manager(
             AppEvent::Llm2(LlmEvent::ChatCompletion(
                 request @ ChatEvt::Request {
                     parent_id,
-                    new_msg_id,
+                    request_msg_id,
                     ..
                 },
             )) => {
-                tracing::info!(
-                    "Received LLM request for parent_id: {}\nnew_msg_id: {}",
-                    parent_id,
-                    new_msg_id
-                );
-
-                // pairing happens when PromptConstructed arrives for the same parent_id.
-                // NOTE: May want to optimize by adding an array buffer for in-memory handling
-                pending_requests.push(request);
+                // pairing happens when PromptConstructed arrives for the same request_id.
+                let event_key = EvtKey { parent_id };
+                pending_requests.insert(event_key, request);
             }
             AppEvent::Llm2(LlmEvent::ChatCompletion(
                 context @ ChatEvt::PromptConstructed { parent_id, .. },
             )) => {
-                tracing::info!("Received context for parent_id: {}", parent_id);
-                ready_contexts.insert(parent_id, context);
-
-                let guard = state.config.read().await;
-                let maybe_provider = guard.model_registry.get_active_model_config();
-                if maybe_provider.is_none() {
-                    // TODO: Trigger update of registered models here
-                    tracing::warn!(
-                        "Could not find active provider in registry, continuing event loop"
-                    );
-                    continue;
+                let event_key = EvtKey { parent_id };
+                if pending_requests.get(&event_key).is_none() {
+                    // no match, keep waiting
+                    ready_contexts.insert(event_key, context);
+                } else {
+                    // match found, process request
+                    let req = pending_requests
+                        .remove(&event_key)
+                        .expect("Event key-val must exist");
+                    js.spawn(process_llm_request(
+                        req,
+                        Arc::clone(&state),
+                        cmd_tx.clone(),
+                        client.clone(),
+                        event_bus.clone(),
+                        context,
+                    ));
                 }
-                let provider_config = maybe_provider
-                    .expect("Error in unwrapping a value guarenteed to be Some")
-                    .clone();
-                drop(guard);
-                // Process any pending requests that now have context
-                pending_requests.retain(|req| {
-                    if let ChatEvt::Request {
-                        parent_id: req_parent,
-                        ..
-                    } = req.clone()
-                    {
-                        tracing::info!(
-                            "pending_requests found match for req_parent: {}",
-                            req_parent
-                        );
-                        if let Some(context) = ready_contexts.remove(&req_parent) {
-                            tracing::info!(
-                                "ready_contexts found match for req_parent: {}",
-                                req_parent
-                            );
-                            // Note that using `retain` here removes only those messages which have
-                            // been sent to be processed. 
-                            //  - possible improvement might be to keep req if it is not correctly
-                            //      processed by `process_llm_request`?
-                            //  - may want to spawn with a timeout or something to prevent leaks(?)
-                            tokio::spawn(process_llm_request(
-                                *req,
-                                Arc::clone(&state),
-                                cmd_tx.clone(),
-                                client.clone(),
-                                event_bus.clone(),
-                                #[cfg(not(feature = "llm_refactor"))]
-                                provider_config.to_owned(),
-                                Some(context),
-                            ));
-                            tracing::info!("removing id from pending_requests");
-                            false // Remove from pending
-                        } else {
-                            tracing::info!(
-                                "keep id from pending_requests
-                                found pending_request but not ready_context
-                                checking if ready_contexts contains req_parent during conditional: {}",
-                                ready_contexts.contains_key(&req_parent)
-                            );
-                            true // Keep waiting
-                        }
-                    } else {
-                        tracing::info!("keep id from pending_requests\nno matched pending_requests");
-                        true
-                    }
-                });
             }
             AppEvent::System(SystemEvent::ToolCallRequested {
                 tool_call,
@@ -438,6 +402,21 @@ pub async fn llm_manager(
     }
 }
 
+async fn get_model_config(state: &Arc<AppState>) -> Option<ModelConfig> {
+    let guard = state.config.read().await;
+    let maybe_provider = guard.model_registry.get_active_model_config();
+    if maybe_provider.is_none() {
+        // TODO: Trigger update of registered models here
+        tracing::warn!("Could not find active provider in registry, continuing event loop");
+        return None;
+    }
+    let provider_config = maybe_provider
+        .expect("Error in unwrapping a value guarenteed to be Some")
+        .clone();
+    drop(guard);
+    Some(provider_config)
+}
+
 fn handle_endpoint_request(
     state: Arc<AppState>,
     event_bus: Arc<EventBus>,
@@ -479,64 +458,56 @@ pub async fn process_llm_request(
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     event_bus: Arc<EventBus>,
-    #[cfg(not(feature = "llm_refactor"))] provider_config: crate::user_config::ModelConfig,
-    context: Option<ChatEvt>,
+    context: ChatEvt,
 ) {
-    let parent_id = match request {
+    let (parent_id, request_message_id) = match request {
         ChatEvt::Request {
-            parent_id,
-            new_msg_id: _,
-            ..
-        } => parent_id,
+            parent_id: p,
+            request_msg_id: r,
+        } => (p, r),
         _ => {
             tracing::debug!("Not a Request, do nothing");
             return;
         } // Not a request, do nothing
     };
 
+    let messages = match context {
+        ChatEvt::PromptConstructed { parent_id, formatted_prompt } => {
+            formatted_prompt
+        },
+        _ => {
+            tracing::debug!("No prompt constructed, do nothing");
+            return;
+        }
+    };
+
+    let router_config = match get_model_config(&state).await {
+        Some(value) => value,
+        None => {
+            tracing::error!("Model Config not initialized.");
+            return;
+        },
+    };
+
+
     // This part remains the same: create a placeholder message first.
     let (responder_tx, responder_rx) = oneshot::channel();
     let create_cmd = StateCommand::CreateAssistantMessage {
         parent_id,
         responder: responder_tx,
+        new_assistant_msg_id: request_message_id,
     };
-
-    // WARN: Trying out `.expect()` here
-    // because I *think* this represents and invalid state. There should never be a case in which
-    // the command cannot be created.
-    //  - May want to add a `shutdown` command or something, as it is possible that the shutdown
-    //  command in the main app could run while we are waiting for a returned value, blah blah
-    // if cmd_tx.send(create_cmd).await.is_err() {
-    //     log::error!("Failed to send CreateAssistantMessage command: channel closed.");
-    //     return;
-    // }
     cmd_tx.send(create_cmd).await.expect(
         "Invalid state: sending over closed channel from process_llm_request via StateCommand",
     );
-
-    // TODO: There must be a cleaner way to handle this than using the one-shot for a callback. Try
-    // to find a better way.
-    // WARN: Trying out `.expect()` here
-    let assistant_message_id = responder_rx.await.expect(
-        "Invalid state: Failed to create assistant message, state_manager dropped responder.",
-    );
-    // let assistant_message_id = match responder_rx.await {
-    //     Ok(id) => id,
-    //     Err(_) => {
-    //         log::error!("Failed to create assistant message: state_manager dropped responder.");
-    //         return;
-    //     }
-    // };
 
     // Prepare and execute the API call, then create the final update command.
     let result = prepare_and_run_llm_call(
         &state,
         &client,
-        #[cfg(not(feature = "llm_refactor"))]
-        &provider_config,
-        context,
+        messages,
         event_bus.clone(),
-        parent_id,
+        request_message_id,
     )
     .await;
 
@@ -557,12 +528,12 @@ pub async fn process_llm_request(
             tracing::info!(
                 "LLM produced response for parent_id={} -> assistant_message_id={}. preview={}",
                 parent_id,
-                assistant_message_id,
+                request_message_id,
                 preview
             );
 
             StateCommand::UpdateMessage {
-                id: assistant_message_id,
+                id: request_message_id,
                 update: MessageUpdate {
                     content: Some(content),
                     status: Some(MessageStatus::Completed),
@@ -583,7 +554,7 @@ pub async fn process_llm_request(
 
             // Avoid invalid status transition by finalizing the assistant message with a failure note.
             StateCommand::UpdateMessage {
-                id: assistant_message_id,
+                id: request_message_id,
                 update: MessageUpdate {
                     content: Some(format!("Request failed: {}", err_string)),
                     status: Some(MessageStatus::Completed),
@@ -612,61 +583,10 @@ async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     #[cfg(not(feature = "llm_refactor"))] _cfg: &ModelConfig,
-    context: Option<ChatEvt>,
+    messages: Vec< RequestMessage >,
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
-    tracing::info!(has_context = %context.is_some(), "prepare_and_run_llm_call start");
-    // 1) Build conversation messages from ChatHistory (root -> current)
-    //    Use the new llm2-native mapping API to avoid old llm types.
-    let history_guard = state.chat.0.read().await;
-    let mut messages: Vec<RequestMessage> = history_guard.current_path_as_llm2_request_messages();
-    drop(history_guard);
-
-    // 2) Incorporate constructed prompt context, if provided (e.g., new user input or system preface)
-    if let Some(ChatEvt::PromptConstructed { prompt, .. }) = context {
-        for (kind, content) in prompt {
-            match kind {
-                MessageKind::User => messages.push(RequestMessage::new_user(content)),
-                MessageKind::Assistant => messages.push(RequestMessage::new_assistant(content)),
-                MessageKind::System => {
-                    if !content.trim().is_empty() {
-                        messages.push(RequestMessage::new_system(content))
-                    }
-                }
-                // Skip UI-only messages and tool messages here (tool requires tool_call_id wiring)
-                MessageKind::SysInfo | MessageKind::Tool => {}
-            }
-        }
-    }
-
-    // 3) Apply simple history capping (char budget). Token-based capping available as well.
-    const DEFAULT_HISTORY_CHAR_BUDGET: usize = 12_000;
-    messages = cap_messages_by_chars(&messages, DEFAULT_HISTORY_CHAR_BUDGET);
-
-    // 4) Parameters (placeholder: use defaults until llm2 registry/prefs are wired)
-    //    When registry is available, merge model/user defaults into LLMParameters.
-    let _llm_params = crate::llm2::LLMParameters::default();
-
-    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
-    //      Construct a concrete request object that RequestSession will dispatch.
-    use crate::llm2::router_only;
-    use crate::llm2::router_only::openrouter;
-    use crate::llm2::request::endpoint::ToolChoice;
-    let default_model = router_only::default_model();
-    let mut req = openrouter::ChatCompFields::default()
-        .completion_core(crate::llm2::request::ChatCompReqCore::default())
-        .with_model_str(&default_model)
-        .map(|r| r.with_messages(messages.clone()))
-        .unwrap_or_else(|_| {
-            openrouter::ChatCompFields::default()
-                .completion_core(crate::llm2::request::ChatCompReqCore::default())
-                .with_messages(messages.clone())
-        });
-    // Plug in params and tools
-    req.llm_params = _llm_params.clone();
-    req.tools = Some(tools.clone());
-    req.tool_choice = Some(ToolChoice::Auto);
 
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
@@ -676,13 +596,44 @@ async fn prepare_and_run_llm_call(
         GetFileMetadata::tool_def(),
     ];
 
+    // 4) Parameters (placeholder: use defaults until llm2 registry/prefs are wired)
+    //    When registry is available, merge model/user defaults into LLMParameters.
+    let _llm_params = crate::llm2::LLMParameters::default();
+
+    // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
+    //      Construct a concrete request object that RequestSession will dispatch.
+    use crate::llm2::request::endpoint::ToolChoice;
+    use crate::llm2::router_only;
+    use crate::llm2::router_only::openrouter;
+
+    // load tools, using defaults for now
+    let tools = Some(tools.clone());
+    let tool_choice = Some(ToolChoice::Auto);
+
+    let default_model_key: ModelKey = ModelKey::default();
+    // not using any variants in model_id here
+    // would get them from the selected model if present
+    let model_id = ModelId::from_parts(default_model_key, None);
+
+    // WARN: Using default fields here, should try to load from registry first and use default if
+    // the selected model is default or if the registry is not yet set up.
+    let mut req = OpenRouter::default_chat_completion()
+        .with_core_bundle(crate::llm2::request::ChatCompReqCore::default())
+        .with_model(model_id)
+        .with_messages(messages)
+        .with_param_bundle(_llm_params)
+        // TODO: This is where Registry will plug in, maybe?
+        // .with_params_union(_llm_params)
+        .with_tools(tools)
+        .with_tool_choice(tool_choice);
+
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
-    let log_fut: Option<_> = None;
+    // let log_fut: Option<_> = None;
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
     // Delegate the per-request loop to RequestSession
-    let session = session::RequestSession::<openrouter::ChatCompFields> {
+    let session = session::RequestSession::<OpenRouter> {
         client,
         event_bus,
         parent_id,
@@ -694,11 +645,12 @@ async fn prepare_and_run_llm_call(
     let result = session.run().await;
 
     // Persist model output or error for later inspection
-    if let Some(fut) = log_fut {
-        if fut.await.is_err() {
-            tracing::error!("Failed to write tool use logs.");
-        }
-    }
+    // if let Some(fut) = log_fut {
+    //     todo!();
+    // if fut.await.is_err() {
+    //     tracing::error!("Failed to write tool use logs.");
+    // }
+    // }
 
     result
 }
@@ -943,10 +895,10 @@ mod tests {
 
     #[test]
     fn test_cap_messages_by_chars_keeps_latest_even_if_over_budget() {
-        let m1 = RequestMessage::new_user("a".into());     // 1
-        let m2 = RequestMessage::new_user("bb".into());    // 2
-        let m3 = RequestMessage::new_user("ccc".into());   // 3
-        let m4 = RequestMessage::new_user("dddd".into());  // 4 (tail)
+        let m1 = RequestMessage::new_user("a".into()); // 1
+        let m2 = RequestMessage::new_user("bb".into()); // 2
+        let m3 = RequestMessage::new_user("ccc".into()); // 3
+        let m4 = RequestMessage::new_user("dddd".into()); // 4 (tail)
         let all = vec![m1, m2, m3, m4.clone()];
 
         // Budget smaller than last message; policy keeps at least the most recent

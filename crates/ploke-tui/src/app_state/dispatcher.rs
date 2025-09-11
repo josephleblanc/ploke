@@ -50,13 +50,13 @@ pub async fn state_manager(
             }
             StateCommand::AddUserMessage {
                 content,
-                new_msg_id,
                 completion_tx,
+                new_user_msg_id
             } => {
                 handlers::chat::add_user_message(
                     &state,
                     &event_bus,
-                    new_msg_id,
+                    new_user_msg_id,
                     content,
                     completion_tx,
                 )
@@ -86,10 +86,11 @@ pub async fn state_manager(
                 handlers::chat::navigate_list(&state, &event_bus, direction).await;
             }
             StateCommand::CreateAssistantMessage {
+                new_assistant_msg_id,
                 parent_id,
                 responder,
             } => {
-                handlers::chat::create_assistant_message(&state, &event_bus, parent_id, responder)
+                handlers::chat::create_assistant_message(&state, &event_bus, parent_id, responder, new_assistant_msg_id)
                     .await;
             }
 

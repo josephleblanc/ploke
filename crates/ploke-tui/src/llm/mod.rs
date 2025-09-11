@@ -56,7 +56,7 @@ impl ProviderPreferences {
         I: IntoIterator<Item = ProviderSlug>,
     {
         Self {
-            allow: Some( slugs.into_iter().collect() ),
+            allow: Some(slugs.into_iter().collect()),
             deny: None,
             order: None,
             require_parameters: true,
@@ -71,7 +71,7 @@ impl ProviderPreferences {
 
     /// Add a deny list.
     pub fn with_deny<I: IntoIterator<Item = ProviderSlug>>(mut self, deny: I) -> Self {
-        self.deny = Some( deny.into_iter().collect() );
+        self.deny = Some(deny.into_iter().collect());
         self
     }
 }
@@ -538,6 +538,7 @@ pub async fn process_llm_request(
     let create_cmd = StateCommand::CreateAssistantMessage {
         parent_id,
         responder: responder_tx,
+        new_assistant_msg_id: unimplemented!("putting this here to avoid compilation errors while refactoring llm into llm2."),
     };
 
     // WARN: Trying out `.expect()` here

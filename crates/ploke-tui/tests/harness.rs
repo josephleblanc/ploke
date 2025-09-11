@@ -190,14 +190,14 @@ impl AppHarness {
 
     /// Submit a realistic user message and kick the RAG pipeline, returning the new message id.
     pub async fn add_user_msg(&self, content: impl Into<String>) -> Uuid {
-        let new_msg_id = Uuid::new_v4();
+        let new_user_msg_id = Uuid::new_v4();
         let (completion_tx, completion_rx) = oneshot::channel();
         let (scan_tx, scan_rx) = oneshot::channel();
         let _ = self
             .cmd_tx
             .send(StateCommand::AddUserMessage {
                 content: content.into(),
-                new_msg_id,
+                new_user_msg_id,
                 completion_tx,
             })
             .await;
@@ -208,12 +208,12 @@ impl AppHarness {
         let _ = self
             .cmd_tx
             .send(StateCommand::EmbedMessage {
-                new_msg_id,
+                new_msg_id: new_user_msg_id,
                 completion_rx,
                 scan_rx,
             })
             .await;
-        new_msg_id
+        new_user_msg_id
     }
 
     /// Emit a synthesized ToolEvent::Completed (typed path) for convenience.

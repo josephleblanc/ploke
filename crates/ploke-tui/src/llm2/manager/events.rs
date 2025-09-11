@@ -96,11 +96,8 @@ pub(crate) mod models {
 pub(crate) enum ChatEvt {
     /// Request to generate content from an LLM
     Request {
-        request_id: Uuid,          // Unique tracking ID
+        request_msg_id: Uuid,          // Unique tracking ID
         parent_id: Uuid,           // Message this responds to
-        prompt: String,            // Input to LLM
-        parameters: LLMParameters, // Generation settings
-        new_msg_id: Uuid, // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
     /// Successful LLM response
@@ -147,9 +144,13 @@ pub(crate) enum ChatEvt {
     },
 
     /// Prompt constructed to be sent to the LLM
+    /// Includes:
+    /// - conversation history from just-submitted user message to root
+    ///     - `Role` of messages: All (User, Assistant, SysInfo, )
+    /// - code context
     PromptConstructed {
-        prompt: Vec<(MessageKind, String)>,
         parent_id: Uuid,
+        formatted_prompt: Vec<RequestMessage>,
     },
 }
 

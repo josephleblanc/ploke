@@ -242,7 +242,7 @@ impl RealAppHarness {
                         // AddUserMessage
                         let _ = cmd_tx_clone.send(StateCommand::AddUserMessage {
                             content: user_input.content,
-                            new_msg_id: msg_id,
+                            new_user_msg_id: msg_id,
                             completion_tx,
                         }).await;
                         
