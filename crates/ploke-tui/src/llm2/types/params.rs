@@ -153,10 +153,6 @@ impl LLMParameters {
         self.top_a = self.top_a.or(other.top_a);
     }
 
-    pub(crate) fn fill_missing_from(&mut self, other: &Self) {
-        self.apply_union(other);
-    }
-
     pub(crate) fn with_intersection(mut self, other: &Self) -> Self {
         self.max_tokens = if self.max_tokens == other.max_tokens { self.max_tokens } else { None };
         self.temperature = if self.temperature == other.temperature { self.temperature } else { None };
@@ -412,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_missing_from() {
+    fn test_apply_union() {
         let mut base = LLMParameters {
             max_tokens: None,
             temperature: Some(0.5),
@@ -429,11 +425,13 @@ mod tests {
             ..Default::default()
         };
 
-        base.fill_missing_from(&source);
+        base.apply_union(&source);
 
         assert_eq!(base.max_tokens, Some(1000)); // filled from None
         assert_eq!(base.temperature, Some(0.5)); // unchanged (not None)
         assert_eq!(base.seed, Some(42)); // filled from None
         assert_eq!(base.top_p, Some(0.8)); // unchanged (not None)
     }
+
+    // Add tests for remaining items AI!
 }
