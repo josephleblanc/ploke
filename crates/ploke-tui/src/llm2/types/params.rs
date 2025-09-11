@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
 
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -122,15 +122,16 @@ impl LLMParameters {
         }
     }
 
-    pub(crate) fn fill_missing_from<T>(&mut self, other: &T) 
+    pub(crate) fn fill_missing_from<T>(&mut self, other: T) 
     where
-        T: AsRef<Self> + ?Sized
+        T: Borrow<Self>,
     {
-        let other = other.as_ref();
+        let other: &Self = other.borrow();
 
-        if self.max_tokens.is_none() {
-            self.max_tokens = other.max_tokens;
-        }
+
+        // AI: Change the following to use this pattern
+        self.max_tokens = self.max_tokens.or(other.max_tokens);
+        // AI!
         if self.temperature.is_none() {
             self.temperature = other.temperature;
         }
@@ -249,7 +250,7 @@ mod tests {
         temperature: Some(0.7),
         seed: Some(42),
         top_p: Some(0.9),
-        top_k: Some(50.0),
+        top_k: Some(1.5),
         frequency_penalty: Some(0.1),
         presence_penalty: Some(0.1),
         repetition_penalty: Some(1.1),
@@ -281,8 +282,8 @@ mod tests {
         assert_eq!(p.top_p, Some(0.9));
 
         assert_eq!(p.top_k, None);
-        p = p.with_top_k(50.0);
-        assert_eq!(p.top_k, Some(50.0));
+        p = p.with_top_k(1.5);
+        assert_eq!(p.top_k, Some(1.5));
 
         assert_eq!(p.frequency_penalty, None);
         p = p.with_frequency_penalty(0.1);
@@ -356,6 +357,7 @@ mod tests {
             seed: None, // Should not override
             ..Default::default()
         };
+        assert_ne!(base, overrides);
         
         base.apply_overrides(&overrides);
         
