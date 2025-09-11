@@ -51,7 +51,7 @@ impl EndpointCache {
 // - Later will add other endpoints and make a generic set of items that should be included across
 // different routers/providers, maybe with extra fields per-router
 // - Serialize/Deserialize for persistence via local saved `.json`
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub(crate) struct ModelCache {
     /// Keyed by {author}/{slug}, differentiate on optional `:{variant}` by checking
     /// `id` of `models::ResponseItem`
@@ -62,10 +62,30 @@ pub(crate) struct ModelCache {
     last_update: u32,
 }
 
-// AI: implement a custom Deserialize for `ModelCache`, since `Deserialize` is not implemented for
-// `Arc<models::ResponseItem>>`, so we get an error with the above derived Deserialize. And since
-// we can't implement foreign traits on foreign types, we can't implement Deserialize on 
-// `Arc<models::ResponseItem>` and need to instead implement deserialize on `ModelCache` AI!
+impl<'de> Deserialize<'de> for ModelCache {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ModelCacheHelper {
+            cache: HashMap<ModelKey, models::ResponseItem>,
+            ttl: Duration,
+            last_update: u32,
+        }
+
+        let helper = ModelCacheHelper::deserialize(deserializer)?;
+        Ok(ModelCache {
+            cache: helper
+                .cache
+                .into_iter()
+                .map(|(key, value)| (key, Arc::new(value)))
+                .collect(),
+            ttl: helper.ttl,
+            last_update: helper.last_update,
+        })
+    }
+}
 
 impl ModelCache {
     /// Create a new model cache with default TTL (12 hours)
