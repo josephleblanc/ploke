@@ -238,3 +238,53 @@ impl LLMParameters {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use color_eyre::Result;
+    use super::*;
+
+    // complete for repeated testing AI!
+    static LLM_TEST_PARAMS: LLMParameters = LLMParameters {
+        max_tokens: 8192,
+        temperature: todo!(),
+        seed: todo!(),
+        top_p: todo!(),
+        top_k: todo!(),
+        frequency_penalty: todo!(),
+        presence_penalty: todo!(),
+        repetition_penalty: todo!(),
+        logit_bias: todo!(),
+        top_logprobs: todo!(),
+        min_p: todo!(),
+        top_a: todo!(),
+    };
+
+    #[test]
+    fn test_builder_fields() {
+        let mut p = LLMParameters::default();
+
+        assert_eq!(p.max_tokens, None);
+        let max_tokens = 8192;
+        p = p.with_max_tokens(max_tokens);
+        assert_eq!(p.max_tokens, Some(8192));
+
+        // add other fields more here
+    }
+
+
+    #[test]
+    fn test_with_overrides() {
+        // todo
+    }
+
+    #[test]
+    fn test_apply_overrides() {
+        // todo
+    }
+
+    #[test]
+    fn test_fill_missing_from() {
+        // todo
+    }
+}
