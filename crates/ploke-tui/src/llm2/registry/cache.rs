@@ -47,12 +47,11 @@ impl EndpointCache {
         }
     }
 }
-
 /// Cache for items from OpenRouter's `/models` endpoint
 // - Later will add other endpoints and make a generic set of items that should be included across
 // different routers/providers, maybe with extra fields per-router
 // - Serialize/Deserialize for persistence via local saved `.json`
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct ModelCache {
     /// Keyed by {author}/{slug}, differentiate on optional `:{variant}` by checking
     /// `id` of `models::ResponseItem`
@@ -62,6 +61,7 @@ pub(crate) struct ModelCache {
     /// unix timestamp of last update
     last_update: u32,
 }
+// AI: Implement Deserialize for `ModelCache` AI!
 
 impl ModelCache {
     /// Create a new model cache with default TTL (12 hours)
