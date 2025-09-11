@@ -433,5 +433,121 @@ mod tests {
         assert_eq!(base.top_p, Some(0.8)); // unchanged (not None)
     }
 
-    // Add tests for remaining items AI!
+    #[test]
+    fn test_with_union() {
+        let base = LLMParameters {
+            max_tokens: None,
+            temperature: Some(0.5),
+            seed: None,
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+
+        let source = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.7),
+            seed: Some(42),
+            top_p: Some(0.9),
+            ..Default::default()
+        };
+
+        let result = base.with_union(&source);
+
+        assert_eq!(result.max_tokens, Some(1000)); // filled from None
+        assert_eq!(result.temperature, Some(0.5)); // unchanged (not None)
+        assert_eq!(result.seed, Some(42)); // filled from None
+        assert_eq!(result.top_p, Some(0.8)); // unchanged (not None)
+    }
+
+    #[test]
+    fn test_with_intersection() {
+        let base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.5),
+            seed: Some(123),
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+
+        let other = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.7),
+            seed: Some(123),
+            top_p: Some(0.9),
+            ..Default::default()
+        };
+
+        let result = base.with_intersection(&other);
+
+        assert_eq!(result.max_tokens, Some(1000)); // same in both
+        assert_eq!(result.temperature, None); // different
+        assert_eq!(result.seed, Some(123)); // same in both
+        assert_eq!(result.top_p, None); // different
+    }
+
+    #[test]
+    fn test_apply_intersection() {
+        let mut base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.5),
+            seed: Some(123),
+            top_p: Some(0.8),
+            ..Default::default()
+        };
+
+        let other = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.7),
+            seed: Some(123),
+            top_p: Some(0.9),
+            ..Default::default()
+        };
+
+        base.apply_intersection(&other);
+
+        assert_eq!(base.max_tokens, Some(1000)); // same in both
+        assert_eq!(base.temperature, None); // different
+        assert_eq!(base.seed, Some(123)); // same in both
+        assert_eq!(base.top_p, None); // different
+    }
+
+    #[test]
+    fn test_union_with_none_values() {
+        let base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: None,
+            ..Default::default()
+        };
+
+        let source = LLMParameters {
+            max_tokens: None,
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+
+        let result = base.with_union(&source);
+
+        assert_eq!(result.max_tokens, Some(1000)); // base has value
+        assert_eq!(result.temperature, Some(0.5)); // filled from source
+    }
+
+    #[test]
+    fn test_intersection_with_none_values() {
+        let base = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: None,
+            ..Default::default()
+        };
+
+        let other = LLMParameters {
+            max_tokens: Some(1000),
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+
+        let result = base.with_intersection(&other);
+
+        assert_eq!(result.max_tokens, Some(1000)); // same in both
+        assert_eq!(result.temperature, None); // base is None, so intersection is None
+    }
 }
