@@ -153,14 +153,63 @@ impl LLMParameters {
         self.top_a = self.top_a.or(other.top_a);
     }
 
-    pub(crate) fn with_intersection(mut self, other: &Self) -> Self {
-        // AI!
-        todo!()
+    pub(crate) fn fill_missing_from(&mut self, other: &Self) {
+        self.apply_union(other);
     }
 
-    pub(crate) fn apply_intersection(mut self, other: &Self) {
-        // AI!
-        todo!()
+    pub(crate) fn with_intersection(mut self, other: &Self) -> Self {
+        self.max_tokens = if self.max_tokens == other.max_tokens { self.max_tokens } else { None };
+        self.temperature = if self.temperature == other.temperature { self.temperature } else { None };
+        self.seed = if self.seed == other.seed { self.seed } else { None };
+        self.top_p = if self.top_p == other.top_p { self.top_p } else { None };
+        self.top_k = if self.top_k == other.top_k { self.top_k } else { None };
+        self.frequency_penalty = if self.frequency_penalty == other.frequency_penalty { self.frequency_penalty } else { None };
+        self.presence_penalty = if self.presence_penalty == other.presence_penalty { self.presence_penalty } else { None };
+        self.repetition_penalty = if self.repetition_penalty == other.repetition_penalty { self.repetition_penalty } else { None };
+        self.logit_bias = if self.logit_bias == other.logit_bias { self.logit_bias.clone() } else { None };
+        self.top_logprobs = if self.top_logprobs == other.top_logprobs { self.top_logprobs } else { None };
+        self.min_p = if self.min_p == other.min_p { self.min_p } else { None };
+        self.top_a = if self.top_a == other.top_a { self.top_a } else { None };
+        self
+    }
+
+    pub(crate) fn apply_intersection(&mut self, other: &Self) {
+        if self.max_tokens != other.max_tokens {
+            self.max_tokens = None;
+        }
+        if self.temperature != other.temperature {
+            self.temperature = None;
+        }
+        if self.seed != other.seed {
+            self.seed = None;
+        }
+        if self.top_p != other.top_p {
+            self.top_p = None;
+        }
+        if self.top_k != other.top_k {
+            self.top_k = None;
+        }
+        if self.frequency_penalty != other.frequency_penalty {
+            self.frequency_penalty = None;
+        }
+        if self.presence_penalty != other.presence_penalty {
+            self.presence_penalty = None;
+        }
+        if self.repetition_penalty != other.repetition_penalty {
+            self.repetition_penalty = None;
+        }
+        if self.logit_bias != other.logit_bias {
+            self.logit_bias = None;
+        }
+        if self.top_logprobs != other.top_logprobs {
+            self.top_logprobs = None;
+        }
+        if self.min_p != other.min_p {
+            self.min_p = None;
+        }
+        if self.top_a != other.top_a {
+            self.top_a = None;
+        }
     }
 
     /// Set max tokens parameter - Range: [1, context_length)
