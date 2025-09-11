@@ -129,42 +129,18 @@ impl LLMParameters {
         let other: &Self = other.borrow();
 
 
-        // AI: Change the following to use this pattern
         self.max_tokens = self.max_tokens.or(other.max_tokens);
-        // AI!
-        if self.temperature.is_none() {
-            self.temperature = other.temperature;
-        }
-        if self.seed.is_none() {
-            self.seed = other.seed;
-        }
-        if self.top_p.is_none() {
-            self.top_p = other.top_p;
-        }
-        if self.top_k.is_none() {
-            self.top_k = other.top_k;
-        }
-        if self.frequency_penalty.is_none() {
-            self.frequency_penalty = other.frequency_penalty;
-        }
-        if self.presence_penalty.is_none() {
-            self.presence_penalty = other.presence_penalty;
-        }
-        if self.repetition_penalty.is_none() {
-            self.repetition_penalty = other.repetition_penalty;
-        }
-        if self.logit_bias.is_none() {
-            self.logit_bias = other.logit_bias.clone();
-        }
-        if self.top_logprobs.is_none() {
-            self.top_logprobs = other.top_logprobs;
-        }
-        if self.min_p.is_none() {
-            self.min_p = other.min_p;
-        }
-        if self.top_a.is_none() {
-            self.top_a = other.top_a;
-        }
+        self.temperature = self.temperature.or(other.temperature);
+        self.seed = self.seed.or(other.seed);
+        self.top_p = self.top_p.or(other.top_p);
+        self.top_k = self.top_k.or(other.top_k);
+        self.frequency_penalty = self.frequency_penalty.or(other.frequency_penalty);
+        self.presence_penalty = self.presence_penalty.or(other.presence_penalty);
+        self.repetition_penalty = self.repetition_penalty.or(other.repetition_penalty);
+        self.logit_bias = self.logit_bias.clone().or_else(|| other.logit_bias.clone());
+        self.top_logprobs = self.top_logprobs.or(other.top_logprobs);
+        self.min_p = self.min_p.or(other.min_p);
+        self.top_a = self.top_a.or(other.top_a);
     }
 
     /// Set max tokens parameter - Range: [1, context_length)
