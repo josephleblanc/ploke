@@ -3,9 +3,10 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{registry::user_prefs::DEFAULT_MODEL, Author, IdError, ModelSlug};
+use crate::llm2::{Author, IdError, ModelSlug, registry::user_prefs::DEFAULT_MODEL};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "&str")]
 pub(crate) struct ModelKey {
     pub(crate) author: Author,  // e.g. "openai", "nousresearch"
     pub(crate) slug: ModelSlug, // e.g. "gpt-5", "deephermes-3-llama-3-8b-preview"
@@ -17,9 +18,26 @@ impl Default for ModelKey {
         DEFAULT_MODEL.clone()
     }
 }
+impl<'a> TryFrom<&'a str> for ModelKey {
+    type Error = IdError;
 
+    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
+        let (author, slug) = s
+            .split_once('/')
+            .ok_or(IdError::Invalid("missing '/' in ModelKey"))?;
+        if slug.contains(':') {
+            return Err(IdError::Invalid("ModelKey has unexpected ':', perhaps you meant to use ModelId?"))
+        }
+        Ok(ModelKey {
+            author: Author::new(author)?,
+            slug: ModelSlug::new(slug)?,
+        })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+// AI: is there some way to leverage `FromStr` in serde if I want this to deserialize things like
+// "deepseek/deepseek-v3" and "deepseek/deepseek-v3:free" AI?
 pub(crate) struct ModelId {
     pub(crate) key: ModelKey,
     pub(crate) variant: Option<ModelVariant>,
@@ -111,5 +129,50 @@ impl FromStr for ModelId {
                 other => ModelVariant::Other(ArcStr::from(other)),
             }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_key_from_author_slug_valid() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_from_string_valid() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_from_string_invalid_format() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_from_string_whitespace_handling() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_author_slug_validation() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_variant_simple() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_variant_empty() {
+        todo!()
+    }
+
+    #[test]
+    fn test_model_key_variant_unknown() {
+        todo!()
     }
 }
