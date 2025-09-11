@@ -84,26 +84,45 @@ impl LLMParameters {
     }
 
     pub(crate) fn apply_overrides(&mut self, other: &Self) {
-        self.max_tokens = other.max_tokens.or(self.max_tokens);
-        self.temperature = other.temperature.or(self.temperature);
-        self.seed = other.seed.or(self.seed);
-        self.top_p = other.top_p.or(self.top_p);
-        self.top_k = other.top_k.or(self.top_k);
-        self.frequency_penalty = other.frequency_penalty.or(self.frequency_penalty);
-        self.presence_penalty = other.presence_penalty.or(self.presence_penalty);
-        self.repetition_penalty = other.repetition_penalty.or(self.repetition_penalty);
-        self.logit_bias = other.logit_bias.clone().or_else(|| self.logit_bias.clone());
-        self.top_logprobs = other.top_logprobs.or(self.top_logprobs);
-        self.min_p = other.min_p.or(self.min_p);
-        self.top_a = other.top_a.or(self.top_a);
+        if let Some(max_tokens) = other.max_tokens {
+            self.max_tokens = Some(max_tokens);
+        }
+        if let Some(temperature) = other.temperature {
+            self.temperature = Some(temperature);
+        }
+        if let Some(seed) = other.seed {
+            self.seed = Some(seed);
+        }
+        if let Some(top_p) = other.top_p {
+            self.top_p = Some(top_p);
+        }
+        if let Some(top_k) = other.top_k {
+            self.top_k = Some(top_k);
+        }
+        if let Some(frequency_penalty) = other.frequency_penalty {
+            self.frequency_penalty = Some(frequency_penalty);
+        }
+        if let Some(presence_penalty) = other.presence_penalty {
+            self.presence_penalty = Some(presence_penalty);
+        }
+        if let Some(repetition_penalty) = other.repetition_penalty {
+            self.repetition_penalty = Some(repetition_penalty);
+        }
+        if let Some(logit_bias) = other.logit_bias.as_ref() {
+            self.logit_bias = Some(logit_bias.clone());
+        }
+        if let Some(top_logprobs) = other.top_logprobs {
+            self.top_logprobs = Some(top_logprobs);
+        }
+        if let Some(min_p) = other.min_p {
+            self.min_p = Some(min_p);
+        }
+        if let Some(top_a) = other.top_a {
+            self.top_a = Some(top_a);
+        }
     }
 
-    pub(crate) fn fill_missing_from<T>(&mut self, other: T)
-    where
-        T: Borrow<Self>,
-    {
-        let other: &Self = other.borrow();
-
+    pub(crate) fn with_union(mut self, other: &Self) -> Self {
         self.max_tokens = self.max_tokens.or(other.max_tokens);
         self.temperature = self.temperature.or(other.temperature);
         self.seed = self.seed.or(other.seed);
@@ -116,6 +135,32 @@ impl LLMParameters {
         self.top_logprobs = self.top_logprobs.or(other.top_logprobs);
         self.min_p = self.min_p.or(other.min_p);
         self.top_a = self.top_a.or(other.top_a);
+        self
+    }
+
+    pub(crate) fn apply_union(&mut self, other: &Self) {
+        self.max_tokens = self.max_tokens.or(other.max_tokens);
+        self.temperature = self.temperature.or(other.temperature);
+        self.seed = self.seed.or(other.seed);
+        self.top_p = self.top_p.or(other.top_p);
+        self.top_k = self.top_k.or(other.top_k);
+        self.frequency_penalty = self.frequency_penalty.or(other.frequency_penalty);
+        self.presence_penalty = self.presence_penalty.or(other.presence_penalty);
+        self.repetition_penalty = self.repetition_penalty.or(other.repetition_penalty);
+        self.logit_bias = self.logit_bias.clone().or_else(|| other.logit_bias.clone());
+        self.top_logprobs = self.top_logprobs.or(other.top_logprobs);
+        self.min_p = self.min_p.or(other.min_p);
+        self.top_a = self.top_a.or(other.top_a);
+    }
+
+    pub(crate) fn with_intersection(mut self, other: &Self) -> Self {
+        // AI!
+        todo!()
+    }
+
+    pub(crate) fn apply_intersection(mut self, other: &Self) {
+        // AI!
+        todo!()
     }
 
     /// Set max tokens parameter - Range: [1, context_length)
