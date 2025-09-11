@@ -131,8 +131,39 @@ impl LLMParameters {
         if self.max_tokens.is_none() {
             self.max_tokens = other.max_tokens;
         }
-
-        // Fill in the rest AI!
+        if self.temperature.is_none() {
+            self.temperature = other.temperature;
+        }
+        if self.seed.is_none() {
+            self.seed = other.seed;
+        }
+        if self.top_p.is_none() {
+            self.top_p = other.top_p;
+        }
+        if self.top_k.is_none() {
+            self.top_k = other.top_k;
+        }
+        if self.frequency_penalty.is_none() {
+            self.frequency_penalty = other.frequency_penalty;
+        }
+        if self.presence_penalty.is_none() {
+            self.presence_penalty = other.presence_penalty;
+        }
+        if self.repetition_penalty.is_none() {
+            self.repetition_penalty = other.repetition_penalty;
+        }
+        if self.logit_bias.is_none() {
+            self.logit_bias = other.logit_bias.clone();
+        }
+        if self.top_logprobs.is_none() {
+            self.top_logprobs = other.top_logprobs;
+        }
+        if self.min_p.is_none() {
+            self.min_p = other.min_p;
+        }
+        if self.top_a.is_none() {
+            self.top_a = other.top_a;
+        }
     }
 
     /// Set max tokens parameter - Range: [1, context_length)
