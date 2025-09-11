@@ -62,6 +62,9 @@ pub(crate) struct ModelCache {
     last_update: u32,
 }
 
+// AI: we need to implement a custom version of Serialize for `ModelCache` as well, due to the
+// `Arc<models::ResponseItem>` AI!
+
 impl<'de> Deserialize<'de> for ModelCache {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
