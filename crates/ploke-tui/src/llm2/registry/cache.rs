@@ -28,6 +28,8 @@ pub(crate) struct EndpointCache {
     last_update: u32,
 }
 
+// AI: implement a custom `Serialize` and `Deserialize` for `EndpointCache` AI!
+
 impl EndpointCache {
     /// Create a new endpoint cache with default TTL (30 minutes)
     pub(crate) fn new() -> Self {
@@ -47,11 +49,14 @@ impl EndpointCache {
         }
     }
 }
+
+
+
 /// Cache for items from OpenRouter's `/models` endpoint
 // - Later will add other endpoints and make a generic set of items that should be included across
 // different routers/providers, maybe with extra fields per-router
 // - Serialize/Deserialize for persistence via local saved `.json`
-#[derive(Serialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct ModelCache {
     /// Keyed by {author}/{slug}, differentiate on optional `:{variant}` by checking
     /// `id` of `models::ResponseItem`
@@ -235,7 +240,7 @@ impl ApiCache for EndpointCache {
                 endpoints,
             } = er.data;
             self.cache_mut().entry(id.key).and_modify(|entry| {
-                entry.extend(endpoints.into_iter().map(|ep| Arc::new(ep)));
+                entry.extend(endpoints.into_iter().map(Arc::new));
             });
         }
         self.touch();
