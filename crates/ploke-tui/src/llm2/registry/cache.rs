@@ -62,8 +62,31 @@ pub(crate) struct ModelCache {
     last_update: u32,
 }
 
-// AI: we need to implement a custom version of Serialize for `ModelCache` as well, due to the
-// `Arc<models::ResponseItem>` AI!
+impl Serialize for ModelCache {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct ModelCacheHelper<'a> {
+            cache: HashMap<&'a ModelKey, &'a models::ResponseItem>,
+            ttl: Duration,
+            last_update: u32,
+        }
+
+        let helper = ModelCacheHelper {
+            cache: self
+                .cache
+                .iter()
+                .map(|(key, value)| (key, value.as_ref()))
+                .collect(),
+            ttl: self.ttl,
+            last_update: self.last_update,
+        };
+
+        helper.serialize(serializer)
+    }
+}
 
 impl<'de> Deserialize<'de> for ModelCache {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
