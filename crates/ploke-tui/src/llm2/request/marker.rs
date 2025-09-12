@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 // Marker for response_format -> { "type": "json_object" }
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JsonObjMarker;
 
 impl Serialize for JsonObjMarker {
@@ -15,3 +15,5 @@ impl Serialize for JsonObjMarker {
         map.end()
     }
 }
+
+// AI: implement a custom Deserialize AI!
