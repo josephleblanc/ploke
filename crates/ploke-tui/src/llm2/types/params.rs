@@ -550,4 +550,6 @@ mod tests {
         assert_eq!(result.max_tokens, Some(1000)); // same in both
         assert_eq!(result.temperature, None); // base is None, so intersection is None
     }
+
+    // AI: add tests for roundtrip serialization AI!
 }
