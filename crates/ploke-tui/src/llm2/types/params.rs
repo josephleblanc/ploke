@@ -551,5 +551,55 @@ mod tests {
         assert_eq!(result.temperature, None); // base is None, so intersection is None
     }
 
-    // AI: add tests for roundtrip serialization AI!
+    #[test]
+    fn test_serialization_roundtrip_default() -> Result<()> {
+        let params = LLMParameters::default();
+        let json = serde_json::to_string(&params)?;
+        let deserialized: LLMParameters = serde_json::from_str(&json)?;
+        assert_eq!(params, deserialized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialization_roundtrip_with_values() -> Result<()> {
+        let params = LLMParameters {
+            max_tokens: Some(1024),
+            temperature: Some(0.8),
+            seed: Some(12345),
+            top_p: Some(0.9),
+            top_k: Some(50.0),
+            frequency_penalty: Some(0.5),
+            presence_penalty: Some(0.3),
+            repetition_penalty: Some(1.1),
+            logit_bias: {
+                let mut map = BTreeMap::new();
+                map.insert(1, 0.5);
+                map.insert(2, -0.3);
+                Some(map)
+            },
+            top_logprobs: Some(5),
+            min_p: Some(0.1),
+            top_a: Some(0.2),
+        };
+        let json = serde_json::to_string(&params)?;
+        let deserialized: LLMParameters = serde_json::from_str(&json)?;
+        assert_eq!(params, deserialized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialization_skips_none_values() -> Result<()> {
+        let params = LLMParameters {
+            max_tokens: Some(100),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&params)?;
+        assert!(!json.contains("temperature"));
+        assert!(!json.contains("seed"));
+        assert!(json.contains("max_tokens"));
+        
+        let deserialized: LLMParameters = serde_json::from_str(&json)?;
+        assert_eq!(params, deserialized);
+        Ok(())
+    }
 }
