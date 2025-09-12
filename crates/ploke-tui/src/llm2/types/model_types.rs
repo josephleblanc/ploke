@@ -17,9 +17,7 @@ pub(crate) struct ModelKey {
 
 impl Display for ModelKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // AI: implement display so `ModelKey` becomes "{author}/{slug}",
-        // e.g. "deepseek/deepseek-r1" AI!
-        todo!()
+        write!(f, "{}/{}", self.author.as_str(), self.slug.as_str())
     }
 }
 
