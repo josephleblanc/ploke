@@ -5,8 +5,8 @@ use std::sync::Arc;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::llm2::types::model_types::Architecture;
 use crate::llm2::types::newtypes::EndpointTag;
-use crate::llm2::types::Architecture;
 use crate::llm2::Quant;
 use crate::llm2::*;
 use crate::llm2::router_only::openrouter::providers::{ProviderName, ProviderSlug};

@@ -216,7 +216,13 @@ pub(crate) struct EndpointKey {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::str::FromStr;
 
+    use crate::llm2::ModelId;
+    use crate::llm2::types::model_types::ModelVariant;
+
+    // TODO:
     // add a helper macro for testing
     #[test]
     fn test_model_id_basic() {
@@ -224,6 +230,17 @@ mod tests {
         //
         // "google/gemma-2-9b-it"
         // "qwen/qwen-plus-2025-07-28"
+        let m1 = ModelId::from_str("google/gemma-2-9b-it").expect("parse m1");
+        assert_eq!(m1.to_string(), "google/gemma-2-9b-it");
+        assert!(m1.variant.is_none());
+        assert_eq!(m1.key.author.as_str(), "google");
+        assert_eq!(m1.key.slug.as_str(), "gemma-2-9b-it");
+
+        let m2 = ModelId::from_str("qwen/qwen-plus-2025-07-28").expect("parse m2");
+        assert_eq!(m2.to_string(), "qwen/qwen-plus-2025-07-28");
+        assert!(m2.variant.is_none());
+        assert_eq!(m2.key.author.as_str(), "qwen");
+        assert_eq!(m2.key.slug.as_str(), "qwen-plus-2025-07-28");
     }
     #[test]
     fn test_model_id_variants() {
@@ -231,31 +248,70 @@ mod tests {
         //
         // "google/gemma-2-9b-it:free"
         // "qwen/qwen-plus-2025-07-28:thinking"
+        let m1 = ModelId::from_str("google/gemma-2-9b-it:free").expect("parse m1 variant");
+        assert_eq!(m1.to_string(), "google/gemma-2-9b-it:free");
+        assert_eq!(m1.key.author.as_str(), "google");
+        assert_eq!(m1.key.slug.as_str(), "gemma-2-9b-it");
+        assert!(matches!(m1.variant, Some(ModelVariant::Free)));
+
+        let m2 = ModelId::from_str("qwen/qwen-plus-2025-07-28:thinking").expect("parse m2 variant");
+        assert_eq!(m2.to_string(), "qwen/qwen-plus-2025-07-28:thinking");
+        assert_eq!(m2.key.author.as_str(), "qwen");
+        assert_eq!(m2.key.slug.as_str(), "qwen-plus-2025-07-28");
+        assert!(matches!(m2.variant, Some(ModelVariant::Thinking)));
     }
 
     #[test]
     fn test_model_id_trim() {
         // Add tests for `ModelId` from the following items:
+        let m1 = ModelId::from_str("  google/gemma-2-9b-it  ").expect("parse trimmed m1");
+        assert_eq!(m1.to_string(), "google/gemma-2-9b-it");
+        assert!(m1.variant.is_none());
+
+        let m2 = ModelId::from_str("	qwen/qwen-plus-2025-07-28:beta  
+").expect("parse trimmed m2");
+        assert_eq!(m2.to_string(), "qwen/qwen-plus-2025-07-28:beta");
+        assert!(matches!(m2.variant, Some(ModelVariant::Beta)));
     }
 
     #[test]
     fn test_model_id_empty() {
         // Add tests for `ModelId` from the following items:
+        assert!(ModelId::from_str("").is_err());
+        assert!(ModelId::from_str("   ").is_err());
+        assert!(ModelId::from_str("openai/").is_err()); // missing slug
+        assert!(ModelId::from_str("/gpt-4").is_err()); // missing author
     }
 
     #[test]
     fn test_model_id_invalid() {
         // Add tests for `ModelId` from the following items:
+        assert!(ModelId::from_str("open ai/gpt-4").is_err()); // space in author
+        assert!(ModelId::from_str("openai/gpt 4").is_err()); // space in slug
+        assert!(ModelId::from_str("not-a-model-id").is_err()); // missing '/'
     }
 
     #[test]
     fn test_model_ids_from_file() {
         use ploke_test_utils::workspace_root;
-        use crate::llm2::router_only::MODELS_JSON_IDS;
+        use crate::llm2::router_only::MODELS_TXT_IDS;
 
         // text file with strings of serialized ModelId split by newlines
-        let text_file = MODELS_JSON_IDS;
+        let text_file = MODELS_TXT_IDS;
         // The file
         // Add tests for `ModelId` for all items in the file
+        let mut path = workspace_root();
+        path.push(text_file);
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
+
+        for (idx, raw) in content.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            let parsed = ModelId::from_str(line)
+                .unwrap_or_else(|e| panic!("failed to parse line {} ({}): {}", idx + 1, line, e));
+            assert_eq!(parsed.to_string(), line, "roundtrip display should match input");
+        }
     }
 }
+

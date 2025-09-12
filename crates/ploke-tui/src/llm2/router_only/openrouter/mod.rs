@@ -103,7 +103,7 @@ impl From<ModelId> for OpenRouterModelId {
         let ModelId { key, variant } = m;
         Self {
             key,
-            variant: variant.map(|v| OpenRouterModelVariant::from(v)),
+            variant: variant.map(OpenRouterModelVariant::from),
         }
     }
 }

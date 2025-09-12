@@ -1,10 +1,10 @@
+#![cfg(feature = "live_api_tests")]
 use std::io::prelude::*;
 use std::{collections::HashSet, fs::File, time::Duration};
 
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 
-pub const REL_MODEL_ID_DATA: &str = "crates/ploke-tui/data/models/ids.txt";
 pub const REL_MODEL_NAME_DATA: &str = "crates/ploke-tui/data/models/names.txt";
 pub const REL_MODEL_PROVIDER_DATA: &str = "crates/ploke-tui/data/models/providers.txt";
 pub const REL_MODEL_CAPABILITIES_DATA: &str = "crates/ploke-tui/data/models/capabilities.txt";
@@ -16,7 +16,6 @@ pub const REL_MODEL_ALL_DATA_RAW: &str = "crates/ploke-tui/data/models/all_raw.j
 pub const REL_MODEL_ALL_DATA_RAW_EP: &str = "crates/ploke-tui/data/models/all_raw_ep.json";
 pub const REL_MODEL_ALL_DATA_STATS: &str = "crates/ploke-tui/data/models/all_raw_stats.txt";
 
-#[cfg(feature = "live_api_tests")]
 mod tests {
     use crate::llm2::SupportsTools;
     use ploke_core::ArcStr;
@@ -33,7 +32,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        REL_MODEL_ALL_DATA, REL_MODEL_ID_DATA, REL_MODEL_NAME_DATA,
+        REL_MODEL_ALL_DATA, REL_MODEL_NAME_DATA,
         REL_MODEL_SUPPORTED_PARAMETERS_DATA, REL_MODEL_SUPPORTS_TOOLS_DATA,
     };
     use crate::llm2::ModelId;
@@ -171,10 +170,11 @@ mod tests {
         };
     }
 
+    use crate::llm2::router_only::MODELS_TXT_IDS;
     generate_model_field_test!(
         flakey_openrouter_model_ids,
         |m: models::ResponseItem| Some(m.id.to_string()),
-        REL_MODEL_ID_DATA
+        MODELS_TXT_IDS
     );
     generate_model_field_test!(
         flakey_openrouter_model_names,

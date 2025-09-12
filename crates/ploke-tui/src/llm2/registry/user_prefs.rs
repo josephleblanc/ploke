@@ -9,38 +9,6 @@ use crate::llm2::{
     types::model_types::ModelVariant,
 };
 
-async fn testing_out_tokio() {
-    let (tx1, mut rx1) = tokio::sync::mpsc::channel(2);
-    test_sender(tx1);
-
-    let maybe_twelve = rx1.recv().await;
-
-    println!("{:?}", maybe_twelve);
-}
-
-async fn test_sender(
-    tx1: tokio::sync::mpsc::Sender<i32>,
-) {
-    let x = 1;
-    let y = 2;
-    
-    let (tx2, mut rx2) = tokio::sync::mpsc::channel(2);
-    tokio::task::spawn(async move {
-        let z = x + y;
-        let send_result = tx2.send(z);
-    });
-
-    let a = 4;
-    let b = 5;
-    tokio::task::spawn(async move {
-        let c = a + b;
-        let three = rx2.recv().await.unwrap();
-
-        let twelve = c + three;
-        _ = tx1.send(twelve);
-    });
-}
-
 pub(crate) static DEFAULT_MODEL: Lazy<ModelKey> = Lazy::new(|| ModelKey {
     author: Author::new("moonshotai").expect("author"),
     slug: ModelSlug::new("kimi-k2").expect("model slug"),

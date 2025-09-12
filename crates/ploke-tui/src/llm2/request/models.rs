@@ -1,4 +1,23 @@
 #![allow(clippy::bool_assert_comparison)]
+// The Response parsed from API endpoints for the list of models served,
+// e.g. for openrouter this is: `https://openrouter.ai/api/v1/models`
+//
+// ## Re: Tests
+// Tests on structs in fields are noted below:
+//  - `llm2::types::model_types`
+//      - `ModelId`
+//      - `Architecture`
+//  - `llm2::router_only::openrouter`
+//      - `TopProvider` (todo)
+//  - `llm2::request`
+//      - `ModelPricing`
+//  - `llm2::types::enums`
+//      - `SupportedParameters`
+//
+//  The other fields are basic types, and `ArcStr` will have its own tests in `ploke_core`.
+//  As for all the types listed above, they have tests for their properties as well as reading
+//  recorded responses from the `/models` endpoint written to files, as well as tests for
+//  deserialization.
 use std::collections::HashMap;
 
 use ploke_core::ArcStr;
@@ -8,9 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     llm::openrouter_catalog::ModelsResponse,
     llm2::{
-        ModelId, SupportedParameters, SupportsTools,
-        router_only::{HasModelId, openrouter::TopProvider},
-        types::Architecture,
+        router_only::{openrouter::TopProvider, HasModelId}, types::model_types::Architecture, ModelId, SupportedParameters, SupportsTools
     },
 };
 
@@ -61,6 +78,9 @@ pub(crate) struct ResponseItem {
     /// - but also possible: deepseek/deepseek-chat-v3.1:free
     pub(crate) id: ModelId,
     /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
+    /// Examples from responses to OpenRouter API:
+    /// id -    "qwen/qwen3-next-80b-a3b-thinking",
+    /// name -  "Qwen: Qwen3 Next 80B A3B Thinking"
     pub(crate) name: ArcStr,
     /// Unix timestamp, e.g. 1755779628
     // TODO: Get serde to deserialize into proper type

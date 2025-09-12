@@ -1,12 +1,10 @@
 //! Router-specific implementations
 
-mod cli;
+pub(super) mod cli;
 pub(crate) mod openrouter;
-pub(crate) use cli::{ 
-    COMPLETION_JSON_SIMPLE_DIR,
-    MODELS_JSON_IDS,
-    MODELS_JSON_RAW,
-    ENDPOINTS_JSON_DIR
+pub(crate) use cli::{
+    COMPLETION_JSON_SIMPLE_DIR, ENDPOINTS_JSON_DIR, MODELS_JSON_ARCH, MODELS_JSON_PRICING,
+    MODELS_JSON_RAW, MODELS_TXT_IDS, MODELS_JSON_ID_NOT_NAME
 };
 
 use crate::llm2::manager::RequestMessage;
@@ -146,6 +144,7 @@ pub(crate) trait Router:
     /// {author}/{model}:{variant}, where the `:{variant}` is optional, e.g.
     /// - deepseek/deepseek-v3.1
     /// - deepseek/deepseek-v3.1:free
+    ///
     /// See `OpenRouterVariants` and `RouterVariants` enums for possible values.
     type RouterModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
     // This is where we would put other differentiating items, for example if there are
@@ -168,7 +167,7 @@ pub(crate) trait Router:
     /// - "endpoints"
     /// - For e.g. OpenRouter becomes:
     ///     - "https://openrouter.ai/api/v1/models/{author}/{model}:{variant}/endpoints", where
-    ///     `:{variant}` is optional, see note on `ChatCompletionFields` above
+    ///       `:{variant}` is optional, see note on `ChatCompletionFields` above
     const ENDPOINTS_TAIL: &str;
     /// The expected name of the API key as in an exported env variable, e.g.
     /// - "OPENROUTER_API_KEY"
@@ -224,6 +223,8 @@ pub(crate) trait Router:
     }
 }
 
+// TODO: Consider deleting this. Kind of a weird pattern. Currently used in
+// `llm2::manager::session` module/file
 pub(crate) trait ApiRoute: Sized + Default + Serialize {
     type Parent: TryFrom<RouterVariants> + Into<RouterVariants> + Default;
     fn parent() -> Self::Parent {
@@ -232,52 +233,6 @@ pub(crate) trait ApiRoute: Sized + Default + Serialize {
     fn router_variant() -> RouterVariants {
         Self::parent().into()
     }
-    // fn completion_all_fields(
-    //     self,
-    //     core: ChatCompReqCore,
-    //     tools: Option<Vec<ToolDefinition>>,
-    //     llm_params: LLMParameters,
-    //     tool_choice: Option<ToolChoice>,
-    // ) -> ChatCompRequest<Self> {
-    //     ChatCompRequest::<Self> {
-    //         model_key: Some(core.model.key.clone()),
-    //         core,
-    //         llm_params,
-    //         tools,
-    //         tool_choice,
-    //         router: self,
-    //     }
-    // }
-    // fn completion_core(self, core: ChatCompReqCore) -> ChatCompRequest<Self> {
-    //     ChatCompRequest::<Self> {
-    //         model_key: Some(core.model.key),
-    //         router: self,
-    //         ..Default::default()
-    //     }
-    // }
-    // fn completion_core_with_params(
-    //     self,
-    //     llm_params: LLMParameters,
-    //     core: ChatCompReqCore,
-    // ) -> ChatCompRequest<Self> {
-    //     ChatCompRequest::<Self> {
-    //         model_key: Some(core.model.key),
-    //         llm_params,
-    //         router: self,
-    //         ..Default::default()
-    //     }
-    // }
-    // fn completion_core_with_tools(
-    //     self,
-    //     core: ChatCompReqCore,
-    //     tools: Option<Vec<ToolDefinition>>,
-    // ) -> ChatCompRequest<Self> {
-    //     ChatCompRequest::<Self> {
-    //         model_key: Some(core.model.key),
-    //         router: self,
-    //         ..Default::default()
-    //     }
-    // }
 }
 use serde_json::{Value, json};
 use std::{str::FromStr as _, sync::OnceLock};
@@ -323,18 +278,6 @@ where
     /// using this `ModelKey` would remove this distinction in requests.
     #[serde(skip, default)]
     pub(crate) model_key: Option<ModelKey>,
-    // Trying a new pattern where these are contained in ChatCompReqCore
-    //
-    // #[serde(default = "default_messages")]
-    // pub(crate) messages: Vec<RequestMessage>,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub(crate) prompt: Option<String>,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub(crate) response_format: Option<JsonObjMarker>,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub(crate) stop: Option<Vec<String>>,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub(crate) stream: Option<bool>,
     /// Core copletion request items that are common to all routers. This field is flattened into
     /// `ChatCompReq` so the common fields appear in the json request as fields of
     /// `ChatCompRequest`, kept separate here for modularization of different kinds of parameters
@@ -387,7 +330,7 @@ where
     }
 
     pub(crate) fn with_params_union(mut self, prefs: &RegistryPrefs) -> Self {
-        let model_prefs = self.model_key.as_ref().and_then(|m| prefs.models.get(&m));
+        let model_prefs = self.model_key.as_ref().and_then(|m| prefs.models.get(m));
         if let Some(pref) = model_prefs.and_then(|mp| mp.get_default_profile()) {
             self.llm_params.apply_union(&pref.params);
         }
@@ -567,21 +510,142 @@ mod tests {
         println!("{j}");
     }
 
+    fn parse_with_env(response_json: &str) -> Result<()> {
+        use ploke_test_utils::workspace_root;
+
+        use crate::llm2::router_only::cli::{
+            MODELS_JSON_ARCH, MODELS_JSON_RAW, MODELS_JSON_RAW_PRETTY, MODELS_JSON_SUPPORTED, MODELS_JSON_TOP, MODELS_TXT_CANON, MODELS_TXT_IDS
+        };
+
+        let mut dir = workspace_root();
+        let parsed: models::Response = serde_json::from_str(response_json)?;
+
+        let env_string = std::env::var("WRITE_MODE").unwrap_or_default();
+        if ["raw", "all"].contains(&env_string.as_str()) {
+            dir.push(MODELS_JSON_RAW);
+            println!("Writing '/models' raw response to:\n{}", dir.display());
+            std::fs::write(dir, response_json)?;
+        }
+        if ["raw_pretty", "all"].contains(&env_string.as_str()) {
+            let mut dir = workspace_root();
+            let raw_pretty = serde_json::Value::from_str(response_json)?;
+            let pretty = serde_json::to_string_pretty(&raw_pretty)?;
+            dir.push(MODELS_JSON_RAW_PRETTY);
+            println!("Writing '/models' raw response to:\n{}", dir.display());
+            std::fs::write(dir, &pretty)?;
+        }
+
+        write_response(&env_string, &parsed)?;
+
+        if env_string == "all" {
+            for op in ["id", "arch", "top", "pricing"] {
+                write_response(op, &parsed)?;
+            }
+        }
+
+        fn write_response(env_str: &str, parsed: &models::Response) -> Result<()> {
+            let mut dir = workspace_root();
+            match env_str {
+                "id" => {
+                    let names = parsed.data.iter().map(|r| r.id.to_string()).join("\n");
+                    dir.push(MODELS_TXT_IDS);
+                    println!(
+                        "Writing '/models' id fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &names)?;
+                }
+                "arch" => {
+                    let architecture = parsed
+                        .data
+                        .iter()
+                        .map(|r| r.architecture.clone())
+                        .collect_vec();
+                    let pretty_arch = serde_json::to_string_pretty(&architecture)?;
+                    dir.push(MODELS_JSON_ARCH);
+                    println!(
+                        "Writing '/models' architecture fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &pretty_arch)?;
+                }
+                "top" => {
+                    let top_provider = parsed
+                        .data
+                        .iter()
+                        .map(|r| r.top_provider.clone())
+                        .collect_vec();
+                    let pretty_arch = serde_json::to_string_pretty(&top_provider)?;
+                    dir.push(MODELS_JSON_TOP);
+                    println!(
+                        "Writing '/models' top_provider fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &pretty_arch)?;
+                }
+                "pricing" => {
+                    let pricing = parsed.data.iter().map(|r| r.pricing).collect_vec();
+                    let pretty_pricing = serde_json::to_string_pretty(&pricing)?;
+                    dir.push(MODELS_JSON_PRICING);
+                    println!(
+                        "Writing '/models' pricing fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &pretty_pricing)?;
+                }
+                "supported" => {
+                    let supported = parsed
+                        .data
+                        .iter()
+                        .map(|r| r.supported_parameters.clone())
+                        .collect_vec();
+                    let pretty_supported = serde_json::to_string_pretty(&supported)?;
+                    dir.push(MODELS_JSON_SUPPORTED);
+                    println!(
+                        "Writing '/models' supported fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &pretty_supported)?;
+                }
+                "canon" => {
+                    let canon = parsed.data.iter()
+                        .filter_map(|r| r.canonical.as_ref().map(|c| c.to_string())).join("\n");
+                    dir.push(MODELS_TXT_CANON);
+                    println!(
+                        "Writing '/models' canon fields response to:\n{}",
+                        dir.display()
+                    );
+                    std::fs::write(dir, &canon)?;
+                }
+                "all" => { /* handled above, just avoiding print below */ }
+                "raw" => { /* handled above, just avoiding print below */ }
+                "raw_pretty" => { /* handled above, just avoiding print below */ }
+                s => {
+                    println!("
+Unkown command: {s}\nvalid choices:\n\traw\n\tall\n\tid\n\tarch\n\ttop
+\tpricing\n\tcanon\n"
+                    );
+                }
+            }
+            Ok(())
+        }
+        Ok(())
+    }
+
     use color_eyre::Result;
+    use ploke_test_utils::workspace_root;
     use reqwest::Client;
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_simple_query_models() -> Result<()> {
-        use ploke_test_utils::workspace_root;
-
-        use crate::llm2::router_only::cli::{MODELS_JSON_IDS, MODELS_JSON_RAW};
 
         let url = OpenRouter::MODELS_URL;
-        let key = OpenRouter::resolve_api_key()?;
+        // let key = OpenRouter::resolve_api_key()?;
 
         let response = Client::new()
             .get(url)
-            .bearer_auth(key)
+            // auth not required for this request
+            // .bearer_auth(key)
             .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
             .send()
             .await
@@ -589,23 +653,30 @@ mod tests {
 
         let response_json = response.text().await?;
 
-        if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
-            let mut dir = workspace_root();
-            dir.push(MODELS_JSON_RAW);
-            println!("Writing '/models' raw response to:\n{}", dir.display());
-            std::fs::write(dir, &response_json)?;
+        parse_with_env(&response_json)?;
 
-            let parsed: models::Response = serde_json::from_str(&response_json)?;
+        Ok(())
+    }
 
-            let names = parsed.data.iter().map(|r| r.id.to_string()).join("\n");
-            let mut dir = workspace_root();
-            dir.push(MODELS_JSON_IDS);
-            println!("Writing '/models' id fields response to:\n{}", dir.display());
-            std::fs::write(dir, &names)?;
+    #[test]
+    fn test_names_vs_ids() -> Result<()> {
+        let mut in_file = workspace_root();
+        in_file.push(MODELS_JSON_RAW);
+        let mut out_file = workspace_root();
+        out_file.push( MODELS_JSON_ID_NOT_NAME );
 
-        }
+        let s = std::fs::read_to_string(in_file)?;
 
+        let mr: models::Response = serde_json::from_str(&s)?;
 
+        let not_equal = mr.into_iter()
+            .map(|i| ( i.id.key.to_string(), i.name.to_string() )  )
+            .filter(|(k, n)| k != n)
+            .collect_vec()
+        ;
+        let pretty = serde_json::to_string_pretty(&not_equal)?;
+
+        std::fs::write(out_file, pretty)?;
         Ok(())
     }
 
@@ -713,7 +784,7 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn test_default_post_completions() -> Result<()> {
-        use crate::llm2::{router_only::cli::COMPLETION_JSON_SIMPLE_DIR, ModelId};
+        use crate::llm2::{ModelId, router_only::cli::COMPLETION_JSON_SIMPLE_DIR};
         use openrouter::OpenRouterModelId;
         use std::path::PathBuf;
 
