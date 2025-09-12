@@ -1,15 +1,26 @@
 use ploke_core::ArcStr;
-use std::{fmt, str::FromStr};
+use std::{fmt::{self, Display}, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{Author, IdError, ModelSlug, registry::user_prefs::DEFAULT_MODEL};
+use crate::llm2::{
+    Author, IdError, InputModality, InstructType, Modality, ModelSlug, OutputModality, Tokenizer,
+    registry::user_prefs::DEFAULT_MODEL,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "&str")]
 pub(crate) struct ModelKey {
     pub(crate) author: Author,  // e.g. "openai", "nousresearch"
     pub(crate) slug: ModelSlug, // e.g. "gpt-5", "deephermes-3-llama-3-8b-preview"
+}
+
+impl Display for ModelKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // AI: implement display so `ModelKey` becomes "{author}/{slug}",
+        // e.g. "deepseek/deepseek-r1" AI!
+        todo!()
+    }
 }
 
 impl Default for ModelKey {
@@ -26,7 +37,9 @@ impl<'a> TryFrom<&'a str> for ModelKey {
             .split_once('/')
             .ok_or(IdError::Invalid("missing '/' in ModelKey"))?;
         if slug.contains(':') {
-            return Err(IdError::Invalid("ModelKey has unexpected ':', perhaps you meant to use ModelId?"))
+            return Err(IdError::Invalid(
+                "ModelKey has unexpected ':', perhaps you meant to use ModelId?",
+            ));
         }
         Ok(ModelKey {
             author: Author::new(author)?,
@@ -140,47 +153,329 @@ impl FromStr for ModelId {
     }
 }
 
+/// Architecture details of a model, including input/output modalities and tokenizer info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Architecture {
+    /// Input modalities supported by this model (text, image, audio, video).
+    pub input_modalities: Vec<InputModality>,
+    pub modality: Modality,
+    pub output_modalities: Vec<OutputModality>,
+    pub tokenizer: Tokenizer,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruct_type: Option<InstructType>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::str::FromStr;
+
+    // Macros to keep tests concise and consistent
+    macro_rules! assert_model_key_ok {
+        ($s:expr, $author:expr, $slug:expr) => {{
+            let mk = ModelKey::try_from($s).expect("ModelKey parse ok");
+            assert_eq!(mk.author.as_str(), $author);
+            assert_eq!(mk.slug.as_str(), $slug);
+        }};
+    }
+    macro_rules! assert_model_key_err {
+        ($s:expr) => {{
+            let res = ModelKey::try_from($s);
+            assert!(res.is_err(), "expected error for input: {}", $s);
+        }};
+    }
+    macro_rules! assert_model_id_case {
+        // Assert ModelId parses and round-trips, with expected author/slug and variant pattern
+        ($s:expr => $author:expr, $slug:expr, $variant_pat:pat) => {{
+            let mid = ModelId::from_str($s).expect("ModelId parse ok");
+            assert_eq!(mid.key.author.as_str(), $author);
+            assert_eq!(mid.key.slug.as_str(), $slug);
+            assert!(matches!(mid.variant, $variant_pat), "variant mismatch: {:?}", mid.variant);
+            assert_eq!(mid.to_string(), $s.trim(), "round-trip display");
+        }};
+    }
+
+    // -- `Architecture` tests --
+    // Examples from API response field for `Architecture` to use in tests (see comments above)
+
+    fn parse_arch_and_assert(
+        raw: &str,
+        expected_inputs: &[InputModality],
+        expected_modality: Modality,
+        expected_outputs: &[OutputModality],
+        expected_tokenizer: Tokenizer,
+        expected_instruct: Option<InstructType>,
+    ) {
+        let arch: Architecture = serde_json::from_str(raw).expect("parse Architecture");
+        assert_eq!(arch.input_modalities, expected_inputs);
+        assert_eq!(arch.modality, expected_modality);
+        assert_eq!(arch.output_modalities, expected_outputs);
+        assert_eq!(arch.tokenizer, expected_tokenizer);
+        assert_eq!(arch.instruct_type, expected_instruct);
+
+        // Also check round-trip preserves canonical strings
+        let round = serde_json::to_string(&arch).expect("serialize Architecture");
+        let reparsed: Architecture = serde_json::from_str(&round).expect("reparse Architecture");
+        assert_eq!(reparsed.input_modalities, expected_inputs);
+        assert_eq!(reparsed.modality, expected_modality);
+        assert_eq!(reparsed.output_modalities, expected_outputs);
+        assert_eq!(reparsed.tokenizer, expected_tokenizer);
+        assert_eq!(reparsed.instruct_type, expected_instruct);
+    }
 
     #[test]
+    fn test_architecture_simple() {
+        // 1) text -> text, tokenizer: Qwen3
+        let raw = r#"{
+            "input_modalities": ["text"],
+            "modality": "text->text",
+            "output_modalities": ["text"],
+            "tokenizer": "Qwen3"
+        }"#;
+        parse_arch_and_assert(
+            raw,
+            &[InputModality::Text],
+            Modality::TextToText,
+            &[OutputModality::Text],
+            Tokenizer::Qwen3,
+            None,
+        );
+
+        // 2) text+image -> text, tokenizer: Other
+        let raw = r#"{
+            "input_modalities": ["text", "image"],
+            "modality": "text+image->text",
+            "output_modalities": ["text"],
+            "tokenizer": "Other"
+        }"#;
+        parse_arch_and_assert(
+            raw,
+            &[InputModality::Text, InputModality::Image],
+            Modality::TextImageToText,
+            &[OutputModality::Text],
+            Tokenizer::Other,
+            None,
+        );
+
+        // 3) text+image -> text+image, tokenizer: Gemini
+        let raw = r#"{
+            "input_modalities": ["image", "text"],
+            "modality": "text+image->text+image",
+            "output_modalities": ["image", "text"],
+            "tokenizer": "Gemini"
+        }"#;
+        parse_arch_and_assert(
+            raw,
+            &[InputModality::Image, InputModality::Text],
+            Modality::TextImageToTextImage,
+            &[OutputModality::Image, OutputModality::Text],
+            Tokenizer::Gemini,
+            None,
+        );
+
+        // 4) text -> text, tokenizer: Llama3, instruct_type: llama3
+        let raw = r#"{
+            "input_modalities": ["text"],
+            "modality": "text->text",
+            "output_modalities": ["text"],
+            "tokenizer": "Llama3",
+            "instruct_type": "llama3"
+        }"#;
+        parse_arch_and_assert(
+            raw,
+            &[InputModality::Text],
+            Modality::TextToText,
+            &[OutputModality::Text],
+            Tokenizer::Llama3,
+            Some(InstructType::Llama3),
+        );
+
+        // 5) text -> text, tokenizer: Qwen, instruct_type: deepseek-r1
+        let raw = r#"{
+            "input_modalities": ["text"],
+            "modality": "text->text",
+            "output_modalities": ["text"],
+            "tokenizer": "Qwen",
+            "instruct_type": "deepseek-r1"
+        }"#;
+        parse_arch_and_assert(
+            raw,
+            &[InputModality::Text],
+            Modality::TextToText,
+            &[OutputModality::Text],
+            Tokenizer::Qwen,
+            Some(InstructType::DeepSeekR1),
+        );
+    }
+
+    #[test]
+    fn test_architecture_invalid() {
+        // Invalid modality string
+        let bad_modality = r#"{
+            "input_modalities": ["text"],
+            "modality": "text=>text",
+            "output_modalities": ["text"],
+            "tokenizer": "Qwen3"
+        }"#;
+        assert!(serde_json::from_str::<Architecture>(bad_modality).is_err());
+
+        // Invalid input modality value
+        let bad_input = r#"{
+            "input_modalities": ["txt"],
+            "modality": "text->text",
+            "output_modalities": ["text"],
+            "tokenizer": "Qwen3"
+        }"#;
+        assert!(serde_json::from_str::<Architecture>(bad_input).is_err());
+
+        // Invalid tokenizer value
+        let bad_tok = r#"{
+            "input_modalities": ["text"],
+            "modality": "text->text",
+            "output_modalities": ["text"],
+            "tokenizer": "UnknownTokenizer"
+        }"#;
+        assert!(serde_json::from_str::<Architecture>(bad_tok).is_err());
+    }
+
+    #[test]
+    fn test_architecture_from_arch_file() {
+        use ploke_test_utils::workspace_root;
+        use crate::llm2::router_only::MODELS_JSON_ARCH;
+
+        let mut p = workspace_root();
+        p.push(MODELS_JSON_ARCH);
+        let data = std::fs::read_to_string(&p)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", p.display(), e));
+        let items: Vec<Architecture> = serde_json::from_str(&data)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {}", p.display(), e));
+
+        let contains = |pred: &dyn Fn(&Architecture) -> bool| items.iter().any(pred);
+
+        assert!(contains(&|a| {
+            a.input_modalities == vec![InputModality::Text]
+                && a.modality == Modality::TextToText
+                && a.output_modalities == vec![OutputModality::Text]
+                && a.tokenizer == Tokenizer::Qwen3
+                && a.instruct_type.is_none()
+        }), "expected Qwen3 text->text archetype present");
+
+        assert!(contains(&|a| {
+            a.input_modalities == vec![InputModality::Text, InputModality::Image]
+                && a.modality == Modality::TextImageToText
+                && a.output_modalities == vec![OutputModality::Text]
+                && a.tokenizer == Tokenizer::Other
+        }), "expected text+image->text Other present");
+
+        assert!(contains(&|a| {
+            a.input_modalities == vec![InputModality::Image, InputModality::Text]
+                && a.modality == Modality::TextImageToTextImage
+                && a.output_modalities == vec![OutputModality::Image, OutputModality::Text]
+                && a.tokenizer == Tokenizer::Gemini
+        }), "expected text+image->text+image Gemini present");
+
+        assert!(contains(&|a| {
+            a.input_modalities == vec![InputModality::Text]
+                && a.modality == Modality::TextToText
+                && a.output_modalities == vec![OutputModality::Text]
+                && a.tokenizer == Tokenizer::Llama3
+                && a.instruct_type == Some(InstructType::Llama3)
+        }), "expected Llama3 text->text with instruct llama3 present");
+
+        assert!(contains(&|a| {
+            a.input_modalities == vec![InputModality::Text]
+                && a.modality == Modality::TextToText
+                && a.output_modalities == vec![OutputModality::Text]
+                && a.tokenizer == Tokenizer::Qwen
+                && a.instruct_type == Some(InstructType::DeepSeekR1)
+        }), "expected Qwen text->text with instruct deepseek-r1 present");
+    }
+
+    // -- `ModelKey` tests --
+    #[test]
     fn test_model_key_from_author_slug_valid() {
-        todo!()
+        let mk = ModelKey {
+            author: Author::new("openai").unwrap(),
+            slug: ModelSlug::new("gpt-5").unwrap(),
+        };
+        assert_eq!(mk.author.as_str(), "openai");
+        assert_eq!(mk.slug.as_str(), "gpt-5");
     }
 
     #[test]
     fn test_model_key_from_string_valid() {
-        todo!()
+        assert_model_key_ok!("openai/gpt-5", "openai", "gpt-5");
+        assert_model_key_ok!(
+            "nousresearch/deephermes-3-llama-3-8b-preview",
+            "nousresearch",
+            "deephermes-3-llama-3-8b-preview"
+        );
     }
 
     #[test]
     fn test_model_key_from_string_invalid_format() {
-        todo!()
+        // Missing '/'
+        assert_model_key_err!("openai-gpt-4");
+        // Variant separator ':' not allowed in ModelKey
+        let err = ModelKey::try_from("openai/gpt-4o:free").unwrap_err();
+        match err {
+            IdError::Invalid(msg) => assert!(msg.contains("ModelKey has unexpected ':'")),
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
     fn test_model_key_from_string_whitespace_handling() {
-        todo!()
+        // No trim in ModelKey parsing, whitespace should fail via Author/ModelSlug validators
+        assert_model_key_err!(" openai/gpt-4");
+        assert_model_key_err!("openai /gpt-4");
+        assert_model_key_err!("openai/gpt-4 ");
     }
 
     #[test]
     fn test_model_key_author_slug_validation() {
-        todo!()
+        // Spaces not allowed
+        assert_model_key_err!("open ai/gpt-4");
+        assert_model_key_err!("openai/gpt 4");
+        // Empty segments not allowed
+        assert_model_key_err!("/gpt-4");
+        assert_model_key_err!("openai/");
+    }
+
+    // -- `ModelId` tests --
+    #[test]
+    fn test_model_id_variant_simple() {
+        assert_model_id_case!(
+            "google/gemma-2-9b-it:free" => "google", "gemma-2-9b-it", Some(ModelVariant::Free)
+        );
+        assert_model_id_case!(
+            "qwen/qwen-plus-2025-07-28:thinking" => "qwen", "qwen-plus-2025-07-28", Some(ModelVariant::Thinking)
+        );
     }
 
     #[test]
-    fn test_model_key_variant_simple() {
-        todo!()
+    fn test_model_id_variant_empty() {
+        // Current behavior: empty variant is accepted as Other("") and preserved in Display
+        let mid = ModelId::from_str("openai/gpt-4o:").expect("parse");
+        assert!(matches!(mid.variant, Some(ModelVariant::Other(ref s)) if s.is_empty()));
+        assert_eq!(mid.to_string(), "openai/gpt-4o:");
     }
 
     #[test]
-    fn test_model_key_variant_empty() {
-        todo!()
+    fn test_model_id_variant_unknown() {
+        assert_model_id_case!(
+            "openai/gpt-4o:fast" => "openai", "gpt-4o", Some(ModelVariant::Other(_))
+        );
     }
 
     #[test]
-    fn test_model_key_variant_unknown() {
-        todo!()
+    fn test_model_id_deserialize_from_json() {
+        // Serde JSON string deserialization uses FromStr under the hood
+        let raw = json!("openai/gpt-4o:beta");
+        let mid: ModelId = serde_json::from_value(raw).expect("deserialize ModelId");
+        assert!(matches!(mid.variant, Some(ModelVariant::Beta)));
+        assert_eq!(mid.to_string(), "openai/gpt-4o:beta");
     }
 }
+
