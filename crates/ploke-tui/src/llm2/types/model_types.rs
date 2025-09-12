@@ -76,8 +76,17 @@ impl ModelId {
         out
     }
 }
-// AI: add a helper function we can call with `#[serde(serialize_with = "...")] that has the same
-// output pattern as `ModelId::to_request_string` AI!
+/// Helper function for use with `#[serde(serialize_with = "...")]` to serialize
+/// a `ModelId` using the same format as `ModelId::to_request_string`.
+pub fn serialize_model_id_as_request_string<S>(
+    model_id: &ModelId,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&model_id.to_request_string())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum ModelVariant {
