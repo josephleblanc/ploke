@@ -66,7 +66,18 @@ impl ModelId {
     pub(crate) fn from_parts(key: ModelKey, variant: Option<ModelVariant>) -> Self {
         Self { key, variant }
     }
+    pub(crate) fn to_request_string(&self) -> String {
+        let Self {key, variant} = self;
+        let mut out = key.to_string();
+        if let Some(v) = variant { 
+            out.push(':');
+            out.push_str( v.as_str() );
+        }
+        out
+    }
 }
+// AI: add a helper function we can call with `#[serde(serialize_with = "...")] that has the same
+// output pattern as `ModelId::to_request_string` AI!
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum ModelVariant {
