@@ -6,7 +6,7 @@ use ploke_core::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::llm2::types::model_types::Architecture;
-use crate::llm2::types::newtypes::EndpointTag;
+use crate::llm2::types::newtypes::{EndpointTag, ModelName};
 use crate::llm2::Quant;
 use crate::llm2::*;
 use crate::llm2::router_only::openrouter::providers::{ProviderName, ProviderSlug};
@@ -18,44 +18,6 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 // Example json response for
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
-
-/// Raw model id as returned by APIs (may contain a variant suffix after ':').
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct ModelIdRaw(pub String);
-impl ModelIdRaw {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-    /// Strip a trailing variant suffix after ':' if present.
-    pub(crate) fn base_id(&self) -> String {
-        match self.0.split_once(':') {
-            Some((base, _)) => base.to_string(),
-            None => self.0.clone(),
-        }
-    }
-    /// Extract variant suffix (after ':') if present.
-    pub(crate) fn variant(&self) -> Option<String> {
-        self.0.split_once(':').map(|(_, v)| v.to_string())
-    }
-}
-
-/// Canonical slug "author/model"; can convert to ProvEnd.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct CanonicalSlug(pub String);
-impl CanonicalSlug {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-/// Provider slug (preferred stable identifier for routing).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct ProviderSlugStr(pub String);
-impl ProviderSlugStr {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
 
 /// Provider display name (human-readable).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -88,16 +50,6 @@ impl ProviderNameStr {
     }
 }
 
-/// Provider id (raw), aliased across different shapes (id/provider/name/slug/provider_slug).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct ProviderIdRaw(pub String);
-impl ProviderIdRaw {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
 use crate::utils::se_de::{de_arc_str, se_arc_str};
 
 use super::ModelPricing;
@@ -107,11 +59,13 @@ use super::ModelPricing;
 pub(crate) struct Endpoint {
     /// Human-friendly name in the form "Provider | model id"
     /// e.g. "name": "DeepInfra | deepseek/deepseek-chat-v3.1",
+    /// NOTE: `name` here is different from models::Response `name`,
+    /// and the models::Response `name` is the same(?) as `model_name` here.
     pub(crate) name: ArcStr,
 
     /// Human-friendly name of the model, e.g.
     /// e.g. "model_name": "DeepSeek: DeepSeek V3.1",
-    pub(crate) model_name: ArcStr,
+    pub(crate) model_name: ModelName,
 
     /// Context length of model served, distinct from prompt/completion limits
     pub(crate) context_length: f64,
@@ -549,7 +503,7 @@ mod tests {
 
         // Test Endpoint fields
         assert_eq!(ep.name.as_ref(), "Chutes | deepseek/deepseek-chat-v3.1");
-        assert_eq!(ep.model_name.as_ref(), "DeepSeek: DeepSeek V3.1");
+        assert_eq!(ep.model_name.as_str(), "DeepSeek: DeepSeek V3.1");
         assert_eq!(ep.context_length, 163840.0);
         assert_eq!(ep.provider_name.as_str(), "Chutes");
         assert_eq!(ep.tag.provider_name.as_str(), "chutes");

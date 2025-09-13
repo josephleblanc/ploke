@@ -39,6 +39,8 @@ pub enum StateCommand {
     AddMessage {
         kind: MessageKind,
         content: String,
+        /// Currently unused, placeholder for adding multi-agent support and/or different branches
+        /// in the conversation history tree.
         target: ChatHistoryTarget,
         parent_id: Uuid,
         child_id: Uuid,

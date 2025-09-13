@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     llm::openrouter_catalog::ModelsResponse,
     llm2::{
-        router_only::{openrouter::TopProvider, HasModelId}, types::model_types::Architecture, ModelId, SupportedParameters, SupportsTools
+        router_only::{openrouter::TopProvider, HasModelId}, types::{model_types::Architecture, newtypes::ModelName}, ModelId, SupportedParameters, SupportsTools
     },
 };
 
@@ -81,7 +81,7 @@ pub(crate) struct ResponseItem {
     /// Examples from responses to OpenRouter API:
     /// id -    "qwen/qwen3-next-80b-a3b-thinking",
     /// name -  "Qwen: Qwen3 Next 80B A3B Thinking"
-    pub(crate) name: ArcStr,
+    pub(crate) name: ModelName,
     /// Unix timestamp, e.g. 1755779628
     // TODO: Get serde to deserialize into proper type
     pub(crate) created: i64,
@@ -224,7 +224,7 @@ mod tests {
             model.id.to_string(),
             "deepcogito/cogito-v2-preview-llama-109b-moe"
         );
-        assert_eq!(model.name.as_ref(), "Cogito V2 Preview Llama 109B");
+        assert_eq!(model.name.as_str(), "Cogito V2 Preview Llama 109B");
         assert_eq!(model.created, 1756831568);
         assert_eq!(
             model.description.as_ref(),
@@ -297,7 +297,7 @@ mod tests {
         for model in &response.data {
             // Just ensure we have the basic fields accessible
             assert!(!model.id.to_string().is_empty());
-            assert!(!model.name.as_ref().is_empty());
+            assert!(!model.name.as_str().is_empty());
             assert!(model.created > 0);
         }
     }

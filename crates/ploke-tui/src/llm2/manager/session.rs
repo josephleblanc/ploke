@@ -1,21 +1,24 @@
 use std::time::Duration;
 
+use chrono::DateTime;
+use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::llm2::response::OpenAiResponse;
 use crate::AppEvent;
 use crate::EventBus;
 use crate::app_state::events::SystemEvent;
-use crate::llm2::manager::{
-    ErrorResponse, OpenAiResponse, RequestMessage, ResponseMessage, StreamingDelta,
-};
+use crate::llm2::manager::RequestMessage;
 use crate::llm2::request::endpoint::ToolChoice;
 use crate::llm2::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
 
 use super::{LlmError, ToolEvent};
+
+const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 
 #[derive(Debug, PartialEq)]
 enum ParseOutcome {
@@ -24,24 +27,11 @@ enum ParseOutcome {
 }
 
 fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
-    // Providers sometimes put errors inside a 200 body
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text) {
-        if let Some(err) = v.get("error") {
-            let msg = err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown provider error");
-            let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-            return Err(LlmError::Api {
-                status: code as u16,
-                message: msg.to_string(),
-            });
-        }
-    }
-
     let parsed: OpenAiResponse = serde_json::from_str(body_text)
         .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
 
+    // TODO: Add the message (if present) from the tool calls in the response to this function,
+    // also will need to change the return type of this function.
     if let Some(choice) = parsed.choices.into_iter().next() {
         if let Some(msg) = choice.message {
             if let Some(tc) = msg.tool_calls {
@@ -59,8 +49,33 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
             return Err(LlmError::Deserialization("Empty choice".into()));
         }
     }
-
     Err(LlmError::Deserialization("No choices".into()))
+
+}
+
+fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
+    // Providers sometimes put errors inside a 200 body
+    match serde_json::from_str::<serde_json::Value>(body_text) {
+        Ok(v) => {
+            if let Some(err) = v.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown provider error");
+                let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+                Err(LlmError::Api {
+                    status: code as u16,
+                    message: msg.to_string(),
+                })
+            } else {
+                Err(LlmError::Deserialization("No choices".into()))
+            }
+        }
+        Err(e) => {
+            let err_msg = format!("Failed to Deserialize to json: {e}");
+            Err(LlmError::Deserialization(err_msg))
+        }
+    }
 }
 
 /// Generic per-request session over a router-specific ApiRoute.
@@ -77,6 +92,7 @@ where
     pub attempts: u32,
 }
 
+#[allow(clippy::needless_lifetimes)]
 impl<'a, R> RequestSession<'a, R>
 where
     R: Router,
@@ -146,15 +162,26 @@ where
                 });
             }
 
+
+            let log_url = response.url().to_string();
+            let log_status = response.status().as_u16();
             let body_text = response
                 .text()
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
 
+            // persist response by sending to db, for now appending to file
+            let parsed: OpenAiResponse = serde_json::from_str(&body_text)
+                .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
+            let mut log_dir = workspace_root();
+            log_dir.push(OPENROUTER_RESPONSE_LOG_PARSED);
+            let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
+
             match parse_outcome(&body_text)? {
                 ParseOutcome::ToolCalls(tool_calls) => {
                     // Dispatch tool calls through event bus
-                    let mut tasks = Vec::with_capacity(tool_calls.len());
+                    let mut abort_handles = Vec::with_capacity(tool_calls.len());
+                    let mut task_set = tokio::task::JoinSet::new();
                     for call in tool_calls.into_iter() {
                         let event_bus = self.event_bus.clone();
                         let parent_id = self.parent_id;
@@ -168,7 +195,7 @@ where
                             parent_id,
                         }));
 
-                        tasks.push(tokio::spawn(async move {
+                        abort_handles.push(task_set.spawn(async move {
                             // Await a correlated completion/failure
                             let call_id_clone = call_id.clone();
                             let wait = async move {
@@ -197,16 +224,16 @@ where
                             };
                             match tokio::time::timeout(Duration::from_secs(30), wait).await {
                                 Ok(r) => (call_id_clone, r),
-                                Err(_) => {
-                                    (call_id_clone, Err("Timed out waiting for tool result".into()))
-                                }
+                                Err(_) => (
+                                    call_id_clone,
+                                    Err("Timed out waiting for tool result".into()),
+                                ),
                             }
                         }));
                     }
 
                     // Join and incorporate tool results
-                    let results = futures::future::join_all(tasks).await;
-                    for res in results.into_iter() {
+                    while let Some(res) = task_set.join_next().await {
                         match res {
                             Ok((cid, Ok(content))) => {
                                 self.req
@@ -246,12 +273,26 @@ where
     }
 }
 
+use tracing::info;
+
+async fn log_api_parsed_json_response(
+    url: &str,
+    status: u16,
+    parsed: &OpenAiResponse,
+) -> color_eyre::Result<()> {
+    let payload: String = serde_json::to_string_pretty(parsed)?;
+
+    // Target MUST match the layer filter ("api_json") to route to api_responses.log
+    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm2::router_only::openrouter::OpenRouter;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
+    use crate::llm2::router_only::openrouter::OpenRouter;
     use crate::tools::{FunctionCall, FunctionMarker, ToolCall, ToolName};
     use tokio::time::{Duration, timeout};
 
@@ -318,7 +359,7 @@ mod tests {
         use crate::llm2::router_only::openrouter;
 
         let messages = vec![RequestMessage::new_user("hi".into())];
-        let req = ChatCompRequest::< OpenRouter >::default()
+        let req = ChatCompRequest::<OpenRouter>::default()
             .with_core_bundle(ChatCompReqCore::default())
             .with_model_str(&default_model())
             .map(|r| r.with_messages(messages))
@@ -374,9 +415,9 @@ mod tests {
             mut s: RequestSession<'_, R>,
             bodies: Vec<String>,
         ) -> Result<String, LlmError>
-            where
-                R: Router,
-                R::CompletionFields: ApiRoute,
+        where
+            R: Router,
+            R::CompletionFields: ApiRoute,
         {
             let mut iter = bodies.into_iter();
             loop {
@@ -426,9 +467,10 @@ mod tests {
                                 };
                                 match tokio::time::timeout(Duration::from_secs(5), wait).await {
                                     Ok(r) => (call_id_clone, r),
-                                    Err(_) => {
-                                        (call_id_clone, Err("Timed out waiting for tool result".into()))
-                                    }
+                                    Err(_) => (
+                                        call_id_clone,
+                                        Err("Timed out waiting for tool result".into()),
+                                    ),
                                 }
                             }));
                         }

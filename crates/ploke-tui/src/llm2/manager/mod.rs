@@ -55,7 +55,7 @@ use super::router_only::openrouter::OpenRouter;
 use super::router_only::openrouter::OpenRouterModelId;
 use super::*;
 
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, PartialOrd, Eq)]
 pub(crate) struct RequestMessage {
     pub role: Role,
     pub content: String,
@@ -158,112 +158,6 @@ impl From<MessageKind> for Role {
     }
 }
 
-#[derive(Deserialize, Debug)]
-pub struct OpenAiResponse {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    choices: Vec<Choices>,
-    #[serde(default)]
-    created: i64,
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    object: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system_fingerprint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<TokenUsage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    logprobs: Option<serde_json::Value>,
-}
-
-#[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
-pub(super) enum ResponseObject {
-    #[serde(rename = "chat.completion")]
-    ChatCompletion,
-    #[serde(rename = "chat.completion.chunk")]
-    ChatCompletionChunk,
-}
-
-#[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
-pub(super) struct ResponseUsage {
-    /** Including images and tools if any */
-    prompt_tokens: i64,
-    /** The tokens generated */
-    completion_tokens: i64,
-    /** Sum of the above two fields */
-    total_tokens: i64,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Choices {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logprobs: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub finish_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub native_finish_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub index: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<ResponseMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorResponse>,
-    // For non-streaming choices that might have text instead of message
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    // For streaming choices
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delta: Option<StreamingDelta>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct StreamingDelta {
-    // May be null or string
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    // May or may not be present
-    role: Option<Role>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    // May or may not be present
-    tool_calls: Option<Vec<ToolCall>>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ErrorResponse {
-    code: i64,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    // Contains additional error information such as provider details, the raw error message, etc.
-    // Original is Record<string, unknown>
-    metadata: Option<HashMap<String, serde_json::Value>>,
-}
-
-// Use OpenAI-style normalized tool call shape per OpenRouter docs
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub(super) struct Choice {
-    message: ResponseMessage,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct ResponseMessage {
-    // When tool_calls are present, role may be null/absent
-    role: Option<String>,
-    // When tool_calls are present, content may be null/absent
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    logprobs: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    refusal: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<String>,
-}
-
 /// Event id helper struct, uses the user's previous message (parent_id) and the new id that will
 /// be updated with the LLM's response (new_msg_id) to differentiate items in the queue.
 // note: This is super overkill, we don't really need two 128-bit keys for such a small set of
@@ -285,13 +179,13 @@ pub async fn llm_manager(
     let client = Client::new();
     let mut pending_requests: HashMap<EvtKey, ChatEvt> = HashMap::default();
     let mut ready_contexts: HashMap<EvtKey, ChatEvt> = HashMap::default();
-    let mut js: JoinSet<()> = JoinSet::new();
 
     // Enters loop every time there is a new event.
     //  - Currently only receives:
     //      - AppEvent::Llm(Event::Request)
     //      - AppEvent::Llm(Event::PromptConstructed)
     while let Ok(event) = event_rx.recv().await {
+        tracing::info!(?event);
         match event {
             AppEvent::Llm2(LlmEvent::ChatCompletion(
                 request @ ChatEvt::Request {
@@ -308,7 +202,7 @@ pub async fn llm_manager(
                 context @ ChatEvt::PromptConstructed { parent_id, .. },
             )) => {
                 let event_key = EvtKey { parent_id };
-                if pending_requests.get(&event_key).is_none() {
+                if !pending_requests.contains_key(&event_key) {
                     // no match, keep waiting
                     ready_contexts.insert(event_key, context);
                 } else {
@@ -316,14 +210,16 @@ pub async fn llm_manager(
                     let req = pending_requests
                         .remove(&event_key)
                         .expect("Event key-val must exist");
-                    js.spawn(process_llm_request(
+                    let result = tokio::spawn(process_llm_request(
                         req,
                         Arc::clone(&state),
                         cmd_tx.clone(),
                         client.clone(),
                         event_bus.clone(),
                         context,
-                    ));
+                    ))
+                    .await;
+                    tracing::info!(?result, "llm call result");
                 }
             }
             AppEvent::System(SystemEvent::ToolCallRequested {
@@ -381,7 +277,7 @@ pub async fn llm_manager(
                     use models::Event;
                     let result = OpenRouter::fetch_models(&client)
                         .await
-                        .map(|m| Arc::new(m))
+                        .map(Arc::new)
                         .inspect_err(|e| {
                             let msg = format!("Failed to fetch models from API: {}", e);
                             tracing::warn!(msg);
@@ -435,7 +331,7 @@ fn handle_endpoint_request(
         let typed_model = OpenRouterModelId::from(model_id);
         let result = OpenRouter::fetch_model_endpoints(&client, typed_model.clone())
             .await
-            .map(|ep| Arc::new(ep))
+            .map(Arc::new)
             .inspect_err(|e| {
                 let msg = format!("Failed to fetch endpoints for {}: {:?}", typed_model, e);
                 tracing::warn!(msg);
@@ -460,6 +356,11 @@ pub async fn process_llm_request(
     event_bus: Arc<EventBus>,
     context: ChatEvt,
 ) {
+    // - parent_id here is the message the user sent that prompted the call to the API for the LLM's
+    // response.
+    // - request_message_id is the id created when the user's message is added to the conversation
+    // history, and helps to co-ordinate the message to first create here and update below when the
+    // placeholder message is updated with the LLM's response.
     let (parent_id, request_message_id) = match request {
         ChatEvt::Request {
             parent_id: p,
@@ -472,9 +373,10 @@ pub async fn process_llm_request(
     };
 
     let messages = match context {
-        ChatEvt::PromptConstructed { parent_id, formatted_prompt } => {
-            formatted_prompt
-        },
+        ChatEvt::PromptConstructed {
+            parent_id,
+            formatted_prompt,
+        } => formatted_prompt,
         _ => {
             tracing::debug!("No prompt constructed, do nothing");
             return;
@@ -486,11 +388,10 @@ pub async fn process_llm_request(
         None => {
             tracing::error!("Model Config not initialized.");
             return;
-        },
+        }
     };
 
-
-    // This part remains the same: create a placeholder message first.
+    // This part remains the same: create a placeholder message first at the provided message id
     let (responder_tx, responder_rx) = oneshot::channel();
     let create_cmd = StateCommand::CreateAssistantMessage {
         parent_id,
@@ -500,6 +401,18 @@ pub async fn process_llm_request(
     cmd_tx.send(create_cmd).await.expect(
         "Invalid state: sending over closed channel from process_llm_request via StateCommand",
     );
+
+    let assistant_message_id = match responder_rx.await {
+        Ok(id) if id == request_message_id => id,
+        Ok(_id) => {
+            log::error!("Failed to create assistant message: mismatch in Uuid of created message.");
+            return;
+        }
+        Err(_) => {
+            log::error!("Failed to create assistant message: state_manager dropped responder.");
+            return;
+        }
+    };
 
     // Prepare and execute the API call, then create the final update command.
     let result = prepare_and_run_llm_call(
@@ -512,8 +425,9 @@ pub async fn process_llm_request(
     .await;
 
     // Build concise per-request outcome summary before consuming `result`
+    // TODO: Add a typed return value that contains a summary and an option for the content
     let summary = match &result {
-        Ok(_) => "Request summary: success".to_string(),
+        Ok(_msg) => "Request summary: [success]".to_string(),
         Err(LlmError::Api { status: 404, .. }) => {
             "Request summary: error 404 (endpoint/tool support?)".to_string()
         }
@@ -569,13 +483,13 @@ pub async fn process_llm_request(
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
 
-    let _ = cmd_tx
-        .send(StateCommand::AddMessageImmediate {
-            msg: summary,
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        })
-        .await;
+    // let _ = cmd_tx
+    //     .send(StateCommand::AddMessageImmediate {
+    //         msg: summary,
+    //         kind: MessageKind::SysInfo,
+    //         new_msg_id: Uuid::new_v4(),
+    //     })
+    //     .await;
 }
 
 #[instrument(skip_all)]
@@ -583,11 +497,10 @@ async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     #[cfg(not(feature = "llm_refactor"))] _cfg: &ModelConfig,
-    messages: Vec< RequestMessage >,
+    messages: Vec<RequestMessage>,
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
 ) -> Result<String, LlmError> {
-
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tools: Vec<ToolDefinition> = vec![
@@ -642,7 +555,7 @@ async fn prepare_and_run_llm_call(
         attempts: 3,
     };
 
-    let result = session.run().await;
+    session.run().await
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {
@@ -651,8 +564,6 @@ async fn prepare_and_run_llm_call(
     //     tracing::error!("Failed to write tool use logs.");
     // }
     // }
-
-    result
 }
 
 pub(super) fn cap_messages_by_chars(

@@ -294,6 +294,7 @@ pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<L
     // Use try_init to avoid panicking if a global subscriber is already set (e.g., across tests)
     let _ = tracing_subscriber::registry()
         .with(env_filter)
+        .with(base_filter)
         .with(console_subscriber.with_writer(std::io::stderr))
         .try_init();
 }

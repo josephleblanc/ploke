@@ -122,7 +122,7 @@ impl LLMParameters {
         }
     }
 
-    pub(crate) fn with_union(mut self, other: &Self) -> Self {
+    pub(crate) fn with_filled(mut self, other: &Self) -> Self {
         self.max_tokens = self.max_tokens.or(other.max_tokens);
         self.temperature = self.temperature.or(other.temperature);
         self.seed = self.seed.or(other.seed);
@@ -138,7 +138,7 @@ impl LLMParameters {
         self
     }
 
-    pub(crate) fn apply_union(&mut self, other: &Self) {
+    pub(crate) fn apply_filled(&mut self, other: &Self) {
         self.max_tokens = self.max_tokens.or(other.max_tokens);
         self.temperature = self.temperature.or(other.temperature);
         self.seed = self.seed.or(other.seed);
@@ -425,7 +425,7 @@ mod tests {
             ..Default::default()
         };
 
-        base.apply_union(&source);
+        base.apply_filled(&source);
 
         assert_eq!(base.max_tokens, Some(1000)); // filled from None
         assert_eq!(base.temperature, Some(0.5)); // unchanged (not None)
@@ -451,7 +451,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = base.with_union(&source);
+        let result = base.with_filled(&source);
 
         assert_eq!(result.max_tokens, Some(1000)); // filled from None
         assert_eq!(result.temperature, Some(0.5)); // unchanged (not None)
@@ -525,7 +525,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = base.with_union(&source);
+        let result = base.with_filled(&source);
 
         assert_eq!(result.max_tokens, Some(1000)); // base has value
         assert_eq!(result.temperature, Some(0.5)); // filled from source

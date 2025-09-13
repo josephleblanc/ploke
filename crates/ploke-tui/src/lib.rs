@@ -33,7 +33,7 @@ mod tests;
 
 // --- tempoarary llm2 items, replace llm items later ---
 
-use llm2::EndpointsResponse;
+use llm2::{manager::events::ChatEvt, EndpointsResponse};
 
 // --- end temporary --- 
 
@@ -263,6 +263,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
+    #[cfg(feature = "llm_refactor")]
+    tokio::spawn(llm2::manager::llm_manager(
+        event_bus.subscribe(EventPriority::Background),
+        state.clone(),
+        cmd_tx.clone(), // Clone for each subsystem
+        event_bus.clone(),
+    ));
+    #[cfg(not(feature = "llm_refactor"))]
     tokio::spawn(llm_manager(
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
@@ -409,6 +417,8 @@ impl AppEvent {
             AppEvent::Rag(_) => EventPriority::Background,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
+            AppEvent::Llm2(llm2::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => EventPriority::Background,
+            AppEvent::Llm2(llm2::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
             AppEvent::Llm2(llm_event) => EventPriority::Background,
 
             // events sent to llm backend are background priority

@@ -78,7 +78,7 @@ impl ModelId {
 }
 /// Helper function for use with `#[serde(serialize_with = "...")]` to serialize
 /// a `ModelId` using the same format as `ModelId::to_request_string`.
-pub fn serialize_model_id_as_request_string<S>(
+pub(crate) fn serialize_model_id_as_request_string<S>(
     model_id: &ModelId,
     serializer: S,
 ) -> Result<S::Ok, S::Error>

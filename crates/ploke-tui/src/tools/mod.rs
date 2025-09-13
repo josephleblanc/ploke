@@ -65,7 +65,7 @@ pub enum ToolDescr {
     GetFileMetadata,
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq)]
 pub struct FunctionMarker;
 
 impl FunctionMarker {
@@ -109,7 +109,7 @@ impl<'de> Deserialize<'de> for FunctionMarker {
 }
 
 // OpenAI tool/function definition (for request payload)
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolDefinition {
     #[serde(rename = "type")]
     pub r#type: FunctionMarker,
@@ -125,7 +125,7 @@ impl From<ToolFunctionDef> for ToolDefinition {
     }
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolFunctionDef {
     pub name: ToolName,
     pub description: ToolDescr,

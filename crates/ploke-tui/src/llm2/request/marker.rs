@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 // Marker for response_format -> { "type": "json_object" }
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JsonObjMarker;
 
 impl Serialize for JsonObjMarker {

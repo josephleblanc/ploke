@@ -38,6 +38,8 @@ newtype_arcstr!(ProviderSlug);
 newtype_arcstr!(ProviderName);
 newtype_arcstr!(ApiKeyEnv);
 newtype_arcstr!(EndpointPath);
+// The name of the model as used in `Endpoint`'s `model_name` or model::Response's `name`
+newtype_arcstr!(ModelName);
 
 // ----- strongly-typed string wrappers (easy to swap inner later) -----
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

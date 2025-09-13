@@ -178,7 +178,7 @@ mod tests {
     );
     generate_model_field_test!(
         flakey_openrouter_model_names,
-        |m: models::ResponseItem| Some(m.name.as_ref().to_string()),
+        |m: models::ResponseItem| Some(m.name.as_str().to_string()),
         REL_MODEL_NAME_DATA
     );
     generate_model_field_test!(
@@ -209,7 +209,7 @@ mod tests {
         }
         eprintln!("all_names:");
         for name in all_names {
-            eprintln!("\t{}", name.as_ref());
+            eprintln!("\t{}", name.as_str());
         }
         let log_file = REL_MODEL_NAME_DATA;
 
@@ -229,7 +229,6 @@ mod tests {
             m.supported_parameters
                 .as_ref()
                 .is_some_and(|p| p.supports_tools())
-            // .is_some_and(|p| p.contains(&SupportedParameters::Tools))
         };
 
         let all_values: Vec<models::ResponseItem> = models_resp
