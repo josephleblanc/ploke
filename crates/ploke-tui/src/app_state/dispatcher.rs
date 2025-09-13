@@ -2,6 +2,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::llm2::ProviderSlug;
+use crate::llm2::{EndpointKey, ModelId, ProviderKey};
+use crate::llm2::registry::user_prefs::{ModelPrefs, RegistryPrefs};
+use crate::llm2::router_only::RouterVariants;
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
@@ -263,38 +266,61 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
-            StateCommand::SelectModelProvider {
-                model_id,
-                provider_id,
-            } => {
+            StateCommand::SelectModelProvider { model_id, provider_id } => {
+                // Update registry prefs and active runtime selection to match user's choice.
+                let parsed = match ModelId::from_str(&model_id) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        handlers::chat::add_msg_immediate(
+                            &state,
+                            &event_bus,
+                            Uuid::new_v4(),
+                            format!("Invalid model id: {}", model_id),
+                            MessageKind::SysInfo,
+                        )
+                        .await;
+                        continue;
+                    }
+                };
                 {
                     let mut cfg = state.config.write().await;
                     let reg = &mut cfg.model_registry;
 
-                    if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
-                        p.model = model_id.clone();
-                        p.base_url = crate::user_config::OPENROUTER_URL.to_string();
-                        p.provider_type = crate::user_config::ProviderType::OpenRouter;
-                        p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
-                        p.provider_slug = Some( ProviderSlug::new(&provider_id) );
-                    } else {
-                        reg.providers.push(crate::user_config::ModelConfig {
-                            id: model_id.clone(),
-                            api_key: String::new(),
-                            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-                            base_url: crate::user_config::OPENROUTER_URL.to_string(),
-                            model: model_id.clone(),
-                            display_name: Some(model_id.clone()),
-                            provider_type: crate::user_config::ProviderType::OpenRouter,
-                            llm_params: Some(crate::llm2::LLMParameters {
-                                ..Default::default()
-                            }),
-                            provider_slug: Some(ProviderSlug::new(&provider_id)),
+                    // Ensure a ModelPrefs entry exists for this model key
+                    reg.models
+                        .entry(parsed.key.clone())
+                        .or_insert_with(|| ModelPrefs {
+                            model_key: parsed.key.clone(),
+                            ..Default::default()
                         });
+
+                    // Ensure OpenRouter is allowed (for now we only support OpenRouter)
+                    let mp = reg
+                        .models
+                        .get_mut(&parsed.key)
+                        .expect("entry ensured above");
+                    if !mp
+                        .allowed_routers
+                        .iter()
+                        .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
+                    {
+                        mp.allowed_routers.push(RouterVariants::OpenRouter(
+                            crate::llm2::router_only::openrouter::OpenRouter,
+                        ));
                     }
-                    // Ensure keys are resolved and activate this provider/model
-                    reg.load_api_keys();
-                    reg.active_model_config = model_id.clone();
+
+                    // Add/update selected endpoint preference
+                    let ek = EndpointKey {
+                        model: parsed.key.clone(),
+                        provider: ProviderKey::new(&provider_id)
+                            .expect("valid provider slug for endpoint selection"),
+                    };
+                    if !mp.selected_endpoints.iter().any(|e| e == &ek) {
+                        mp.selected_endpoints.push(ek);
+                    }
+
+                    // Set active runtime model to the chosen id (includes optional variant)
+                    cfg.active_model = parsed.clone();
                 }
 
                 // Inform the user and update the UI via events

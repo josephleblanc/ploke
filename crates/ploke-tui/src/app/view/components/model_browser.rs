@@ -8,8 +8,8 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{OPENROUTER_URL, ModelConfig};
+use crate::llm2::{ModelId, ModelName};
+use crate::user_config::OPENROUTER_URL;
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -30,8 +30,8 @@ use tracing::instrument;
 
 #[derive(Debug)]
 pub struct ModelBrowserItem {
-    pub id: String,
-    pub name: Option<String>,
+    pub id: ModelId,
+    pub name: Option<ModelName>,
     pub context_length: Option<u32>,
     pub input_cost: Option<f64>,
     pub output_cost: Option<f64>,

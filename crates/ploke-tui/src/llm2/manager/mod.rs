@@ -45,7 +45,6 @@ use crate::utils::consts::DEBUG_TOOLS;
 use crate::{AppEvent, EventBus};
 use crate::{
     chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
-    user_config::ModelConfig,
 };
 
 // API and Config
@@ -298,20 +297,6 @@ pub async fn llm_manager(
     }
 }
 
-async fn get_model_config(state: &Arc<AppState>) -> Option<ModelConfig> {
-    let guard = state.config.read().await;
-    let maybe_provider = guard.model_registry.get_active_model_config();
-    if maybe_provider.is_none() {
-        // TODO: Trigger update of registered models here
-        tracing::warn!("Could not find active provider in registry, continuing event loop");
-        return None;
-    }
-    let provider_config = maybe_provider
-        .expect("Error in unwrapping a value guarenteed to be Some")
-        .clone();
-    drop(guard);
-    Some(provider_config)
-}
 
 fn handle_endpoint_request(
     state: Arc<AppState>,
@@ -383,13 +368,7 @@ pub async fn process_llm_request(
         }
     };
 
-    let router_config = match get_model_config(&state).await {
-        Some(value) => value,
-        None => {
-            tracing::error!("Model Config not initialized.");
-            return;
-        }
-    };
+    // llm2: runtime routing uses registry prefs + active model; no legacy ModelConfig required.
 
     // This part remains the same: create a placeholder message first at the provided message id
     let (responder_tx, responder_rx) = oneshot::channel();
@@ -523,10 +502,11 @@ async fn prepare_and_run_llm_call(
     let tools = Some(tools.clone());
     let tool_choice = Some(ToolChoice::Auto);
 
-    let default_model_key: ModelKey = ModelKey::default();
-    // not using any variants in model_id here
-    // would get them from the selected model if present
-    let model_id = ModelId::from_parts(default_model_key, None);
+    // Use the runtime-selected active model (includes optional variant)
+    let model_id = {
+        let cfg = state.config.read().await;
+        cfg.active_model.clone()
+    };
 
     // WARN: Using default fields here, should try to load from registry first and use default if
     // the selected model is default or if the registry is not yet set up.
@@ -623,77 +603,7 @@ fn now_ts() -> u128 {
         .unwrap_or(0)
 }
 
-struct LogToolUseCtx<'a> {
-    provider: &'a ModelConfig,
-    parent_id: Uuid,
-    supports_tools_opt: Option<bool>,
-    require_tools: bool,
-}
-
-fn log_tool_use(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
-    match diag_dir() {
-        Some(dir) => {
-            let LogToolUseCtx {
-                provider,
-                parent_id,
-                supports_tools_opt,
-                require_tools,
-            } = ctx;
-            let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
-            let record = json!({
-                    "phase": "preflight",
-                    "reason": "tools_required_but_model_not_marked_tool_capable",
-                    "provider": {
-                    "model": provider.model,
-                    "base_url": provider.base_url,
-                    "provider_type": format!("{:?}", provider.provider_type),
-                    "provider_slug": provider.provider_slug
-                },
-                "capabilities": {
-                    "supports_tools_cache": supports_tools_opt,
-                    "require_tools_policy": require_tools
-                }
-            });
-            Some(tokio::fs::write(
-                dir.join(fname),
-                serde_json::to_string_pretty(&record).unwrap_or_default(),
-            ))
-        }
-        None => None,
-    }
-}
-
-fn log_tool_reason(ctx: LogToolUseCtx) -> Option<impl Future<Output = tokio::io::Result<()>>> {
-    let LogToolUseCtx {
-        provider,
-        parent_id,
-        supports_tools_opt,
-        require_tools,
-    } = ctx;
-    if let Some(dir) = diag_dir() {
-        let fname = format!("{}-{}-decision.json", now_ts(), parent_id);
-        let record = json!({
-            "phase": "preflight",
-            "reason": "tools_required_but_model_not_marked_tool_capable",
-            "provider": {
-                "model": provider.model,
-                "base_url": provider.base_url,
-                "provider_type": format!("{:?}", provider.provider_type),
-                "provider_slug": provider.provider_slug
-            },
-            "capabilities": {
-                "supports_tools_cache": supports_tools_opt,
-                "require_tools_policy": require_tools
-            }
-        });
-        Some(tokio::fs::write(
-            dir.join(fname),
-            serde_json::to_string_pretty(&record).unwrap_or_default(),
-        ))
-    } else {
-        None
-    }
-}
+// Legacy diagnostics helpers referencing ModelConfig removed; llm2 routes via registry prefs.
 
 // Example tool-call handler (stub)
 

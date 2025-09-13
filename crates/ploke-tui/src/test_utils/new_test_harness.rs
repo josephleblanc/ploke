@@ -18,10 +18,10 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use ratatui::{Terminal, backend::TestBackend};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate as tui;
+use crate::{self as tui, default_model};
 use tui::app::{App, RunOptions};
 use tui::app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState};
-use tui::user_config::{UserConfig, default_model};
+use tui::user_config::UserConfig;
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};
 
 use ploke_db::{Database, bm25_index, create_index_primary};
@@ -62,12 +62,7 @@ impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
     pub async fn spawn() -> color_eyre::Result<Self> {
         // Config + registry
-        let mut config = UserConfig::default();
-        config.registry = config.registry.with_defaults();
-        config.registry.load_api_keys();
-        if let Some(openrouter_env) = openrouter_env() {
-            config.registry.set_openrouter_key(&openrouter_env.key)
-        }
+        let config = UserConfig::default();
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
         // DB from shared fixture

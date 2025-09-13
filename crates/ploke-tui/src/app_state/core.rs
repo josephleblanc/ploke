@@ -6,7 +6,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::llm2::LLMParameters;
-use crate::user_config::{CommandStyle, EmbeddingConfig, ModelRegistry, UserConfig};
+use crate::user_config::{CommandStyle, EmbeddingConfig, UserConfig};
+use crate::llm2::{ModelId, ModelKey};
+use crate::llm2::registry::user_prefs::RegistryPrefs;
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -132,7 +134,8 @@ use super::*;
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
-    pub model_registry: ModelRegistry,
+    pub model_registry: RegistryPrefs,
+    pub active_model: ModelId,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub embedding: EmbeddingConfig,
@@ -141,11 +144,14 @@ pub struct RuntimeConfig {
 
 impl From<UserConfig> for RuntimeConfig {
     fn from(uc: UserConfig) -> Self {
-        let registry = uc.registry;
-        // Choose LLM params from active provider or default
+        let registry: RegistryPrefs = uc.registry;
+        // Choose LLM params from default profile for default model if present
+        let default_key: ModelKey = Default::default();
         let llm_params = registry
-            .get_active_model_config()
-            .and_then(|p| p.llm_params.clone())
+            .models
+            .get(&default_key)
+            .and_then(|mp| mp.get_default_profile())
+            .map(|prof| prof.params.clone())
             .unwrap_or_default();
 
         // Map persisted editing -> runtime editing
@@ -158,6 +164,7 @@ impl From<UserConfig> for RuntimeConfig {
         RuntimeConfig {
             llm_params,
             model_registry: registry,
+            active_model: ModelId::from(ModelKey::default()),
             editing,
             command_style: uc.command_style,
             embedding: uc.embedding,

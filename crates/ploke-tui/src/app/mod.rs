@@ -1,5 +1,4 @@
-use crate::llm::model_provider::EndpointData;
-use crate::llm::provider_endpoints::SupportsTools as _;
+use crate::llm2::request::models;
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -20,8 +19,7 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
-use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{ModelConfig, OPENROUTER_URL, ProviderType};
+use crate::user_config::OPENROUTER_URL;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -973,7 +971,7 @@ impl App {
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),
-                        target: llm::ChatHistoryTarget::Main,
+                        target: llm2::ChatHistoryTarget::Main,
                         parent_id: new_user_msg_id,
                         child_id: next_llm_msg_id,
                     });
@@ -1202,13 +1200,11 @@ impl App {
         self.input_buffer = self.input_history[last].clone();
     }
 
-    fn open_model_browser(&mut self, keyword: String, items: Vec<llm2::models::ResponseItem>) {
+    fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
         let items = items
             .into_iter()
             .map(|m| {
                 // Model-level tools: true if any provider supports tools OR model supported_parameters says so
-                let model_supports_tools = m.supports_tools();
-
                 ModelBrowserItem {
                     id: m.id,
                     name: Some( m.name ),
@@ -1244,37 +1240,21 @@ impl App {
     }
 
     fn switch_to_model(&mut self, model_id: &str) {
-        // Mutate runtime config to promote or select the model, then broadcast info
+        // Update runtime active model selection via llm2 types
         let state = Arc::clone(&self.state);
+        let mid = model_id.to_string();
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut cfg = state.config.write().await;
-                let reg = &mut cfg.model_registry;
-
-                let exists = reg.providers.iter().any(|p| p.id == model_id);
-                if !exists {
-                    // Promote discovered model into registry
-                    reg.providers.push(ModelConfig {
-                        id: model_id.to_string(),
-                        api_key: String::new(),
-                        provider_slug: None,
-                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-                        base_url: OPENROUTER_URL.to_string(),
-                        model: model_id.to_string(),
-                        display_name: Some(model_id.to_string()),
-                        provider_type: ProviderType::OpenRouter,
-                        llm_params: Some(crate::llm::LLMParameters {
-                            model: model_id.to_string(),
-                            ..Default::default()
-                        }),
-                    });
-                    // Load keys across providers
-                    reg.load_api_keys();
+            use std::str::FromStr;
+            tokio::runtime::Handle::current().block_on(async move {
+                match crate::llm2::ModelId::from_str(&mid) {
+                    Ok(parsed) => {
+                        let mut cfg = state.config.write().await;
+                        cfg.model_registry.models.entry(parsed.key.clone()).or_default();
+                        cfg.active_model = parsed;
+                    }
+                    Err(_) => {}
                 }
-
-                // Switch active provider
-                reg.active_model_config = model_id.to_string();
-            });
+            })
         });
 
         self.active_model_id = model_id.to_string();

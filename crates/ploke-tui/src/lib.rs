@@ -2,8 +2,7 @@
 //! ploke-tui main library entry.
 //!
 //! Dataflow overview:
-//! - Config load: `try_main` reads config (toml/env), merges curated defaults, refreshes
-//!   OpenRouter capabilities, then resolves API keys and spins up subsystems.
+//! - Config load: `try_main` reads config (toml/env), and spins up subsystems.
 //! - Commands: UI routes parsed commands to `StateCommand` via channels; model/provider
 //!   commands update `ModelRegistry` and emit `SystemEvent::ModelSwitched`.
 //! - Persistence: config can be saved/loaded atomically with optional key redaction.
@@ -38,7 +37,7 @@ pub mod user_config2;
 #[cfg(feature = "llm_refactor")]
 pub mod user_config;
 
-use llm2::{manager::events::ChatEvt, EndpointsResponse};
+use llm2::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -66,7 +65,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ModelConfig, UserConfig, default_model};
+use user_config::{OPENROUTER_URL, UserConfig};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -156,17 +155,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .try_deserialize::<UserConfig>()
         .unwrap_or_else(|_| UserConfig::default());
 
-    // Merge curated defaults with user overrides
-    config.registry = config.registry.with_defaults();
-
-    // Refresh OpenRouter model registry (capabilities, pricing) for better routing/validation.
-    if let Err(e) = config.registry.refresh_from_openrouter().await {
-        tracing::warn!("Failed to refresh OpenRouter model registry: {}", e);
-    }
-
-    // Apply API keys from environment variables to all providers
-    config.registry.load_api_keys();
-    tracing::debug!("Registry after merge: {:#?}", config.registry);
+    // llm2: registry prefs are used directly; model lists/capabilities fetched via router APIs.
+    tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);

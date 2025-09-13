@@ -768,12 +768,7 @@ mod test {
             .try_deserialize::<crate::user_config::UserConfig>()
             .unwrap_or_else(|_| crate::user_config::UserConfig::default());
 
-        // Merge curated defaults with user overrides
-        config.registry = config.registry.with_defaults();
-
-        // Apply API keys from environment variables to all providers
-        // config.registry.load_api_keys();
-        tracing::debug!("Registry after merge: {:#?}", config.registry);
+        tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
         let new_db = ploke_db::Database::new(cozo_db);
         let db_handle = Arc::new(new_db);
 

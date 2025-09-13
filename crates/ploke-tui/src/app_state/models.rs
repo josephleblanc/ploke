@@ -7,27 +7,29 @@ pub(super) async fn switch_model(
 ) {
     tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
 
-    let mut cfg = state.config.write().await;
-    if cfg.model_registry.set_active(&alias_or_id) {
-        tracing::debug!(
-            "sending AppEvent::System(SystemEvent::ModelSwitched {}
-                        Trying to find cfg.model_registry.get_active_model_config(): {:#?}",
-            alias_or_id,
-            cfg.model_registry.get_active_model_config(),
-        );
-        let actual_model = cfg
-            .model_registry
-            .get_active_model_config()
-            .map(|p| p.model.clone())
-            .unwrap_or_else(|| alias_or_id.clone());
-        event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
-            actual_model, // Using actual model ID
-        )));
-    } else {
-        tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
-        event_bus.send(AppEvent::Error(ErrorEvent {
-            message: format!("Unknown model '{}'", alias_or_id),
-            severity: ErrorSeverity::Warning,
-        }));
+    use std::str::FromStr;
+    match crate::llm2::ModelId::from_str(&alias_or_id) {
+        Ok(mid) => {
+            // Update runtime active model
+            {
+                let mut cfg = state.config.write().await;
+                cfg.active_model = mid.clone();
+                // Ensure there is a ModelPrefs entry so later commands can attach profiles/endpoints
+                cfg.model_registry
+                    .models
+                    .entry(mid.key.clone())
+                    .or_default();
+            }
+            event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
+                mid.to_string(),
+            )));
+        }
+        Err(_) => {
+            tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
+            event_bus.send(AppEvent::Error(ErrorEvent {
+                message: format!("Unknown model '{}'", alias_or_id),
+                severity: ErrorSeverity::Warning,
+            }));
+        }
     }
 }

@@ -1,13 +1,6 @@
 #![allow(missing_docs)]
-//! User configuration and provider registry.
-//!
-//! Dataflow:
-//! - `UserConfig` is loaded at startup (toml/env), then merged with curated defaults.
-//! - `ModelRegistry` manages providers, aliases, strictness, capabilities cache,
-//!   and API key resolution from env or config.
-//! - Commands (`/model *`, `/provider strictness`) mutate `ModelRegistry` at runtime,
-//!   while save/load provide persistence with optional secret redaction.
-
+//! User configuration (migrated to llm2 types and router traits).
+//! Focuses on persistence, embedding/editing, and re-exports for router defaults.
 
 use lazy_static::lazy_static;
 use ploke_embed::{
@@ -16,15 +9,20 @@ use ploke_embed::{
     local::{DevicePreference, EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder},
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
-use reqwest::{Client, Url};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{router_only::openrouter::OpenRouter, HasModels, LLMParameters, ProviderSlug, Router, SupportsTools as _};
-
+// llm2 types and router defaults
+use crate::llm2::{registry::user_prefs::RegistryPrefs, Router as _};
+pub use crate::llm2::registry::user_prefs::ModelRegistryStrictness;
+use crate::llm2::router_only::default_model;
+use crate::llm2::ProviderSlug;
+use crate::llm2::router_only::openrouter::OpenRouter;
 
 lazy_static! {
-    pub static ref OPENROUTER_URL: Url = 
-        Url::parse("https://openrouter.ai/api/v1/").expect("Invalid OpenRouter base URL");
+    // Parsed from llm2 OpenRouter BASE_URL
+    pub static ref OPENROUTER_URL: Url =
+        Url::parse(OpenRouter::BASE_URL).expect("Invalid OpenRouter base URL");
 }
 
 pub fn openrouter_url() -> reqwest::Url {
@@ -40,8 +38,9 @@ pub enum CommandStyle {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct UserConfig {
+    // llm2 registry preferences (profiles, strictness, router prefs)
     #[serde(default)]
-    pub registry: ModelRegistry,
+    pub registry: RegistryPrefs,
     #[serde(default)]
     pub command_style: CommandStyle,
     #[serde(default)]
@@ -105,21 +104,13 @@ impl UserConfig {
     }
 
     /// Save the configuration to the specified path.
-    /// If `redact_keys` is true, provider API keys are removed before saving.
+    /// Note: API keys are not stored in this config (llm2 resolves keys from env via Router).
     pub fn save_to_path(
         &self,
         path: &std::path::Path,
-        redact_keys: bool,
+        _redact_keys: bool,
     ) -> color_eyre::Result<()> {
-        let mut cfg = self.clone();
-
-        if redact_keys {
-            for p in &mut cfg.registry.providers {
-                p.api_key.clear();
-            }
-        }
-
-        let toml_str = toml::to_string_pretty(&cfg)?;
+        let toml_str = toml::to_string_pretty(self)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -152,7 +143,7 @@ impl UserConfig {
     }
 }
 
-// NEW: Embedding configuration
+// Embedding configuration (unchanged)
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 /// Embedding backend configuration. Exactly one provider should be set.
 pub struct EmbeddingConfig {
@@ -182,394 +173,4 @@ pub struct EditingConfig {
 
 fn default_agent_min_confidence() -> f32 {
     0.8
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-/// Registry of configured providers with active selection, aliases,
-/// cached capabilities, and selection policy (strictness).
-pub struct ModelRegistry {
-    pub providers: Vec<ModelConfig>,
-    #[serde(default = "default_active_model_config")]
-    pub active_model_config: String,
-    #[serde(default)]
-    pub aliases: std::collections::HashMap<String, String>,
-    #[serde(skip)]
-    pub capabilities: std::collections::HashMap<String, ModelCapabilities>,
-    #[serde(default = "default_strictness")]
-    pub strictness: ModelRegistryStrictness,
-    #[serde(default)]
-    pub require_tool_support: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-/// Concrete provider configuration (one model endpoint).
-pub struct ModelConfig {
-    /// Unique identifier for this provider configuration
-    pub id: String,
-    /// The API key for this specific provider
-    #[serde(skip)]
-    pub api_key: String,
-    /// Optional: upstream provider slug (for OpenRouter routing preferences)
-    #[serde(default)]
-    pub provider_slug: Option<ProviderSlug>,
-    /// Optional: provider-specific environment variable name for API key
-    #[serde(default)]
-    pub api_key_env: Option<String>,
-    /// The base URL for the API endpoint.
-    /// For OpenRouter, this would be "https://openrouter.ai/api/v1".
-    #[serde(default = "default_base_url")]
-    pub base_url: String,
-    /// The model to use, e.g., "openai/gpt-4o" or "anthropic/claude-3-haiku".
-    #[serde(default = "default_model")]
-    pub model: String,
-    /// Optional display name for UI
-    pub display_name: Option<String>,
-    /// Provider type for request formatting
-    #[serde(default)]
-    pub provider_type: ProviderType,
-    /// Optional per-provider LLM parameters (temperature, top-p, etc.)
-    #[serde(default)]
-    pub llm_params: Option<LLMParameters>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
-/// Provider type used for request formatting and env-var resolution.
-pub enum ProviderType {
-    #[default]
-    OpenRouter,
-    OpenAI,
-    Anthropic,
-    Custom,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-/// Policy for allowed providers when switching the active provider.
-pub enum ModelRegistryStrictness {
-    /// Only allow selecting OpenRouter providers
-    OpenRouterOnly,
-    /// Allow OpenRouter and Custom providers (default)
-    #[default]
-    AllowCustom,
-    /// No restrictions (future-friendly)
-    AllowAny,
-}
-
-pub fn default_strictness() -> ModelRegistryStrictness {
-    ModelRegistryStrictness::AllowCustom
-}
-
-impl ModelConfig {
-    /// Resolve the actual API key to use, considering env vars and defaults
-    pub fn resolve_api_key(&self) -> String {
-        // 1. Check provider-specific env var if specified
-        if let Some(env_var) = &self.api_key_env {
-            if let Ok(key) = std::env::var(env_var) {
-                return key;
-            }
-        }
-
-        // 2. Check provider-type specific env vars
-        match self.provider_type {
-            ProviderType::OpenRouter => {
-                if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
-                    return key;
-                }
-            }
-            ProviderType::OpenAI => {
-                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-                    return key;
-                }
-            }
-            ProviderType::Anthropic => {
-                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-                    return key;
-                }
-            }
-            ProviderType::Custom => {
-                // Check generic env vars
-                if let Ok(key) = std::env::var("LLM_API_KEY") {
-                    return key;
-                }
-            }
-        }
-
-        // 3. Fall back to the explicitly configured key
-        self.api_key.clone()
-    }
-    pub fn with_api_key(mut self) -> Self {
-        self.api_key = self.resolve_api_key();
-        self
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-/// Cached model capabilities/pricing for quick lookup in the UI and routing.
-pub struct ModelCapabilities {
-    pub supports_tools: bool,
-    pub context_length: Option<u32>,
-    pub input_cost_per_million: Option<f64>,
-    pub output_cost_per_million: Option<f64>,
-}
-
-impl ModelRegistry {
-    /// Returns the currently active provider configuration.
-    pub fn get_active_model_config(&self) -> Option<&ModelConfig> {
-        self.providers.iter().find(|p| p.id == self.active_model_config)
-    }
-
-    /// Returns a provider either by id or by alias.
-    pub fn get_model_config_by_alias(&self, alias: &str) -> Option<&ModelConfig> {
-        if let Some(provider_id) = self.aliases.get(alias) {
-            self.providers.iter().find(|p| p.id == *provider_id)
-        } else {
-            self.providers.iter().find(|p| p.id == *alias)
-        }
-    }
-
-    pub fn with_defaults(self) -> Self {
-        // NOTE: Removed after `llm2` refactor, as now we only store user configs, and the
-        // "defaults" are None used in requests or otherwise handled automatically by serde where
-        // needed.
-        //
-        // Leaving this here for a bit until we pass current tests and can refactor more.
-        self
-    }
-
-    // TODO: Update doc tests with new fields
-    /// Attempts to switch the active provider.
-    ///
-    /// # Returns
-    /// `true` if the provider id or alias was found and the switch succeeded,
-    /// `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use ploke_tui::user_config::{ModelRegistry, ModelConfig, ProviderType};
-    /// # use std::collections::HashMap;
-    /// let mut registry = ModelRegistry {
-    ///     providers: vec![
-    ///         ModelConfig {
-    ///             id: "gpt4".into(),
-    ///             api_key: "key".into(),
-    ///             base_url: "https://openrouter.ai/api/v1".into(),
-    ///             model: "openai/gpt-4".into(),
-    ///             display_name: Some("GPT-4".into()),
-    ///             provider_type: ProviderType::OpenRouter,
-    ///         },
-    ///         ModelConfig {
-    ///             id: "claude".into(),
-    ///             api_key: "key".into(),
-    ///             base_url: "https://openrouter.ai/api/v1".into(),
-    ///             model: "anthropic/claude-3".into(),
-    ///             display_name: Some("Claude 3".into()),
-    ///             provider_type: ProviderType::OpenRouter,
-    ///         },
-    ///     ],
-    ///     active_model_config: "gpt4".into(),
-    ///     aliases: HashMap::from([("gpt".into(), "gpt4".into())]),
-    /// };
-    ///
-    /// assert!(registry.set_active("claude"));
-    /// assert_eq!(registry.active_model_config, "claude");
-    ///
-    /// // Switch via alias
-    /// assert!(registry.set_active("gpt"));
-    /// assert_eq!(registry.active_model_config, "gpt4");
-    ///
-    /// // Unknown id fails
-    /// assert!(!registry.set_active("unknown"));
-    /// ```
-    // - LLM Generated, reviewed by - JL 25-07-17
-    pub fn set_active(&mut self, id_or_alias: &str) -> bool {
-        let provider_id = self
-            .aliases
-            .get(id_or_alias)
-            .map(|s| s.as_str())
-            .unwrap_or(id_or_alias);
-
-        let provider = if let Some(p) = self.providers.iter().find(|p| p.id == *provider_id) {
-            p
-        } else {
-            return false;
-        };
-
-        // Enforce strictness policy
-        let allowed = match self.strictness {
-            ModelRegistryStrictness::OpenRouterOnly => {
-                matches!(provider.provider_type, ProviderType::OpenRouter)
-            }
-            ModelRegistryStrictness::AllowCustom => {
-                matches!(
-                    provider.provider_type,
-                    ProviderType::OpenRouter | ProviderType::Custom
-                )
-            }
-            ModelRegistryStrictness::AllowAny => true,
-        };
-
-        if !allowed {
-            tracing::warn!(
-                "Provider '{}' not allowed by current strictness setting: {:?}",
-                provider_id,
-                self.strictness
-            );
-            return false;
-        }
-
-        tracing::info!(
-            "Changing provider from {} to {}",
-            self.active_model_config,
-            provider_id
-        );
-        self.active_model_config = provider_id.to_string();
-        true
-    }
-
-    /// Ensure all providers have their API keys loaded from environment variables
-    pub fn load_api_keys(&mut self) {
-        for provider in &mut self.providers {
-            provider.api_key = provider.resolve_api_key();
-        }
-    }
-
-    /// Ensure all providers have their API keys loaded from environment variables
-    pub fn set_openrouter_key(&mut self, api_key: &str) {
-        // All Openrouter keys are 73 chars long (including dashes), e.g.
-        // xx-xx-xx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-        assert_eq!(api_key.chars().count(), 73);
-        for provider in self.providers.iter_mut().filter(|p| p.provider_type == ProviderType::OpenRouter) {
-            provider.api_key = api_key.to_owned();
-        }
-    }
-
-    /// Returns a list of all available providers as `(id, display_name)` tuples.
-    // - LLM Generated, reviewed by - JL 25-07-17
-    pub fn list_available(&self) -> Vec<(String, String)> {
-        self.providers
-            .iter()
-            .map(|p| {
-                let name = p.display_name.as_ref().unwrap_or(&p.id);
-                (p.id.clone(), name.clone())
-            })
-            .collect()
-    }
-
-    /// Query OpenRouter for current model capabilities and pricing and cache them.
-    pub async fn refresh_from_openrouter(&mut self) -> color_eyre::Result<()> {
-        // Find an API key to use
-        let api_key = self
-            .providers
-            .iter()
-            .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
-            .map(|p| p.resolve_api_key())
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .unwrap_or_default();
-
-        if api_key.is_empty() {
-            tracing::warn!(
-                "OPENROUTER_API_KEY not set and no OpenRouter provider configured; skipping model registry refresh"
-            );
-            return Ok(());
-        }
-
-        let client = Client::new();
-        let models = OpenRouter::fetch_models_iter(&client).await?;
-
-        self.capabilities.clear();
-        for m in models {
-            let model_level_tools = m
-                .supported_parameters
-                .as_ref()
-                .map(|v| v.supports_tools())
-                .unwrap_or(false);
-
-            let supports_tools = m.supported_parameters
-                .as_ref().is_some_and(|p| p.supports_tools());
-
-            let caps = ModelCapabilities {
-                supports_tools,
-                context_length: m
-                    .context_length,
-                input_cost_per_million: Some( m.pricing.prompt * 1_000_000.0 ),
-                output_cost_per_million: Some( m.pricing.completion * 1_000_000.0 )
-            };
-
-            self.capabilities.insert(m.id, caps);
-        }
-        Ok(())
-    }
-
-    /// Helper to check if a specific model is known to support tools.
-    pub fn model_supports_tools(&self, model: &str) -> Option<bool> {
-        // Check registry first
-        if let Some(caps) = self.capabilities.get(model) {
-            return Some(caps.supports_tools);
-        }
-        
-        // Fallback for known tool-capable models when registry refresh fails
-        match model {
-            "moonshotai/kimi-k2" | "kimi-k2" => Some(true),
-            "openai/gpt-4o" | "gpt-4o" => Some(true),
-            "openai/gpt-4o-mini" | "gpt-4o-mini" => Some(true),
-            "anthropic/claude-3-5-sonnet" => Some(true),
-            "anthropic/claude-3-5-haiku" => Some(true),
-            _ => None
-        }
-    }
-}
-
-pub fn default_active_model_config() -> String {
-    "kimi-k2".to_string()
-}
-
-fn default_base_url() -> String {
-    "https://openrouter.ai/api/v1".to_string()
-}
-
-fn chat_url() -> String {
-    "https://openrouter.ai/api/v1/chat/completions".to_string()
-}
-
-pub fn default_model_id() -> String {
-    "kimi-k2".to_string()
-}
-
-pub fn default_model() -> String {
-    "moonshotai/kimi-k2".to_string()
-}
-
-// Add a default implementation for when the config file is missing
-impl Default for ModelRegistry {
-    fn default() -> Self {
-        let mut registry = Self {
-            providers: vec![ModelConfig {
-                id: default_model_id(),
-                api_key: String::new(),
-                provider_slug: None,
-                base_url: default_base_url(),
-                model: default_model(),
-                display_name: Some("Default".to_string()),
-                provider_type: ProviderType::OpenRouter,
-                llm_params: Some(LLMParameters {
-                    ..Default::default()
-                }),
-                api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-            }],
-            active_model_config: default_active_model_config(),
-            aliases: std::collections::HashMap::new(),
-            capabilities: std::collections::HashMap::new(),
-            strictness: default_strictness(),
-            require_tool_support: false,
-        };
-
-        // Always include the curated defaults
-        for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
-            if !registry.providers.iter().any(|p| &p.id == id) {
-                registry.providers.push(default.clone());
-            }
-        }
-
-        registry
-    }
 }

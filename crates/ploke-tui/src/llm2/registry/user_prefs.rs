@@ -25,7 +25,7 @@ impl Default for ProfileName {
 
 impl ProfileName {
     pub(crate) fn from(other: impl AsRef<str>) -> Self {
-        Self( other.as_ref().to_string() )
+        Self(other.as_ref().to_string())
     }
 }
 
