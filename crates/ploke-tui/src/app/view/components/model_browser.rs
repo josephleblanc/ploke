@@ -33,6 +33,7 @@ pub struct ModelBrowserItem {
     pub id: ModelId,
     pub name: Option<ModelName>,
     pub context_length: Option<u32>,
+    /// input cost converted from USD/token to 
     pub input_cost: Option<f64>,
     pub output_cost: Option<f64>,
     pub supports_tools: bool,
@@ -116,13 +117,13 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
 
     for (i, it) in mb.items.iter().enumerate() {
         let title = if let Some(name) = &it.name {
-            if name.is_empty() {
-                it.id.clone()
+            if name.as_str().is_empty() {
+                it.id.to_string()
             } else {
-                format!("{} — {}", it.id, name)
+                format!("{} — {}", it.id, name.as_str())
             }
         } else {
-            it.id.clone()
+            it.id.to_string()
         };
 
         let mut line = Line::from(vec![
