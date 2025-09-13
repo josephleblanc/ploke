@@ -1,8 +1,9 @@
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 
+use crate::ModelId;
 use crate::chat_history::MessageKind;
-use crate::llm2::{ChatHistoryTarget, LLMParameters};
+use crate::llm2::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -187,8 +188,8 @@ pub enum StateCommand {
         request_id: Uuid,
     },
     SelectModelProvider {
-        model_id: String,
-        provider_id: String,
+        model_id: ModelId,
+        provider_key: Option<ProviderKey>,
     },
 }
 

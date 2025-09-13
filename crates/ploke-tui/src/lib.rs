@@ -37,7 +37,7 @@ pub mod user_config2;
 #[cfg(feature = "llm_refactor")]
 pub mod user_config;
 
-use llm2::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse};
+use llm2::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse, ModelId};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -330,21 +330,24 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(SystemEvent),
+    #[deprecated = "use llm2::LlmEvent::Models(models::Event) instead"]
     ModelSearchResults {
         keyword: String,
         items: Vec<llm2::request::models::ResponseItem>,
     },
+    #[deprecated = "use llm2::LlmEvent::Endpoint(endpoint::Event) instead"]
     ModelsEndpointsRequest {
         // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
         // the typed version for that specific router before making the request.
         // + make model_id typed as ModelKey
-        model_id: String,
+        model_id: ModelId,
     },
-    #[deprecated = "Use ModelEndpointsResultsFull isntead, then delete this variant"]
+    #[deprecated = "use llm2::LlmEvent::Models(models::Event) instead"]
     ModelsEndpointsResults {
         model_id: String,
         providers: Vec<llm2::request::endpoint::Endpoint>,
     },
+    #[deprecated = "use llm2::LlmEvent::Endpoint(endpoint::Event) instead"]
     EndpointsResults {
         model_id: String,
         endpoints: EndpointsResponse,

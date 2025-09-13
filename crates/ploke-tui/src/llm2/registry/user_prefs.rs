@@ -44,7 +44,7 @@ pub struct ModelPrefs {
     // note that it does not include `:{variant}` as in `ModelId`, which varies by provider,
     // and is included under `ModelProfile` in `variant`
     pub model_key: ModelKey,
-    pub default_profile: Option<ProfileName>,
+    pub default_profile: Option<ModelProfile>,
     // name from profiles
     pub profiles: HashMap<ProfileName, ModelProfile>,
     // API routing server, this gives us url, e.g. OpenRouter, OpenAI
@@ -57,13 +57,13 @@ impl ModelPrefs {
     pub(crate) fn get_default_profile(&self) -> Option<&ModelProfile> {
         self.default_profile
             .as_ref()
-            .and_then(|def_pr| self.profiles.get(def_pr))
+            .and_then(|def_pr| self.profiles.get(&def_pr.name))
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RegistryPrefs {
-    pub global_default_profile: Option<String>,
+    pub global_default_profile: Option<ModelProfile>,
     pub models: HashMap<ModelKey, ModelPrefs>,
     pub strictness: ModelRegistryStrictness,
     pub router_prefs: HashMap<RouterVariants, ProviderPreferences>,

@@ -266,22 +266,8 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
-            StateCommand::SelectModelProvider { model_id, provider_id } => {
+            StateCommand::SelectModelProvider { model_id, provider_key} => {
                 // Update registry prefs and active runtime selection to match user's choice.
-                let parsed = match ModelId::from_str(&model_id) {
-                    Ok(m) => m,
-                    Err(_) => {
-                        handlers::chat::add_msg_immediate(
-                            &state,
-                            &event_bus,
-                            Uuid::new_v4(),
-                            format!("Invalid model id: {}", model_id),
-                            MessageKind::SysInfo,
-                        )
-                        .await;
-                        continue;
-                    }
-                };
                 {
                     let mut cfg = state.config.write().await;
                     let reg = &mut cfg.model_registry;

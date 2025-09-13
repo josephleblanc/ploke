@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::Arc};
 use url::Url;
 
-use super::{Quant, model_types::ModelKey};
+use super::{model_types::{ModelKey, ModelVariant}, Quant};
 
 // ----- minimal error type -----
 #[derive(Debug, thiserror::Error)]
@@ -213,6 +213,7 @@ impl ProviderKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct EndpointKey {
     pub(crate) model: ModelKey,
+    pub(crate) variant: Option< ModelVariant >,
     pub(crate) provider: ProviderKey,
 }
 

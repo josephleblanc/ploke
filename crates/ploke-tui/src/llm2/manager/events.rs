@@ -20,6 +20,12 @@ pub(crate) enum LlmEvent {
     Status(status::Event),
 }
 
+impl From<LlmEvent> for AppEvent {
+    fn from(value: LlmEvent) -> Self {
+        AppEvent::Llm2(value)
+    }
+}
+
 pub(crate) mod status {
     use serde_json::Value;
     use uuid::Uuid;
@@ -44,7 +50,8 @@ pub(crate) mod endpoint {
     #[derive(Clone, Debug)]
     pub(crate) enum Event {
         Request {
-            parent_id: Uuid,
+            // removed "parent_id" since that is usually to refer to a conversation history
+            // message, where this refers to a model and is not used in a chat history context
             model_key: ModelKey, // e.g., "gpt-4-turbo"
             // Larger response, make an Arc to hold it
             router: RouterVariants,
@@ -73,7 +80,6 @@ pub(crate) mod models {
         /// that contain the model identifier in the form `{author}/{model}:{variant}` where
         /// `:{variant}` is optional.
         Request {
-            parent_id: Uuid,
             router: RouterVariants,
         },
         /// Response with the full returned values for the models.

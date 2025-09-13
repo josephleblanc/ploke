@@ -324,7 +324,6 @@ fn handle_endpoint_request(
             })
             .ok();
         event_bus.send(AppEvent::Llm2(LlmEvent::Endpoint(Event::Response {
-            parent_id,
             model_key,
             endpoints: result,
         })));

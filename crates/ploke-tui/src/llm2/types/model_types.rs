@@ -10,6 +10,11 @@ use crate::llm2::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "&str")]
+/// The ModelKey is in the form {author}/{model}, and does not contain the `:{variant}` convention
+/// that may vary across routers/providers, e.g. for OpenRouter
+/// - ModelKey might be: deepseek/deepseek-r1
+/// - but there may be a ModelId, `deepseek/deepseek-r1:free`, which may correspond to an Endpoint
+/// such as `deepinfra/deepseek-r1`
 pub(crate) struct ModelKey {
     pub(crate) author: Author,  // e.g. "openai", "nousresearch"
     pub(crate) slug: ModelSlug, // e.g. "gpt-5", "deephermes-3-llama-3-8b-preview"

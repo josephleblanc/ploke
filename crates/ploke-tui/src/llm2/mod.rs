@@ -7,11 +7,11 @@ pub(crate) mod error;
 pub(crate) mod manager;
 pub(crate) mod registry;
 
-pub(crate) use types::model_types::{ ModelId, ModelKey };
+pub(crate) use types::model_types::{ ModelId, ModelKey, ModelVariant };
 pub(crate) use types::enums::*;
 pub(crate) use types::newtypes::{
     ApiKeyEnv, Author, BaseUrl, EndpointKey, ProviderKey, ProviderName, ProviderSlug,
-    ModelSlug, IdError, Transport, ProviderConfig, ModelName 
+    ModelSlug, IdError, Transport, ProviderConfig, ModelName
 };
 pub(crate) use types::meta::LLMMetadata;
 pub(crate) use wire::WireRequest;

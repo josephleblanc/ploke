@@ -1,4 +1,8 @@
+use crate::llm2::manager::events::endpoint;
 use crate::llm2::request::models;
+use crate::llm2::router_only::RouterVariants;
+use crate::llm2::router_only::openrouter::OpenRouter;
+use crate::llm2::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -730,9 +734,10 @@ impl App {
         if self.approvals.is_some() && self.handle_overlay_key(key) {
             return;
         }
+        let mut chosen_model: Option<ModelId> = None;
+        let mut chosen_provider: Option<ProviderKey> = None;
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
-            let mut chosen_id: Option<String> = None;
             if let Some(mb) = self.model_browser.as_mut() {
                 use KeyCode::*;
                 match key.code {
@@ -763,9 +768,18 @@ impl App {
                             {
                                 item.loading_providers = true;
                                 let model_id = item.id.clone();
+                                // TODO: Change to a scoped task
                                 tokio::spawn(async move {
+                                    // NOTE: Temporary glue, hardcoding OpenRouter (later want to
+                                    // make configurable or generic or something)
+                                    let router = RouterVariants::OpenRouter(OpenRouter);
                                     crate::emit_app_event(
-                                        crate::AppEvent::ModelsEndpointsRequest { model_id },
+                                        LlmEvent::Endpoint(endpoint::Event::Request {
+                                            model_key: model_id.key,
+                                            router,
+                                            variant: model_id.variant,
+                                        })
+                                        .into(),
                                     )
                                     .await;
                                 });
@@ -774,15 +788,23 @@ impl App {
                     }
                     KeyCode::Char('s') => {
                         if let Some(item) = mb.items.get_mut(mb.selected) {
+                            chosen_model = Some(item.id.clone());
                             if item.providers.is_empty() {
                                 // Fetch endpoints first, then auto-select when results arrive
                                 if !item.loading_providers {
                                     item.loading_providers = true;
                                     item.pending_select = true;
                                     let model_id = item.id.clone();
+                                    // TODO: Change to a scoped task
                                     tokio::spawn(async move {
+                                        let router = RouterVariants::OpenRouter(OpenRouter);
                                         crate::emit_app_event(
-                                            crate::AppEvent::ModelsEndpointsRequest { model_id },
+                                            LlmEvent::Endpoint(endpoint::Event::Request {
+                                                model_key: model_id.key,
+                                                router,
+                                                variant: model_id.variant,
+                                            })
+                                            .into(),
                                         )
                                         .await;
                                     });
@@ -792,17 +814,12 @@ impl App {
                                 }
                             } else {
                                 // Choose a provider that supports tools if available, otherwise first provider
-                                let provider_choice = item
+                                chosen_provider = item
                                     .providers
                                     .iter()
                                     .find(|p| p.supports_tools)
                                     .or_else(|| item.providers.first())
-                                    .map(|p| p.name.clone());
-                                if let Some(pid) = provider_choice {
-                                    chosen_id = Some(format!("{}::{}", item.id, pid.as_ref()));
-                                } else {
-                                    chosen_id = Some(item.id.clone());
-                                }
+                                    .map(|p| p.key.clone());
                             }
                         }
                     }
@@ -813,12 +830,12 @@ impl App {
                 }
             }
             // Drop the mutable borrow of self.model_browser before switching model
-            if let Some(id) = chosen_id {
+            if let Some(model_id) = chosen_model {
                 // id format: "model_id::provider_id" when provider selected, or just model_id
-                if let Some((model_id, provider_id)) = id.split_once("::") {
-                    self.apply_model_provider_selection(model_id, Some(provider_id));
+                if let Some(provider) = chosen_provider {
+                    self.apply_model_provider_selection(model_id, Some(provider));
                 } else {
-                    self.apply_model_provider_selection(&id, None);
+                    self.apply_model_provider_selection(model_id, None);
                 }
                 self.model_browser = None;
             }
@@ -888,12 +905,15 @@ impl App {
         self.needs_redraw = true;
     }
 
-    fn apply_model_provider_selection(&mut self, model_id: &str, provider_slug: Option<&str>) {
+    fn apply_model_provider_selection(
+        &mut self,
+        model_id: ModelId,
+        provider_key: Option<ProviderKey>,
+    ) {
         // Delegate persistence and broadcasts to the state manager (non-blocking for UI)
-        let provider_id = provider_slug.unwrap_or("-");
         self.send_cmd(StateCommand::SelectModelProvider {
-            model_id: model_id.to_string(),
-            provider_id: provider_id.to_string(),
+            model_id,
+            provider_key,
         });
         self.needs_redraw = true;
     }
@@ -1204,16 +1224,15 @@ impl App {
         let items = items
             .into_iter()
             .map(|m| {
+                let supports_tools = m.supports_tools();
                 // Model-level tools: true if any provider supports tools OR model supported_parameters says so
                 ModelBrowserItem {
-                    id: m.id,
-                    name: Some( m.name ),
-                    context_length: m
-                        .context_length
-                        .or_else(|| m.top_provider.context_length),
-                    input_cost: Some( m.pricing.prompt ),
-                    output_cost: Some( m.pricing.completion ),
-                    supports_tools: model_supports_tools,
+                    id: m.id.clone(),
+                    name: Some(m.name),
+                    context_length: m.context_length.or_else(|| m.top_provider.context_length),
+                    input_cost: Some(m.pricing.prompt),
+                    output_cost: Some(m.pricing.completion),
+                    supports_tools,
                     // Provider rows will be populated later by `list_model_providers_async` after the
                     // command `Command::ModelProviders(model_id)`, the details are empty to start with.
                     providers: Vec::new(),
@@ -1249,7 +1268,10 @@ impl App {
                 match crate::llm2::ModelId::from_str(&mid) {
                     Ok(parsed) => {
                         let mut cfg = state.config.write().await;
-                        cfg.model_registry.models.entry(parsed.key.clone()).or_default();
+                        cfg.model_registry
+                            .models
+                            .entry(parsed.key.clone())
+                            .or_default();
                         cfg.active_model = parsed;
                     }
                     Err(_) => {}
@@ -1282,7 +1304,7 @@ impl App {
         });
     }
 
-    /// Lists all registered provider configurations in the chat window.
+    /// Lists all registered endpoint configurations in the chat window.
     ///
     /// Reads the current provider registry from shared state (blocking only the
     /// calling thread) and emits a nicely-formatted list of available models,
@@ -1294,9 +1316,8 @@ impl App {
 
         let mut lines = vec!["Available models:".to_string()];
 
-        for pc in &cfg.model_registry.providers {
-            let display = pc.display_name.as_ref().unwrap_or(&pc.model);
-            lines.push(format!("  {:<28}  {}", pc.id, display));
+        for mk in cfg.model_registry.models.keys() {
+            lines.push(format!("{:<4}", mk));
         }
 
         self.send_cmd(StateCommand::AddMessageImmediate {

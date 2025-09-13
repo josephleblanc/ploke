@@ -8,7 +8,8 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use crate::llm2::{ModelId, ModelName};
+use crate::llm2::request::endpoint::ProviderNameStr;
+use crate::llm2::{EndpointKey, ModelId, ModelName, ProviderKey};
 use crate::user_config::OPENROUTER_URL;
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -46,7 +47,8 @@ pub struct ModelBrowserItem {
 
 #[derive(Debug)]
 pub struct ModelProviderRow {
-    pub name: ArcStr,
+    pub name: ProviderNameStr,
+    pub key: ProviderKey,
     pub context_length: u32,
     pub input_cost: f64,
     pub output_cost: f64,
@@ -192,7 +194,7 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
                     lines.push(Line::from(Span::styled(
                         format!(
                             "      - {}  tools={}  ctx={}  pricing: in={} out={}",
-                            p.name.as_ref(),
+                            p.name.to_string(),
                             p.supports_tools,
                             format_args!("{:.0}", p.context_length),
                             format_args!("{:.3}", p.input_cost * 1_000_000.0),
