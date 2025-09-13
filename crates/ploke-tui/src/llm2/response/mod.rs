@@ -140,4 +140,123 @@ pub(crate) struct ResponseMessage {
     pub(super) reasoning: Option<String>,
 }
 
-// AI: add unit tests for `OpenAiResponse` serailization and deserialization AI!
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openai_response_serialization_deserialization() {
+        let response = OpenAiResponse {
+            id: "test-id".to_string(),
+            choices: vec![
+                Choices {
+                    logprobs: None,
+                    finish_reason: Some(FinishReason::Stop),
+                    native_finish_reason: Some("stop".to_string()),
+                    index: Some(0),
+                    message: Some(ResponseMessage {
+                        role: Some(Role::Assistant),
+                        content: Some("Hello, world!".to_string()),
+                        tool_calls: None,
+                        logprobs: None,
+                        refusal: None,
+                        reasoning: None,
+                    }),
+                    error: None,
+                    text: None,
+                    delta: None,
+                }
+            ],
+            created: 1234567890,
+            model: "gpt-4".to_string(),
+            object: "chat.completion".to_string(),
+            system_fingerprint: Some("test-fingerprint".to_string()),
+            usage: Some(TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+            logprobs: None,
+        };
+
+        // Test serialization
+        let serialized = serde_json::to_string(&response).unwrap();
+        
+        // Test deserialization
+        let deserialized: OpenAiResponse = serde_json::from_str(&serialized).unwrap();
+        
+        // Verify fields
+        assert_eq!(deserialized.id, response.id);
+        assert_eq!(deserialized.choices.len(), response.choices.len());
+        assert_eq!(deserialized.created, response.created);
+        assert_eq!(deserialized.model, response.model);
+        assert_eq!(deserialized.object, response.object);
+        assert_eq!(deserialized.system_fingerprint, response.system_fingerprint);
+        assert_eq!(deserialized.usage.unwrap().prompt_tokens, 10);
+        assert_eq!(deserialized.usage.unwrap().completion_tokens, 5);
+        assert_eq!(deserialized.usage.unwrap().total_tokens, 15);
+    }
+
+    #[test]
+    fn test_openai_response_minimal() {
+        let json = r#"{
+            "id": "minimal",
+            "choices": [],
+            "created": 0,
+            "model": "test-model",
+            "object": "chat.completion"
+        }"#;
+
+        let response: OpenAiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.id, "minimal");
+        assert!(response.choices.is_empty());
+        assert_eq!(response.system_fingerprint, None);
+        assert_eq!(response.usage, None);
+    }
+
+    #[test]
+    fn test_openai_response_with_tool_calls() {
+        let response = OpenAiResponse {
+            id: "tool-test".to_string(),
+            choices: vec![
+                Choices {
+                    logprobs: None,
+                    finish_reason: Some(FinishReason::ToolCalls),
+                    native_finish_reason: Some("tool_calls".to_string()),
+                    index: Some(0),
+                    message: Some(ResponseMessage {
+                        role: Some(Role::Assistant),
+                        content: None,
+                        tool_calls: Some(vec![
+                            ToolCall {
+                                id: "call_1".to_string(),
+                                r#type: "function".to_string(),
+                                function: crate::tools::FunctionCall {
+                                    name: "test_function".to_string(),
+                                    arguments: "{\"param\": \"value\"}".to_string(),
+                                },
+                            }
+                        ]),
+                        logprobs: None,
+                        refusal: None,
+                        reasoning: None,
+                    }),
+                    error: None,
+                    text: None,
+                    delta: None,
+                }
+            ],
+            created: 1234567890,
+            model: "gpt-4".to_string(),
+            object: "chat.completion".to_string(),
+            system_fingerprint: None,
+            usage: None,
+            logprobs: None,
+        };
+
+        let serialized = serde_json::to_string(&response).unwrap();
+        let deserialized: OpenAiResponse = serde_json::from_str(&serialized).unwrap();
+        
+        assert_eq!(deserialized.choices[0].message.as_ref().unwrap().tool_calls.as_ref().unwrap().len(), 1);
+    }
+}
