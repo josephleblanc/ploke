@@ -2,9 +2,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::llm2::ProviderSlug;
-use crate::llm2::{EndpointKey, ModelId, ProviderKey};
 use crate::llm2::registry::user_prefs::{ModelPrefs, RegistryPrefs};
 use crate::llm2::router_only::RouterVariants;
+use crate::llm2::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
@@ -54,7 +54,7 @@ pub async fn state_manager(
             StateCommand::AddUserMessage {
                 content,
                 completion_tx,
-                new_user_msg_id
+                new_user_msg_id,
             } => {
                 handlers::chat::add_user_message(
                     &state,
@@ -93,8 +93,14 @@ pub async fn state_manager(
                 parent_id,
                 responder,
             } => {
-                handlers::chat::create_assistant_message(&state, &event_bus, parent_id, responder, new_assistant_msg_id)
-                    .await;
+                handlers::chat::create_assistant_message(
+                    &state,
+                    &event_bus,
+                    parent_id,
+                    responder,
+                    new_assistant_msg_id,
+                )
+                .await;
             }
 
             StateCommand::IndexWorkspace {
@@ -244,80 +250,76 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            // NOTE: I think this is no longer being used. Commenting out to look for errors if
-            // absent, delete later.
-            // - 2025-08-28
-            //
-            // StateCommand::RagAssembleContext {
-            //     req_id,
-            //     user_query,
-            //     top_k,
-            //     budget,
-            //     strategy,
-            // } => {
-            //     rag::context::assemble_context(
-            //         &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
-            //     )
-            //     .await
-            // }
             StateCommand::ApproveEdits { request_id } => {
                 rag::editing::approve_edits(&state, &event_bus, request_id).await;
             }
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
-            StateCommand::SelectModelProvider { model_id, provider_key} => {
+            StateCommand::SelectModelProvider {
+                model_id,
+                provider_key,
+            } => {
                 // Update registry prefs and active runtime selection to match user's choice.
+                let mut cfg = state.config.write().await;
+                let reg = &mut cfg.model_registry;
+
+                // Ensure a ModelPrefs entry exists for this model key
+                reg.models
+                    .entry(model_id.clone().key)
+                    .or_insert_with(|| ModelPrefs {
+                        model_key: model_id.clone().key,
+                        ..Default::default()
+                    });
+
+                // Ensure OpenRouter is allowed (for now we only support OpenRouter)
+                let mp = reg
+                    .models
+                    .get_mut(&model_id.clone().key)
+                    .expect("entry ensured above");
+                if !mp
+                    .allowed_routers
+                    .iter()
+                    .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
                 {
-                    let mut cfg = state.config.write().await;
-                    let reg = &mut cfg.model_registry;
+                    mp.allowed_routers.push(RouterVariants::OpenRouter(
+                        crate::llm2::router_only::openrouter::OpenRouter,
+                    ));
+                }
 
-                    // Ensure a ModelPrefs entry exists for this model key
-                    reg.models
-                        .entry(parsed.key.clone())
-                        .or_insert_with(|| ModelPrefs {
-                            model_key: parsed.key.clone(),
-                            ..Default::default()
-                        });
-
-                    // Ensure OpenRouter is allowed (for now we only support OpenRouter)
-                    let mp = reg
-                        .models
-                        .get_mut(&parsed.key)
-                        .expect("entry ensured above");
-                    if !mp
-                        .allowed_routers
-                        .iter()
-                        .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
-                    {
-                        mp.allowed_routers.push(RouterVariants::OpenRouter(
-                            crate::llm2::router_only::openrouter::OpenRouter,
-                        ));
-                    }
-
+                let msg = if let Some(provider) = provider_key {
                     // Add/update selected endpoint preference
+                    let ModelId { key, variant } = model_id.clone();
                     let ek = EndpointKey {
-                        model: parsed.key.clone(),
-                        provider: ProviderKey::new(&provider_id)
-                            .expect("valid provider slug for endpoint selection"),
+                        model: key,
+                        provider: provider.clone(),
+                        variant,
                     };
                     if !mp.selected_endpoints.iter().any(|e| e == &ek) {
                         mp.selected_endpoints.push(ek);
                     }
-
-                    // Set active runtime model to the chosen id (includes optional variant)
-                    cfg.active_model = parsed.clone();
-                }
+                    // otherwise selected model without provider, which is fine.
+                    format!(
+                        "Switched active model to {} via provider {}",
+                        model_id,
+                        provider.slug.as_str()
+                    )
+                } else {
+                    format!(
+                        "Switched active model to {} with auto provider selection",
+                        model_id
+                    )
+                };
 
                 // Inform the user and update the UI via events
+
+                // Set active runtime model to the chosen id (includes optional variant)
+                cfg.active_model = model_id.clone();
                 handlers::chat::add_msg_immediate(
                     &state,
                     &event_bus,
                     Uuid::new_v4(),
-                    format!(
-                        "Switched active model to {} via provider {}",
-                        model_id, provider_id
-                    ),
+                    msg,
                     MessageKind::SysInfo,
                 )
                 .await;
