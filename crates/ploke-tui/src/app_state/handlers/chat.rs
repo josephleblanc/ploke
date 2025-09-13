@@ -9,7 +9,7 @@ use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, Up
 use crate::llm2::manager::events::ChatEvt;
 use crate::llm2::LlmEvent;
 use crate::utils::helper::truncate_string;
-use crate::{EventBus, llm};
+use crate::EventBus;
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 

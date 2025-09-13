@@ -11,7 +11,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::{ModelsEndpointResponse, SupportedParameters, SupportsTools};
+use crate::llm::provider_endpoints::{llm2::models::ResponseItemResponse, SupportedParameters, SupportsTools};
 use crate::tracing_setup::{init_tracing, init_tracing_tests};
 use crate::user_config::OPENROUTER_URL;
 

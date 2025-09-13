@@ -33,6 +33,7 @@ impl ProfileName {
 pub struct ModelProfile {
     // user-named param sets per model
     pub name: ProfileName, // e.g. "creative-0.8" or "eval-sweep"
+    pub model_key: ModelKey,
     pub params: LLMParameters,
     pub variant: Option<ModelVariant>,
 }

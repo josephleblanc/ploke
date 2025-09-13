@@ -14,6 +14,7 @@ use super::*;
 pub(crate) enum LlmEvent {
     ChatCompletion(ChatEvt),
     Completion(ChatEvt),
+    Tool(ToolEvent),
     Endpoint(endpoint::Event),
     Models(models::Event),
     Status(status::Event),
@@ -153,6 +154,30 @@ pub(crate) enum ChatEvt {
         formatted_prompt: Vec<RequestMessage>,
     },
 }
+
+#[derive(Clone, Debug)]
+pub enum ToolEvent {
+    Requested {
+        request_id: Uuid,
+        parent_id: Uuid,
+        name: String,
+        arguments: Value,
+        call_id: ArcStr,
+    },
+    Completed {
+        request_id: Uuid,
+        parent_id: Uuid,
+        call_id: ArcStr,
+        content: String,
+    },
+    Failed {
+        request_id: Uuid,
+        parent_id: Uuid,
+        call_id: ArcStr,
+        error: String,
+    },
+}
+
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct UsageMetrics {

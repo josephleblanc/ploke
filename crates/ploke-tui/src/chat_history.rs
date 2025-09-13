@@ -1,6 +1,6 @@
 use crate::AppEvent;
 use crate::app_state::ListNavigation;
-use crate::llm::LLMMetadata;
+use crate::llm2::LLMMetadata;
 
 use fxhash::FxHashMap as HashMap;
 use std::hash::RandomState;

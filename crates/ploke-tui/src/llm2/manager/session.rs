@@ -16,7 +16,7 @@ use crate::llm2::request::endpoint::ToolChoice;
 use crate::llm2::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
 
-use super::{LlmError, ToolEvent};
+use super::LlmError;
 
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 

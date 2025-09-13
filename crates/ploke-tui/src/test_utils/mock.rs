@@ -13,7 +13,6 @@ use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
-use crate::llm::openrouter_catalog::ModelEntry;
 use crate::user_config::CommandStyle;
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;

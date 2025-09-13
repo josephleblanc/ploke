@@ -21,7 +21,7 @@ use ploke_error::Error;
 
 use crate::llm::model_provider::{Endpoint, EndpointsResponse};
 use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
+use crate::llm::provider_endpoints::{llm2::models::ResponseItem, llm2::models::ResponseItemResponse, SupportedParameters};
 use crate::test_harness::openrouter_env;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
@@ -76,7 +76,7 @@ async fn post_with_retries(
 }
 
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
-fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelsEndpoint) -> f64 {
+fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::llm2::models::ResponseItem) -> f64 {
     let p = ep.pricing.prompt_or_default();
     let c = ep.pricing.completion_or_default();
     p + c

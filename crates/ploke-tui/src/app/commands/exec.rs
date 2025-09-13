@@ -16,7 +16,7 @@ use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::openrouter_catalog::{self, ModelEntry};
-use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
+use crate::llm::provider_endpoints::{llm2::models::ResponseItem, llm2::models::ResponseItemResponse, SupportedParameters};
 use crate::user_config::{
     ModelRegistryStrictness, OPENROUTER_URL, ProviderType, UserConfig, openrouter_url,
 };
@@ -674,7 +674,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
         match openrouter_catalog::fetch_models(&client, base_url, &api_key).await {
             Ok(models) => {
                 let kw_lower = keyword_str.to_lowercase();
-                let mut filtered: Vec<ModelsEndpoint> = models
+                let mut filtered: Vec<llm2::models::ResponseItem> = models
                     .into_iter()
                     .filter(|m| {
                         let id_match = m.id.to_lowercase().contains(&kw_lower);

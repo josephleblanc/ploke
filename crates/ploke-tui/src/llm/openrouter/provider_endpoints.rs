@@ -204,11 +204,11 @@ impl TryFrom<&Url> for ProvEnd {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Typed response to deserialize the response from:
 /// https://openrouter.ai/api/v1/models
-pub struct ModelsEndpointResponse {
-    pub endpoint: Vec<ModelsEndpoint>,
+pub struct llm2::models::ResponseItemResponse {
+    pub endpoint: Vec<llm2::models::ResponseItem>,
 }
 
-impl ModelsEndpointResponse {
+impl llm2::models::ResponseItemResponse {
     /// Returns the static URL for the OpenRouter models endpoint.
     ///
     /// This URL points to the official OpenRouter API endpoint that lists all available models.
@@ -282,7 +282,7 @@ impl ModelsEndpointResponse {
 ///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
 ///     - architecture.instruct_type: missing for most (~65%), 208/323
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelsEndpoint {
+pub struct llm2::models::ResponseItem {
     /// canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
     pub id: String,
     /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
@@ -328,9 +328,9 @@ pub struct ModelsEndpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelsEndpointsData {
+pub struct llm2::models::ResponseItemsData {
     /// List of available model endpoints from OpenRouter.
-    pub data: Vec<ModelsEndpoint>,
+    pub data: Vec<llm2::models::ResponseItem>,
 }
 
 pub(crate) trait SupportsTools {
@@ -348,7 +348,7 @@ impl SupportsTools for &Vec<SupportedParameters> {
     }
 }
 
-impl SupportsTools for ModelsEndpoint {
+impl SupportsTools for llm2::models::ResponseItem {
     fn supports_tools(&self) -> bool {
         self.supported_parameters
             .as_ref()

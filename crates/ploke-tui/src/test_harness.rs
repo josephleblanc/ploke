@@ -5,7 +5,14 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, file_man::FileManager, llm::llm_manager, observability, run_event_bus, user_config::{default_model, openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
+    AppEvent, EventBus, EventBusCaps, EventPriority,
+    app::App,
+    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager},
+    chat_history::ChatHistory,
+    file_man::FileManager,
+    llm2::manager::llm_manager,
+    observability, run_event_bus,
+    user_config::{OPENROUTER_URL, UserConfig, default_model, openrouter_url},
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
@@ -184,7 +191,7 @@ impl OpenRouterEnv {
     }
 }
 
-pub fn openrouter_env() -> Option<OpenRouterEnv >{
+pub fn openrouter_env() -> Option<OpenRouterEnv> {
     // Try current process env first; if missing, load from .env as a fallback
     let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
     let key = match key_opt {
@@ -192,7 +199,9 @@ pub fn openrouter_env() -> Option<OpenRouterEnv >{
         _ => {
             let _ = dotenvy::dotenv();
             let k = std::env::var("OPENROUTER_API_KEY").ok()?;
-            if k.trim().is_empty() { return None; }
+            if k.trim().is_empty() {
+                return None;
+            }
             k
         }
     };

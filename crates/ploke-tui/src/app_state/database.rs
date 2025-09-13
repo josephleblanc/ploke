@@ -704,7 +704,7 @@ mod test {
     use ploke_rag::RagService;
     use syn_parser::parser::nodes::ToCozoUuid;
 
-    use crate::tracing_setup::init_tracing;
+    use crate::{llm2::manager::llm_manager, tracing_setup::init_tracing};
 
     use super::*;
     use ploke_embed::{

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::llm::providers::ProviderSlug;
+use crate::llm2::ProviderSlug;
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
@@ -276,7 +276,7 @@ pub async fn state_manager(
                         p.base_url = crate::user_config::OPENROUTER_URL.to_string();
                         p.provider_type = crate::user_config::ProviderType::OpenRouter;
                         p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
-                        p.provider_slug = ProviderSlug::from_str(&provider_id).ok();
+                        p.provider_slug = Some( ProviderSlug::new(&provider_id) );
                     } else {
                         reg.providers.push(crate::user_config::ModelConfig {
                             id: model_id.clone(),
@@ -286,11 +286,10 @@ pub async fn state_manager(
                             model: model_id.clone(),
                             display_name: Some(model_id.clone()),
                             provider_type: crate::user_config::ProviderType::OpenRouter,
-                            llm_params: Some(crate::llm::LLMParameters {
-                                model: model_id.clone(),
+                            llm_params: Some(crate::llm2::LLMParameters {
                                 ..Default::default()
                             }),
-                            provider_slug: ProviderSlug::from_str(&provider_id).ok(),
+                            provider_slug: Some(ProviderSlug::new(&provider_id)),
                         });
                     }
                     // Ensure keys are resolved and activate this provider/model

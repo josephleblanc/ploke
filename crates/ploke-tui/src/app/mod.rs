@@ -1202,7 +1202,7 @@ impl App {
         self.input_buffer = self.input_history[last].clone();
     }
 
-    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelsEndpoint>) {
+    fn open_model_browser(&mut self, keyword: String, items: Vec<llm2::models::ResponseItem>) {
         let items = items
             .into_iter()
             .map(|m| {

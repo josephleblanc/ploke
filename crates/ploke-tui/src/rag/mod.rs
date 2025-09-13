@@ -42,5 +42,4 @@ use uuid::Uuid;
 use crate::{
     AppEvent, EventBus,
     app_state::{AppState, events::SystemEvent},
-    llm,
 };

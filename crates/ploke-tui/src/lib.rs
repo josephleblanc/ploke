@@ -18,12 +18,9 @@ pub mod chat_history;
 pub mod error;
 pub mod event_bus;
 pub mod file_man;
-pub mod llm;
-mod llm2;
 pub mod observability;
 pub mod parser;
 pub mod tracing_setup;
-pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
 pub mod rag;
@@ -31,11 +28,17 @@ pub mod tools;
 #[cfg(test)]
 mod tests;
 
-// --- tempoarary llm2 items, replace llm items later ---
+#[cfg(not(feature = "llm_refactor"))]
+pub mod llm;
+#[cfg(feature = "llm_refactor")]
+pub mod llm2;
+
+#[cfg(not(feature = "llm_refactor"))]
+pub mod user_config2;
+#[cfg(feature = "llm_refactor")]
+pub mod user_config;
 
 use llm2::{manager::events::ChatEvt, EndpointsResponse};
-
-// --- end temporary --- 
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -52,7 +55,6 @@ use app_state::{
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
-use llm::{llm_manager, model_provider::EndpointData, openrouter_catalog::{ModelEntry, ProviderSummary}, provider_endpoints::ModelsEndpoint};
 use parser::run_parse;
 use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
 use ploke_embed::{
@@ -328,9 +330,9 @@ pub enum RagEvent {
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm(llm::Event),
     Llm2(llm2::LlmEvent),
-    LlmTool(llm::ToolEvent),
+    // placeholder
+    LlmTool(llm2::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
     // TODO:
@@ -340,7 +342,7 @@ pub enum AppEvent {
     System(SystemEvent),
     ModelSearchResults {
         keyword: String,
-        items: Vec<ModelsEndpoint>,
+        items: Vec<llm2::request::models::ResponseItem>,
     },
     ModelsEndpointsRequest {
         // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
@@ -351,7 +353,7 @@ pub enum AppEvent {
     #[deprecated = "Use ModelEndpointsResultsFull isntead, then delete this variant"]
     ModelsEndpointsResults {
         model_id: String,
-        providers: Vec<ProviderSummary>,
+        providers: Vec<llm2::request::endpoint::Endpoint>,
     },
     EndpointsResults {
         model_id: String,
@@ -380,12 +382,13 @@ impl AppEvent {
     // TODO: Change EventPriority to isntead be either a field within the event struct itself or
     // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
+        use llm2::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            AppEvent::Llm(_) => EventPriority::Background,
+            AppEvent::Llm2(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
-                llm::ToolEvent::Requested { .. } => EventPriority::Background,
-                llm::ToolEvent::Completed { .. } | llm::ToolEvent::Failed { .. } => {
+                ToolEvent::Requested { .. } => EventPriority::Background,
+                ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => {
                     EventPriority::Realtime
                 }
             },

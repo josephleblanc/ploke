@@ -19,7 +19,7 @@ use ploke_embed::{
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 
-use crate::llm2::{router_only::openrouter::OpenRouter, HasModels, LLMParameters, ProviderSlug, Router, SupportsTools as _};
+use crate::llm2::{LLMParameters, ProviderSlug};
 
 
 lazy_static! {
@@ -207,7 +207,6 @@ pub struct ModelConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
     /// The API key for this specific provider
-    #[serde(skip)]
     pub api_key: String,
     /// Optional: upstream provider slug (for OpenRouter routing preferences)
     #[serde(default)]
@@ -474,10 +473,16 @@ impl ModelRegistry {
         }
 
         let client = Client::new();
-        let models = OpenRouter::fetch_models_iter(&client).await?;
+        let models =
+           openrouter_catalog::fetch_models(&client, openrouter_url(), &api_key).await?;
 
         self.capabilities.clear();
         for m in models {
+            // Determine tool support with robust fallbacks:
+            // - provider.supported_parameters contains "tools" (preferred)
+            // - provider.capabilities.tools == true (fallback)
+            // - model.supported_parameters contains "tools" (hint)
+            // - model.capabilities.tools (legacy)
             let model_level_tools = m
                 .supported_parameters
                 .as_ref()
@@ -495,6 +500,14 @@ impl ModelRegistry {
                 output_cost_per_million: Some( m.pricing.completion * 1_000_000.0 )
             };
 
+            // let caps = ModelCapabilities {
+            //     supports_tools,
+            //     context_length: m
+            //         .context_length
+            //         .or_else(|| m.top_provider.as_ref().and_then(|tp| tp.context_length)),
+            //     input_cost_per_million: m.pricing.as_ref().map(|p| p.prompt),
+            //     output_cost_per_million: m.pricing.as_ref().map(|p| p.completion),
+            // };
             self.capabilities.insert(m.id, caps);
         }
         Ok(())

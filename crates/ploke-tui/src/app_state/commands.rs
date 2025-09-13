@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::chat_history::MessageKind;
-use crate::llm::{ChatHistoryTarget, LLMParameters};
+use crate::llm2::{ChatHistoryTarget, LLMParameters};
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
 use uuid::Uuid;

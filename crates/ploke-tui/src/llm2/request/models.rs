@@ -24,12 +24,9 @@ use ploke_core::ArcStr;
 use ploke_test_utils::workspace_root;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    llm::openrouter_catalog::ModelsResponse,
-    llm2::{
+use crate::llm2::{
         router_only::{openrouter::TopProvider, HasModelId}, types::{model_types::Architecture, newtypes::ModelName}, ModelId, SupportedParameters, SupportsTools
-    },
-};
+    };
 
 use once_cell::sync::Lazy;
 use serde_json::Value;

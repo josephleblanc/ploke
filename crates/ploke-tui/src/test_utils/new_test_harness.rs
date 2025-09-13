@@ -4,6 +4,7 @@
 
 use crate::app_state::SystemStatus;
 use crate::app_state::events::SystemEvent;
+use crate::llm2::manager::llm_manager;
 use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -20,7 +21,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate as tui;
 use tui::app::{App, RunOptions};
 use tui::app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState};
-use tui::llm::llm_manager;
 use tui::user_config::{UserConfig, default_model};
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};
 

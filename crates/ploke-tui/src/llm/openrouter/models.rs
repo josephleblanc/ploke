@@ -37,7 +37,7 @@ mod tests {
         REL_MODEL_SUPPORTED_PARAMETERS_DATA, REL_MODEL_SUPPORTS_TOOLS_DATA,
     };
     use crate::llm::provider_endpoints::{
-        ModelsEndpoint, ModelsEndpointsData, SupportedParameters, SupportsTools,
+        llm2::models::ResponseItem, llm2::models::ResponseItemsData, SupportedParameters, SupportsTools,
     };
     use crate::{
         llm::openrouter_catalog::ModelsResponse,
@@ -52,7 +52,7 @@ mod tests {
     use super::{REL_MODEL_ALL_DATA_RAW, REL_MODEL_ALL_DATA_RAW_EP, REL_MODEL_ALL_DATA_STATS};
 
     // Run the request only once per test run
-    static MODELS_RESPONSE: Lazy<ModelsEndpointsData> = Lazy::new(|| {
+    static MODELS_RESPONSE: Lazy<llm2::models::ResponseItemsData> = Lazy::new(|| {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let req_builder = OPENROUTER_MODELS_RESPONSE
@@ -65,7 +65,7 @@ mod tests {
                 .and_then(|r| r.error_for_status())
                 .expect("failed response");
 
-            resp.json::<ModelsEndpointsData>().await.expect("failed parse")
+            resp.json::<llm2::models::ResponseItemsData>().await.expect("failed parse")
         })
     });
 
@@ -174,17 +174,17 @@ mod tests {
 
     generate_model_field_test!(
         flakey_openrouter_model_ids,
-        |m: ModelsEndpoint| Some(m.id),
+        |m: llm2::models::ResponseItem| Some(m.id),
         REL_MODEL_ID_DATA
     );
     generate_model_field_test!(
         flakey_openrouter_model_names,
-        |m: ModelsEndpoint| Some(m.name),
+        |m: llm2::models::ResponseItem| Some(m.name),
         REL_MODEL_NAME_DATA
     );
     generate_model_field_test!(
         flakey_supported_parameters,
-        |m: ModelsEndpoint| {
+        |m: llm2::models::ResponseItem| {
             m.supported_parameters.map(|v| {
                 v.iter()
                     .map(|sp| {
@@ -226,14 +226,14 @@ mod tests {
         let models_resp = &MODELS_RESPONSE;
         let rel_path_const = REL_MODEL_SUPPORTS_TOOLS_DATA;
 
-        let tools_filter = |m: &ModelsEndpoint| {
+        let tools_filter = |m: &llm2::models::ResponseItem| {
             m.supported_parameters
                 .as_ref()
                 .is_some_and(|p| p.supports_tools())
             // .is_some_and(|p| p.contains(&SupportedParameters::Tools))
         };
 
-        let all_values: Vec<ModelsEndpoint> = models_resp
+        let all_values: Vec<llm2::models::ResponseItem> = models_resp
             .data
             .clone()
             .into_iter()
@@ -274,16 +274,16 @@ mod tests {
             Err(e) => return Err(e.into()),
         };
         let buf_reader = BufReader::new(file);
-        let contents: Vec<ModelsEndpoint> = serde_json::from_reader(buf_reader)?;
+        let contents: Vec<llm2::models::ResponseItem> = serde_json::from_reader(buf_reader)?;
         let file_id_map = contents
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelsEndpoint>>();
+            .collect::<HashMap<String, llm2::models::ResponseItem>>();
         let file_id_set = file_id_map.keys().cloned().collect::<HashSet<String>>();
         let resp_id_map = all_values
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelsEndpoint>>();
+            .collect::<HashMap<String, llm2::models::ResponseItem>>();
         let resp_id_set = resp_id_map.keys().cloned().collect::<HashSet<String>>();
 
         let missing: Vec<_> = file_id_set.difference(&resp_id_set).collect();
@@ -318,13 +318,13 @@ mod tests {
         use std::fs;
         let models_resp = &MODELS_RESPONSE;
 
-        let tools_filter = |m: &ModelsEndpoint| {
+        let tools_filter = |m: &llm2::models::ResponseItem| {
             m.supported_parameters
                 .as_ref()
                 .is_some_and(|p| p.supports_tools())
         };
 
-        let selected: Vec<ModelsEndpoint> = models_resp
+        let selected: Vec<llm2::models::ResponseItem> = models_resp
             .data
             .clone()
             .into_iter()
@@ -400,7 +400,7 @@ mod tests {
         let models_resp = &MODELS_RESPONSE;
         let rel_path_const = REL_MODEL_ALL_DATA;
 
-        let all_values: Vec<ModelsEndpoint> =
+        let all_values: Vec<llm2::models::ResponseItem> =
             models_resp.data.clone().into_iter().collect_vec();
 
         let mut log_file = workspace_root();
@@ -437,16 +437,16 @@ mod tests {
             Err(e) => return Err(e.into()),
         };
         let buf_reader = BufReader::new(file);
-        let contents: Vec<ModelsEndpoint> = serde_json::from_reader(buf_reader)?;
+        let contents: Vec<llm2::models::ResponseItem> = serde_json::from_reader(buf_reader)?;
         let file_id_map = contents
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelsEndpoint>>();
+            .collect::<HashMap<String, llm2::models::ResponseItem>>();
         let file_id_set = file_id_map.keys().cloned().collect::<HashSet<String>>();
         let resp_id_map = all_values
             .into_iter()
             .map(|m| (m.id.clone(), m))
-            .collect::<HashMap<String, ModelsEndpoint>>();
+            .collect::<HashMap<String, llm2::models::ResponseItem>>();
         let resp_id_set = resp_id_map.keys().cloned().collect::<HashSet<String>>();
 
         let missing: Vec<_> = file_id_set.difference(&resp_id_set).collect();

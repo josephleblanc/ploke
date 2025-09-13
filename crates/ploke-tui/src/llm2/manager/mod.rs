@@ -710,29 +710,6 @@ pub enum ChatHistoryTarget {
     Scratchpad,
 }
 
-#[derive(Clone, Debug)]
-pub enum ToolEvent {
-    Requested {
-        request_id: Uuid,
-        parent_id: Uuid,
-        name: String,
-        arguments: Value,
-        call_id: ArcStr,
-    },
-    Completed {
-        request_id: Uuid,
-        parent_id: Uuid,
-        call_id: ArcStr,
-        content: String,
-    },
-    Failed {
-        request_id: Uuid,
-        parent_id: Uuid,
-        call_id: ArcStr,
-        error: String,
-    },
-}
-
 // --- Supporting Types ---
 
 #[cfg(test)]

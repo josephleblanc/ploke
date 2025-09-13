@@ -482,7 +482,7 @@ pub async fn llm_manager(
                             let provider_summaries = providers
                                 .endpoints
                                 .iter()
-                                .map(ProviderSummary::from_endpoint)
+                                .map(llm2::request::endpoint::Endpoint::from_endpoint)
                                 .collect_vec();
                             event_bus.send(AppEvent::ModelsEndpointsResults {
                                 model_id,

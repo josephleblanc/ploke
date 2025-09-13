@@ -20,8 +20,8 @@ use serde_json::Value;
 use super::model_provider as or_ep;
 use super::model_provider::Endpoint;
 use super::model_provider::EndpointData;
-use super::provider_endpoints::ModelsEndpoint;
-use super::provider_endpoints::ModelsEndpointsData;
+use super::provider_endpoints::llm2::models::ResponseItem;
+use super::provider_endpoints::llm2::models::ResponseItemsData;
 use super::provider_endpoints::SupportedParameters;
 use super::provider_endpoints::SupportsTools;
 use super::providers::Provider;
@@ -185,7 +185,7 @@ pub struct TopProviderInfo {
 /// `Arc<str>`, making this an inexpensive way to show the summary of model endpoint info before
 /// fetching more details (either locally or from the API) if needed.
 #[derive(Deserialize, Debug, Clone, PartialOrd, PartialEq, Serialize)]
-pub struct ProviderSummary {
+pub struct llm2::request::endpoint::Endpoint {
     /// Human-friendly name in the form "Provider | model id"
     /// e.g. "name": "DeepInfra | deepseek/deepseek-chat-v3.1",
     pub ep_name: ArcStr,
@@ -203,7 +203,7 @@ pub struct ProviderSummary {
     pub tool_use: bool,
 }
 
-impl ProviderSummary {
+impl llm2::request::endpoint::Endpoint {
     pub fn from_endpoint(ep: &Endpoint) -> Self {
         let Endpoint {
             name,
@@ -228,7 +228,7 @@ pub async fn fetch_models(
     client: &reqwest::Client,
     base_url: reqwest::Url,
     api_key: &str,
-) -> color_eyre::Result<Vec<ModelsEndpoint>> {
+) -> color_eyre::Result<Vec<llm2::models::ResponseItem>> {
     // Use public models endpoint (same as working tests)
     let url = base_url
         .join("models") // must be "models", not "/models"
@@ -241,7 +241,7 @@ pub async fn fetch_models(
         .error_for_status()?;
 
     let body = resp.text().await?;
-    let parsed: ModelsEndpointsData= serde_json::from_str(&body)?;
+    let parsed: llm2::models::ResponseItemsData= serde_json::from_str(&body)?;
     Ok(parsed.data)
 }
 

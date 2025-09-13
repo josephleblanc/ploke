@@ -13,7 +13,6 @@ use crate::app_state::MessageUpdatedEvent;
 use crate::chat_history::{Message, MessageKind};
 use crate::tools::ToolName;
 use crate::{AppEvent, EventBus, EventPriority};
-use crate::llm::ToolEvent;
 
 use crate::app_state::AppState;
 

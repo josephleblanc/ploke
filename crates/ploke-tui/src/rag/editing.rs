@@ -1,4 +1,4 @@
-use crate::{app_state::handlers::chat, chat_history::MessageKind, llm::ToolEvent};
+use crate::{app_state::handlers::chat, chat_history::MessageKind};
 
 use super::*;
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
