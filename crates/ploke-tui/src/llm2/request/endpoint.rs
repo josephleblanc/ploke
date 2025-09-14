@@ -9,7 +9,7 @@ use crate::llm2::types::model_types::Architecture;
 use crate::llm2::types::newtypes::{EndpointTag, ModelName};
 use crate::llm2::Quant;
 use crate::llm2::*;
-use crate::llm2::router_only::openrouter::providers::{ProviderName, ProviderSlug};
+use crate::llm2::router_only::openrouter::providers::{ProviderSlug};
 use crate::llm2::SupportedParameters;
 use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;
@@ -18,37 +18,6 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 // Example json response for
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
-
-/// Provider display name (human-readable).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct ProviderNameStr(pub String);
-impl ProviderNameStr {
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-    /// Normalize display name into a conservative slug (lowercase, alnum -> keep, others -> '-').
-    pub(crate) fn normalized_slug(&self) -> String {
-        self.0
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect::<String>()
-    }
-    /// Attempt conversion via enum ProviderName, then map to ProviderSlug; fall back to normalized slug parse.
-    pub(crate) fn to_author(&self) -> Option<ProviderSlug> {
-        // Try precise enum parse via serde
-        let try_enum = serde_json::from_str::<ProviderName>(&format!("\"{}\"", self.0)).ok();
-        if let Some(pn) = try_enum {
-            return Some(pn.to_slug());
-        }
-        ProviderSlug::from_str(&self.normalized_slug()).ok()
-    }
-}
 
 use crate::utils::se_de::{de_arc_str, se_arc_str};
 
@@ -76,11 +45,9 @@ pub(crate) struct Endpoint {
 
     /// Human-readable provider name, e.g. "Chutes", "Z.AI", "DeepSeek"
     ///     "provider_name": "Chutes",
-    pub(crate) provider_name: ProviderNameStr,
+    pub(crate) provider_name: ProviderName,
 
     /// computer-friendly provider slug, e.g. "chutes", "z-ai", "deepseek"
-    /// We translate these into an enum, e.g. "z-ai" becomes `ProviderSlug::z_ai`
-    ///     "provider_name": "Chutes",
     pub(crate) tag: EndpointTag,
 
     /// The level of quantization of the endpoint, e.g.
@@ -581,17 +548,6 @@ mod tests {
                 .contains(&SupportedParameters::TopLogprobs)
         );
         assert_eq!(ep.supported_parameters.len(), 17);
-    }
-
-    #[test]
-    fn provider_name_str_slug_and_author() {
-        let p = ProviderNameStr("OpenAI".to_string());
-        assert_eq!(p.normalized_slug(), "openai");
-        let a = p.to_author().expect("author");
-        assert_eq!(a.to_string(), "openai");
-
-        let p2 = ProviderNameStr("DeepInfra Turbo".to_string());
-        assert_eq!(p2.normalized_slug(), "deepinfra-turbo");
     }
 
     use crate::llm2::router_only::openrouter::OpenRouterModelId;

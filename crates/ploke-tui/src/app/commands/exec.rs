@@ -19,6 +19,7 @@ use crate::llm2::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm2::router_only::{HasEndpoint, HasModels};
 use crate::llm2::request::endpoint::EndpointsResponse;
 use crate::llm2::request::models::{Response as ModelsResponse, ResponseItem};
+use crate::llm2::ProviderKey;
 use crate::user_config::{
     ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
 };
@@ -208,9 +209,10 @@ pub fn execute(app: &mut App, command: Command) {
             provider_slug,
         } => {
             // Delegate to state layer to pin a specific provider endpoint for a model
+            let provider_key = ProviderKey { slug: provider_slug };
             app.send_cmd(StateCommand::SelectModelProvider {
-                model_id,
-                provider_id: provider_slug,
+                model_id_string: model_id,
+                provider_key: provider_slug,
             });
         }
         Command::Update => spawn_update(app),

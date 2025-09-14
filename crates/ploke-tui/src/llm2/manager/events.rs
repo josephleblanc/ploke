@@ -58,7 +58,6 @@ pub(crate) mod endpoint {
             variant: Option<ModelVariant>,
         },
         Response {
-            parent_id: Uuid,
             model_key: ModelKey, // e.g., "gpt-4-turbo"
             // Larger response, make an Arc to hold it
             endpoints: Option<Arc<EndpointsResponse>>,
@@ -84,8 +83,7 @@ pub(crate) mod models {
         },
         /// Response with the full returned values for the models.
         Response {
-            parent_id: Uuid,
-            /// The information on all models, can be used to update the cache'd model info and/or
+            /// The information on all models, can be used to update the cached model info and/or
             /// persisted into the database.
             /// - Caches the owned deserialized values in-memory, then persist with 12-hour update
             /// cycles.

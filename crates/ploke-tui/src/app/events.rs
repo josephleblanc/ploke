@@ -1,7 +1,9 @@
 use super::App;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
-use crate::llm2::LlmEvent;
+use crate::llm2::manager::events::{endpoint, models};
+use crate::llm2::{LlmEvent, ProviderName, ProviderSlug};
+use crate::ModelId;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,47 +31,47 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
 
         AppEvent::ModelsEndpointsResults { model_id, providers } => {
             // Defer selection and overlay close until after we release the borrow on model_browser
-            let mut select_after: Option<(String, ArcStr)> = None;
-            if let Some(mb) = app.model_browser.as_mut() {
-                if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
-                    // Map ProviderEntry -> ModelProviderRow
-                    let rows = providers
-                        .into_iter()
-                        .map(|p| {
-                            let supports_tools = p.tool_use;
-                            ModelProviderRow {
-                                name: p.ep_name.clone(),
-                                context_length: p.ep_context_length,
-                                input_cost: p.ep_pricing_prompt,
-                                output_cost: p.ep_pricing_completion,
-                                supports_tools,
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    item.providers = rows;
-                    item.loading_providers = false;
-
-                    // If user pressed 's' while loading, compute best provider now
-                    if item.pending_select {
-                        let provider_choice = item
-                            .providers
-                            .iter()
-                            .find(|p| p.supports_tools)
-                            .or_else(|| item.providers.first())
-                            .map(|p| p.name.clone());
-
-                        if let Some(pid) = provider_choice {
-                            // Defer selection until after borrow ends
-                            select_after = Some((item.id.clone(), pid));
-                        }
-                        item.pending_select = false;
-                    }
-                }
-            }
-            if let Some((mid, pid)) = select_after {
-                app.apply_model_provider_selection(&mid, Some(&pid));
-                app.model_browser = None;
-            }
+            // let mut select_after: Option<(String, ArcStr)> = None;
+            // if let Some(mb) = app.model_browser.as_mut() {
+            //     if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
+            //         // Map ProviderEntry -> ModelProviderRow
+            //         let rows = providers
+            //             .into_iter()
+            //             .map(|p| {
+            //                 let supports_tools = p.tool_use;
+            //                 ModelProviderRow {
+            //                     name: p.ep_name.clone(),
+            //                     context_length: p.ep_context_length,
+            //                     input_cost: p.ep_pricing_prompt,
+            //                     output_cost: p.ep_pricing_completion,
+            //                     supports_tools,
+            //                 }
+            //             })
+            //             .collect::<Vec<_>>();
+            //         item.providers = rows;
+            //         item.loading_providers = false;
+            //
+            //         // If user pressed 's' while loading, compute best provider now
+            //         if item.pending_select {
+            //             let provider_choice = item
+            //                 .providers
+            //                 .iter()
+            //                 .find(|p| p.supports_tools)
+            //                 .or_else(|| item.providers.first())
+            //                 .map(|p| p.name.clone());
+            //
+            //             if let Some(pid) = provider_choice {
+            //                 // Defer selection until after borrow ends
+            //                 select_after = Some((item.id.clone(), pid));
+            //             }
+            //             item.pending_select = false;
+            //         }
+            //     }
+            // }
+            // if let Some((mid, pid)) = select_after {
+            //     app.apply_model_provider_selection(&mid, Some(&pid));
+            //     app.model_browser = None;
+            // }
         }
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
@@ -85,7 +87,15 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.indexing_state = Some(state);
         }
         AppEvent::Ui(_ui_event) => {}
-        AppEvent::Llm(_event) => {}
+        AppEvent::Llm2(event) => { match event {
+            LlmEvent::Models(resp @ models::Event::Response { .. }) => handle_llm_models_response(app, resp),
+            LlmEvent::ChatCompletion(chat_evt) => todo!(),
+            LlmEvent::Completion(chat_evt) => todo!(),
+            LlmEvent::Tool(tool_event) => todo!(),
+            LlmEvent::Endpoint(event) => todo!(),
+            LlmEvent::Status(event) => todo!(),
+            _ => {}
+        } }
         AppEvent::LlmTool(_event) => {}
         AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
@@ -131,8 +141,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });
-                    app.active_model_indicator = Some((new_model.clone(), Instant::now()));
-                    app.active_model_id = new_model;
+                    app.active_model_indicator = Some((new_model.clone().to_string(), Instant::now()));
+                    app.active_model_id = new_model.to_string();
                 }
                 SystemEvent::ReadQuery {
                     file_name,
@@ -265,4 +275,63 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             // future hook
         }
     }
+}
+
+fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
+        
+    if let models::Event::Response { models } = models_event {
+    }
+}
+
+fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event) {
+    if let endpoint::Event::Response { model_key, endpoints } = endpoints_event {
+        let eps = match endpoints {
+            Some(epoints) => epoints,
+            None => {
+                send_warning(app, "No endpoints found for model: {}"                                    );
+                return
+            },
+        };
+        let mb = match app.model_browser.as_mut() {
+            Some(m_browser) => m_browser,
+            None => { 
+                send_warning(app, "Querying model endpoints outside of model browser"); 
+                return 
+            }
+        };
+
+        let browser_item = match mb.items.iter_mut().find(|i| i.id == eps.data.id) {
+            Some(b) => b,
+            None => {
+                send_error(app, "No matching item for returned model endopints");
+                return
+            }
+
+        };
+        
+        let model_id = &eps.data.id;
+        // Map ProviderEntry -> ModelProviderRow
+        let rows = eps.data.endpoints
+            .iter()
+            .map(|ep| ModelProviderRow::from_id_endpoint(model_id.clone(), ep.clone()))
+            .collect::<Vec<_>>();
+        browser_item.providers = rows;
+        browser_item.loading_providers = false;
+
+        // NOTE: no longer handling chosing a model here while window is loading. Add if
+        // performance becomes an issue and overlay takes too long too load.
+    }
+
+}
+
+fn send_warning(app: &mut App, message: &str) {
+    let msg = String::from(message);
+    tracing::warn!(msg);
+    app.cmd_tx.send(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+}
+
+fn send_error(app: &mut App, message: &str) {
+    let msg = String::from(message);
+    tracing::warn!(msg);
+    app.cmd_tx.send(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
 }

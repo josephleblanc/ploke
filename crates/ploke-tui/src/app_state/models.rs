@@ -21,7 +21,7 @@ pub(super) async fn switch_model(
                     .or_default();
             }
             event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
-                mid.to_string(),
+                mid,
             )));
         }
         Err(_) => {

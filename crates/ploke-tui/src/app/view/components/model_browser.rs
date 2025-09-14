@@ -1,15 +1,15 @@
 use ploke_core::ArcStr;
 use ratatui::Frame;
-use ratatui::layout::{ Rect, Layout, Direction, Constraint };
-use ratatui::style::{ Color, Style, Stylize as _ };
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style, Stylize as _};
 
 use crate::app::input::keymap::{Action, to_action};
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use crate::llm2::request::endpoint::ProviderNameStr;
-use crate::llm2::{EndpointKey, ModelId, ModelName, ProviderKey};
+use crate::llm2::request::endpoint::{Endpoint};
+use crate::llm2::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey, ProviderName, ProviderSlug};
 use crate::user_config::OPENROUTER_URL;
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -34,7 +34,7 @@ pub struct ModelBrowserItem {
     pub id: ModelId,
     pub name: Option<ModelName>,
     pub context_length: Option<u32>,
-    /// input cost converted from USD/token to 
+    /// input cost converted from USD/token to
     pub input_cost: Option<f64>,
     pub output_cost: Option<f64>,
     pub supports_tools: bool,
@@ -47,12 +47,28 @@ pub struct ModelBrowserItem {
 
 #[derive(Debug)]
 pub struct ModelProviderRow {
-    pub name: ProviderNameStr,
-    pub key: ProviderKey,
+    pub provider_name: ProviderName,
+    pub provider_key: ProviderKey,
+    pub model_id: ModelId,
     pub context_length: u32,
     pub input_cost: f64,
     pub output_cost: f64,
     pub supports_tools: bool,
+}
+
+impl ModelProviderRow {
+    pub(crate) fn from_id_endpoint(m: ModelId, k: &ProviderKey, v: Endpoint) -> Self {
+        let supports_tools = v.supports_tools();
+        ModelProviderRow {
+            provider_key: k.clone(),
+            provider_name: v.provider_name.clone(),
+            context_length: v.context_length as u32,
+            input_cost: v.pricing.prompt * 1_000_000.0,
+            output_cost: v.pricing.completion * 1_000_000.0,
+            supports_tools,
+            model_id: m,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -65,8 +81,10 @@ pub struct ModelBrowserState {
     pub help_visible: bool,
 }
 
-
-pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -> (Rect, Rect, Style, Vec<Line<'a>>) {
+pub fn render_model_browser<'a>(
+    frame: &mut Frame<'_>,
+    mb: &ModelBrowserState,
+) -> (Rect, Rect, Style, Vec<Line<'a>>) {
     let area = frame.area();
     let width = area.width.saturating_mul(8) / 10;
     let height = area.height.saturating_mul(8) / 10;
@@ -194,11 +212,11 @@ pub fn render_model_browser<'a>(frame: &mut Frame<'_>, mb: &ModelBrowserState) -
                     lines.push(Line::from(Span::styled(
                         format!(
                             "      - {}  tools={}  ctx={}  pricing: in={} out={}",
-                            p.name.to_string(),
+                            p.provider_name.as_str(),
                             p.supports_tools,
                             format_args!("{:.0}", p.context_length),
                             format_args!("{:.3}", p.input_cost * 1_000_000.0),
-                            format_args!("{:.3}", p.output_cost * 1_000_000.0                                             ),
+                            format_args!("{:.3}", p.output_cost * 1_000_000.0),
                         ),
                         detail_style,
                     )));

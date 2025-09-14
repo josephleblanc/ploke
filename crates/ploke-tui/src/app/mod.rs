@@ -814,12 +814,13 @@ impl App {
                                 }
                             } else {
                                 // Choose a provider that supports tools if available, otherwise first provider
-                                chosen_provider = item
+                                let tool_provider = item
                                     .providers
                                     .iter()
                                     .find(|p| p.supports_tools)
                                     .or_else(|| item.providers.first())
-                                    .map(|p| p.key.clone());
+                                    .map(|p| p.provider_key.clone());
+                                chosen_provider = tool_provider;
                             }
                         }
                     }
@@ -833,9 +834,9 @@ impl App {
             if let Some(model_id) = chosen_model {
                 // id format: "model_id::provider_id" when provider selected, or just model_id
                 if let Some(provider) = chosen_provider {
-                    self.apply_model_provider_selection(model_id, Some(provider));
+                    self.apply_model_provider_selection(model_id.to_string(), Some(provider));
                 } else {
-                    self.apply_model_provider_selection(model_id, None);
+                    self.apply_model_provider_selection(model_id.to_string(), None);
                 }
                 self.model_browser = None;
             }
@@ -907,12 +908,13 @@ impl App {
 
     fn apply_model_provider_selection(
         &mut self,
-        model_id: ModelId,
+        // keeps this string because we need to look it up in the registry from user input.
+        model_id_string: String,
         provider_key: Option<ProviderKey>,
     ) {
         // Delegate persistence and broadcasts to the state manager (non-blocking for UI)
         self.send_cmd(StateCommand::SelectModelProvider {
-            model_id,
+            model_id_string,
             provider_key,
         });
         self.needs_redraw = true;

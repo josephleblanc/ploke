@@ -280,11 +280,10 @@ pub async fn state_manager(
                 // Update registry prefs and active runtime selection to match user's choice.
                 let mut cfg = state.config.write().await;
                 let reg = &mut cfg.model_registry;
-                let model_id = match ModelId::from_str(&model_id_string) {
+                let model_id = match ModelId::from_str(model_id_string) {
                     Ok(m) => m,
-                    Err(e) => {
-                        let msg = format!( "Invalid model id: {}, expected `{{auther}}/{{model}}:{{variant}}` where `:{{variant}}` is optional", model_id_string );
-                        add_msg_shortcut(&msg);
+                    Err(e) => { 
+                        add_msg_shortcut("Invalid model id");
                         continue
                     }
                 };

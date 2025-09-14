@@ -1,5 +1,3 @@
-# Agent Review Change-Log
-
 - 2025-09-13T20:37:28Z — 8836d215
   - Scope: `model_browser.rs` migrated to strict types (`ModelId`, `ModelName`).
   - UI: Title rendering updated to use typed IDs and names; fallback to `id.to_string()` when name empty/absent.
@@ -7,3 +5,9 @@
   - Docs: Found incomplete doc comment for `input_cost`; recommended fix.
   - Formatting: `rustfmt --check` suggests small tidy-ups (imports order, whitespace).
   - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → 27 errors, 10 warnings (unrelated broader refactor).
+- 2025-09-13T23:16:25Z — 8a83934a
+  - Scope: Propagate llm2 types into state dispatcher and events; `SystemEvent::ModelSwitched` now carries `ModelId`.
+  - Dispatcher: `SelectModelProvider` now builds typed `EndpointKey { model, variant, provider }` and sets `cfg.active_model` to `ModelId`.
+  - Events: Began migration but still references old endpoint fields and strings; needs updates to new endpoint/pricing fields and to use `ProviderKey` for selection.
+  - Formatting: rustfmt shows small diffs in both files.
+  - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → 36 errors, 19 warnings, concentrated in down‑stream modules expecting `String` and old field names.

@@ -249,7 +249,6 @@ pub async fn llm_manager(
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
             }
             AppEvent::Llm2(LlmEvent::Endpoint(endpoint::Event::Request {
-                parent_id,
                 model_key,
                 variant,
                 router,
@@ -260,10 +259,9 @@ pub async fn llm_manager(
                     client.clone(),
                     model_key,
                     variant,
-                    parent_id,
                 );
             }
-            AppEvent::Llm2(LlmEvent::Models(models::Event::Request { parent_id, router })) => {
+            AppEvent::Llm2(LlmEvent::Models(models::Event::Request { router })) => {
                 use std::str::FromStr;
                 // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
                 // the typed version for that specific router before making the request.
@@ -282,12 +280,10 @@ pub async fn llm_manager(
                             tracing::warn!(msg);
                             // Unblock the UI even on error with an empty provider list.
                             event_bus.send(AppEvent::Llm2(LlmEvent::Models(Event::Response {
-                                parent_id,
                                 models: None,
                             })));
                         });
                     event_bus.send(AppEvent::Llm2(LlmEvent::Models(Event::Response {
-                        parent_id,
                         models: result.ok(),
                     })));
                 });
@@ -304,7 +300,6 @@ fn handle_endpoint_request(
     client: Client,
     model_key: ModelKey,
     variant: Option<types::model_types::ModelVariant>,
-    parent_id: Uuid,
 ) {
     use std::str::FromStr;
     // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into

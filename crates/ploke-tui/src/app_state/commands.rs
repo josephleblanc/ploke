@@ -188,7 +188,7 @@ pub enum StateCommand {
         request_id: Uuid,
     },
     SelectModelProvider {
-        model_id: ModelId,
+        model_id_string: String,
         provider_key: Option<ProviderKey>,
     },
 }

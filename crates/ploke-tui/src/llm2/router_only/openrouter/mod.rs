@@ -109,11 +109,11 @@ impl From<ModelId> for OpenRouterModelId {
 }
 
 impl OpenRouterModelId {
-    fn from_parts(value: EndpointKey, variant: Option<OpenRouterModelVariant>) -> Self {
-        let EndpointKey { model, provider } = value;
+    fn from_parts(value: EndpointKey, variant: Option<ModelVariant>) -> Self {
+        let EndpointKey { model, variant, provider } = value;
         Self {
             key: model,
-            variant,
+            variant: variant.map(OpenRouterModelVariant::from),
         }
     }
 

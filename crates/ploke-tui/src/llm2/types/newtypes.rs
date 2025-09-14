@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::Arc};
 use url::Url;
 
-use super::{model_types::{ModelKey, ModelVariant}, Quant};
+use super::{
+    Quant,
+    model_types::{ModelKey, ModelVariant},
+};
 
 // ----- minimal error type -----
 #[derive(Debug, thiserror::Error)]
@@ -213,7 +216,10 @@ impl ProviderKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct EndpointKey {
     pub(crate) model: ModelKey,
-    pub(crate) variant: Option< ModelVariant >,
+    pub(crate) variant: Option<ModelVariant>,
+    // This is not actually the key, it is a name. The returned value this is taken from initially
+    // is in the `Endpoint`, which does not return a `provider_slug`, but rather a ProviderName
+    // pub(crate) provider: ProviderKey,
     pub(crate) provider: ProviderKey,
 }
 
@@ -271,8 +277,11 @@ mod tests {
         assert_eq!(m1.to_string(), "google/gemma-2-9b-it");
         assert!(m1.variant.is_none());
 
-        let m2 = ModelId::from_str("	qwen/qwen-plus-2025-07-28:beta  
-").expect("parse trimmed m2");
+        let m2 = ModelId::from_str(
+            "	qwen/qwen-plus-2025-07-28:beta  
+",
+        )
+        .expect("parse trimmed m2");
         assert_eq!(m2.to_string(), "qwen/qwen-plus-2025-07-28:beta");
         assert!(matches!(m2.variant, Some(ModelVariant::Beta)));
     }
@@ -296,8 +305,8 @@ mod tests {
 
     #[test]
     fn test_model_ids_from_file() {
-        use ploke_test_utils::workspace_root;
         use crate::llm2::router_only::MODELS_TXT_IDS;
+        use ploke_test_utils::workspace_root;
 
         // text file with strings of serialized ModelId split by newlines
         let text_file = MODELS_TXT_IDS;
@@ -310,11 +319,16 @@ mod tests {
 
         for (idx, raw) in content.lines().enumerate() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             let parsed = ModelId::from_str(line)
                 .unwrap_or_else(|e| panic!("failed to parse line {} ({}): {}", idx + 1, line, e));
-            assert_eq!(parsed.to_string(), line, "roundtrip display should match input");
+            assert_eq!(
+                parsed.to_string(),
+                line,
+                "roundtrip display should match input"
+            );
         }
     }
 }
-

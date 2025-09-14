@@ -15,6 +15,7 @@ pub struct Provider {
     pub terms_of_service_url: Option<Url>,
 }
 
+
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ProviderName {
