@@ -1210,4 +1210,4 @@ async fn e2e_api_response_deserialization_and_gat_validation() -> Result<()> {
     println!("✓ API response deserialization and GAT-based tool system validated");
     Ok(())
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

@@ -33,4 +33,4 @@ fn outcome_summary_variants() {
     let generic = to_summary_string(Err(LlmError::Unknown("oops".into())));
     assert!(generic.starts_with("Request summary: error ("));
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

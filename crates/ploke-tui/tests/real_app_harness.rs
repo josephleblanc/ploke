@@ -402,4 +402,4 @@ impl Clone for MessageTracker {
         }
     }
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

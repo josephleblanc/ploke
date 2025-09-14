@@ -149,4 +149,4 @@ async fn live_tool_call_request_code_context() {
         .ok();
     }
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

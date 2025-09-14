@@ -67,7 +67,7 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
         state,
         cmd_tx,
         &event_bus,
-        ploke_tui::user_config::default_model(),
+        "openai/gpt-4o".to_string(),
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;
@@ -128,7 +128,7 @@ async fn make_app_with_proposals_and_editor(editor: Option<&str>) -> (App, mpsc:
         state,
         cmd_tx,
         &event_bus,
-        ploke_tui::user_config::default_model(),
+        "openai/gpt-4o".to_string(),
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;

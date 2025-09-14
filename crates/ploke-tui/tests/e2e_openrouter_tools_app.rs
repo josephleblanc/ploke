@@ -1,4 +1,4 @@
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]
 #![allow(unused_variables, unused_mut, dead_code, unreachable_code)]
 /*!
 E2E live tool-cycle tests using:

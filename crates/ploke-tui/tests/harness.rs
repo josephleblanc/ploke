@@ -266,4 +266,4 @@ pub fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
     }
     out
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

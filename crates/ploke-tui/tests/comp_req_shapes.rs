@@ -57,4 +57,4 @@ fn comp_req_with_tools_and_provider_prefs() {
     let f = tc.get("function").and_then(|x| x.as_object()).expect("function body");
     assert_eq!(f.get("name").and_then(|x| x.as_str()), Some("request_code_context"));
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

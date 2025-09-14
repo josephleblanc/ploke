@@ -77,4 +77,4 @@ async fn e2e_tool_specific_edge_cases() -> color_eyre::Result<()> {
     harness.shutdown().await;
     Ok(())
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]

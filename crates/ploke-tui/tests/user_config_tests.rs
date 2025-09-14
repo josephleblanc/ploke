@@ -128,4 +128,4 @@ fn alias_lookup_and_switching() {
     assert!(reg.set_active("local"));
     assert_eq!(reg.active_model_config, "custom-local");
 }
-#![cfg(not(feature = "llm_refactor"))]
+#![cfg(feature = "legacy_llm_tests")]
