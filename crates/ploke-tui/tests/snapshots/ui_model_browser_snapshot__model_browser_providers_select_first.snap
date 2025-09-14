@@ -1,0 +1,14 @@
+---
+source: crates/ploke-tui/tests/ui_model_browser_snapshot.rs
+expression: text
+---
+Model Browser — 1 results for "deepseek"
+Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, l to choose provider (Enter to apply), s to auto-select, ? for help, q/Esc to close.
+
+> deepseek/deepseek-chat-v3.1 — DeepSeek: DeepSeek V3.1
+    context_length: 163840
+    supports_tools: true
+    pricing: in=0.200000 out=0.800000
+    providers:
+      > Chutes  tools=true  ctx=163840  pricing (USD/1M tok): in=0.200 out=0.800
+      - DeepInfra  tools=true  ctx=131072  pricing (USD/1M tok): in=0.250 out=0.900

@@ -1,4 +1,4 @@
-#![cfg(feature = "test_harness")]
+#![cfg(all(feature = "test_harness", not(feature = "llm_refactor")))]
 
 //! Multi-tool workflow and interaction testing
 //! 

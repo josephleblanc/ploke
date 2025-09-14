@@ -9,7 +9,7 @@ use crate::llm2::types::model_types::Architecture;
 use crate::llm2::types::newtypes::{EndpointTag, ModelName};
 use crate::llm2::Quant;
 use crate::llm2::*;
-use crate::llm2::router_only::openrouter::providers::{ProviderSlug};
+use crate::llm2::router_only::openrouter::providers::{ProviderName, ProviderSlug};
 use crate::llm2::SupportedParameters;
 use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;

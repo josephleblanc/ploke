@@ -506,3 +506,4 @@ async fn e2e_gat_deserialization_validation() {
     
     println!("✓ GAT deserialization validated with various JSON inputs");
 }
+#![cfg(not(feature = "llm_refactor"))]

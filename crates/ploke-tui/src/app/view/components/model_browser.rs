@@ -8,8 +8,9 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use crate::llm2::request::endpoint::{Endpoint};
-use crate::llm2::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey, ProviderName, ProviderSlug};
+use crate::llm2::request::endpoint::Endpoint;
+use crate::llm2::router_only::openrouter::providers::ProviderName;
+use crate::llm2::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey};
 use crate::user_config::OPENROUTER_URL;
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -34,7 +35,7 @@ pub struct ModelBrowserItem {
     pub id: ModelId,
     pub name: Option<ModelName>,
     pub context_length: Option<u32>,
-    /// input cost converted from USD/token to
+    /// Input cost in USD per token (displayed as USD per 1M tokens).
     pub input_cost: Option<f64>,
     pub output_cost: Option<f64>,
     pub supports_tools: bool,
@@ -79,6 +80,9 @@ pub struct ModelBrowserState {
     pub selected: usize,
     // Toggle for bottom-right help panel within the Model Browser overlay
     pub help_visible: bool,
+    // Provider selection mode for the currently selected item
+    pub provider_select_active: bool,
+    pub provider_selected: usize,
 }
 
 pub fn render_model_browser<'a>(
@@ -121,7 +125,7 @@ pub fn render_model_browser<'a>(
         overlay_style,
     )));
     lines.push(Line::from(Span::styled(
-        "Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, ? to toggle help, q/Esc to close.",
+        "Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, l to choose provider (Enter to apply), s to auto-select, ? for help, q/Esc to close.",
         overlay_style,
     )));
     lines.push(Line::from(Span::raw("")));
@@ -208,21 +212,115 @@ pub fn render_model_browser<'a>(
             } else if it.providers.is_empty() {
                 lines.push(Line::from(Span::styled("      (none)", detail_style)));
             } else {
-                for p in &it.providers {
+                for (row_idx, p) in it.providers.iter().enumerate() {
+                    let is_sel = mb.provider_select_active && i == mb.selected && row_idx == mb.provider_selected;
+                    let row_style = if is_sel { selected_style } else { detail_style };
+                    let pointer = if is_sel { ">" } else { "-" };
                     lines.push(Line::from(Span::styled(
                         format!(
-                            "      - {}  tools={}  ctx={}  pricing: in={} out={}",
-                            p.provider_name.as_str(),
+                            "      {} {}  tools={}  ctx={}  pricing (USD/1M tok): in={} out={}",
+                            pointer,
+                            p.provider_name,
                             p.supports_tools,
                             format_args!("{:.0}", p.context_length),
-                            format_args!("{:.3}", p.input_cost * 1_000_000.0),
-                            format_args!("{:.3}", p.output_cost * 1_000_000.0),
+                            format_args!("{:.3}", p.input_cost),
+                            format_args!("{:.3}", p.output_cost),
                         ),
-                        detail_style,
+                        row_style,
                     )));
                 }
             }
         }
     }
     (body_area, footer_area, overlay_style, lines)
+}
+
+#[cfg(feature = "test_harness")]
+pub fn snapshot_text_for_test(models: Vec<TestModelItem>, keyword: &str, selected: usize, provider_select_active: bool, provider_selected: usize) -> String {
+    use ratatui::{backend::TestBackend, Terminal};
+    let items: Vec<ModelBrowserItem> = models.into_iter().map(|m| m.into_item()).collect();
+    let mb = ModelBrowserState {
+        visible: true,
+        keyword: keyword.to_string(),
+        items,
+        selected,
+        help_visible: false,
+        provider_select_active,
+        provider_selected,
+    };
+
+    let backend = TestBackend::new(100, 25);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    let mut out = String::new();
+    terminal.draw(|frame| {
+        let (_a,_b,_s, lines) = render_model_browser(frame, &mb);
+        out = lines_to_text(&lines);
+    }).expect("draw");
+    out
+}
+
+#[cfg(feature = "test_harness")]
+fn lines_to_text(lines: &[Line<'_>]) -> String {
+    lines.iter().map(|line| {
+        let mut s = String::new();
+        for span in &line.spans { s.push_str(span.content.as_ref()); }
+        s
+    }).collect::<Vec<_>>().join("\n")
+}
+
+#[cfg(feature = "test_harness")]
+pub struct TestProviderRow {
+    pub provider_slug: String,
+    pub context_length: u32,
+    pub input_cost: f64,
+    pub output_cost: f64,
+    pub supports_tools: bool,
+}
+
+#[cfg(feature = "test_harness")]
+pub struct TestModelItem {
+    pub id: String,
+    pub name: Option<String>,
+    pub context_length: Option<u32>,
+    pub input_cost: Option<f64>,
+    pub output_cost: Option<f64>,
+    pub supports_tools: bool,
+    pub providers: Vec<TestProviderRow>,
+    pub expanded: bool,
+    pub loading_providers: bool,
+}
+
+#[cfg(feature = "test_harness")]
+impl TestModelItem {
+    fn into_item(self) -> ModelBrowserItem {
+        use std::str::FromStr;
+        let id = crate::llm2::ModelId::from_str(&self.id).expect("valid model id");
+        let name = self.name.map(|s| crate::llm2::ModelName::new(s));
+        let providers = self.providers.into_iter().map(|p| {
+            let slug = crate::llm2::router_only::openrouter::providers::ProviderSlug::from_str(&p.provider_slug).expect("provider slug");
+            let pname = slug.to_provider_name();
+            let provider_key = crate::llm2::ProviderKey::new(&slug.to_string()).expect("provider key");
+            ModelProviderRow {
+                provider_name: pname,
+                provider_key,
+                model_id: id.clone(),
+                context_length: p.context_length,
+                input_cost: p.input_cost,
+                output_cost: p.output_cost,
+                supports_tools: p.supports_tools,
+            }
+        }).collect();
+        ModelBrowserItem {
+            id,
+            name,
+            context_length: self.context_length,
+            input_cost: self.input_cost,
+            output_cost: self.output_cost,
+            supports_tools: self.supports_tools,
+            providers,
+            expanded: self.expanded,
+            loading_providers: self.loading_providers,
+            pending_select: false,
+        }
+    }
 }

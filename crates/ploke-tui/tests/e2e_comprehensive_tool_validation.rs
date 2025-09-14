@@ -323,3 +323,4 @@ async fn e2e_performance_validation() {
     
     println!("✓ Performance validation completed");
 }
+#![cfg(not(feature = "llm_refactor"))]

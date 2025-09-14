@@ -87,8 +87,10 @@ pub struct App {
     state: Arc<AppState>,
     /// A channel to send commands to the state manager.
     cmd_tx: mpsc::Sender<StateCommand>,
-    /// A channel to receive broadcasted application events.
+    /// A channel to receive real-time broadcasted application events.
     event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
+    /// A channel to receive background-priority broadcasted application events.
+    bg_event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
     pub input_buffer: String,
@@ -128,6 +130,7 @@ impl App {
             state,
             cmd_tx,
             event_rx: event_bus.subscribe(EventPriority::Realtime),
+            bg_event_rx: event_bus.subscribe(EventPriority::Background),
             input_buffer: String::new(),
             mode: Mode::default(),
             command_style,
@@ -331,9 +334,15 @@ impl App {
                 }
             }
 
-            // Application events
-            Ok(app_event) = self.event_rx.recv() => {
-                events::handle_event(&mut self, app_event).await;
+            // Application events (realtime)
+            Ok(app_event_rt) = self.event_rx.recv() => {
+                events::handle_event(&mut self, app_event_rt).await;
+                self.needs_redraw = true;
+            }
+
+            // Application events (background)
+            Ok(app_event_bg) = self.bg_event_rx.recv() => {
+                events::handle_event(&mut self, app_event_bg).await;
                 self.needs_redraw = true;
             }
 
@@ -742,17 +751,42 @@ impl App {
                 use KeyCode::*;
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
-                        self.model_browser = None;
+                        if mb.provider_select_active {
+                            mb.provider_select_active = false;
+                        } else {
+                            self.model_browser = None;
+                        }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        if mb.selected > 0 {
+                        if mb.provider_select_active {
+                            if let Some(item) = mb.items.get(mb.selected) {
+                                if !item.providers.is_empty() {
+                                    if mb.provider_selected > 0 {
+                                        mb.provider_selected -= 1;
+                                    } else {
+                                        mb.provider_selected = item.providers.len().saturating_sub(1);
+                                    }
+                                }
+                            }
+                        } else if mb.selected > 0 {
                             mb.selected -= 1;
                         } else {
                             mb.selected = mb.items.len().saturating_sub(1);
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if mb.items.is_empty() {
+                        if mb.provider_select_active {
+                            if let Some(item) = mb.items.get(mb.selected) {
+                                let len = item.providers.len();
+                                if len > 0 {
+                                    if mb.provider_selected + 1 < len {
+                                        mb.provider_selected += 1;
+                                    } else {
+                                        mb.provider_selected = 0;
+                                    }
+                                }
+                            }
+                        } else if mb.items.is_empty() {
                             // nothing
                         } else if mb.selected + 1 < mb.items.len() {
                             mb.selected += 1;
@@ -761,7 +795,16 @@ impl App {
                         }
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                        if mb.provider_select_active {
+                            if let Some(item) = mb.items.get_mut(mb.selected) {
+                                if !item.providers.is_empty() {
+                                    let idx = mb.provider_selected.min(item.providers.len() - 1);
+                                    let chosen = item.providers[idx].provider_key.clone();
+                                    chosen_model = Some(item.id.clone());
+                                    chosen_provider = Some(chosen);
+                                }
+                            }
+                        } else if let Some(item) = mb.items.get_mut(mb.selected) {
                             item.expanded = !item.expanded;
                             // On expand, if providers not yet loaded, request endpoints
                             if item.expanded && item.providers.is_empty() && !item.loading_providers
@@ -784,6 +827,32 @@ impl App {
                                     .await;
                                 });
                             }
+                        }
+                    }
+                    KeyCode::Char('l') => {
+                        // Enter provider selection mode on current item; trigger load if needed
+                        if let Some(item) = mb.items.get_mut(mb.selected) {
+                            if !item.expanded {
+                                item.expanded = true;
+                            }
+                            if item.providers.is_empty() && !item.loading_providers {
+                                item.loading_providers = true;
+                                let model_id = item.id.clone();
+                                tokio::spawn(async move {
+                                    let router = RouterVariants::OpenRouter(OpenRouter);
+                                    crate::emit_app_event(
+                                        LlmEvent::Endpoint(endpoint::Event::Request {
+                                            model_key: model_id.key,
+                                            router,
+                                            variant: model_id.variant,
+                                        })
+                                        .into(),
+                                    )
+                                    .await;
+                                });
+                            }
+                            mb.provider_select_active = true;
+                            mb.provider_selected = 0;
                         }
                     }
                     KeyCode::Char('s') => {
@@ -1232,8 +1301,9 @@ impl App {
                     id: m.id.clone(),
                     name: Some(m.name),
                     context_length: m.context_length.or_else(|| m.top_provider.context_length),
-                    input_cost: Some(m.pricing.prompt),
-                    output_cost: Some(m.pricing.completion),
+                    // Display pricing in USD per 1M tokens (aligns with provider rows)
+                    input_cost: Some(m.pricing.prompt * 1_000_000.0),
+                    output_cost: Some(m.pricing.completion * 1_000_000.0),
                     supports_tools,
                     // Provider rows will be populated later by `list_model_providers_async` after the
                     // command `Command::ModelProviders(model_id)`, the details are empty to start with.
@@ -1251,6 +1321,8 @@ impl App {
             selected: 0,
             items,
             help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
         });
         self.needs_redraw = true;
     }

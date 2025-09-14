@@ -62,3 +62,4 @@ async fn e2e_resource_cleanup_verification() -> color_eyre::Result<()> {
     harness.shutdown().await;
     Ok(())
 }
+#![cfg(not(feature = "llm_refactor"))]

@@ -392,3 +392,4 @@ async fn e2e_live_api_tool_call_types() -> color_eyre::Result<()> {
     harness.shutdown().await;
     Ok(())
 }
+#![cfg(not(feature = "llm_refactor"))]

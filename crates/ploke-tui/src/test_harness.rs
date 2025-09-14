@@ -19,10 +19,8 @@ lazy_static! {
         // Build a realistic App instance without spawning UI/event loops.
         // Keep this synchronous for ergonomic use in tests.
         let mut config = UserConfig::default();
-        // Merge curated defaults with user overrides (none in tests by default)
-        config.registry = config.registry.with_defaults();
-        // Apply any API keys from env for more realistic behavior if present
-        config.registry.load_api_keys();
+        // Registry defaults are already represented by `Default` impls in llm2; API keys are
+        // resolved by routers at call time from env in tests.
 
         // Convert to runtime configuration
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();

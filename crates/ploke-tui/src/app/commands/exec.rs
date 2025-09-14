@@ -209,10 +209,11 @@ pub fn execute(app: &mut App, command: Command) {
             provider_slug,
         } => {
             // Delegate to state layer to pin a specific provider endpoint for a model
-            let provider_key = ProviderKey { slug: provider_slug };
+            let provider_key = ProviderKey::new(&provider_slug)
+                .expect("valid provider slug for endpoint selection");
             app.send_cmd(StateCommand::SelectModelProvider {
                 model_id_string: model_id,
-                provider_key: provider_slug,
+                provider_key: Some(provider_key),
             });
         }
         Command::Update => spawn_update(app),
@@ -264,7 +265,7 @@ fn show_model_info_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        use crate::llm2::types::newtypes::ProviderSlug as _;
+        use crate::llm2::ProviderSlug as _;
         let active = cfg.active_model.to_string();
         let params = cfg.llm_params.clone();
         let endpoints = cfg
@@ -279,10 +280,7 @@ fn show_model_info_async(app: &App) {
         };
         let fmt_opt_u32 =
             |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-        let fmt_opt_usize =
-            |o: Option<usize>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-        let fmt_opt_u64 =
-            |o: Option<u64>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+        // legacy helpers removed (no longer needed): fmt_opt_usize, fmt_opt_u64
 
         let mut lines = vec![
             "Current model settings:".to_string(),
@@ -291,25 +289,15 @@ fn show_model_info_async(app: &App) {
             "  LLM parameters:".to_string(),
             format!("    temperature: {}", fmt_opt_f32(params.temperature)),
             format!("    top_p: {}", fmt_opt_f32(params.top_p)),
+            format!("    top_k: {}", fmt_opt_f32(params.top_k)),
             format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
-            format!(
-                "    presence_penalty: {}",
-                fmt_opt_f32(params.presence_penalty)
-            ),
-            format!(
-                "    frequency_penalty: {}",
-                fmt_opt_f32(params.frequency_penalty)
-            ),
-            format!("    stop_sequences: [{}]", params.stop_sequences.join(", ")),
-            format!("    parallel_tool_calls: {}", params.parallel_tool_calls),
-            format!("    response_format: {:?}", params.response_format),
-            format!("    tool_max_retries: {}", fmt_opt_u32(params.tool_max_retries)),
-            format!("    tool_token_limit: {}", fmt_opt_u32(params.tool_token_limit)),
-            format!("    tool_timeout_secs: {}", fmt_opt_u64(params.tool_timeout_secs)),
-            format!(
-                "    history_char_budget: {}",
-                fmt_opt_usize(params.history_char_budget)
-            ),
+            format!("    seed: {}", params.seed.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
+            format!("    presence_penalty: {}", fmt_opt_f32(params.presence_penalty)),
+            format!("    frequency_penalty: {}", fmt_opt_f32(params.frequency_penalty)),
+            format!("    repetition_penalty: {}", fmt_opt_f32(params.repetition_penalty)),
+            format!("    top_logprobs: {}", params.top_logprobs.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
+            format!("    min_p: {}", fmt_opt_f32(params.min_p)),
+            format!("    top_a: {}", fmt_opt_f32(params.top_a)),
         ];
 
         lines.push("".to_string());
@@ -411,7 +399,7 @@ fn list_models_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        use crate::llm2::types::newtypes::ProviderSlug as _;
+        use crate::llm2::ProviderSlug as _;
         let active = cfg.active_model.to_string();
         let eps = cfg
             .model_registry
@@ -596,14 +584,18 @@ fn open_model_search(app: &mut App, keyword: &str) {
             Ok(models_resp) => {
                 let kw_lower = keyword_str.to_lowercase();
                 let mut filtered: Vec<ResponseItem> = models_resp
-                    .into_iter() // IntoIterator<Item = ResponseItem>
+                    .into_iter()
                     .filter(|m| {
-                        let id_match = m.id.to_lowercase().contains(&kw_lower);
-                        let name_match = m.name.to_lowercase().contains(&kw_lower);
+                        let id_match = m.id.to_string().to_lowercase().contains(&kw_lower);
+                        let name_match = m
+                            .name
+                            .as_str()
+                            .to_lowercase()
+                            .contains(&kw_lower);
                         id_match || name_match
                     })
                     .collect();
-                filtered.sort_by(|a, b| a.id.cmp(&b.id));
+                filtered.sort_by(|a, b| a.id.to_string().cmp(&b.id.to_string()));
                 debug!(
                     "model search filtered {} results for keyword '{}'",
                     filtered.len(),
@@ -895,7 +887,10 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
     }
 }
 
-#[cfg(test)]
+// These legacy shape tests target the pre-`llm2` module.
+// When the `llm_refactor` feature is enabled (default), the old `llm` module is
+// not compiled, so we skip these tests.
+#[cfg(all(test, not(feature = "llm_refactor")))]
 mod typed_response_tests {
     use crate::llm::openrouter::model_provider::{EndpointsResponse, ProviderNameStr};
     use crate::llm::openrouter::provider_endpoints::SupportedParameters;

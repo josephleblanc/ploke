@@ -2,8 +2,7 @@ use super::App;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
 use crate::llm2::manager::events::{endpoint, models};
-use crate::llm2::{LlmEvent, ProviderName, ProviderSlug};
-use crate::ModelId;
+use crate::llm2::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,7 +24,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.quit();
         }
 
-        AppEvent::Llm2(_llm_event) => {},
+        // LLM events routed into llm2 match arm below
 
         AppEvent::EndpointsResults { model_id, endpoints } => todo!(),
 
@@ -87,15 +86,19 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.indexing_state = Some(state);
         }
         AppEvent::Ui(_ui_event) => {}
-        AppEvent::Llm2(event) => { match event {
-            LlmEvent::Models(resp @ models::Event::Response { .. }) => handle_llm_models_response(app, resp),
-            LlmEvent::ChatCompletion(chat_evt) => todo!(),
-            LlmEvent::Completion(chat_evt) => todo!(),
-            LlmEvent::Tool(tool_event) => todo!(),
-            LlmEvent::Endpoint(event) => todo!(),
-            LlmEvent::Status(event) => todo!(),
-            _ => {}
-        } }
+        AppEvent::Llm2(event) => {
+            match event {
+                LlmEvent::Models(resp @ models::Event::Response { .. }) => {
+                    handle_llm_models_response(app, resp)
+                }
+                LlmEvent::Endpoint(ep_evt) => handle_llm_endpoints_response(app, ep_evt),
+                LlmEvent::ChatCompletion(_) => {}
+                LlmEvent::Completion(_) => {}
+                LlmEvent::Tool(_) => {}
+                LlmEvent::Status(_) => {}
+                _ => {}
+            }
+        }
         AppEvent::LlmTool(_event) => {}
         AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
@@ -284,11 +287,11 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
 }
 
 fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event) {
-    if let endpoint::Event::Response { model_key, endpoints } = endpoints_event {
+    if let endpoint::Event::Response { model_key: _, endpoints } = endpoints_event {
         let eps = match endpoints {
             Some(epoints) => epoints,
             None => {
-                send_warning(app, "No endpoints found for model: {}"                                    );
+                send_warning(app, "No endpoints found for model.");
                 return
             },
         };
@@ -299,6 +302,8 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
                 return 
             }
         };
+
+        let mut select_after: Option<(crate::llm2::ModelId, crate::llm2::ProviderKey)> = None;
 
         let browser_item = match mb.items.iter_mut().find(|i| i.id == eps.data.id) {
             Some(b) => b,
@@ -311,27 +316,51 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
         
         let model_id = &eps.data.id;
         // Map ProviderEntry -> ModelProviderRow
-        let rows = eps.data.endpoints
+        let rows = eps
+            .data
+            .endpoints
             .iter()
-            .map(|ep| ModelProviderRow::from_id_endpoint(model_id.clone(), ep.clone()))
+            .map(|ep| {
+                let key = ProviderKey { slug: ep.tag.provider_name.clone() };
+                ModelProviderRow::from_id_endpoint(model_id.clone(), &key, ep.clone())
+            })
             .collect::<Vec<_>>();
         browser_item.providers = rows;
         browser_item.loading_providers = false;
 
-        // NOTE: no longer handling chosing a model here while window is loading. Add if
-        // performance becomes an issue and overlay takes too long too load.
-    }
+        // If user pressed 's' while loading, choose a provider automatically now
+        if browser_item.pending_select {
+            let tool_provider = browser_item
+                .providers
+                .iter()
+                .find(|p| p.supports_tools)
+                .or_else(|| browser_item.providers.first())
+                .map(|p| p.provider_key.clone());
 
+            if let Some(pk) = tool_provider {
+                // Defer actual selection to after we release the borrow on model_browser
+                select_after = Some((model_id.clone(), pk));
+            }
+            browser_item.pending_select = false;
+        }
+
+        // explicitly release mutable borrow of model_browser by ending its scope
+
+        if let Some((mid, pk)) = select_after {
+            app.apply_model_provider_selection(mid.to_string(), Some(pk));
+            app.close_model_browser();
+        }
+    }
 }
 
 fn send_warning(app: &mut App, message: &str) {
     let msg = String::from(message);
     tracing::warn!(msg);
-    app.cmd_tx.send(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+    app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
 }
 
 fn send_error(app: &mut App, message: &str) {
     let msg = String::from(message);
     tracing::warn!(msg);
-    app.cmd_tx.send(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+    app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
 }

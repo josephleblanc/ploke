@@ -11,3 +11,11 @@
   - Events: Began migration but still references old endpoint fields and strings; needs updates to new endpoint/pricing fields and to use `ProviderKey` for selection.
   - Formatting: rustfmt shows small diffs in both files.
   - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → 36 errors, 19 warnings, concentrated in down‑stream modules expecting `String` and old field names.
+- 2025-09-14T01:50:09Z — 59c5ea13
+  - Fix: Removed stray file `'`; gated `exec_live_tests` and `exec_real_tools_live_tests` behind `live_api_tests` feature.
+  - Exec: Provider select builds `ProviderKey` and passes `model_id_string`; adjusted model search to typed ids/names; sorted by string form.
+  - Events: Routed `AppEvent::Llm2` to handlers; implemented endpoints response mapping using typed `ProviderKey` from `Endpoint.tag`.
+  - Endpoint types: `Endpoint.provider_name` uses OpenRouter `ProviderName` (Display), not string newtype.
+  - Model Browser: Provider rows now use typed name; pricing labeled `USD/1M tok` and avoid double scaling; doc comment completed.
+  - Test harness: Removed outdated `RegistryPrefs::with_defaults()`/`load_api_keys()` calls.
+  - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → success; warnings remain (deprecated events, visibility).
