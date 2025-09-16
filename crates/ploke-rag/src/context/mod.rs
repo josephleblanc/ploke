@@ -12,11 +12,18 @@
 //! are documented in `plans.md` for subsequent iterations.
 use std::collections::{HashMap, HashSet};
 
+use itertools::Itertools;
 use ploke_core::{
-    rag_types::{AssembledContext, ContextPart, ContextPartKind, ContextStats, Modality},
+    rag_types::{
+        AssembledContext, CanonPath, ContextPart, ContextPartKind, ContextStats, Modality,
+        NodeFilepath,
+    },
     EmbeddingData,
 };
-use ploke_db::{Database, NodeType};
+use ploke_db::{
+    get_by_id::{GetNodeInfo, NodePaths},
+    Database, NodeType,
+};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -179,6 +186,17 @@ pub async fn assemble_context(
         .get_nodes_ordered(dedup_ids.clone())
         .map_err(|e| RagError::Embed(e.to_string()))?;
 
+    let node_paths: Vec<Result<NodePaths, ploke_db::DbError>> = nodes
+        .iter()
+        .map(|p| db.paths_from_id(p.id))
+        .map(|db_row| db_row.and_then(|r| r.try_into()))
+        .collect();
+
+    let file_paths = nodes
+        .iter()
+        .map(|ed| ed.file_path.to_string_lossy().to_string())
+        .collect_vec();
+
     // Batch fetch snippets.
     let batch = io
         .get_snippets_batch(nodes)
@@ -187,18 +205,21 @@ pub async fn assemble_context(
 
     // Build preliminary parts (with placeholder file path and no ranges for now).
     let mut prelim_parts: Vec<ContextPart> = Vec::with_capacity(batch.len());
-    for (i, res) in batch.into_iter().enumerate() {
+    for (i, (res, node_paths)) in batch.into_iter().zip(node_paths.into_iter()).enumerate() {
         let id = dedup_ids
             .get(i)
             .copied()
             .ok_or_else(|| RagError::Search(format!("mismatched batch index {}", i)))?;
+        let NodePaths { file, canon } = node_paths.map_err(RagError::Db)?;
+
         match res {
             Ok(text) => {
                 // Use UUID as a stable per-"file" key until richer metadata is wired through.
-                let file_key = format!("id://{}", id);
+                // let file_key = format!("id://{}", id);
                 let part = ContextPart {
                     id,
-                    file_path: file_key,
+                    file_path: NodeFilepath::new(file),
+                    canon_path: CanonPath::new(canon),
                     ranges: Vec::new(),
                     kind: ContextPartKind::Code,
                     text,
@@ -262,7 +283,7 @@ pub async fn assemble_context(
         ..Default::default()
     };
 
-    let mut per_file_used: HashMap<String, usize> = HashMap::new();
+    let mut per_file_used: HashMap<NodeFilepath, usize> = HashMap::new();
     let mut admitted: Vec<ContextPart> = Vec::with_capacity(parts.len());
 
     for mut part in parts {

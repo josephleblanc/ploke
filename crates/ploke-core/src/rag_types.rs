@@ -4,7 +4,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextPart {
     pub id: Uuid,
-    pub file_path: String,
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
     pub ranges: Vec<(usize, usize)>,
     pub kind: ContextPartKind,
     pub text: String,
@@ -82,14 +83,14 @@ impl RequestCodeContextResult {
 impl From<ContextPart> for ConciseContext {
     fn from(value: ContextPart) -> Self {
         Self {
-            file_path: NodeFilepath(value.file_path.clone()),
-            canon_path: CanonPath(value.file_path.clone()),
+            file_path: value.file_path.clone(),
+            canon_path: value.canon_path.clone(),
             snippet: value.text,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 #[serde(transparent)]
 pub struct NodeFilepath(pub String);
 
@@ -99,13 +100,13 @@ impl AsRef<str> for NodeFilepath {
     }
 }
 
-impl PartialEq for NodeFilepath {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+impl NodeFilepath {
+    pub fn new(s: String) -> Self {
+        Self(s)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq,  PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq,  PartialOrd, Ord, Hash, PartialEq)]
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
@@ -115,9 +116,9 @@ impl AsRef<str> for CanonPath {
     }
 }
 
-impl PartialEq for CanonPath {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+impl CanonPath {
+    pub fn new(s: String) -> Self {
+        Self(s)
     }
 }
 
