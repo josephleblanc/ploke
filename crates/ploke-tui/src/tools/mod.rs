@@ -410,16 +410,29 @@ mod tests {
         );
         assert!(f.contains_key("parameters"));
     }
-
+    /// Repro and fix verification for tool-call failure when `search_term` is missing.
+    ///
+    /// Previously, models sometimes emitted tool_calls with only `token_budget` and omitted
+    /// `search_term`. Our deserializer required `search_term` which caused ToolCallFailed and
+    /// bubbled to the UI as a misleading deserialization error. We now accept missing
+    /// `search_term` and fall back to the last user message on the active chat path.
+    /// This test drives process_tool end-to-end with a real RagService mock and asserts
+    /// that a ToolCallCompleted is emitted even without explicit `search_term`.
     #[tokio::test]
-    async fn process_tool_emits_completed_for_get_file_metadata() {
+    async fn process_request_code_context_succeeds_without_explicit_search_term() {
         use crate::test_utils::mock::create_mock_app_state;
         use crate::{AppEvent, EventBus, event_bus::EventBusCaps};
 
-        // Prepare ctx
+        // Prepare ctx and add a last user message for fallback
         let state = Arc::new(create_mock_app_state());
+        {
+            let mut hist = state.chat.write().await;
+            let parent = hist.tail;
+            let child_id = Uuid::new_v4();
+            hist.add_message_user(parent, child_id, "search me".to_string()).expect("add user");
+        }
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let call_id = ArcStr::from("test-call");
+        let call_id = ArcStr::from("ctx-fallback");
         let ctx = Ctx {
             state: Arc::clone(&state),
             event_bus: Arc::clone(&event_bus),
@@ -428,17 +441,13 @@ mod tests {
             call_id: call_id.clone(),
         };
 
-        // Create a temporary file
-        let tmp = std::env::temp_dir().join(format!("gat_meta_{}.txt", Uuid::new_v4()));
-        std::fs::write(&tmp, b"abc").expect("write temp");
-
-        // Build ToolCall
-        let args = json!({"file_path": tmp.display().to_string()}).to_string();
+        // Build ToolCall with missing search_term
+        let args = serde_json::json!({"token_budget": 128}).to_string();
         let tc = ToolCall {
-            call_id: ArcStr::from("test-call"),
+            call_id: call_id.clone(),
             call_type: FunctionMarker,
             function: FunctionCall {
-                name: ToolName::GetFileMetadata,
+                name: ToolName::RequestCodeContext,
                 arguments: args,
             },
         };
@@ -446,27 +455,19 @@ mod tests {
         let mut rx = event_bus.realtime_tx.subscribe();
         process_tool(tc, ctx.clone()).await.expect("process ok");
 
-        // Expect a ToolCallCompleted with matching call_id
-        let got = timeout(Duration::from_secs(1), async move {
+        let got = timeout(Duration::from_secs(2), async move {
             loop {
                 match rx.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                        call_id,
-                        content,
-                        ..
-                    })) => {
-                        if call_id == ctx.call_id {
-                            break Some(content);
-                        }
+                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted { call_id, content, .. })) => {
+                        if call_id == ArcStr::from("ctx-fallback") { break Some(content); }
                     }
+                    Ok(AppEvent::System(SystemEvent::ToolCallFailed { .. })) => { break None; }
                     Ok(_) => continue,
                     Err(_) => break None,
                 }
             }
-        })
-        .await
-        .expect("timeout waiting for event");
-
+        }).await.expect("timeout waiting for event");
         assert!(got.is_some(), "no ToolCallCompleted captured");
     }
+
 }

@@ -40,7 +40,7 @@ pub enum LlmError {
     Deserialization(String),
 
     /// Failed to deserialize the API response.
-    #[error("Failed to deserialize response data: {0}")]
+    #[error("Tool call failed: {0}")]
     ToolCall(String),
 
     /// An unexpected or unknown error occurred.

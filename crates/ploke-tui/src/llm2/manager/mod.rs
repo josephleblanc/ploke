@@ -209,16 +209,14 @@ pub async fn llm_manager(
                     let req = pending_requests
                         .remove(&event_key)
                         .expect("Event key-val must exist");
-                    let result = tokio::spawn(process_llm_request(
+                    tokio::spawn(process_llm_request(
                         req,
                         Arc::clone(&state),
                         cmd_tx.clone(),
                         client.clone(),
                         event_bus.clone(),
                         context,
-                    ))
-                    .await;
-                    tracing::info!(?result, "llm call result");
+                    ));
                 }
             }
             AppEvent::System(SystemEvent::ToolCallRequested {

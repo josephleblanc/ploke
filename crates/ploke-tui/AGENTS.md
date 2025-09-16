@@ -21,9 +21,10 @@
 - Safety-first editing: stage edits with verified file hashes; write via the `IoManager` atomically; never write on hash mismatch.
 
 ## Testing Guidelines
-- Test layout: files under `tests/` (e.g., `models_tests.rs`) and module-level unit tests.
 - Snapshots: use `insta`; update intentionally with `INSTA_UPDATE=auto cargo test`.
-- Live gates: guard external calls with `#[cfg(feature = "live_api_tests")]`; include evidence (pass/fail counts, notable failures) and artifacts under `target/test-output/...` when claiming readiness.
+- Unit tests: small unit tests in files, module-level tests in a `<module>/tests/` directory
+  - (new convention, may not be many tests like this yet)
+- Write tests within `src` behind `#[cfg(test)]`, `#[test]`, and `#[tokio::test]`
 
 ## Commit & Pull Request Guidelines
 - Commit style: Conventional Commits (e.g., `feat: ...`, `fix: ...`, `refactor: ...`, `test: ...`, `style: ...`).

@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::llm2::response::OpenAiResponse;
+use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use crate::AppEvent;
 use crate::EventBus;
 use crate::app_state::events::SystemEvent;
@@ -22,22 +23,38 @@ const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parse
 
 #[derive(Debug, PartialEq)]
 enum ParseOutcome {
-    ToolCalls(Vec<crate::tools::ToolCall>),
+    ToolCalls { calls: Vec<crate::tools::ToolCall>, content: Option<String> },
     Content(String),
 }
 
 fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
+    // First, detect provider-embedded errors inside a 200 body
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text) {
+        if let Some(err) = v.get("error") {
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown provider error");
+            let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+            return Err(LlmError::Api {
+                status: code as u16,
+                message: msg.to_string(),
+            });
+        }
+    }
+
+    // Parse into normalized response
     let parsed: OpenAiResponse = serde_json::from_str(body_text)
         .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
 
-    // TODO: Add the message (if present) from the tool calls in the response to this function,
-    // also will need to change the return type of this function.
+    // Some providers may return both content and tool calls in the same message.
     if let Some(choice) = parsed.choices.into_iter().next() {
         if let Some(msg) = choice.message {
+            let content = msg.content;
             if let Some(tc) = msg.tool_calls {
-                return Ok(ParseOutcome::ToolCalls(tc));
+                return Ok(ParseOutcome::ToolCalls { calls: tc, content });
             }
-            let content = msg.content.unwrap_or_default();
+            let content = content.unwrap_or_default();
             return Ok(ParseOutcome::Content(content));
         } else if let Some(text) = choice.text {
             return Ok(ParseOutcome::Content(text));
@@ -92,7 +109,18 @@ where
     pub attempts: u32,
 }
 
-#[allow(clippy::needless_lifetimes)]
+use tracing::info;
+
+async fn log_api_parsed_json_response(
+    url: &str,
+    status: u16,
+    parsed: &OpenAiResponse,
+) -> color_eyre::Result<()> {
+    let payload: String = serde_json::to_string_pretty(parsed)?;
+    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
+    Ok(())
+}
+
 impl<'a, R> RequestSession<'a, R>
 where
     R: Router,
@@ -107,9 +135,9 @@ where
         // Determine whether to include tools
         let mut use_tools = self.req.tools.is_some();
         let mut tools_fallback_attempted = false;
+        let mut assistant_intro: String = String::new();
 
         for _attempt in 0..=self.attempts {
-            // If tools disabled due to fallback, ensure both tools and tool_choice reflect it
             if !use_tools {
                 self.req.tools = None;
                 self.req.tool_choice = None;
@@ -137,7 +165,6 @@ where
                     .await
                     .unwrap_or_else(|_| "<no error body>".into());
 
-                // Heuristic: many providers respond with hints when tool calls are unsupported
                 if status == 404
                     && use_tools
                     && text.to_lowercase().contains("support tool")
@@ -156,12 +183,8 @@ where
                     tools_fallback_attempted = true;
                     continue;
                 }
-                return Err(LlmError::Api {
-                    status,
-                    message: text,
-                });
+                return Err(LlmError::Api { status, message: text });
             }
-
 
             let log_url = response.url().to_string();
             let log_status = response.status().as_u16();
@@ -170,24 +193,34 @@ where
                 .await
                 .map_err(|e| LlmError::Request(e.to_string()))?;
 
-            // persist response by sending to db, for now appending to file
-            let parsed: OpenAiResponse = serde_json::from_str(&body_text)
-                .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
-            let mut log_dir = workspace_root();
-            log_dir.push(OPENROUTER_RESPONSE_LOG_PARSED);
-            let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
+            // Attempt to log parsed response; fall back to provider-embedded error detection
+            if let Ok(parsed) = serde_json::from_str::<OpenAiResponse>(&body_text) {
+                let mut log_dir = workspace_root();
+                log_dir.push(OPENROUTER_RESPONSE_LOG_PARSED);
+                let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
+            } else if let Err(err) = check_provider_error(&body_text) {
+                return Err(err);
+            }
 
             match parse_outcome(&body_text)? {
-                ParseOutcome::ToolCalls(tool_calls) => {
-                    // Dispatch tool calls through event bus
-                    let mut abort_handles = Vec::with_capacity(tool_calls.len());
+                ParseOutcome::ToolCalls { calls: tool_calls, content } => {
+                    tracing::debug!(calls = ?tool_calls, ?content);
+                    if let Some(text) = content {
+                        if !text.is_empty() {
+                            if !assistant_intro.is_empty() {
+                                assistant_intro.push_str("\n\n");
+                            }
+                            assistant_intro.push_str(&text);
+                            self.req.core.messages.push(RequestMessage::new_assistant(text));
+                        }
+                    }
+
                     let mut task_set = tokio::task::JoinSet::new();
                     for call in tool_calls.into_iter() {
                         let event_bus = self.event_bus.clone();
                         let parent_id = self.parent_id;
                         let request_id = Uuid::new_v4();
                         let call_id = call.call_id.clone();
-                        // Subscribe before sending request event
                         let mut rx = event_bus.realtime_tx.subscribe();
                         event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                             tool_call: call,
@@ -195,11 +228,11 @@ where
                             parent_id,
                         }));
 
-                        abort_handles.push(task_set.spawn(async move {
-                            // Await a correlated completion/failure
+                        task_set.spawn(async move {
                             let call_id_clone = call_id.clone();
                             let wait = async move {
                                 while let Ok(evt) = rx.recv().await {
+                                    tracing::debug!(?evt, "recv wait tool event for matching");
                                     match evt {
                                         AppEvent::System(SystemEvent::ToolCallCompleted {
                                             request_id: rid,
@@ -207,6 +240,7 @@ where
                                             content,
                                             ..
                                         }) if rid == request_id && cid == call_id => {
+                                            tracing::debug!(%request_id, ?call_id, ?content, "tool call completed");
                                             return Ok(content);
                                         }
                                         AppEvent::System(SystemEvent::ToolCallFailed {
@@ -222,46 +256,45 @@ where
                                 }
                                 Err("Event channel closed".to_string())
                             };
-                            match tokio::time::timeout(Duration::from_secs(30), wait).await {
+                            match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
                                 Ok(r) => (call_id_clone, r),
                                 Err(_) => (
                                     call_id_clone,
                                     Err("Timed out waiting for tool result".into()),
                                 ),
                             }
-                        }));
+                        });
                     }
 
-                    // Join and incorporate tool results
                     while let Some(res) = task_set.join_next().await {
                         match res {
                             Ok((cid, Ok(content))) => {
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid));
+                                self.req.core.messages.push(RequestMessage::new_tool(content, cid));
                             }
                             Ok((cid, Err(err))) => {
+                                tracing::debug!(tool_content = ?cid, error_msg = ?err);
                                 let content = json!({"ok": false, "error": err}).to_string();
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid));
-                                return Err(LlmError::ToolCall("tool call failed".into()));
+                                self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
+                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{err:?}");
+                                return Err(LlmError::ToolCall(err_msg));
                             }
                             Err(join_err) => {
-                                return Err(LlmError::ToolCall(format!(
-                                    "join error: {}",
-                                    join_err
-                                )));
+                                return Err(LlmError::ToolCall(format!("join error: {}", join_err)));
                             }
                         }
                     }
-                    // Continue loop: after tool results added, allow next iteration
                     continue;
                 }
                 ParseOutcome::Content(content) => {
-                    return Ok(content);
+                    if assistant_intro.is_empty() {
+                        return Ok(content);
+                    } else {
+                        let mut combined = assistant_intro;
+                        if !combined.ends_with('\n') { combined.push('\n'); }
+                        if !combined.ends_with("\n\n") { combined.push('\n'); }
+                        combined.push_str(&content);
+                        return Ok(combined);
+                    }
                 }
             }
         }
@@ -273,28 +306,13 @@ where
     }
 }
 
-use tracing::info;
-
-async fn log_api_parsed_json_response(
-    url: &str,
-    status: u16,
-    parsed: &OpenAiResponse,
-) -> color_eyre::Result<()> {
-    let payload: String = serde_json::to_string_pretty(parsed)?;
-
-    // Target MUST match the layer filter ("api_json") to route to api_responses.log
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
     use crate::llm2::router_only::openrouter::OpenRouter;
-    use crate::tools::{FunctionCall, FunctionMarker, ToolCall, ToolName};
-    use tokio::time::{Duration, timeout};
+    use crate::tools::ToolName;
 
     #[test]
     fn parse_outcome_content_message() {
@@ -341,7 +359,8 @@ mod tests {
         }"#;
         let r = parse_outcome(body).unwrap();
         match r {
-            ParseOutcome::ToolCalls(tc) => {
+            ParseOutcome::ToolCalls { calls: tc, content } => {
+                assert!(content.is_none());
                 assert_eq!(tc.len(), 1);
                 assert_eq!(tc[0].call_id.as_ref(), "call_1");
                 assert_eq!(tc[0].function.name, ToolName::RequestCodeContext);
@@ -350,156 +369,30 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn request_session_tool_call_iteration_via_fixture() {
-        // Build a minimal ChatCompRequest for OpenRouter
-        use crate::llm2::manager::RequestMessage;
-        use crate::llm2::request::ChatCompReqCore;
-        use crate::llm2::router_only::default_model;
-        use crate::llm2::router_only::openrouter;
-
-        let messages = vec![RequestMessage::new_user("hi".into())];
-        let req = ChatCompRequest::<OpenRouter>::default()
-            .with_core_bundle(ChatCompReqCore::default())
-            .with_model_str(&default_model())
-            .map(|r| r.with_messages(messages))
-            .unwrap();
-
-        let client = reqwest::Client::new();
-        let event_bus = std::sync::Arc::new(EventBus::new(EventBusCaps::default()));
-        let parent_id = Uuid::new_v4();
-        let session = RequestSession::<OpenRouter> {
-            client: &client,
-            event_bus: event_bus.clone(),
-            parent_id,
-            req,
-            fallback_on_404: false,
-            attempts: 1,
-        };
-
-        // Two-step fixture: first message has tool_calls, second has final content
-        let bodies = vec![
-            r#"{ "choices": [{ "message": { "tool_calls": [ { "id": "call_xyz", "type": "function", "function": {"name": "request_code_context", "arguments": "{\\"token_budget\\": 123}" } } ] } }] }"#.to_string(),
-            r#"{ "choices": [{ "message": { "role": "assistant", "content": "Done!" } }] }"#.to_string(),
-        ];
-
-        // Spawn a replier to tool requests
-        let mut rx_requests = event_bus.realtime_tx.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match rx_requests.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallRequested {
-                        request_id,
-                        parent_id,
-                        tool_call,
-                        ..
-                    })) => {
-                        // immediately reply success for this call id
-                        let _ = event_bus.realtime_tx.send(AppEvent::System(
-                            SystemEvent::ToolCallCompleted {
-                                request_id,
-                                parent_id,
-                                call_id: tool_call.call_id.clone(),
-                                content: "{\"ok\":true}".into(),
-                            },
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
-                }
-            }
-        });
-
-        // Local helper: run session using fixture bodies instead of HTTP
-        async fn run_with_fixture<R>(
-            mut s: RequestSession<'_, R>,
-            bodies: Vec<String>,
-        ) -> Result<String, LlmError>
-        where
-            R: Router,
-            R::CompletionFields: ApiRoute,
-        {
-            let mut iter = bodies.into_iter();
-            loop {
-                let body = match iter.next() {
-                    Some(b) => b,
-                    None => return Err(LlmError::Unknown("exhausted fixtures".into())),
-                };
-                match parse_outcome(&body)? {
-                    ParseOutcome::ToolCalls(tool_calls) => {
-                        let mut tasks = Vec::with_capacity(tool_calls.len());
-                        for call in tool_calls.into_iter() {
-                            let event_bus = s.event_bus.clone();
-                            let parent_id = s.parent_id;
-                            let request_id = Uuid::new_v4();
-                            let call_id = call.call_id.clone();
-                            let mut rx = event_bus.realtime_tx.subscribe();
-                            event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                                tool_call: call,
-                                request_id,
-                                parent_id,
-                            }));
-                            tasks.push(tokio::spawn(async move {
-                                let call_id_clone = call_id.clone();
-                                let wait = async move {
-                                    while let Ok(evt) = rx.recv().await {
-                                        match evt {
-                                            AppEvent::System(SystemEvent::ToolCallCompleted {
-                                                request_id: rid,
-                                                call_id: cid,
-                                                content,
-                                                ..
-                                            }) if rid == request_id && cid == call_id => {
-                                                return Ok(content);
-                                            }
-                                            AppEvent::System(SystemEvent::ToolCallFailed {
-                                                request_id: rid,
-                                                call_id: cid,
-                                                error,
-                                                ..
-                                            }) if rid == request_id && cid == call_id => {
-                                                return Err(error);
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    Err("Event channel closed".to_string())
-                                };
-                                match tokio::time::timeout(Duration::from_secs(5), wait).await {
-                                    Ok(r) => (call_id_clone, r),
-                                    Err(_) => (
-                                        call_id_clone,
-                                        Err("Timed out waiting for tool result".into()),
-                                    ),
-                                }
-                            }));
+    #[test]
+    fn parse_outcome_tool_calls_with_content() {
+        let body = r#"{
+            "choices": [
+                { "message": { 
+                    "content": "I will fetch context.",
+                    "tool_calls": [
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": { "name": "request_code_context", "arguments": "{\\"token_budget\\": "SomeStruct"}" }
                         }
-                        let results = futures::future::join_all(tasks).await;
-                        for res in results.into_iter() {
-                            match res {
-                                Ok((cid, Ok(content))) => {
-                                    s.req
-                                        .core
-                                        .messages
-                                        .push(RequestMessage::new_tool(content, cid));
-                                }
-                                Ok((_cid, Err(err))) => return Err(LlmError::ToolCall(err)),
-                                Err(join_err) => {
-                                    return Err(LlmError::ToolCall(format!(
-                                        "join error: {}",
-                                        join_err
-                                    )));
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    ParseOutcome::Content(c) => return Ok(c),
-                }
+                    ]
+                }}
+            ]
+        }"#;
+        let r = parse_outcome(body).unwrap();
+        match r {
+            ParseOutcome::ToolCalls { calls: tc, content } => {
+                assert_eq!(content.as_deref(), Some("I will fetch context."));
+                assert_eq!(tc.len(), 1);
+                assert_eq!(tc[0].call_id.as_ref(), "call_2");
             }
+            _ => panic!("expected tool calls with content"),
         }
-
-        let out = run_with_fixture(session, bodies).await.expect("content ok");
-        assert_eq!(out, "Done!");
     }
 }

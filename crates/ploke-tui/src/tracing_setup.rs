@@ -33,8 +33,10 @@ pub fn init_tracing() -> LoggingGuards {
     let common_fmt = fmt::layer()
         .with_target(true)
         .with_level(true)
-        .with_thread_ids(true)
+        .without_time()
+        .with_thread_ids(false)
         .with_span_events(FmtSpan::CLOSE)
+        .pretty()
         .with_ansi(false);
 
     let main_layer = common_fmt.with_writer(non_blocking_file);
