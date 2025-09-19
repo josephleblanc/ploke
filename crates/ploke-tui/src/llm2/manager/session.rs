@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::DateTime;
@@ -7,6 +8,7 @@ use serde_json::json;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::llm2::response::FinishReason;
 use crate::llm2::response::OpenAiResponse;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use crate::AppEvent;
@@ -23,7 +25,7 @@ const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parse
 
 #[derive(Debug, PartialEq)]
 enum ParseOutcome {
-    ToolCalls { calls: Vec<crate::tools::ToolCall>, content: Option<String> },
+    ToolCalls { calls: Vec<crate::tools::ToolCall>, content: Option<String>, finish_reason: FinishReason },
     Content(String),
 }
 
@@ -49,10 +51,13 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
 
     // Some providers may return both content and tool calls in the same message.
     if let Some(choice) = parsed.choices.into_iter().next() {
+        // assuming if not present it is stop to trigger return from session
+        let finish_reason = choice.finish_reason.unwrap_or(FinishReason::Stop);
         if let Some(msg) = choice.message {
             let content = msg.content;
             if let Some(tc) = msg.tool_calls {
-                return Ok(ParseOutcome::ToolCalls { calls: tc, content });
+                return Ok(ParseOutcome::ToolCalls { calls: tc, content,
+                finish_reason});
             }
             let content = content.unwrap_or_default();
             return Ok(ParseOutcome::Content(content));
@@ -102,7 +107,7 @@ where
     R::CompletionFields: ApiRoute,
 {
     pub client: &'a Client,
-    pub event_bus: std::sync::Arc<EventBus>,
+    pub event_bus: Arc<EventBus>,
     pub parent_id: Uuid,
     pub req: ChatCompRequest<R>,
     pub fallback_on_404: bool,
@@ -138,6 +143,7 @@ where
         let mut assistant_intro: String = String::new();
 
         for _attempt in 0..=self.attempts {
+
             if !use_tools {
                 self.req.tools = None;
                 self.req.tool_choice = None;
@@ -145,6 +151,7 @@ where
                 self.req.tool_choice = Some(ToolChoice::Auto);
             }
 
+            let _ = self.log_request().await;
             let response = self
                 .client
                 .post(url)
@@ -203,7 +210,7 @@ where
             }
 
             match parse_outcome(&body_text)? {
-                ParseOutcome::ToolCalls { calls: tool_calls, content } => {
+                ParseOutcome::ToolCalls { calls: tool_calls, content, finish_reason } => {
                     tracing::debug!(calls = ?tool_calls, ?content);
                     if let Some(text) = content {
                         if !text.is_empty() {
@@ -283,7 +290,12 @@ where
                             }
                         }
                     }
-                    continue;
+                    if finish_reason == FinishReason::ToolCalls {
+                        continue;
+                    } else {
+                        if assistant_intro.is_empty() {assistant_intro.push_str("Calling tools")}
+                        return Ok( assistant_intro );
+                    }
                 }
                 ParseOutcome::Content(content) => {
                     if assistant_intro.is_empty() {
@@ -304,6 +316,15 @@ where
             self.attempts
         )))
     }
+
+    async fn log_request(&self
+    ) -> color_eyre::Result<()> 
+    {
+        let payload: String = serde_json::to_string_pretty(&self.req)?;
+        info!(target: "api_json", "{}", payload);
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]

@@ -34,6 +34,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::app_state::{AppState, StateCommand};
+use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate};
 use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
@@ -43,9 +44,6 @@ use crate::tools::{
 };
 use crate::utils::consts::DEBUG_TOOLS;
 use crate::{AppEvent, EventBus};
-use crate::{
-    chat_history::{Message, MessageKind, MessageStatus, MessageUpdate},
-};
 
 // API and Config
 
@@ -244,6 +242,14 @@ pub async fn llm_manager(
                     parent_id,
                     call_id: tool_call.call_id.clone(),
                 };
+                let msg = format!("Calling tool: {}\n", tool_call.function.name.as_str());
+                let cmd_tx_clone = cmd_tx.clone();
+                let _ = cmd_tx
+                    .send(StateCommand::UpdateMessage {
+                        id: parent_id,
+                        update: MessageUpdate { append_content: Some(msg), ..Default::default() },
+                    })
+                    .await;
                 tokio::task::spawn(tools::process_tool(tool_call, ctx));
             }
             AppEvent::Llm2(LlmEvent::Endpoint(endpoint::Event::Request {
@@ -290,7 +296,6 @@ pub async fn llm_manager(
         }
     }
 }
-
 
 fn handle_endpoint_request(
     state: Arc<AppState>,

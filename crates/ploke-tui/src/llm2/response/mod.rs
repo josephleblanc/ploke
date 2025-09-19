@@ -83,7 +83,7 @@ pub(crate) struct Choices {
 }
 
 /// Generation completion reasons
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FinishReason {
     Stop,          // Natural stop sequence

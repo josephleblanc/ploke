@@ -140,7 +140,7 @@ impl super::Tool for RequestCodeContextGat {
             rrf: RrfConfig::default(),
             mmr: None,
         };
-        let AssembledContext { parts, stats: _ } = rag
+        let AssembledContext { parts, stats } = rag
             .get_context(&search_term, top_k, &budget, &strategy)
             .await?;
 
@@ -149,6 +149,7 @@ impl super::Tool for RequestCodeContextGat {
             top_k,
             kind: ContextPartKind::Code,
         };
+        tracing::debug!(?parts, ?stats);
         let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
         let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
