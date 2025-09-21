@@ -1,8 +1,8 @@
-use crate::llm2::manager::events::endpoint;
-use crate::llm2::request::models;
-use crate::llm2::router_only::RouterVariants;
-use crate::llm2::router_only::openrouter::OpenRouter;
-use crate::llm2::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
+use crate::llm::manager::events::endpoint;
+use crate::llm::request::models;
+use crate::llm::router_only::RouterVariants;
+use crate::llm::router_only::openrouter::OpenRouter;
+use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -1062,7 +1062,7 @@ impl App {
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),
-                        target: llm2::ChatHistoryTarget::Main,
+                        target: llm::ChatHistoryTarget::Main,
                         parent_id: new_user_msg_id,
                         child_id: next_llm_msg_id,
                     });
@@ -1333,13 +1333,13 @@ impl App {
     }
 
     fn switch_to_model(&mut self, model_id: &str) {
-        // Update runtime active model selection via llm2 types
+        // Update runtime active model selection via llm types
         let state = Arc::clone(&self.state);
         let mid = model_id.to_string();
         tokio::task::block_in_place(|| {
             use std::str::FromStr;
             tokio::runtime::Handle::current().block_on(async move {
-                match crate::llm2::ModelId::from_str(&mid) {
+                match crate::llm::ModelId::from_str(&mid) {
                     Ok(parsed) => {
                         let mut cfg = state.config.write().await;
                         cfg.model_registry

@@ -20,7 +20,7 @@
 //!   this module validates inputs, constructs requests, and forwards results as events/messages.
 //!
 //! Context in the larger project:
-//! - Events and system integration types come from the crate root (AppEvent, SystemEvent, llm::Event).
+//! - Events and system integration types come from the crate root (AppEvent, SystemEvent, etc).
 //! - The module is invoked by the state manager/dispatcher and other handlers; it does not own
 //!   background loops itself. It relies on the EventBus for communicating with the UI and LLM manager.
 

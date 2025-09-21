@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::llm2::LLMParameters;
+use crate::llm::LLMParameters;
 use crate::user_config::{CommandStyle, EmbeddingConfig, UserConfig};
-use crate::llm2::{ModelId, ModelKey};
-use crate::llm2::registry::user_prefs::RegistryPrefs;
+use crate::llm::{ModelId, ModelKey};
+use crate::llm::registry::user_prefs::RegistryPrefs;
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};

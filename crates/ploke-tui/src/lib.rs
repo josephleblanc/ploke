@@ -27,17 +27,11 @@ pub mod tools;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "llm_refactor"))]
 pub mod llm;
-#[cfg(feature = "llm_refactor")]
-pub mod llm2;
 
-#[cfg(not(feature = "llm_refactor"))]
-pub mod user_config2;
-#[cfg(feature = "llm_refactor")]
 pub mod user_config;
 
-use llm2::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse, ModelId};
+use llm::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse, ModelId};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -155,7 +149,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .try_deserialize::<UserConfig>()
         .unwrap_or_else(|_| UserConfig::default());
 
-    // llm2: registry prefs are used directly; model lists/capabilities fetched via router APIs.
+    // llm: registry prefs are used directly; model lists/capabilities fetched via router APIs.
     tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
@@ -255,15 +249,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
-    #[cfg(feature = "llm_refactor")]
-    tokio::spawn(llm2::manager::llm_manager(
-        event_bus.subscribe(EventPriority::Background),
-        state.clone(),
-        cmd_tx.clone(), // Clone for each subsystem
-        event_bus.clone(),
-    ));
-    #[cfg(not(feature = "llm_refactor"))]
-    tokio::spawn(llm_manager(
+    tokio::spawn(llm::manager::llm_manager(
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
@@ -320,9 +306,9 @@ pub enum RagEvent {
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm2(llm2::LlmEvent),
+    Llm(llm::LlmEvent),
     // placeholder
-    LlmTool(llm2::manager::events::ToolEvent),
+    LlmTool(llm::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
     // TODO:
@@ -330,24 +316,24 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(SystemEvent),
-    #[deprecated = "use llm2::LlmEvent::Models(models::Event) instead"]
+    #[deprecated = "use llm::LlmEvent::Models(models::Event) instead"]
     ModelSearchResults {
         keyword: String,
-        items: Vec<llm2::request::models::ResponseItem>,
+        items: Vec<llm::request::models::ResponseItem>,
     },
-    #[deprecated = "use llm2::LlmEvent::Endpoint(endpoint::Event) instead"]
+    #[deprecated = "use llm::LlmEvent::Endpoint(endpoint::Event) instead"]
     ModelsEndpointsRequest {
         // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
         // the typed version for that specific router before making the request.
         // + make model_id typed as ModelKey
         model_id: ModelId,
     },
-    #[deprecated = "use llm2::LlmEvent::Models(models::Event) instead"]
+    #[deprecated = "use llm::LlmEvent::Models(models::Event) instead"]
     ModelsEndpointsResults {
         model_id: String,
-        providers: Vec<llm2::request::endpoint::Endpoint>,
+        providers: Vec<llm::request::endpoint::Endpoint>,
     },
-    #[deprecated = "use llm2::LlmEvent::Endpoint(endpoint::Event) instead"]
+    #[deprecated = "use llm::LlmEvent::Endpoint(endpoint::Event) instead"]
     EndpointsResults {
         model_id: String,
         endpoints: EndpointsResponse,
@@ -375,10 +361,10 @@ impl AppEvent {
     // TODO: Change EventPriority to isntead be either a field within the event struct itself or
     // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
-        use llm2::manager::events::ToolEvent;
+        use llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            AppEvent::Llm2(_) => EventPriority::Background,
+            AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
                 ToolEvent::Requested { .. } => EventPriority::Background,
                 ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => {
@@ -413,14 +399,14 @@ impl AppEvent {
             AppEvent::Rag(_) => EventPriority::Background,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
-            AppEvent::Llm2(llm2::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => EventPriority::Background,
-            AppEvent::Llm2(llm2::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
-            AppEvent::Llm2(llm_event) => EventPriority::Background,
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => EventPriority::Background,
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
+            AppEvent::Llm(llm_event) => EventPriority::Background,
 
             // events sent to llm backend are background priority
-            // AppEvent::Llm2(event) if event.is_realtime() => EventPriority::Background,
+            // AppEvent::Llm(event) if event.is_realtime() => EventPriority::Background,
             // events sent back to the UI are realtime priority
-            // AppEvent::Llm2(ui_event) if ui_event.is_background() => EventPriority::Realtime,
+            // AppEvent::Llm(ui_event) if ui_event.is_background() => EventPriority::Realtime,
         }
     }
     pub fn is_system(&self) -> bool {

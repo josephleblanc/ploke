@@ -8,7 +8,7 @@ pub(super) async fn switch_model(
     tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
 
     use std::str::FromStr;
-    match crate::llm2::ModelId::from_str(&alias_or_id) {
+    match crate::llm::ModelId::from_str(&alias_or_id) {
         Ok(mid) => {
             // Update runtime active model
             {

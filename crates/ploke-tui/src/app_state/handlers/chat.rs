@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
-use crate::llm2::manager::events::ChatEvt;
-use crate::llm2::LlmEvent;
+use crate::llm::manager::events::ChatEvt;
+use crate::llm::LlmEvent;
 use crate::utils::helper::truncate_string;
 use crate::EventBus;
 
@@ -178,19 +178,10 @@ pub async fn add_msg_immediate(
         event_bus.send(MessageUpdatedEvent::new(message_id).into());
 
         if kind == MessageKind::User {
-            #[cfg(feature = "llm_refactor")]
-            let llm_request = AppEvent::Llm2(LlmEvent::ChatCompletion(ChatEvt::Request {
+            let llm_request = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
                 parent_id: message_id,
                 request_msg_id: Uuid::new_v4(),
                 }));
-            #[cfg(not(feature = "llm_refactor"))]
-            let llm_request = AppEvent::Llm(llm::Event::Request {
-                request_id: Uuid::new_v4(),
-                parent_id: message_id,
-                new_msg_id,
-                prompt: content,
-                parameters: Default::default(),
-            });
             tracing::info!(
                 "sending llm_request wrapped in an AppEvent::Llm of kind {kind} with ids 
                 new_msg_id (not sent): {new_msg_id},

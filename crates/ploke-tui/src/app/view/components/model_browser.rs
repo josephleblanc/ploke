@@ -8,9 +8,9 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
-use crate::llm2::request::endpoint::Endpoint;
-use crate::llm2::router_only::openrouter::providers::ProviderName;
-use crate::llm2::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey};
+use crate::llm::request::endpoint::Endpoint;
+use crate::llm::router_only::openrouter::providers::ProviderName;
+use crate::llm::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey};
 use crate::user_config::OPENROUTER_URL;
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -294,12 +294,12 @@ pub struct TestModelItem {
 impl TestModelItem {
     fn into_item(self) -> ModelBrowserItem {
         use std::str::FromStr;
-        let id = crate::llm2::ModelId::from_str(&self.id).expect("valid model id");
-        let name = self.name.map(|s| crate::llm2::ModelName::new(s));
+        let id = crate::llm::ModelId::from_str(&self.id).expect("valid model id");
+        let name = self.name.map(|s| crate::llm::ModelName::new(s));
         let providers = self.providers.into_iter().map(|p| {
-            let slug = crate::llm2::router_only::openrouter::providers::ProviderSlug::from_str(&p.provider_slug).expect("provider slug");
+            let slug = crate::llm::router_only::openrouter::providers::ProviderSlug::from_str(&p.provider_slug).expect("provider slug");
             let pname = slug.to_provider_name();
-            let provider_key = crate::llm2::ProviderKey::new(&slug.to_string()).expect("provider key");
+            let provider_key = crate::llm::ProviderKey::new(&slug.to_string()).expect("provider key");
             ModelProviderRow {
                 provider_name: pname,
                 provider_key,

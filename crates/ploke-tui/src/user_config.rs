@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! User configuration (migrated to llm2 types and router traits).
+//! User configuration (migrated to llm types and router traits).
 //! Focuses on persistence, embedding/editing, and re-exports for router defaults.
 
 use lazy_static::lazy_static;
@@ -12,15 +12,15 @@ use ploke_embed::{
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-// llm2 types and router defaults
-use crate::llm2::{registry::user_prefs::RegistryPrefs, Router as _};
-pub use crate::llm2::registry::user_prefs::ModelRegistryStrictness;
-use crate::llm2::router_only::default_model;
-use crate::llm2::ProviderSlug;
-use crate::llm2::router_only::openrouter::OpenRouter;
+// llm types and router defaults
+use crate::llm::{registry::user_prefs::RegistryPrefs, Router as _};
+pub use crate::llm::registry::user_prefs::ModelRegistryStrictness;
+use crate::llm::router_only::default_model;
+use crate::llm::ProviderSlug;
+use crate::llm::router_only::openrouter::OpenRouter;
 
 lazy_static! {
-    // Parsed from llm2 OpenRouter BASE_URL
+    // Parsed from llm OpenRouter BASE_URL
     pub static ref OPENROUTER_URL: Url =
         Url::parse(OpenRouter::BASE_URL).expect("Invalid OpenRouter base URL");
 }
@@ -38,7 +38,7 @@ pub enum CommandStyle {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct UserConfig {
-    // llm2 registry preferences (profiles, strictness, router prefs)
+    // llm registry preferences (profiles, strictness, router prefs)
     #[serde(default)]
     pub registry: RegistryPrefs,
     #[serde(default)]
@@ -104,7 +104,7 @@ impl UserConfig {
     }
 
     /// Save the configuration to the specified path.
-    /// Note: API keys are not stored in this config (llm2 resolves keys from env via Router).
+    /// Note: API keys are not stored in this config (llm resolves keys from env via Router).
     pub fn save_to_path(
         &self,
         path: &std::path::Path,

@@ -4,7 +4,7 @@
 
 use crate::app_state::SystemStatus;
 use crate::app_state::events::SystemEvent;
-use crate::llm2::manager::llm_manager;
+use crate::llm::manager::llm_manager;
 use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;

@@ -1,4 +1,4 @@
-use crate::llm2::{LlmEvent, manager::events::ChatEvt};
+use crate::llm::{LlmEvent, manager::events::ChatEvt};
 use std::{
     ops::{ControlFlow, Deref},
     path::PathBuf,
@@ -13,7 +13,7 @@ use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
-    llm2::manager::RequestMessage,
+    llm::manager::RequestMessage,
 };
 
 use super::*;
@@ -90,7 +90,7 @@ pub async fn process_with_rag(
                 }
             }
         };
-        let messages: Vec<RequestMessage> = guard.current_path_as_llm2_request_messages();
+        let messages: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
         let budget = &state.budget;
         // TODO: Add this to the program config
         let top_k = TOP_K;
@@ -109,10 +109,7 @@ pub async fn process_with_rag(
         let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
 
         // TODO: Change this to LlmEvent and expand event_bus event types
-        #[cfg(not(feature = "llm_refactor"))]
         event_bus.send(AppEvent::Llm(augmented_prompt));
-        #[cfg(feature = "llm_refactor")]
-        event_bus.send(AppEvent::Llm2(augmented_prompt));
     } else {
         let msg = "No RAG configured";
         add_msg(msg).await;
@@ -132,7 +129,6 @@ pub async fn process_with_rag(
 ///     - System -> filtered
 ///
 /// Returns an event that is sent in the caller to the system managing the API call
-#[cfg(feature = "llm_refactor")]
 fn construct_context_from_rag(
     ctx: AssembledContext,
     messages: Vec<RequestMessage>,

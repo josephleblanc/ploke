@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, default_model, file_man::FileManager, llm2::manager::llm_manager, observability, run_event_bus, user_config::{openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
+    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, default_model, file_man::FileManager, llm::manager::llm_manager, observability, run_event_bus, user_config::{openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
@@ -19,7 +19,7 @@ lazy_static! {
         // Build a realistic App instance without spawning UI/event loops.
         // Keep this synchronous for ergonomic use in tests.
         let mut config = UserConfig::default();
-        // Registry defaults are already represented by `Default` impls in llm2; API keys are
+        // Registry defaults are already represented by `Default` impls in llm; API keys are
         // resolved by routers at call time from env in tests.
 
         // Convert to runtime configuration

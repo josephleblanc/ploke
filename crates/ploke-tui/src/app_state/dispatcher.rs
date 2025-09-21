@@ -1,10 +1,10 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::llm2::ProviderSlug;
-use crate::llm2::registry::user_prefs::{ModelPrefs, RegistryPrefs};
-use crate::llm2::router_only::RouterVariants;
-use crate::llm2::{EndpointKey, ModelId, ProviderKey};
+use crate::llm::ProviderSlug;
+use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
+use crate::llm::router_only::RouterVariants;
+use crate::llm::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
@@ -308,7 +308,7 @@ pub async fn state_manager(
                     .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
                 {
                     mp.allowed_routers.push(RouterVariants::OpenRouter(
-                        crate::llm2::router_only::openrouter::OpenRouter,
+                        crate::llm::router_only::openrouter::OpenRouter,
                     ));
                 }
 

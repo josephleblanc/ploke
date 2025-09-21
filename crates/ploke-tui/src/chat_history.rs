@@ -1,6 +1,6 @@
 use crate::AppEvent;
 use crate::app_state::ListNavigation;
-use crate::llm2::LLMMetadata;
+use crate::llm::LLMMetadata;
 
 use fxhash::FxHashMap as HashMap;
 use std::hash::RandomState;
@@ -321,17 +321,17 @@ pub struct ChatHistory {
 }
 
 impl ChatHistory {
-    /// Returns the conversation path (root → current) mapped to llm2 RequestMessage.
+    /// Returns the conversation path (root → current) mapped to llm RequestMessage.
     ///
     /// Rules:
     /// - Includes User, Assistant, and System messages.
     /// - Skips System messages with empty content (root sentinel).
     /// - Skips SysInfo (UI/diagnostic) messages.
     /// - Skips Tool messages for now (requires tool_call_id which is not tracked here).
-    pub(crate) fn current_path_as_llm2_request_messages(
+    pub(crate) fn current_path_as_llm_request_messages(
         &self,
-    ) -> Vec<crate::llm2::manager::RequestMessage> {
-        use crate::llm2::manager::RequestMessage as ReqMsg;
+    ) -> Vec<crate::llm::manager::RequestMessage> {
+        use crate::llm::manager::RequestMessage as ReqMsg;
 
         self.current_path_ids()
             .filter_map(|id| self.messages.get(&id))
@@ -933,7 +933,7 @@ pub(crate) async fn atomic_write(
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    use crate::llm2::manager::Role as Llm2Role;
+    use crate::llm::manager::Role as LlmRole;
 
     #[test]
     fn delete_root_returns_none_and_no_changes() {
@@ -1242,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn current_path_as_llm2_request_messages_maps_and_filters() {
+    fn current_path_as_llm_request_messages_maps_and_filters() {
         let mut ch = ChatHistory::new();
         let root = ch.current;
 
@@ -1299,18 +1299,18 @@ mod tests {
         ch.rebuild_path_cache();
 
         // NOTE: Doesn't include the root message
-        let msgs = ch.current_path_as_llm2_request_messages();
+        let msgs = ch.current_path_as_llm_request_messages();
         // Expect: [System(non-empty), User, Assistant]
         let printable = format!("messages:\n\n{:#?}\n", msgs);
         eprintln!("{}", &printable);
         assert_eq!(msgs.len(), 2);
         // TODO: Think about changing methods to allow root message to be included, this seems
         // buggy.
-        // assert_eq!(msgs[0].role, Llm2Role::System);
+        // assert_eq!(msgs[0].role, LlmRole::System);
         // assert_eq!(msgs[0].content, "You are a helpful assistant.");
-        assert_eq!(msgs[0].role, Llm2Role::User);
+        assert_eq!(msgs[0].role, LlmRole::User);
         assert_eq!(msgs[0].content, "Hello?");
-        assert_eq!(msgs[1].role, Llm2Role::Assistant);
+        assert_eq!(msgs[1].role, LlmRole::Assistant);
         assert_eq!(msgs[1].content, "Hi! How can I help?");
     }
 }

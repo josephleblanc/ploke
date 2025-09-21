@@ -1,10 +1,10 @@
 #![cfg(test)]
 
-use crate::llm2::request::endpoint::Endpoint;
-use crate::llm2::request::models;
-use crate::llm2::router_only::openrouter::OpenRouter;
-use crate::llm2::router_only::HasEndpoint as _;
-use crate::llm2::HasModels as _;
+use crate::llm::request::endpoint::Endpoint;
+use crate::llm::request::models;
+use crate::llm::router_only::openrouter::OpenRouter;
+use crate::llm::router_only::HasEndpoint as _;
+use crate::llm::HasModels as _;
 use crate::EndpointsResponse;
 use lazy_static::lazy_static;
 use ploke_test_utils::workspace_root;

@@ -15,11 +15,11 @@
 use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
-use crate::llm2::router_only::openrouter::{OpenRouter, OpenRouterModelId};
-use crate::llm2::router_only::{HasEndpoint, HasModels};
-use crate::llm2::request::endpoint::EndpointsResponse;
-use crate::llm2::request::models::{Response as ModelsResponse, ResponseItem};
-use crate::llm2::ProviderKey;
+use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
+use crate::llm::router_only::{HasEndpoint, HasModels};
+use crate::llm::request::endpoint::EndpointsResponse;
+use crate::llm::request::models::{Response as ModelsResponse, ResponseItem};
+use crate::llm::ProviderKey;
 use crate::user_config::{
     ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
 };
@@ -87,7 +87,7 @@ pub fn execute(app: &mut App, command: Command) {
                     path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
                 match UserConfig::load_from_path(std::path::Path::new(&path_str)) {
                     Ok(mut new_cfg) => {
-                        // llm2: registry prefs used as-is; env-based key resolution in router
+                        // llm: registry prefs used as-is; env-based key resolution in router
 
                         // Detect if embedding backend changed (we cannot hot-swap embedder safely yet)
                         let embedding_changed = {
@@ -265,7 +265,7 @@ fn show_model_info_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        use crate::llm2::ProviderSlug as _;
+        use crate::llm::ProviderSlug as _;
         let active = cfg.active_model.to_string();
         let params = cfg.llm_params.clone();
         let endpoints = cfg
@@ -399,7 +399,7 @@ fn list_models_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        use crate::llm2::ProviderSlug as _;
+        use crate::llm::ProviderSlug as _;
         let active = cfg.active_model.to_string();
         let eps = cfg
             .model_registry
@@ -485,7 +485,7 @@ fn list_model_providers_async(app: &App, model_id: &str) {
 
         let client = Client::new();
         use std::str::FromStr;
-        let typed_model = match crate::llm2::ModelId::from_str(&model_id) {
+        let typed_model = match crate::llm::ModelId::from_str(&model_id) {
             Ok(m) => OpenRouterModelId::from(m),
             Err(_) => {
                 let _ = cmd_tx
@@ -884,97 +884,5 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             show_command_help(app);
             tracing::warn!("Unknown command: {}", cmd);
         }
-    }
-}
-
-// These legacy shape tests target the pre-`llm2` module.
-// When the `llm_refactor` feature is enabled (default), the old `llm` module is
-// not compiled, so we skip these tests.
-#[cfg(all(test, not(feature = "llm_refactor")))]
-mod typed_response_tests {
-    use crate::llm::openrouter::model_provider::{EndpointsResponse, ProviderNameStr};
-    use crate::llm::openrouter::provider_endpoints::SupportedParameters;
-    use crate::llm::openrouter_catalog::ModelPricing;
-    use crate::llm::providers::ProviderSlug;
-    use ploke_core::ArcStr;
-
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn deserialize_endpoints_basic() {
-        let payload = json!({
-            "data": {
-                "id": "test/model",
-                "name": "Test Model",
-                "created": 1234567890.0,
-                "description": "A test model",
-                "architecture": {
-                    "input_modalities": ["text"],
-                    "output_modalities": ["text"], 
-                    "tokenizer": "GPT"
-                },
-                "endpoints": [
-                    {
-                        "name": "Foo Provider | test/model",
-                        "model_name": "Test Model",
-                        "context_length": 8192.0,
-                        "pricing": {
-                            "prompt": 0.001,
-                            "completion": 0.002
-                        },
-                        "provider_name": "Foo Provider",
-                        "tag": "openai",
-                        "supported_parameters": ["tools", "structured_outputs"]
-                    },
-                    {
-                        "name": "Bar Provider | test/model", 
-                        "model_name": "Test Model",
-                        "context_length": 4096.0,
-                        "pricing": {
-                            "prompt": 0.001,
-                            "completion": 0.002
-                        },
-                        "provider_name": "Bar Provider",
-                        "tag": "anthropic",
-                        "supported_parameters": []
-                    }
-                ]
-            }
-        });
-
-        let parsed: EndpointsResponse = serde_json::from_value(payload).expect("valid response");
-        assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(
-            parsed.data.endpoints[0].provider_name,
-            ProviderNameStr("Foo Provider".to_string())
-        );
-        assert!((parsed.data.endpoints[0].context_length - 8192.0).abs() < 1e-10);
-        assert!(parsed.data.endpoints[0].supports_tools());
-        assert_eq!(
-            parsed.data.endpoints[1].provider_name,
-            ProviderNameStr("Bar Provider".to_string())
-        );
-        assert!(!parsed.data.endpoints[1].supports_tools());
-    }
-
-    #[test]
-    fn default_fields_do_not_panic() {
-        let minimal = serde_json::json!({
-            "data": {
-                "id": "test/model",
-                "name": "Test Model", 
-                "created": 1234567890.0,
-                "description": "A test model",
-                "architecture": {
-                    "input_modalities": ["text"],
-                    "output_modalities": ["text"], 
-                    "tokenizer": "GPT"
-                },
-                "endpoints": []
-            }
-        });
-        let parsed: EndpointsResponse = serde_json::from_value(minimal).unwrap();
-        assert!(parsed.data.endpoints.is_empty());
     }
 }

@@ -1,8 +1,8 @@
 use super::App;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
-use crate::llm2::manager::events::{endpoint, models};
-use crate::llm2::{LlmEvent, ProviderKey};
+use crate::llm::manager::events::{endpoint, models};
+use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,7 +24,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.quit();
         }
 
-        // LLM events routed into llm2 match arm below
+        // LLM events routed into llm match arm below
 
         AppEvent::EndpointsResults { model_id, endpoints } => todo!(),
 
@@ -86,7 +86,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.indexing_state = Some(state);
         }
         AppEvent::Ui(_ui_event) => {}
-        AppEvent::Llm2(event) => {
+        AppEvent::Llm(event) => {
             match event {
                 LlmEvent::Models(resp @ models::Event::Response { .. }) => {
                     handle_llm_models_response(app, resp)
@@ -303,7 +303,7 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
             }
         };
 
-        let mut select_after: Option<(crate::llm2::ModelId, crate::llm2::ProviderKey)> = None;
+        let mut select_after: Option<(crate::llm::ModelId, crate::llm::ProviderKey)> = None;
 
         let browser_item = match mb.items.iter_mut().find(|i| i.id == eps.data.id) {
             Some(b) => b,
