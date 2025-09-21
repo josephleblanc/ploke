@@ -63,38 +63,6 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     let _ = event_bus.realtime_tx.send(AppEvent::EventBusStarted);
     loop {
         tokio::select! {
-        // bg_event = bg_rx.recv() => {
-        // tracing::trace!("event bus received a background event: {:?}", bg_event);
-        //     match bg_event {
-        //         Ok(AppEvent::System(sys_event)) => match sys_event {
-        //             SystemEvent::ModelSwitched(alias_or_id) => {
-        //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", alias_or_id);
-        //                 event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(alias_or_id)));
-        //             }
-        //             SystemEvent::SaveRequested(vec_bytes) => {
-        //                 tracing::info!("event bus Sent save event of Vec<u8> len = {}", vec_bytes.len());
-        //                 event_bus.send(AppEvent::System(SystemEvent::SaveRequested(vec_bytes)));
-        //         }
-        //             _ => {}
-        //         },
-        //         Ok(_) => {}
-        //         Err(e) => {
-        //             match e {
-        //                 RecvError::Closed => {
-        //                     tracing::trace!("System Event event channel closed {}", e.to_string());
-        //                     break;
-        //                 }
-        //                 RecvError::Lagged(lag) => {
-        //                     tracing::trace!(
-        //                         "System Event event channel lagging {} with {} messages",
-        //                         e.to_string(),
-        //                         lag,
-        //                     )
-        //                 }
-        //             };
-        //         }
-        //     }
-        // }
             index_event = index_rx.recv() => {
             // let index_event = index_rx.recv().await;
             tracing::trace!("event bus received IndexStatus");

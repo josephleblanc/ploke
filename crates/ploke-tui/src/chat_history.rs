@@ -429,6 +429,17 @@ impl ChatHistory {
         self.add_child(parent_id, child_id, &content, status, kind)
     }
 
+    pub fn add_message_sysinfo(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        kind: MessageKind,
+        content: String,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        self.add_child(parent_id, child_id, &content, status, kind)
+    }
+
     pub fn add_message_system(
         &mut self,
         parent_id: Uuid,

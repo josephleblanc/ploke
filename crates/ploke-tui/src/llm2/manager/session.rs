@@ -6,8 +6,13 @@ use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::app_state::StateCommand;
+use crate::chat_history::MessageKind;
+use crate::chat_history::MessageStatus;
+use crate::chat_history::MessageUpdate;
 use crate::llm2::response::FinishReason;
 use crate::llm2::response::OpenAiResponse;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
@@ -112,6 +117,7 @@ where
     pub req: ChatCompRequest<R>,
     pub fallback_on_404: bool,
     pub attempts: u32,
+    pub state_cmd_tx: mpsc::Sender<StateCommand>,
 }
 
 use tracing::info;
@@ -141,6 +147,7 @@ where
         let mut use_tools = self.req.tools.is_some();
         let mut tools_fallback_attempted = false;
         let mut assistant_intro: String = String::new();
+        let state_cmd_tx = self.state_cmd_tx.clone();
 
         for _attempt in 0..=self.attempts {
 
@@ -209,18 +216,19 @@ where
                 return Err(err);
             }
 
+            let mut last_msg_id = self.parent_id;
             match parse_outcome(&body_text)? {
                 ParseOutcome::ToolCalls { calls: tool_calls, content, finish_reason } => {
                     tracing::debug!(calls = ?tool_calls, ?content);
-                    if let Some(text) = content {
-                        if !text.is_empty() {
-                            if !assistant_intro.is_empty() {
-                                assistant_intro.push_str("\n\n");
-                            }
-                            assistant_intro.push_str(&text);
-                            self.req.core.messages.push(RequestMessage::new_assistant(text));
+                    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
+                    state_cmd_tx.send(StateCommand::UpdateMessage { 
+                        id: self.parent_id, 
+                        update: MessageUpdate { 
+                            content: Some( assistant_update), 
+                            status: Some( MessageStatus::Completed ),
+                            ..Default::default() 
                         }
-                    }
+                    }).await.expect("state command must be running");
 
                     let mut task_set = tokio::task::JoinSet::new();
                     for call in tool_calls.into_iter() {
@@ -229,6 +237,9 @@ where
                         let request_id = Uuid::new_v4();
                         let call_id = call.call_id.clone();
                         let mut rx = event_bus.realtime_tx.subscribe();
+                        let cmd_tx = state_cmd_tx.clone();
+                        let cmd_tx_clone = state_cmd_tx.clone();
+
                         event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
                             tool_call: call,
                             request_id,
@@ -256,6 +267,7 @@ where
                                             error,
                                             ..
                                         }) if rid == request_id && cid == call_id => {
+                                            update_message(last_msg_id, &call_id, &cmd_tx, "tool call error").await;
                                             return Err(error);
                                         }
                                         _ => {}
@@ -265,10 +277,10 @@ where
                             };
                             match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
                                 Ok(r) => (call_id_clone, r),
-                                Err(_) => (
-                                    call_id_clone,
-                                    Err("Timed out waiting for tool result".into()),
-                                ),
+                                Err(_) => { 
+                                    update_message(last_msg_id, &call_id_clone, &cmd_tx_clone, "timeout").await;
+                                    ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
+                                }
                             }
                         });
                     }
@@ -278,12 +290,19 @@ where
                             Ok((cid, Ok(content))) => {
                                 self.req.core.messages.push(RequestMessage::new_tool(content, cid));
                             }
-                            Ok((cid, Err(err))) => {
-                                tracing::debug!(tool_content = ?cid, error_msg = ?err);
-                                let content = json!({"ok": false, "error": err}).to_string();
+                            Ok((cid, Err(err_string))) => {
+                                tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
+                                let content = json!({"ok": false, "error": err_string}).to_string();
                                 self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{err:?}");
-                                return Err(LlmError::ToolCall(err_msg));
+                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{err_string:?}");
+                                state_cmd_tx.send(StateCommand::AddMessageImmediate {
+                                    new_msg_id: Uuid::new_v4(),
+                                    msg: err_msg.clone(),
+                                    kind: MessageKind::System,
+
+                                }).await.expect("state manager must be running");
+                                continue;
+                                // return Err(LlmError::ToolCall(err_msg));
                             }
                             Err(join_err) => {
                                 return Err(LlmError::ToolCall(format!("join error: {}", join_err)));
@@ -298,15 +317,7 @@ where
                     }
                 }
                 ParseOutcome::Content(content) => {
-                    if assistant_intro.is_empty() {
-                        return Ok(content);
-                    } else {
-                        let mut combined = assistant_intro;
-                        if !combined.ends_with('\n') { combined.push('\n'); }
-                        if !combined.ends_with("\n\n") { combined.push('\n'); }
-                        combined.push_str(&content);
-                        return Ok(combined);
-                    }
+                    return Ok(content);
                 }
             }
         }
@@ -325,6 +336,17 @@ where
         Ok(())
     }
 
+}
+
+async fn update_message(last_msg_id: Uuid, call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
+    let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
+    cmd_tx.send(StateCommand::UpdateMessage {
+        id: last_msg_id,
+        update: MessageUpdate {
+            content: Some( completed_msg ),
+            ..Default::default()
+        }
+    }).await.expect("state manager must be running");
 }
 
 #[cfg(test)]

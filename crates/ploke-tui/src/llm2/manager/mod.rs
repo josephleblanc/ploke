@@ -221,9 +221,6 @@ pub async fn llm_manager(
                 tool_call,
                 request_id,
                 parent_id,
-                // name,
-                // arguments,
-                // call_id,
             }) => {
                 tracing::debug!(target: DEBUG_TOOLS,
                     request_id = %request_id,
@@ -397,6 +394,7 @@ pub async fn process_llm_request(
         messages,
         event_bus.clone(),
         request_message_id,
+        cmd_tx.clone()
     )
     .await;
 
@@ -422,15 +420,12 @@ pub async fn process_llm_request(
                 preview
             );
 
-            StateCommand::UpdateMessage {
-                id: request_message_id,
-                update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
+            StateCommand::AddMessageImmediate {
+                msg: content,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
+                }
             }
-        }
         Err(e) => {
             let err_string = e.to_string();
             // Inform the user in-chat so the "Pending..." isn't left hanging without context.
@@ -443,14 +438,11 @@ pub async fn process_llm_request(
                 .await;
 
             // Avoid invalid status transition by finalizing the assistant message with a failure note.
-            StateCommand::UpdateMessage {
-                id: request_message_id,
-                update: MessageUpdate {
-                    content: Some(format!("Request failed: {}", err_string)),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
-            }
+            StateCommand::AddMessageImmediate {
+                msg: format!("Request failed: {}", err_string),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+                }
         }
     };
 
@@ -476,6 +468,7 @@ async fn prepare_and_run_llm_call(
     messages: Vec<RequestMessage>,
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
+    cmd_tx: mpsc::Sender<StateCommand>,
 ) -> Result<String, LlmError> {
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
@@ -530,6 +523,7 @@ async fn prepare_and_run_llm_call(
         req,
         fallback_on_404: false,
         attempts: 3,
+        state_cmd_tx: cmd_tx.clone(),
     };
 
     session.run().await
