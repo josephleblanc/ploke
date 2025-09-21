@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use ploke_core::rag_types::AssembledContext;
+use ploke_core::rag_types::{AssembledContext, ContextPart};
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
@@ -148,7 +148,9 @@ fn construct_context_from_rag(
     ]);
 
     // Add assembled context parts as system messages
-    let text = ctx.parts.into_iter().map(|p| ReqMsg::new_system(p.text));
+    let text = ctx.parts.into_iter()
+        .map(reformat_context_to_system)
+        .map(ReqMsg::new_system);
     base.extend(text);
 
     // Add conversation messages
@@ -158,4 +160,13 @@ fn construct_context_from_rag(
         parent_id,
         formatted_prompt: base,
     })
+}
+
+fn reformat_context_to_system(ctx_part: ContextPart) -> String {
+    format!(
+        "file_path: {}\ncanon_path: {}\ncode_snippet: {}", 
+        ctx_part.file_path.as_ref(),
+        ctx_part.canon_path.as_ref(),
+        ctx_part.text
+    )
 }

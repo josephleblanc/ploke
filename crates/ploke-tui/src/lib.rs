@@ -1,4 +1,4 @@
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(unused_variables, unused_imports, dead_code, private_interfaces)]
 //! ploke-tui main library entry.
 //!
 //! Dataflow overview:
@@ -134,7 +134,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         );
     }));
 
-    let mut config = config::Config::builder()
+    let config = config::Config::builder()
         .add_source(
             config::File::with_name(
                 &dirs::config_dir()

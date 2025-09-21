@@ -123,11 +123,12 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Char('J') => Some(Action::PageDown),
                 KeyCode::Char('K') => Some(Action::PageUp),
 
-                KeyCode::Char('h') | KeyCode::Left => Some(Action::BranchPrev),
-                KeyCode::Char('l') | KeyCode::Right => Some(Action::BranchNext),
-
                 KeyCode::Char('g') => Some(Action::GotoSequenceG),
                 KeyCode::Char('G') => Some(Action::JumpTop),
+
+                // Placeholder for changing conversation branches
+                KeyCode::Char('h') | KeyCode::Left => Some(Action::BranchPrev),
+                KeyCode::Char('l') | KeyCode::Right => Some(Action::BranchNext),
 
                 _ => None,
             }

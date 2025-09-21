@@ -8,6 +8,7 @@ use std::fmt;
 use std::io::Write as _;
 
 use color_eyre::Result;
+use ploke_core::ArcStr;
 
 #[derive(Debug, Clone, Copy)]
 pub enum NavigationDirection {
@@ -199,6 +200,9 @@ pub struct Message {
     pub content: String,
     /// The kind of the message's speaker, e.g. User, Assistant, System, etc
     pub kind: MessageKind,
+    /// If this is a Tool message that came from a tool call, the originating call id.
+    /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
+    pub tool_call_id: Option<ArcStr>,
 }
 
 /// Defines the author of a message.
@@ -367,6 +371,7 @@ impl ChatHistory {
             selected_child: None,
             content: String::new(),
             kind: MessageKind::System,
+            tool_call_id: None,
         };
         let root_id = root.id;
         let mut messages = HashMap::default();
@@ -486,6 +491,7 @@ impl ChatHistory {
             status,
             metadata: None,
             kind,
+            tool_call_id: None,
         };
 
         let parent = self
@@ -914,6 +920,24 @@ impl ChatHistory {
         Ok(msg_with_id)
     }
 }
+    /// Adds a new Tool message and attaches a tool_call_id.
+    pub fn add_tool_message(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        content: String,
+        call_id: ArcStr,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        let kind = MessageKind::Tool;
+        let res = self.add_child(parent_id, child_id, &content, status, kind);
+        if let Ok(id) = res {
+            if let Some(m) = self.messages.get_mut(&id) {
+                m.tool_call_id = Some(call_id);
+            }
+        }
+        res
+    }
 
 /// Atomically writes file contents using tempfile and rename
 pub(crate) async fn atomic_write(

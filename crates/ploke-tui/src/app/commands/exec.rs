@@ -15,11 +15,12 @@
 use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
+use crate::llm::manager::events::models;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::request::models::{Response as ModelsResponse, ResponseItem};
-use crate::llm::ProviderKey;
+use crate::llm::{self, ProviderKey};
 use crate::user_config::{
     ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
 };
@@ -29,6 +30,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::{debug, info_span, instrument, warn};
 use uuid::Uuid;
@@ -86,7 +88,7 @@ pub fn execute(app: &mut App, command: Command) {
                 let path_str =
                     path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
                 match UserConfig::load_from_path(std::path::Path::new(&path_str)) {
-                    Ok(mut new_cfg) => {
+                    Ok(new_cfg) => {
                         // llm: registry prefs used as-is; env-based key resolution in router
 
                         // Detect if embedding backend changed (we cannot hot-swap embedder safely yet)
@@ -582,6 +584,9 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let client = Client::new();
         match OpenRouter::fetch_models(&client).await {
             Ok(models_resp) => {
+                // emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(models::Event::Response {
+                //     models: Some( Arc::new( models_resp ) ),
+                // }))).await;
                 let kw_lower = keyword_str.to_lowercase();
                 let mut filtered: Vec<ResponseItem> = models_resp
                     .into_iter()

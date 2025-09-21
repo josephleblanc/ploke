@@ -173,6 +173,8 @@ where
                 .map_err(|e| LlmError::Request(e.to_string()))?;
 
             if !response.status().is_success() {
+                let error_code = response.status();
+                tracing::error!(status_code = ?error_code, "Error status returned from API");
                 let status = response.status().as_u16();
                 let text = response
                     .text()
@@ -298,6 +300,7 @@ where
                                 state_cmd_tx.send(StateCommand::AddMessageImmediate {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: err_msg.clone(),
+                                    // TODO: Change to 'Tool'
                                     kind: MessageKind::System,
 
                                 }).await.expect("state manager must be running");
@@ -338,14 +341,18 @@ where
 
 }
 
+#[tracing::instrument]
 async fn update_message(last_msg_id: Uuid, call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
     let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
-    cmd_tx.send(StateCommand::UpdateMessage {
-        id: last_msg_id,
-        update: MessageUpdate {
-            content: Some( completed_msg ),
-            ..Default::default()
-        }
+    cmd_tx.send(StateCommand::AddMessageImmediate {
+        msg: completed_msg,
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4()
+        // id: last_msg_id,
+        // update: MessageUpdate {
+        //     content: Some( completed_msg ),
+        //     ..Default::default()
+        // }
     }).await.expect("state manager must be running");
 }
 

@@ -284,7 +284,7 @@ pub async fn state_manager(
                     Ok(m) => m,
                     Err(e) => {
                         let msg = format!( "Invalid model id: {}, expected `{{auther}}/{{model}}:{{variant}}` where `:{{variant}}` is optional", model_id_string );
-                        add_msg_shortcut(&msg);
+                        add_msg_shortcut(&msg).await;
                         continue
                     }
                 };
