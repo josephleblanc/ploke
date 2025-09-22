@@ -919,7 +919,7 @@ impl ChatHistory {
         });
         Ok(msg_with_id)
     }
-}
+
     /// Adds a new Tool message and attaches a tool_call_id.
     pub fn add_tool_message(
         &mut self,
@@ -938,6 +938,7 @@ impl ChatHistory {
         }
         res
     }
+}
 
 /// Atomically writes file contents using tempfile and rename
 pub(crate) async fn atomic_write(

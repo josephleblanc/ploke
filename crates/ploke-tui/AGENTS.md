@@ -1,35 +1,43 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Source: `src/` (TUI, LLM/OpenRouter, app state, IO). Integration tests in `tests/`; unit tests colocated in modules.
-- Benches: `benches/` (Criterion). Data/logs: `data/`, `logs/`, and `test-logs/`.
-- Docs: `docs/` for plans and reports; see `docs/plans/agentic-system-plan/` and related OpenRouter/API notes.
-- This crate depends on sibling workspace crates under `../` (e.g., `ploke-io`, `ploke-db`, `ploke-core`).
+- Workspace lives under `crates/`; this crate is `crates/ploke-tui`.
+- Source code: `crates/ploke-tui/src/` (e.g., OpenRouter code in `src/llm/openrouter/`).
+- Tests: `crates/ploke-tui/tests/` and module-adjacent `*_test.rs`.
+- Docs and plans: `crates/ploke-tui/docs/` (plans in `docs/plans/agentic-system-plan/`, reports in `docs/reports/`).
 
 ## Build, Test, and Development Commands
-- Build: `cargo build -p ploke-tui --all-targets`.
-- Run TUI: `cargo run -p ploke-tui`.
-- Unit/Integration tests: `cargo test -p ploke-tui`.
-- Live API tests: `cargo test -p ploke-tui --features live_api_tests` (requires `OPENROUTER_API_KEY`). Treat skips as not validated.
-- Benches: `cargo bench -p ploke-tui`.
-- Lint/format: `cargo fmt --all && cargo clippy --workspace -- -D warnings`.
+- Build: `cargo build -p ploke-tui`
+- Run TUI: `cargo run -p ploke-tui`
+- Format: `cargo fmt --all` (CI checks with `-- --check`)
+- Lint: `cargo clippy --all-targets -- -D warnings`
+- Unit/integ tests (offline): `cargo test -p ploke-tui`
+- E2E test harness (gated): `cargo test -p ploke-tui --features test_harness`
+- Live API tests (require env + network): `cargo test -p ploke-tui --features live_api_tests -- --nocapture`
+  - Record notable artifacts under `target/test-output/` and reference them in summaries.
+- Quick pass/fail summary (quiet): `cargo test -p ploke-tui --lib 2>&1 | tail -n 20`
+- Include warnings (verbose): `cargo test -p ploke-tui --lib`
 
 ## Coding Style & Naming Conventions
-- Rust 2024, 4‑space indent, `rustfmt` required. Clippy warnings must be fixed.
-- Strong typing at boundaries: use `Serialize`/`Deserialize` structs/enums; numeric fields as numeric types (e.g., `u32`, `f64`). Prefer enums/newtypes over ad‑hoc maps.
-- Prefer static dispatch; minimize dynamic dispatch. Make invalid states unrepresentable.
-- Safety-first editing: stage edits with verified file hashes; write via the `IoManager` atomically; never write on hash mismatch.
+- Rust 2021; enforce `rustfmt` + `clippy`.
+- Strong typing at boundaries: prefer enums/tagged unions; all OpenRouter structs derive `Serialize`/`Deserialize`; numeric fields use numeric types.
+- Avoid stringly-typed JSON; validate early and surface actionable errors.
+- Prefer static dispatch; minimize dynamic dispatch; use macros where they reduce boilerplate.
+- Naming (Rust conventions): `snake_case` for functions/modules, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for consts.
 
 ## Testing Guidelines
-- Snapshots: use `insta`; update intentionally with `INSTA_UPDATE=auto cargo test`.
-- Unit tests: small unit tests in files, module-level tests in a `<module>/tests/` directory
-  - (new convention, may not be many tests like this yet)
-- Write tests within `src` behind `#[cfg(test)]`, `#[test]`, and `#[tokio::test]`
+- Place unit tests near code; integration tests in `tests/`.
+- Gate live tests behind `live_api_tests`; do not report green unless the live path was exercised (tool calls observed, proposal staged/applied, file delta verified).
+- For e2e, prefer `test_harness` feature; include brief pass/fail/ignored counts and artifact paths in PRs.
 
 ## Commit & Pull Request Guidelines
-- Commit style: Conventional Commits (e.g., `feat: ...`, `fix: ...`, `refactor: ...`, `test: ...`, `style: ...`).
-- PRs must include: clear description, linked issues, test summary (counts + highlights), and screenshots for UI changes. Reference or update docs under `docs/` when behavior or contracts change.
+- Use Conventional Commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`. Example: `feat(openrouter): add tool trait for request_more_context`.
+- PRs include: clear description, linked issues, screenshots for UI changes, and evidence-based test summary (counts + `target/test-output/...` references). Avoid unrelated refactors.
 
 ## Security & Configuration Tips
-- Configure env via `.env` or shell (e.g., `export OPENROUTER_API_KEY=...`).
-- Do not log secrets. Validate external inputs early; treat loosely-typed JSON as errors at boundaries.
+- Never commit secrets. Provide `OPENROUTER_API_KEY` via env for live tests.
+- Follow safety-first editing patterns (staged edits with verified file hashes via IoManager). Avoid writing outputs to docs by default; link artifacts instead.
+
+
+## Serena MCP Memories
+- Before starting work, load the `table_of_contents` memory via Serena MCP (Memories → read `table_of_contents`). It links to key docs, plans, and paths to explore next.
