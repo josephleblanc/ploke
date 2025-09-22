@@ -45,7 +45,7 @@ use toml::to_string;
 use tracing::instrument;
 use view::components::approvals::{ApprovalsState, render_approvals_overlay};
 use view::components::model_browser::{
-    ModelBrowserItem, ModelBrowserState, ModelProviderRow, render_model_browser,
+    compute_browser_scroll, model_browser_focus_line, model_browser_total_lines, render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow
 };
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
@@ -551,18 +551,22 @@ impl App {
         }
 
         // Render model browser overlay if visible
-        if let Some(mb) = &self.model_browser {
+        if let Some(mb) = &mut self.model_browser {
             let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
+
+            // Keep focused row visible and clamp vscroll
+            compute_browser_scroll(body_area, mb);
 
             let widget = Paragraph::new(lines)
                 .style(overlay_style)
                 .block(
                     Block::bordered()
-                        .title(" Model Browser ")
+                        .title(format!(" Model Browser — {} results for \"{}\" ", mb.items.len(), mb.keyword))
                         .style(overlay_style),
                 )
                 // Preserve leading indentation in detail lines
-                .wrap(ratatui::widgets::Wrap { trim: false });
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .scroll((mb.vscroll, 0));
             frame.render_widget(widget, body_area);
 
             // Footer: bottom-right help toggle or expanded help
@@ -1160,6 +1164,8 @@ impl App {
             help_visible: false,
             provider_select_active: false,
             provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 0,
         });
         self.needs_redraw = true;
     }
@@ -1185,7 +1191,7 @@ impl App {
                             .or_default();
                         cfg.active_model = parsed;
                     }
-                    Err(_) => {}
+                    Err(e) => tracing::error!("Failed to write model to registry")
                 }
             })
         });
