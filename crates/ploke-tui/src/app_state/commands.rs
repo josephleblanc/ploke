@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::ModelId;
 use crate::chat_history::MessageKind;
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
+use ploke_core::ArcStr;
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -50,6 +51,12 @@ pub enum StateCommand {
         msg: String,
         kind: MessageKind,
         new_msg_id: Uuid,
+    },
+    AddMessageTool {
+        msg: String,
+        kind: MessageKind,
+        new_msg_id: Uuid,
+        tool_call_id: ArcStr
     },
     AddUserMessage {
         content: String,
@@ -201,6 +208,7 @@ impl StateCommand {
             DeleteMessage { .. } => "DeleteMessage",
             DeleteNode { .. } => "DeleteNode",
             AddUserMessage { .. } => "AddUserMessage",
+            AddMessageTool { .. } => "AddMessageTool",
             UpdateMessage { .. } => "UpdateMessage",
             ClearHistory { .. } => "ClearHistory",
             NewSession => "NewSession",

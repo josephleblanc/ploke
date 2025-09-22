@@ -349,8 +349,12 @@ impl ChatHistory {
                         Some(ReqMsg::new_system(m.content.clone()))
                     }
                 }
-                // Tool messages require a tool_call_id at the wire level; omit here.
-                MessageKind::Tool => None,
+                // Tool messages.
+                MessageKind::Tool => Some(ReqMsg::new_tool(
+                    m.content.clone(), 
+                    m.tool_call_id.clone()
+                        .expect("Tool calls must have Some tool_call_id")
+                )),
                 // UI/system info messages are not part of the API payload; omit.
                 MessageKind::SysInfo => None,
             })
@@ -420,7 +424,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::User;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_llm(
@@ -431,7 +435,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_sysinfo(
@@ -442,7 +446,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_system(
@@ -453,7 +457,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_tool(
@@ -462,9 +466,10 @@ impl ChatHistory {
         child_id: Uuid,
         kind: MessageKind,
         content: String,
+        tool_call_id: Option<ArcStr>
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id )
     }
 
     /// Adds a new child message to the conversation tree.
@@ -481,6 +486,7 @@ impl ChatHistory {
         content: &str,
         status: MessageStatus,
         kind: MessageKind,
+        tool_call_id: Option<ArcStr>
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -525,6 +531,7 @@ impl ChatHistory {
         &mut self,
         sibling_id: Uuid,
         content: &str,
+        kind: MessageKind,
         status: MessageStatus,
     ) -> Result<Uuid, ChatError> {
         let sibling = self
@@ -535,9 +542,8 @@ impl ChatHistory {
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent, and generate a new message id
-        // NOTE: Assumes the same kind (safe for sibling of message)
         let new_id = Uuid::new_v4();
-        self.add_child(parent_id, new_id, content, status, sibling.kind)
+        self.add_child(parent_id, new_id, content, status, kind, None)
     }
 
     /// Deletes a message and its descendant subtree from the conversation history.
@@ -930,13 +936,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::Tool;
-        let res = self.add_child(parent_id, child_id, &content, status, kind);
-        if let Ok(id) = res {
-            if let Some(m) = self.messages.get_mut(&id) {
-                m.tool_call_id = Some(call_id);
-            }
-        }
-        res
+        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id))
     }
 }
 
@@ -1001,6 +1001,7 @@ mod tests {
             "User: hi",
             MessageStatus::Completed,
             MessageKind::User,
+            None
         )
         .unwrap();
 
@@ -1030,7 +1031,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a1 = Uuid::new_v4();
@@ -1040,6 +1041,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1050,6 +1052,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1074,7 +1077,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a1 = Uuid::new_v4();
@@ -1084,6 +1087,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1094,6 +1098,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1128,7 +1133,7 @@ mod tests {
         let mut ch = ChatHistory::new();
         let root = ch.current;
 
-        let res = ch.add_sibling(root, "x", MessageStatus::Completed);
+        let res = ch.add_sibling(root, "x", MessageKind::Assistant, MessageStatus::Completed);
 
         assert!(matches!(res, Err(ChatError::RootHasNoSiblings)));
     }
@@ -1139,7 +1144,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
         ch.current = u1;
 
@@ -1158,7 +1163,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a1 = Uuid::new_v4();
@@ -1168,6 +1173,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1181,7 +1187,7 @@ mod tests {
 
         // Deeper conversation
         let u2 = Uuid::new_v4();
-        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a2 = Uuid::new_v4();
@@ -1191,6 +1197,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1209,7 +1216,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a1 = Uuid::new_v4();
@@ -1219,6 +1226,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1234,7 +1242,7 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         let a1 = Uuid::new_v4();
@@ -1244,6 +1252,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1283,7 +1292,7 @@ mod tests {
 
         // Add a user message
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Hello?", MessageStatus::Completed, MessageKind::User)
+        ch.add_child(root, u1, "Hello?", MessageStatus::Completed, MessageKind::User, None)
             .unwrap();
 
         // Add an assistant message
@@ -1294,6 +1303,7 @@ mod tests {
             "Hi! How can I help?",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None
         )
         .unwrap();
 
@@ -1305,6 +1315,7 @@ mod tests {
             "(diagnostic) not part of request",
             MessageStatus::Completed,
             MessageKind::SysInfo,
+            None
         )
         .unwrap();
 
@@ -1316,6 +1327,7 @@ mod tests {
             "tool-output",
             MessageStatus::Completed,
             MessageKind::Tool,
+           Some(ArcStr::from("new_tool_call:0")) 
         )
         .unwrap();
 

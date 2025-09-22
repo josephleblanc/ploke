@@ -82,6 +82,9 @@ pub async fn state_manager(
             } => {
                 handlers::chat::add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
+            StateCommand::AddMessageTool { msg, kind, new_msg_id, tool_call_id } => {
+                handlers::chat::add_tool_msg_immediate(&state, &event_bus, new_msg_id, msg, tool_call_id ).await;
+            }
             StateCommand::PruneHistory { max_messages: _ } => {
                 handlers::chat::prune_history().await;
             }

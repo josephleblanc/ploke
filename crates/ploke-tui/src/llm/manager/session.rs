@@ -297,11 +297,12 @@ where
                                 let content = json!({"ok": false, "error": err_string}).to_string();
                                 self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
                                 let err_msg = format!("tool failed\n\t{cid:?}\n\t{err_string:?}");
-                                state_cmd_tx.send(StateCommand::AddMessageImmediate {
+                                state_cmd_tx.send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: err_msg.clone(),
                                     // TODO: Change to 'Tool'
                                     kind: MessageKind::System,
+                                    tool_call_id: cid,
 
                                 }).await.expect("state manager must be running");
                                 continue;

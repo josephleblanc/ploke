@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ploke_core::ArcStr;
 use tokio::sync::oneshot;
 use tracing::instrument;
 use uuid::Uuid;
@@ -104,7 +105,7 @@ pub async fn add_message(
         MessageStatus::Completed
     };
 
-    if let Ok(new_message_id) = chat_guard.add_child(parent_id, child_id, &content, status, kind) {
+    if let Ok(new_message_id) = chat_guard.add_child(parent_id, child_id, &content, status, kind, None) {
         chat_guard.current = new_message_id;
         event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
     }
@@ -131,7 +132,7 @@ pub async fn create_assistant_message(
     let status = MessageStatus::Generating;
     let kind = crate::chat_history::MessageKind::Assistant;
 
-    if let Ok(new_id) = chat_guard.add_child(parent_id, new_assistant_msg_id, "Pending...", status, kind) {
+    if let Ok(new_id) = chat_guard.add_child(parent_id, new_assistant_msg_id, "Pending...", status, kind, None) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
         event_bus.send(MessageUpdatedEvent::new(new_id).into());
@@ -140,6 +141,20 @@ pub async fn create_assistant_message(
 
 pub async fn prune_history() {
     todo!("Handle PruneHistory")
+}
+
+pub async fn add_tool_msg_immediate(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    tool_call_id: ArcStr
+) {
+    tracing::trace!("Starting add_msg_immediate");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+
+    chat_guard.add_message_tool(parent_id, new_msg_id, MessageKind::Tool, content.clone(), Some( tool_call_id ));
 }
 
 #[instrument(skip(state))]
@@ -163,7 +178,7 @@ pub async fn add_msg_immediate(
             chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
         }
         MessageKind::Tool => {
-            chat_guard.add_message_tool(parent_id, new_msg_id, kind, content.clone())
+            panic!("Use add_tool_msg_immediate to add tool messages");
         },
         MessageKind::SysInfo => {
             chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
