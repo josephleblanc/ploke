@@ -1,4 +1,4 @@
-use crate::AppEvent;
+use crate::{llm::manager::Role, AppEvent};
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
 
@@ -200,9 +200,53 @@ pub struct Message {
     pub content: String,
     /// The kind of the message's speaker, e.g. User, Assistant, System, etc
     pub kind: MessageKind,
+    /// The status of the message in the current LLM context window.
+    pub context_status: ContextStatus,
     /// If this is a Tool message that came from a tool call, the originating call id.
     /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
     pub tool_call_id: Option<ArcStr>,
+}
+
+/// The status of the message in the current LLM context window.
+/// Pinned indicates that the message should be kept in the messages sent to the LLM, while
+/// Unpinned messages are left out of messages sent to the LLM.
+/// Pinned messages must have a reason for the pin, which will be evaluated when they run out of
+/// `turns_to_live`.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum ContextStatus {
+    /// Pinned message to be kept in LLM context window.
+    Pinned(PinnedInfo),
+    /// Unpinned message not kept in LLM context window.
+    Unpinned,
+}
+
+impl Default for ContextStatus {
+    fn default() -> Self {
+        ContextStatus::Pinned(PinnedInfo::default())
+    }
+}
+
+/// The information on why an item is pinned, and how long until it will either be automatically
+/// be removed from the context or reviewed and potentially re-pinned.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct PinnedInfo {
+    /// Number of LLM calls this message will live, defaults to 15
+    turns_to_live: u16,
+    /// The reason this item is pinned
+    reason: ArcStr,
+    /// Optional field to indicate this message was pinned by a particular role.
+    pinned_by: Option<Role>
+}
+
+impl Default for PinnedInfo {
+    fn default() -> Self {
+        Self { 
+            // sane default, somewhat arbitrary
+            turns_to_live: 15, 
+            reason: ArcStr::from("Initial automatic message pin"),
+            pinned_by: None
+        }
+    }
 }
 
 /// Defines the author of a message.
@@ -376,6 +420,7 @@ impl ChatHistory {
             content: String::new(),
             kind: MessageKind::System,
             tool_call_id: None,
+            context_status: ContextStatus::default(),
         };
         let root_id = root.id;
         let mut messages = HashMap::default();
@@ -498,6 +543,7 @@ impl ChatHistory {
             metadata: None,
             kind,
             tool_call_id: None,
+            context_status: ContextStatus::default(),
         };
 
         let parent = self

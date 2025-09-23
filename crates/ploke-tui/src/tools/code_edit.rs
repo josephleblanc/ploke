@@ -257,6 +257,7 @@ mod tests {
     }
 }
 
+
 #[cfg(test)]
 mod gat_tests {
     use super::*;

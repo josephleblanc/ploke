@@ -186,10 +186,10 @@ pub fn render_model_browser<'a>(
                 format!(
                     "    pricing: in={} out={}",
                     it.input_cost
-                        .map(|v| format!("{:.6}", v))
+                        .map(|v| format!("${:.3}", v))
                         .unwrap_or_else(|| "-".to_string()),
                     it.output_cost
-                        .map(|v| format!("{:.6}", v))
+                        .map(|v| format!("${:.3}", v))
                         .unwrap_or_else(|| "-".to_string())
                 ),
                 detail_style,
@@ -203,6 +203,7 @@ pub fn render_model_browser<'a>(
                 lines.push(Line::from(Span::styled("      (none)", detail_style)));
             } else {
                 for (row_idx, p) in it.providers.iter().enumerate() {
+                    let indent = "      ";
                     let is_sel = mb.provider_select_active
                         && i == mb.selected
                         && row_idx == mb.provider_selected;
@@ -210,13 +211,13 @@ pub fn render_model_browser<'a>(
                     let pointer = if is_sel { ">" } else { "-" };
                     lines.push(Line::from(Span::styled(
                         format!(
-                            "      {} {}  tools={}  ctx={}  pricing (USD/1M tok): in={} out={}",
+                            "{indent}{} {} in=${} out=${} ctx={} tools={}",
                             pointer,
                             p.provider_name,
-                            p.supports_tools,
-                            format_args!("{:.0}", p.context_length),
                             format_args!("{:.3}", p.input_cost),
                             format_args!("{:.3}", p.output_cost),
+                            format_args!("{:.0}", p.context_length),
+                            p.supports_tools,
                         ),
                         row_style,
                     )));
