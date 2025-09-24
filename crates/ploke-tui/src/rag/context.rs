@@ -1,10 +1,20 @@
-use crate::llm::{LlmEvent, manager::events::ChatEvt};
+use crate::{
+    chat_history::{ContextStatus, TurnsToLive},
+    llm::{
+        LlmEvent,
+        manager::{Role, events::ChatEvt},
+    },
+};
 use std::{
     ops::{ControlFlow, Deref},
     path::PathBuf,
 };
 
-use ploke_core::rag_types::{AssembledContext, ContextPart};
+use once_cell::sync::Lazy;
+use ploke_core::{
+    ArcStr,
+    rag_types::{AssembledContext, ContextPart},
+};
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
@@ -19,32 +29,11 @@ use crate::{
 use super::*;
 
 pub static PROMPT_HEADER: &str = r#"
-<-- SYSTEM PROMPT -->
+<-- BEGIN SYSTEM PROMPT -->
 You are a highly skilled software engineer, specializing in the Rust programming language.
 
 You will be asked to provide some assistance in collaborating with the user.
-"#;
-
-pub static PROMPT_CODE: &str = r#"
-Tool-aware code collaboration instructions
-
-You can call tools to request more context and to stage code edits for user approval.
-
-- Notes:
-  - You do NOT provide byte offsets or hashes; we will resolve the canonical path to a node span and validate file hashes internally.
-  - Provide complete item definitions (rewrite), including attributes and docs where appropriate.
-
-Conversation structure
-- After the Code section below, the User's query appears under a # USER header.
-- If additional responses from collaborators appear (Assistant/Collaborator), treat them as context.
-- When uncertain, ask for missing details or request additional context precisely.
-
-# Code
-
-"#;
-static PROMPT_USER: &str = r#"
-# USER
-
+<-- END SYSTEM PROMPT -->
 "#;
 
 /// Reads the just-submitted user message and:
@@ -142,29 +131,26 @@ fn construct_context_from_rag(
         messages.len()
     );
 
-    let mut base: Vec<ReqMsg> = Vec::from([
-        (ReqMsg::new_system(String::from(PROMPT_HEADER))),
-        (ReqMsg::new_system(String::from(PROMPT_CODE))),
-    ]);
-
     // Add assembled context parts as system messages
-    let text = ctx.parts.into_iter()
+    let mut text = ctx
+        .parts
+        .into_iter()
         .map(reformat_context_to_system)
-        .map(ReqMsg::new_system);
-    base.extend(text);
+        .map(ReqMsg::new_system)
+        .collect::<Vec<RequestMessage>>();
 
     // Add conversation messages
-    base.extend(messages);
+    text.extend(messages);
 
     LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
         parent_id,
-        formatted_prompt: base,
+        formatted_prompt: text,
     })
 }
 
 fn reformat_context_to_system(ctx_part: ContextPart) -> String {
     format!(
-        "file_path: {}\ncanon_path: {}\ncode_snippet: {}", 
+        "file_path: {}\ncanon_path: {}\ncode_snippet: {}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.text

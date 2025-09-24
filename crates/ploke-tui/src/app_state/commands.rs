@@ -70,6 +70,8 @@ pub enum StateCommand {
     DeleteMessage {
         id: Uuid,
     },
+    /// Decrement the chat history "turns to live"
+    DecrementChatTtl,
     DeleteNode {
         id: Uuid,
     },
@@ -251,6 +253,7 @@ impl StateCommand {
             ApproveEdits { .. } => "ApproveEdits",
             DenyEdits { .. } => "DenyEdits",
             SelectModelProvider { .. } => "SelectModelProvider",
+            DecrementChatTtl => "DecrementChatTtl",
         }
     }
 }

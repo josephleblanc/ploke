@@ -352,6 +352,10 @@ pub async fn state_manager(
                     model_id,
                 )));
             }
+            StateCommand::DecrementChatTtl => {
+                let mut chat_history = state.chat.write().await;
+                chat_history.decrement_ttl();
+            }
 
             _ => {}
         };

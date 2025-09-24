@@ -6,7 +6,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::{CommandStyle, EmbeddingConfig, UserConfig};
+use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
 use crate::llm::{ModelId, ModelKey};
 use crate::llm::registry::user_prefs::RegistryPrefs;
 use crate::{RagEvent, chat_history::ChatHistory};
@@ -187,6 +187,7 @@ impl RuntimeConfig {
             embedding: self.embedding.clone(),
             editing,
             ploke_editor: self.ploke_editor.clone(),
+            context_management: CtxPrefs::default(),
         }
     }
 }

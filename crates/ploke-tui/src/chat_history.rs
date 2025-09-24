@@ -1,10 +1,12 @@
-use crate::{llm::manager::Role, AppEvent};
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
+use crate::rag::context::PROMPT_HEADER;
+use crate::{AppEvent, llm::manager::Role};
 
 use fxhash::FxHashMap as HashMap;
-use std::hash::RandomState;
+use once_cell::sync::Lazy;
 use std::fmt;
+use std::hash::RandomState;
 use std::io::Write as _;
 
 use color_eyre::Result;
@@ -200,11 +202,11 @@ pub struct Message {
     pub content: String,
     /// The kind of the message's speaker, e.g. User, Assistant, System, etc
     pub kind: MessageKind,
-    /// The status of the message in the current LLM context window.
-    pub context_status: ContextStatus,
     /// If this is a Tool message that came from a tool call, the originating call id.
     /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
     pub tool_call_id: Option<ArcStr>,
+    /// The status of the message in the current LLM context window.
+    pub context_status: ContextStatus,
 }
 
 /// The status of the message in the current LLM context window.
@@ -212,40 +214,45 @@ pub struct Message {
 /// Unpinned messages are left out of messages sent to the LLM.
 /// Pinned messages must have a reason for the pin, which will be evaluated when they run out of
 /// `turns_to_live`.
+/// A "turn to live" is decremented each time the conversation history is retrieved.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum ContextStatus {
-    /// Pinned message to be kept in LLM context window.
-    Pinned(PinnedInfo),
+    /// The information on why an item is pinned, and how long until it will either be automatically
+    /// be removed from the context or reviewed and potentially re-pinned.
+    Pinned {
+        /// Number of LLM calls this message will live, defaults to 15
+        turns_to_live: TurnsToLive,
+        /// Optional reason this item is pinned
+        reason: Option<ArcStr>,
+        /// Optional field to indicate this message was pinned by a particular role.
+        pinned_by: Option<Role>,
+    },
     /// Unpinned message not kept in LLM context window.
     Unpinned,
 }
 
 impl Default for ContextStatus {
     fn default() -> Self {
-        ContextStatus::Pinned(PinnedInfo::default())
+        Self::Pinned {
+            // sane default, somewhat arbitrary
+            turns_to_live: TurnsToLive::default(),
+            reason: None,
+            pinned_by: None,
+        }
     }
 }
 
-/// The information on why an item is pinned, and how long until it will either be automatically
-/// be removed from the context or reviewed and potentially re-pinned.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct PinnedInfo {
-    /// Number of LLM calls this message will live, defaults to 15
-    turns_to_live: u16,
-    /// The reason this item is pinned
-    reason: ArcStr,
-    /// Optional field to indicate this message was pinned by a particular role.
-    pinned_by: Option<Role>
+pub enum TurnsToLive {
+    Limited(u16),
+    NoneRemaining,
+    Unlimited,
 }
 
-impl Default for PinnedInfo {
+impl Default for TurnsToLive {
     fn default() -> Self {
-        Self { 
-            // sane default, somewhat arbitrary
-            turns_to_live: 15, 
-            reason: ArcStr::from("Initial automatic message pin"),
-            pinned_by: None
-        }
+        // sane default, somewhat arbitrary
+        Self::Limited(15)
     }
 }
 
@@ -342,6 +349,27 @@ impl Message {
     }
 }
 
+pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
+    let context_status = ContextStatus::Pinned {
+        turns_to_live: TurnsToLive::Unlimited,
+        reason: Some( ArcStr::from("Base system prompt should be pinned for entire conversation.") ),
+        pinned_by: Some( Role::System )
+    };
+    Message {
+        id: Uuid::new_v4(),
+        status: crate::chat_history::MessageStatus::Completed,
+        metadata: None,
+        parent: None,
+        children: Vec::new(),
+        selected_child: None,
+        content: PROMPT_HEADER.to_string(),
+        kind: MessageKind::System,
+        tool_call_id: None,
+        context_status,
+    }
+});
+
+
 /// Manages the complete branching conversation history using a tree structure.
 ///
 /// Stores all messages in a HashMap for efficient lookup and maintains
@@ -395,33 +423,22 @@ impl ChatHistory {
                 }
                 // Tool messages.
                 MessageKind::Tool => Some(ReqMsg::new_tool(
-                    m.content.clone(), 
-                    m.tool_call_id.clone()
-                        .expect("Tool calls must have Some tool_call_id")
+                    m.content.clone(),
+                    m.tool_call_id
+                        .clone()
+                        .expect("Tool calls must have Some tool_call_id"),
                 )),
                 // UI/system info messages are not part of the API payload; omit.
                 MessageKind::SysInfo => None,
             })
             .collect()
     }
-    /// Creates a new ChatHistory with an empty root message.
+    /// Creates a new ChatHistory with the systm prompt message.
     ///
     /// The root message serves as the starting point for all conversations.
     /// Its content is intentionally left empty to allow natural branching.
     pub fn new() -> Self {
-        let root_id = Uuid::new_v4();
-        let root = Message {
-            id: root_id,
-            status: MessageStatus::Completed,
-            metadata: None,
-            parent: None,
-            children: Vec::new(),
-            selected_child: None,
-            content: String::new(),
-            kind: MessageKind::System,
-            tool_call_id: None,
-            context_status: ContextStatus::default(),
-        };
+        let root = BASE_SYSTEM_PROMPT.clone();
         let root_id = root.id;
         let mut messages = HashMap::default();
         messages.insert(root.id, root);
@@ -511,15 +528,17 @@ impl ChatHistory {
         child_id: Uuid,
         kind: MessageKind,
         content: String,
-        tool_call_id: Option<ArcStr>
+        tool_call_id: Option<ArcStr>,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id )
+        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id)
     }
 
     /// Adds a new child message to the conversation tree.
     /// Takes some data from the state of the chat history, modifies chat history state to include
     /// the new child and message, and returns the new child id.
+    ///
+    /// By default, the message is pinned for 15 turns of the conversation.
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
@@ -531,7 +550,7 @@ impl ChatHistory {
         content: &str,
         status: MessageStatus,
         kind: MessageKind,
-        tool_call_id: Option<ArcStr>
+        tool_call_id: Option<ArcStr>,
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -545,6 +564,37 @@ impl ChatHistory {
             tool_call_id: None,
             context_status: ContextStatus::default(),
         };
+
+        let parent = self
+            .messages
+            .get_mut(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+
+        parent.children.push(child_id);
+        parent.selected_child = Some(child_id);
+        self.messages.insert(child_id, child);
+        // NOTE: This could be problematic, maybe?
+        // Consider a case where multiple children are being added simultaneously.
+        // Forget it, we would likely need a different function for that.
+        self.tail = child_id;
+        self.rebuild_path_cache();
+        Ok(child_id)
+    }
+
+    /// Adds a new child message to the conversation tree.
+    /// Takes some data from the state of the chat history, modifies chat history state to include
+    /// the new child and message, and returns the new child id.
+    ///
+    /// Pins the message with a context status, including a given `TurnsToLive`, indicating the
+    /// number of turns of the conversation before the message is either reviewed or automatically
+    /// removed from the conversation. May be pinned with an Unlimited `TurnsToLive` if no
+    /// automatic context management is desired.
+    ///
+    /// # Panics
+    /// No explicit panics, but invalid parent_ids will result in orphaned messages
+    pub fn add_child_message(&mut self, child: Message) -> Result<Uuid, ChatError> {
+        let child_id = child.id;
+        let parent_id = child.parent.expect("child message must have parent");
 
         let parent = self
             .messages
@@ -984,6 +1034,30 @@ impl ChatHistory {
         let kind = MessageKind::Tool;
         self.add_child(parent_id, child_id, &content, status, kind, Some(call_id))
     }
+
+    /// Decrement turns to live of messages in the currently selected message history.
+    /// Changes the context_status from Limited to NoneRemaining if turns to live goes from 1 to 0,
+    /// indicating that the message will either be automatically left out of the LLM context or
+    /// will need review and repinning.
+    pub fn decrement_ttl(&mut self) {
+        for msg_id in self.path_cache.iter() {
+            self.messages
+                .entry(*msg_id)
+                .and_modify(|m| match &mut m.context_status {
+                    ContextStatus::Pinned {
+                        turns_to_live: ttl, ..
+                    } => {
+                        if let TurnsToLive::Limited(n) = ttl {
+                            *n = n.saturating_sub(1);
+                        }
+                        if *ttl == TurnsToLive::Limited(0) {
+                            *ttl = TurnsToLive::NoneRemaining
+                        }
+                    }
+                    ContextStatus::Unpinned => {}
+                });
+        }
+    }
 }
 
 /// Atomically writes file contents using tempfile and rename
@@ -1003,8 +1077,8 @@ pub(crate) async fn atomic_write(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use crate::llm::manager::Role as LlmRole;
+    use tempfile::tempdir;
 
     #[test]
     fn delete_root_returns_none_and_no_changes() {
@@ -1047,7 +1121,7 @@ mod tests {
             "User: hi",
             MessageStatus::Completed,
             MessageKind::User,
-            None
+            None,
         )
         .unwrap();
 
@@ -1077,8 +1151,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1087,7 +1168,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1098,7 +1179,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1123,8 +1204,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1133,7 +1221,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1144,7 +1232,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1190,8 +1278,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
         ch.current = u1;
 
         let res = ch.navigate_sibling(NavigationDirection::Next);
@@ -1209,8 +1304,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1219,7 +1321,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1233,8 +1335,15 @@ mod tests {
 
         // Deeper conversation
         let u2 = Uuid::new_v4();
-        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            a1,
+            u2,
+            "Q2",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a2 = Uuid::new_v4();
         ch.add_child(
@@ -1243,7 +1352,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1262,8 +1371,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1272,7 +1388,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1288,8 +1404,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1298,7 +1421,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1338,8 +1461,15 @@ mod tests {
 
         // Add a user message
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Hello?", MessageStatus::Completed, MessageKind::User, None)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Hello?",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         // Add an assistant message
         let a1 = Uuid::new_v4();
@@ -1349,7 +1479,7 @@ mod tests {
             "Hi! How can I help?",
             MessageStatus::Completed,
             MessageKind::Assistant,
-            None
+            None,
         )
         .unwrap();
 
@@ -1361,7 +1491,7 @@ mod tests {
             "(diagnostic) not part of request",
             MessageStatus::Completed,
             MessageKind::SysInfo,
-            None
+            None,
         )
         .unwrap();
 
@@ -1373,7 +1503,7 @@ mod tests {
             "tool-output",
             MessageStatus::Completed,
             MessageKind::Tool,
-           Some(ArcStr::from("new_tool_call:0")) 
+            Some(ArcStr::from("new_tool_call:0")),
         )
         .unwrap();
 

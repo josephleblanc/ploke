@@ -49,6 +49,32 @@ pub struct UserConfig {
     pub editing: EditingConfig,
     #[serde(default)]
     pub ploke_editor: Option<String>,
+    #[serde(default)]
+    pub context_management: CtxPrefs,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct CtxPrefs {
+    strategy: CtxStrategy,
+    // more here...
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum CtxStrategy {
+    /// Automatically prunes context items after turns to live runs out.
+    Automatic(u16),
+    /// Asks LLM to repin context items after turns to live runs out.
+    Ask(u16),
+    /// Never unpins context items - only manual command from user clears context.
+    Unlimited
+}
+
+pub const DEFAULT_CONTEXT_TURNS_TO_LIVE: u16 = 15;
+
+impl Default for CtxStrategy {
+    fn default() -> Self {
+        Self::Automatic(DEFAULT_CONTEXT_TURNS_TO_LIVE)
+    }
 }
 
 impl UserConfig {
