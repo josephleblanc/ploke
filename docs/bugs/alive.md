@@ -1,5 +1,18 @@
 # Bugs that are still alive
 
+## Duplicate Relation (Sep 24, 2025)
+
+Detected: Sep 24, 2025
+
+function‑scoped duplicate imports of the same
+item in the same module.
+
+- What duplicates: Two identical lines use crate::llm::ProviderSlug as _; appear in the same
+file/module, inside different functions:
+    - crates/ploke-tui/src/app/commands/exec.rs:270
+    - crates/ploke-tui/src/app/commands/exec.rs:404
+    - crates/ploke-tui/src/app/commands/exec.rs:404
+
 ## Duplicate Relation (Sep 1, 2025)
 
 Detected: Sep 1, 2025
