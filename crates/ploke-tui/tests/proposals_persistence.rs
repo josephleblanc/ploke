@@ -46,6 +46,7 @@ async fn proposals_save_and_load_roundtrip() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     let req_id = uuid::Uuid::new_v4();
@@ -109,6 +110,7 @@ async fn proposals_load_missing_file_is_graceful() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     timeout(
@@ -144,6 +146,7 @@ async fn proposals_load_corrupted_file_is_graceful() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     timeout(
@@ -155,4 +158,3 @@ async fn proposals_load_corrupted_file_is_graceful() {
     let guard = state.proposals.read().await;
     assert_eq!(guard.len(), 0, "no proposals loaded from corrupted file");
 }
-

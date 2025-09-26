@@ -225,6 +225,12 @@ pub fn execute(app: &mut App, command: Command) {
         Command::EditDeny(id) => {
             app.send_cmd(StateCommand::DenyEdits { request_id: id });
         }
+        Command::CreateApprove(id) => {
+            app.send_cmd(StateCommand::ApproveCreations { request_id: id });
+        }
+        Command::CreateDeny(id) => {
+            app.send_cmd(StateCommand::DenyCreations { request_id: id });
+        }
         Command::EditSetPreviewMode(mode) => {
             app.send_cmd(StateCommand::SetEditingPreviewMode { mode });
         }
@@ -354,6 +360,12 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
   edit deny <request_id>             - Deny and discard staged code edits
 "#
         .to_string()
+    } else if t.starts_with("create") {
+        r#"Create commands:
+  create approve <request_id>        - Apply staged file creations with this request ID
+  create deny <request_id>           - Deny and discard staged file creations
+"#
+            .to_string()
     } else if t.starts_with("bm25") {
         r#"BM25 commands:
   bm25 rebuild                       - Rebuild sparse BM25 index

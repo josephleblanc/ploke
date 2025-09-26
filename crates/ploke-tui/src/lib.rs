@@ -213,6 +213,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
         proposals: RwLock::new(HashMap::new()),
+        create_proposals: RwLock::new(HashMap::new()),
         rag,
         // TODO: Add TokenBudget fields to Config
         budget: TokenBudget::default(),
@@ -220,6 +221,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Load persisted proposals (best-effort) before starting subsystems
     crate::app_state::handlers::proposals::load_proposals(&state).await;
+    crate::app_state::handlers::proposals::load_create_proposals(&state).await;
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);

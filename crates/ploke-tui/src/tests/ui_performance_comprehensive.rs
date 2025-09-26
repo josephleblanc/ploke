@@ -80,6 +80,7 @@ async fn create_mock_app_state_with_proposals(proposal_count: usize) -> Arc<crat
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(proposals),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     })
 }
 
@@ -297,6 +298,7 @@ mod performance_tests {
             rag: None,
             budget: ploke_rag::TokenBudget::default(),
             proposals: RwLock::new(proposals),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
         });
         
         let ui_state = ApprovalsState::default();

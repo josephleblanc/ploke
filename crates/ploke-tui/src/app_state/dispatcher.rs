@@ -275,6 +275,12 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
+            StateCommand::ApproveCreations { request_id } => {
+                rag::editing::approve_creations(&state, &event_bus, request_id).await;
+            }
+            StateCommand::DenyCreations { request_id } => {
+                rag::editing::deny_creations(&state, &event_bus, request_id).await;
+            }
             StateCommand::SelectModelProvider {
                 model_id_string,
                 provider_key,

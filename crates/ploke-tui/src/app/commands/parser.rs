@@ -45,6 +45,8 @@ pub enum Command {
     Update,
     EditApprove(Uuid),
     EditDeny(Uuid),
+    CreateApprove(Uuid),
+    CreateDeny(Uuid),
     EditSetPreviewMode(PreviewMode),
     EditSetPreviewLines(usize),
     EditSetAutoConfirm(bool),
@@ -219,6 +221,20 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             let id_str = s.trim_start_matches("edit deny ").trim();
             match Uuid::parse_str(id_str) {
                 Ok(id) => Command::EditDeny(id),
+                Err(_) => Command::Raw(trimmed.to_string()),
+            }
+        }
+        s if s.starts_with("create approve ") => {
+            let id_str = s.trim_start_matches("create approve ").trim();
+            match Uuid::parse_str(id_str) {
+                Ok(id) => Command::CreateApprove(id),
+                Err(_) => Command::Raw(trimmed.to_string()),
+            }
+        }
+        s if s.starts_with("create deny ") => {
+            let id_str = s.trim_start_matches("create deny ").trim();
+            match Uuid::parse_str(id_str) {
+                Ok(id) => Command::CreateDeny(id),
                 Err(_) => Command::Raw(trimmed.to_string()),
             }
         }

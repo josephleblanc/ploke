@@ -16,7 +16,16 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 use serde::{Deserialize, Serialize};
 
 pub mod io_types;
-pub use io_types::{ChangedFileData, EmbeddingData, FileData, WriteResult, WriteSnippetData};
+pub use io_types::{
+    ChangedFileData,
+    EmbeddingData,
+    FileData,
+    WriteResult,
+    WriteSnippetData,
+    CreateFileData,
+    CreateFileResult,
+    OnExists,
+};
 pub mod rag_types;
 mod arc_str;
 pub use arc_str::ArcStr;

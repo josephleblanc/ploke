@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::{TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
 
 /**
 A handle to the IoManager actor.
@@ -298,6 +298,24 @@ impl IoManagerHandle {
         };
         self.request_sender
             .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError)
+            .map_err(IoError::from)?;
+        response_rx
+            .await
+            .map_err(|_| RecvError::RecvError)
+            .map_err(IoError::from)
+    }
+
+    /// Create (or overwrite) a Rust source file atomically, enforcing path policy.
+    pub async fn create_file(
+        &self,
+        request: CreateFileData,
+    ) -> Result<Result<CreateFileResult, PlokeError>, IoError> {
+        let (responder, response_rx) = oneshot::channel();
+        let req = IoRequest::CreateFile { request, responder };
+        self.request_sender
+            .send(IoManagerMessage::Request(req))
             .await
             .map_err(|_| RecvError::SendError)
             .map_err(IoError::from)?;

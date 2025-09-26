@@ -43,7 +43,7 @@ use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-use view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use view::components::approvals::{ApprovalsState, render_approvals_overlay, unified_items, ProposalKind};
 use view::components::model_browser::{
     compute_browser_scroll, model_browser_focus_line, model_browser_total_lines, render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow
 };
@@ -658,27 +658,34 @@ impl App {
                 return true;
             }
             KeyCode::Char('o') => {
-                // Open-in-editor for the first file of selected proposal
+                // Open-in-editor for the first file of selected proposal (edit or create)
                 if let Some(st) = &self.approvals {
                     let sel_index = st.selected;
                     let state = Arc::clone(&self.state);
                     let cmd_tx = self.cmd_tx.clone();
                     tokio::spawn(async move {
-                        let guard = state.proposals.read().await;
-                        let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-                        ids.sort();
-                        if let Some(id) = ids.get(sel_index) {
-                            if let Some(p) = guard.get(id) {
-                                if let Some(path) = p.files.first() {
-                                    let cfg = state.config.read().await;
-                                    let editor = resolve_editor_command(&cfg);
-                                    drop(cfg);
-                                    if let Some(cmd) = editor {
-                                        let args = build_editor_args(path, None);
-                                        let _ = std::process::Command::new(cmd).args(args).spawn();
-                                    } else {
-                                        let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
-                                    }
+                        // Build unified ordering to match overlay
+                        let items = unified_items(&state);
+                        if let Some((kind, id, _)) = items.get(sel_index).cloned() {
+                            let path_opt = match kind {
+                                ProposalKind::Edit => {
+                                    let guard = state.proposals.read().await;
+                                    guard.get(&id).and_then(|p| p.files.first().cloned())
+                                }
+                                ProposalKind::Create => {
+                                    let guard = state.create_proposals.read().await;
+                                    guard.get(&id).and_then(|p| p.files.first().cloned())
+                                }
+                            };
+                            if let Some(path) = path_opt {
+                                let cfg = state.config.read().await;
+                                let editor = resolve_editor_command(&cfg);
+                                drop(cfg);
+                                if let Some(cmd) = editor {
+                                    let args = build_editor_args(&path, None);
+                                    let _ = std::process::Command::new(cmd).args(args).spawn();
+                                } else {
+                                    let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
                                 }
                             }
                         }
@@ -698,14 +705,22 @@ impl App {
                 let state = Arc::clone(&self.state);
                 let cmd_tx = self.cmd_tx.clone();
                 tokio::spawn(async move {
-                    let guard = state.proposals.read().await;
-                    let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-                    ids.sort();
-                    if let Some(id) = ids.get(sel_index) {
-                        let _ = if approve {
-                            cmd_tx.try_send(StateCommand::ApproveEdits { request_id: *id })
-                        } else {
-                            cmd_tx.try_send(StateCommand::DenyEdits { request_id: *id })
+                    // Build unified item list asynchronously to avoid blocking UI thread
+                    let (p_guard, c_guard) = {
+                        let p = state.proposals.read().await;
+                        let c = state.create_proposals.read().await;
+                        (p, c)
+                    };
+                    let mut items: Vec<(ProposalKind, uuid::Uuid)> = Vec::new();
+                    for (id, _) in p_guard.iter() { items.push((ProposalKind::Edit, *id)); }
+                    for (id, _) in c_guard.iter() { items.push((ProposalKind::Create, *id)); }
+                    items.sort_by_key(|(_, id)| *id);
+                    if let Some((kind, id)) = items.get(sel_index).cloned() {
+                        let _ = match (approve, kind) {
+                            (true, ProposalKind::Edit) => cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id }),
+                            (true, ProposalKind::Create) => cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id }),
+                            (false, ProposalKind::Edit) => cmd_tx.try_send(StateCommand::DenyEdits { request_id: id }),
+                            (false, ProposalKind::Create) => cmd_tx.try_send(StateCommand::DenyCreations { request_id: id }),
                         };
                     }
                 });

@@ -154,3 +154,18 @@ pub struct ApplyCodeEditResult {
     /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
     pub auto_confirmed: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFileResult {
+    pub ok: bool,
+    /// Number of creations staged
+    pub staged: usize,
+    /// Number of creations applied immediately (0 unless auto-confirm is enabled and synchronous)
+    pub applied: usize,
+    /// Display-friendly file paths included in this proposal
+    pub files: Vec<String>,
+    /// Preview mode used for the summary ("diff" or "codeblock")
+    pub preview_mode: String,
+    /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
+    pub auto_confirmed: bool,
+}

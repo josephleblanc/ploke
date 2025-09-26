@@ -33,6 +33,8 @@ pub struct AppState {
 
     // In-memory registry for staged code-edit proposals (M1)
     pub proposals: RwLock<HashMap<Uuid, EditProposal>>,
+    // In-memory registry for staged file-creation proposals
+    pub create_proposals: RwLock<HashMap<Uuid, CreateProposal>>,
 
     // RAG stuff
     pub rag: Option<Arc<ploke_rag::RagService>>,
@@ -226,6 +228,18 @@ pub struct EditProposal {
     pub status: EditProposalStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateProposal {
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub call_id: ArcStr,
+    pub proposed_at_ms: i64,
+    pub creates: Vec<ploke_core::CreateFileData>,
+    pub files: Vec<PathBuf>,
+    pub preview: DiffPreview,
+    pub status: EditProposalStatus,
+}
+
 impl AppState {
     pub fn new(
         db: Arc<Database>,
@@ -244,11 +258,12 @@ impl AppState {
             indexing_control: Arc::new(Mutex::new(None)),
             db,
             embedder,
-            io_handle,
-            proposals: RwLock::new(HashMap::new()),
-            rag: Some(rag),
-            budget,
-        }
+        io_handle,
+        proposals: RwLock::new(HashMap::new()),
+        create_proposals: RwLock::new(HashMap::new()),
+        rag: Some(rag),
+        budget,
+    }
     }
 }
 

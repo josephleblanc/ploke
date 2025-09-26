@@ -86,6 +86,7 @@ async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<A
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     let mut ids = Vec::new();
@@ -131,6 +132,7 @@ fn approvals_overlay_renders_empty_list() {
             rag: None,
             budget: ploke_rag::TokenBudget::default(),
             proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
         });
         let ui = ApprovalsState::default();
 

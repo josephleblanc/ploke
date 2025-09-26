@@ -467,6 +467,7 @@ async fn prepare_and_run_llm_call(
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
         GetFileMetadata::tool_def(),
+        crate::tools::create_file::CreateFile::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)

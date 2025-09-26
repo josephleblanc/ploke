@@ -39,6 +39,7 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     // Insert a dummy proposal with one file
@@ -95,6 +96,7 @@ async fn make_app_with_proposals_and_editor(editor: Option<&str>) -> (App, mpsc:
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     if let Some(cmd) = editor {

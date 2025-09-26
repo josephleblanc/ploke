@@ -38,6 +38,7 @@ pub fn create_mock_app_state() -> AppState {
         embedder,
         io_handle,
         proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
         rag: Some(rag),
         budget,
     }

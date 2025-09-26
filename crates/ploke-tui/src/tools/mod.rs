@@ -31,6 +31,7 @@ pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod get_file_metadata;
 pub use get_file_metadata::{GetFileMetadata, GetFileMetadataInput};
+pub mod create_file;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +39,7 @@ pub enum ToolName {
     RequestCodeContext,
     ApplyCodeEdit,
     GetFileMetadata,
+    CreateFile,
 }
 
 impl ToolName {
@@ -47,6 +49,7 @@ impl ToolName {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
             GetFileMetadata => "get_file_metadata",
+            CreateFile => "create_file",
         }
     }
 }
@@ -63,6 +66,10 @@ pub enum ToolDescr {
         rename = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits."
     )]
     GetFileMetadata,
+    #[serde(
+        rename = "Create a new Rust source file atomically within the workspace, staging for approval."
+    )]
+    CreateFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq)]
@@ -288,7 +295,24 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             );
             get_file_metadata::GetFileMetadata::emit_completed(&ctx, content);
             Ok(())
-        } // more here
+        }
+        ToolName::CreateFile => {
+            let params = create_file::CreateFile::deserialize_params(&args)?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } =
+                create_file::CreateFile::execute(params, ctx.clone())
+                    .await
+                    .inspect_err(|e| create_file::CreateFile::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            create_file::CreateFile::emit_completed(&ctx, content);
+            Ok(())
+        }
     }
 }
 
@@ -385,6 +409,7 @@ mod tests {
         );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
         assert_eq!(ToolName::GetFileMetadata.as_str(), "get_file_metadata");
+        assert_eq!(ToolName::CreateFile.as_str(), "create_file");
     }
 
     #[test]

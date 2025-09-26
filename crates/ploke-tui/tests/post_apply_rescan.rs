@@ -35,6 +35,7 @@ async fn approve_emits_rescan_sysinfo() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(std::collections::HashMap::new()),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
@@ -71,4 +72,3 @@ async fn approve_emits_rescan_sysinfo() {
     });
     assert!(found, "expected scheduled rescan SysInfo message in chat history");
 }
-

@@ -5,7 +5,7 @@ use crate::{
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
     write::write_snippets_batch,
 };
-use ploke_core::{TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
 
 use super::*;
 
@@ -46,6 +46,10 @@ pub enum IoRequest {
         expected_hash: TrackingHash,
         namespace: uuid::Uuid,
         responder: oneshot::Sender<Result<String, PlokeError>>,
+    },
+    CreateFile {
+        request: CreateFileData,
+        responder: oneshot::Sender<Result<CreateFileResult, PlokeError>>,
     },
 }
 
@@ -221,6 +225,27 @@ impl IoManager {
                     }
                     .await;
 
+                    let _ = responder.send(res);
+                });
+            }
+            IoRequest::CreateFile { request, responder } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                #[cfg(feature = "watcher")]
+                let events_tx = self.events_tx.clone();
+                tokio::spawn(async move {
+                    let res = crate::create::create_file(request.clone(), roots, symlink_policy)
+                        .await
+                        .map_err(ploke_error::Error::from);
+                    #[cfg(feature = "watcher")]
+                    if let (Some(tx), Ok(_)) = (events_tx, res.as_ref()) {
+                        let _ = tx.send(crate::watcher::FileChangeEvent {
+                            path: request.file_path.clone(),
+                            kind: crate::watcher::FileEventKind::Created,
+                            old_path: None,
+                            origin: None,
+                        });
+                    }
                     let _ = responder.send(res);
                 });
             }

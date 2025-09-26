@@ -55,6 +55,70 @@ impl ApprovalsState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalKind {
+    Edit,
+    Create,
+}
+
+/// Build a unified list of proposal items (edits + creates) with display strings.
+/// Items are sorted by request_id for determinism.
+pub fn unified_items(
+    state: &Arc<crate::app_state::AppState>,
+) -> Vec<(ProposalKind, uuid::Uuid, String)> {
+    // Read both registries within a single block_in_place scope (non-blocking for async executors)
+    let (proposals_guard, create_guard) = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let p = state.proposals.read().await;
+            let c = state.create_proposals.read().await;
+            (p, c)
+        })
+    });
+
+    let mut items: Vec<(ProposalKind, uuid::Uuid, String)> = Vec::new();
+
+    for (id, p) in proposals_guard.iter() {
+        let status = match &p.status {
+            EditProposalStatus::Pending => "Pending",
+            EditProposalStatus::Approved => "Approved",
+            EditProposalStatus::Denied => "Denied",
+            EditProposalStatus::Applied => "Applied",
+            EditProposalStatus::Failed(_) => "Failed",
+        };
+        items.push((
+            ProposalKind::Edit,
+            *id,
+            format!(
+                "[E] {}  {:<7}  files:{}",
+                crate::app::utils::truncate_uuid(*id),
+                status,
+                p.files.len()
+            ),
+        ));
+    }
+    for (id, p) in create_guard.iter() {
+        let status = match &p.status {
+            EditProposalStatus::Pending => "Pending",
+            EditProposalStatus::Approved => "Approved",
+            EditProposalStatus::Denied => "Denied",
+            EditProposalStatus::Applied => "Applied",
+            EditProposalStatus::Failed(_) => "Failed",
+        };
+        items.push((
+            ProposalKind::Create,
+            *id,
+            format!(
+                "[C] {}  {:<7}  files:{}",
+                crate::app::utils::truncate_uuid(*id),
+                status,
+                p.files.len()
+            ),
+        ));
+    }
+    items.sort_by_key(|(_, id, _)| *id);
+    items
+}
+
 pub fn render_approvals_overlay(
     frame: &mut Frame,
     area: Rect,
@@ -83,39 +147,12 @@ pub fn render_approvals_overlay(
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(body_area);
 
-    // Use the established pattern for accessing async data from sync context
-    let proposals_guard = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            state.proposals.read().await
-        })
-    });
-    
-    let mut items: Vec<(uuid::Uuid, String)> = proposals_guard
-        .iter()
-        .map(|(id, p)| {
-            let status = match &p.status {
-                EditProposalStatus::Pending => "Pending",
-                EditProposalStatus::Approved => "Approved",
-                EditProposalStatus::Denied => "Denied",
-                EditProposalStatus::Applied => "Applied",
-                EditProposalStatus::Failed(_) => "Failed",
-            };
-            (
-                *id,
-                format!(
-                    "{}  {:<7}  files:{}",
-                    crate::app::utils::truncate_uuid(*id),
-                    status,
-                    p.files.len()
-                ),
-            )
-        })
-        .collect();
-    items.sort_by_key(|(id, _)| *id);
+    // Build unified list across edits and creates
+    let items: Vec<(ProposalKind, uuid::Uuid, String)> = unified_items(state);
 
     let list_items: Vec<ListItem> = items
         .iter()
-        .map(|(_, s)| ListItem::new(s.clone()))
+        .map(|(_, _, s)| ListItem::new(s.clone()))
         .collect();
     let list = List::new(list_items)
         .block(Block::bordered().title(" Pending Proposals "))
@@ -123,39 +160,44 @@ pub fn render_approvals_overlay(
     frame.render_widget(list, cols[0]);
 
     // Details
-    let selected_id = items.get(ui.selected).map(|(id, _)| *id);
+    let selected = items.get(ui.selected).map(|(kind, id, _)| (*kind, *id));
     let mut detail_lines: Vec<Line> = Vec::new();
-    if let Some(sel) = selected_id {
-        if let Some(p) = proposals_guard.get(&sel) {
+    if let Some((sel_kind, sel_id)) = selected {
+        // Use the established pattern for accessing async data from sync context
+        let (proposals_guard, create_guard) = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let p = state.proposals.read().await;
+                let c = state.create_proposals.read().await;
+                (p, c)
+            })
+        });
+        let mut render_preview = |status: &EditProposalStatus, files_len: usize, preview: &DiffPreview| {
             detail_lines.push(Line::from(vec![Span::styled(
-                format!("request_id: {}", sel),
+                format!("request_id: {}", sel_id),
                 Style::new().fg(Color::Yellow),
             )]));
             detail_lines.push(Line::from(format!(
                 "status: {:?}  files:{}",
-                p.status,
-                p.files.len()
+                status,
+                files_len
             )));
-            // Determine line limit for display
-            let line_limit = if ui.view_lines == 0 { 
-                usize::MAX // No limit
-            } else { 
-                ui.view_lines 
-            };
 
-            match &p.preview {
+            // Determine line limit for display
+            let line_limit = if ui.view_lines == 0 { usize::MAX } else { ui.view_lines };
+
+            match preview {
                 DiffPreview::UnifiedDiff { text } => {
                     let header = Line::from(vec![Span::styled(
                         "Unified Diff:",
                         Style::new().fg(Color::Green),
                     )]);
                     detail_lines.push(header);
-                    
+
                     let mut lines_added = 0;
                     for ln in text.lines() {
                         if lines_added >= line_limit {
                             detail_lines.push(Line::from(format!(
-                                "... [truncated at {} lines, use +/- to adjust]", 
+                                "... [truncated at {} lines, use +/- to adjust]",
                                 line_limit
                             )));
                             break;
@@ -170,25 +212,25 @@ pub fn render_approvals_overlay(
                         Style::new().fg(Color::Green),
                     )]);
                     detail_lines.push(header);
-                    
+
                     let mut total_lines_added = 0;
                     for ba in per_file.iter().take(2) {
                         if total_lines_added >= line_limit {
                             detail_lines.push(Line::from(format!(
-                                "... [more files truncated at {} lines]", 
+                                "... [more files truncated at {} lines]",
                                 line_limit
                             )));
                             break;
                         }
-                        
+
                         detail_lines.push(Line::from(format!("--- {}", ba.file_path.display())));
                         total_lines_added += 1;
-                        
+
                         // Before section
                         for ln in ba.before.lines() {
                             if total_lines_added >= line_limit {
                                 detail_lines.push(Line::from(format!(
-                                    "... [truncated at {} lines, use +/- to adjust]", 
+                                    "... [truncated at {} lines, use +/- to adjust]",
                                     line_limit
                                 )));
                                 break;
@@ -196,7 +238,7 @@ pub fn render_approvals_overlay(
                             detail_lines.push(Line::from(format!("- {}", ln)));
                             total_lines_added += 1;
                         }
-                        
+
                         // After section
                         for ln in ba.after.lines() {
                             if total_lines_added >= line_limit {
@@ -206,6 +248,19 @@ pub fn render_approvals_overlay(
                             total_lines_added += 1;
                         }
                     }
+                }
+            }
+        };
+
+        match sel_kind {
+            ProposalKind::Edit => {
+                if let Some(p) = proposals_guard.get(&sel_id) {
+                    render_preview(&p.status, p.files.len(), &p.preview);
+                }
+            }
+            ProposalKind::Create => {
+                if let Some(p) = create_guard.get(&sel_id) {
+                    render_preview(&p.status, p.files.len(), &p.preview);
                 }
             }
         }
@@ -255,5 +310,5 @@ pub fn render_approvals_overlay(
         frame.render_widget(hint, footer_area);
     }
 
-    selected_id
+    selected.map(|(_, id)| id)
 }

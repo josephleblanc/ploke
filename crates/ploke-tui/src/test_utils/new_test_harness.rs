@@ -121,6 +121,7 @@ impl AppHarness {
             embedder: Arc::clone(&proc_arc),
             io_handle,
             proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
             rag,
             budget: TokenBudget::default(),
         });

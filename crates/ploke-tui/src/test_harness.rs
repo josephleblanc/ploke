@@ -97,6 +97,7 @@ lazy_static! {
             embedder: Arc::clone(&proc_arc),
             io_handle: io_handle.clone(),
             proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
             rag,
             budget: TokenBudget::default(),
         });
