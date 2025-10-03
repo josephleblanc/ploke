@@ -100,6 +100,20 @@ impl IoManagerHandle {
         IoManagerBuilder::default()
     }
 
+    /// Update the configured roots and symlink policy at runtime for the running IoManager.
+    ///
+    /// Pass `None` to clear roots/policy and disable path scoping enforcement.
+    pub async fn update_roots(
+        &self,
+        roots: Option<Vec<std::path::PathBuf>>,
+        policy: Option<crate::path_policy::SymlinkPolicy>,
+    ) {
+        let _ = self
+            .request_sender
+            .send(IoManagerMessage::UpdateRoots { roots, policy })
+            .await;
+    }
+
     /// Read a batch of UTF-8-safe snippets from files with per-request hash verification.
     ///
     /// - Preserves input order in the returned vector.

@@ -81,6 +81,16 @@ impl SystemState {
     pub fn new(status: SystemStatus) -> Self {
         SystemState(RwLock::new(status))
     }
+    #[cfg(feature = "test_harness")]
+    pub async fn set_crate_focus_for_test(&self, p: std::path::PathBuf) {
+        let mut guard = self.0.write().await;
+        guard.crate_focus = Some(p);
+    }
+    #[cfg(feature = "test_harness")]
+    pub async fn crate_focus_for_test(&self) -> Option<std::path::PathBuf> {
+        let guard = self.0.read().await;
+        guard.crate_focus.clone()
+    }
 }
 
 impl std::ops::Deref for SystemState {

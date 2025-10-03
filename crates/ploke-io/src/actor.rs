@@ -22,6 +22,8 @@ pub struct IoManager {
 #[derive(Debug)]
 pub enum IoManagerMessage {
     Request(IoRequest),
+    /// Update path roots and symlink policy at runtime
+    UpdateRoots { roots: Option<Vec<PathBuf>>, policy: Option<SymlinkPolicy> },
     Shutdown,
 }
 
@@ -108,6 +110,10 @@ impl IoManager {
     pub async fn run(mut self) {
         while let Some(message) = self.request_receiver.recv().await {
             match message {
+                IoManagerMessage::UpdateRoots { roots, policy } => {
+                    self.roots = roots.map(Arc::new);
+                    self.symlink_policy = policy;
+                }
                 IoManagerMessage::Request(request) => self.handle_request(request).await,
                 IoManagerMessage::Shutdown => break,
             }

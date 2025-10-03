@@ -43,9 +43,12 @@ use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-use view::components::approvals::{ApprovalsState, render_approvals_overlay, unified_items, ProposalKind};
+use view::components::approvals::{
+    ApprovalsState, ProposalKind, render_approvals_overlay, unified_items,
+};
 use view::components::model_browser::{
-    compute_browser_scroll, model_browser_focus_line, model_browser_total_lines, render_model_browser, ModelBrowserItem, ModelBrowserState, ModelProviderRow
+    ModelBrowserItem, ModelBrowserState, ModelProviderRow, compute_browser_scroll,
+    model_browser_focus_line, model_browser_total_lines, render_model_browser,
 };
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
@@ -173,6 +176,7 @@ impl App {
     {
         use futures::StreamExt;
         self.running = true;
+        #[allow(clippy::collapsible_if)]
         if opts.setup_terminal_modes {
             if let Err(e) = execute!(
                 std::io::stdout(),
@@ -438,7 +442,7 @@ impl App {
         let selected_index_opt = self
             .list
             .selected()
-            .map(|i| i.min(path_len.saturating_sub(1)));
+            .map(|i| i.min(path_len.saturating_sub( 1 )));
 
         // Prepare and render conversation via ConversationView
         self.conversation.prepare(
@@ -535,8 +539,8 @@ impl App {
         frame.render_widget(model_display, model_info_area);
 
         // Flash indicator for model changes
-        if let Some((_, timestamp)) = &self.active_model_indicator {
-            if timestamp.elapsed().as_secs() < 2 {
+        if let Some((_, timestamp)) = &self.active_model_indicator
+            && timestamp.elapsed().as_secs() < 2 {
                 let flash_indicator = Paragraph::new("✓");
                 frame.render_widget(
                     flash_indicator,
@@ -547,7 +551,6 @@ impl App {
                         1,
                     ),
                 );
-            }
         }
 
         // Render model browser overlay if visible
@@ -561,7 +564,11 @@ impl App {
                 .style(overlay_style)
                 .block(
                     Block::bordered()
-                        .title(format!(" Model Browser — {} results for \"{}\" ", mb.items.len(), mb.keyword))
+                        .title(format!(
+                            " Model Browser — {} results for \"{}\" ",
+                            mb.items.len(),
+                            mb.keyword
+                        ))
                         .style(overlay_style),
                 )
                 // Preserve leading indentation in detail lines
@@ -712,15 +719,27 @@ impl App {
                         (p, c)
                     };
                     let mut items: Vec<(ProposalKind, uuid::Uuid)> = Vec::new();
-                    for (id, _) in p_guard.iter() { items.push((ProposalKind::Edit, *id)); }
-                    for (id, _) in c_guard.iter() { items.push((ProposalKind::Create, *id)); }
+                    for (id, _) in p_guard.iter() {
+                        items.push((ProposalKind::Edit, *id));
+                    }
+                    for (id, _) in c_guard.iter() {
+                        items.push((ProposalKind::Create, *id));
+                    }
                     items.sort_by_key(|(_, id)| *id);
                     if let Some((kind, id)) = items.get(sel_index).cloned() {
                         let _ = match (approve, kind) {
-                            (true, ProposalKind::Edit) => cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id }),
-                            (true, ProposalKind::Create) => cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id }),
-                            (false, ProposalKind::Edit) => cmd_tx.try_send(StateCommand::DenyEdits { request_id: id }),
-                            (false, ProposalKind::Create) => cmd_tx.try_send(StateCommand::DenyCreations { request_id: id }),
+                            (true, ProposalKind::Edit) => {
+                                cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
+                            }
+                            (true, ProposalKind::Create) => {
+                                cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
+                            }
+                            (false, ProposalKind::Edit) => {
+                                cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
+                            }
+                            (false, ProposalKind::Create) => {
+                                cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
+                            }
                         };
                     }
                 });
@@ -752,7 +771,7 @@ impl App {
             // If the current message isn't in the path for some reason, select nothing.
             self.list.select(None);
         }
-    } // The read lock `guard` is dropped here.
+    }
 
     /// Handles the key events and updates application state via high-level Actions.
     ///
@@ -770,17 +789,16 @@ impl App {
         }
 
         // Global action mapping (including OpenApprovals)
-        if let Some(action) = to_action(self.mode, key, self.command_style) {
-            use Action::*;
-            if let OpenApprovals = action {
-                if self.approvals.is_some() {
-                    self.approvals = None;
-                } else {
-                    self.approvals = Some(ApprovalsState::default());
-                }
-                self.needs_redraw = true;
-                return;
+        if let Some(action) = to_action(self.mode, key, self.command_style)
+            && Action::OpenApprovals == action
+        {
+            if self.approvals.is_some() {
+                self.approvals = None;
+            } else {
+                self.approvals = Some(ApprovalsState::default());
             }
+            self.needs_redraw = true;
+            return;
         }
 
         // Insert mode input history navigation
@@ -1156,7 +1174,7 @@ impl App {
                 ModelBrowserItem {
                     id: m.id.clone(),
                     name: Some(m.name),
-                    context_length: m.context_length.or_else(|| m.top_provider.context_length),
+                    context_length: m.context_length.or(m.top_provider.context_length),
                     // Display pricing in USD per 1M tokens (aligns with provider rows)
                     input_cost: Some(m.pricing.prompt * 1_000_000.0),
                     output_cost: Some(m.pricing.completion * 1_000_000.0),
@@ -1206,7 +1224,7 @@ impl App {
                             .or_default();
                         cfg.active_model = parsed;
                     }
-                    Err(e) => tracing::error!("Failed to write model to registry")
+                    Err(e) => tracing::error!("Failed to write model to registry"),
                 }
             })
         });

@@ -42,7 +42,7 @@ use crate::tools::{
     FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall,
     ToolDefinition, ToolFunctionDef, ToolName,
 };
-use crate::utils::consts::DEBUG_TOOLS;
+use crate::utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT};
 use crate::{AppEvent, EventBus};
 
 // API and Config
@@ -514,7 +514,7 @@ async fn prepare_and_run_llm_call(
         parent_id,
         req,
         fallback_on_404: false,
-        attempts: 3,
+        attempts: TOOL_CALL_CHAIN_LIMIT,
         state_cmd_tx: cmd_tx.clone(),
     };
 

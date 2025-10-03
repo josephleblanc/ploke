@@ -220,10 +220,17 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 namespace,
             } => {
                 let p = PathBuf::from(file_path);
-                let abs_path = if p.is_absolute() {
+                let abs_path = if let Some(root) = crate_root.as_ref() {
+                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                        Ok(pb) => pb,
+                        Err(err) => {
+                            let msg = format!("invalid path: {}", err);
+                            tool_call_params.tool_call_failed(msg);
+                            return;
+                        }
+                    }
+                } else if p.is_absolute() {
                     p
-                } else if let Some(root) = crate_root.as_ref() {
-                    root.join(p)
                 } else {
                     std::env::current_dir()
                         .unwrap_or_else(|_| PathBuf::from("."))
@@ -259,20 +266,23 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
-                let (abs_path, file_is_relative) = {
-                    let p = PathBuf::from(file);
-                    if p.is_absolute() {
-                        (p, false)
-                    } else if let Some(root) = crate_root.as_ref() {
-                        (root.join(file), true)
-                    } else {
-                        (
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(file),
-                            true,
-                        )
+                let p = PathBuf::from(file);
+                let file_was_relative = !p.is_absolute();
+                let abs_path = if let Some(root) = crate_root.as_ref() {
+                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                        Ok(pb) => pb,
+                        Err(err) => {
+                            let msg = format!("invalid path: {}", err);
+                            tool_call_params.tool_call_failed(msg);
+                            return;
+                        }
                     }
+                } else if p.is_absolute() {
+                    p
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(p)
                 };
                 let canon_trim = canon.trim();
                 if canon_trim.is_empty() {
@@ -339,7 +349,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         .filter(|ed| {
                             if ed.file_path == abs_path {
                                 true
-                            } else if file_is_relative {
+                            } else if file_was_relative {
                                 ed.file_path.to_string_lossy().ends_with(file)
                             } else {
                                 false
@@ -650,10 +660,16 @@ pub async fn create_file_tool(tool_call_params: ToolCallParams) {
     let crate_root = { state.system.read().await.crate_focus.clone() };
     let abs_path = {
         let p = std::path::PathBuf::from(&params.file_path);
-        if p.is_absolute() {
+        if let Some(root) = crate_root.as_ref() {
+            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                Ok(pb) => pb,
+                Err(err) => {
+                    tool_call_params.tool_call_failed(format!("invalid path: {}", err));
+                    return;
+                }
+            }
+        } else if p.is_absolute() {
             p
-        } else if let Some(root) = crate_root.as_ref() {
-            root.join(p)
         } else {
             std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))

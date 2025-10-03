@@ -8,6 +8,9 @@ pub(crate) const OPENROUTER_ENDPOINT_STR: &str = "/endpoints";
 
 pub(crate) const TOOL_CALL_TIMEOUT: u64 = 10;
 
+// --- sane defaults ---
+pub(crate) const TOOL_CALL_CHAIN_LIMIT: u32 = 15;
+
 // --- debug consts ---
 //
 // Used for debug targets with tracing

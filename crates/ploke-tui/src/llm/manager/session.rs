@@ -149,6 +149,7 @@ where
         let mut assistant_intro: String = String::new();
         let state_cmd_tx = self.state_cmd_tx.clone();
 
+        let mut initial_message_updated = false;
         for _attempt in 0..=self.attempts {
 
             if !use_tools {
@@ -218,19 +219,22 @@ where
                 return Err(err);
             }
 
-            let mut last_msg_id = self.parent_id;
             match parse_outcome(&body_text)? {
                 ParseOutcome::ToolCalls { calls: tool_calls, content, finish_reason } => {
                     tracing::debug!(calls = ?tool_calls, ?content);
                     let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
-                    state_cmd_tx.send(StateCommand::UpdateMessage { 
-                        id: self.parent_id, 
-                        update: MessageUpdate { 
-                            content: Some( assistant_update), 
-                            status: Some( MessageStatus::Completed ),
-                            ..Default::default() 
-                        }
-                    }).await.expect("state command must be running");
+
+                    if !initial_message_updated {
+                        state_cmd_tx.send(StateCommand::UpdateMessage { 
+                            id: self.parent_id, 
+                            update: MessageUpdate { 
+                                content: Some( assistant_update), 
+                                status: Some( MessageStatus::Completed ),
+                                ..Default::default() 
+                            }
+                        }).await.expect("state command must be running");
+                        initial_message_updated = true;
+                    }
 
                     let mut task_set = tokio::task::JoinSet::new();
                     for call in tool_calls.into_iter() {
@@ -269,7 +273,7 @@ where
                                             error,
                                             ..
                                         }) if rid == request_id && cid == call_id => {
-                                            update_message(last_msg_id, &call_id, &cmd_tx, "tool call error").await;
+                                            add_sysinfo_message(&call_id, &cmd_tx, "tool call error").await;
                                             return Err(error);
                                         }
                                         _ => {}
@@ -280,7 +284,7 @@ where
                             match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
                                 Ok(r) => (call_id_clone, r),
                                 Err(_) => { 
-                                    update_message(last_msg_id, &call_id_clone, &cmd_tx_clone, "timeout").await;
+                                    add_sysinfo_message(&call_id_clone, &cmd_tx_clone, "timeout").await;
                                     ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
                                 }
                             }
@@ -301,7 +305,7 @@ where
                                     new_msg_id: Uuid::new_v4(),
                                     msg: err_msg.clone(),
                                     // TODO: Change to 'Tool'
-                                    kind: MessageKind::System,
+                                    kind: MessageKind::Tool,
                                     tool_call_id: cid,
 
                                 }).await.expect("state manager must be running");
@@ -343,17 +347,22 @@ where
 }
 
 #[tracing::instrument]
-async fn update_message(last_msg_id: Uuid, call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
+async fn add_sysinfo_message(call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
     let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
     cmd_tx.send(StateCommand::AddMessageImmediate {
         msg: completed_msg,
         kind: MessageKind::SysInfo,
         new_msg_id: Uuid::new_v4()
-        // id: last_msg_id,
-        // update: MessageUpdate {
-        //     content: Some( completed_msg ),
-        //     ..Default::default()
-        // }
+    }).await.expect("state manager must be running");
+}
+
+#[tracing::instrument]
+async fn add_tool_failed_message(call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
+    let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
+    cmd_tx.send(StateCommand::AddMessageImmediate {
+        msg: completed_msg,
+        kind: MessageKind::System,
+        new_msg_id: Uuid::new_v4()
     }).await.expect("state manager must be running");
 }
 

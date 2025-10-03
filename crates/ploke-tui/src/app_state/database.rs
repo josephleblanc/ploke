@@ -221,11 +221,18 @@ pub(super) async fn load_db(
                         ))
                     })
                     .map(|v| v.get_str().expect("Crate must always be a string"))?;
-                let target_dir = std::env::current_dir()
-                    .inspect_err(|e| tracing::error!("Error finding current dir: {e}"))
-                    .ok();
-
-                system_guard.crate_focus = target_dir.map(|cd| cd.join(crate_root_path));
+                // crate_root_path is expected to be absolute from DB context; use directly
+                let root_path = std::path::PathBuf::from(crate_root_path);
+                system_guard.crate_focus = Some(root_path.clone());
+                // Also update IoManager roots for IO-level enforcement
+                drop(system_guard);
+                state
+                    .io_handle
+                    .update_roots(
+                        Some(vec![root_path]),
+                        Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
+                    )
+                    .await;
             }
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
@@ -246,6 +253,40 @@ pub(super) async fn load_db(
         }
         Err(e) => Err(e),
     }
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn test_set_crate_focus_from_db(
+    state: &Arc<AppState>,
+    crate_name: String,
+) -> Result<(), ploke_error::Error> {
+    let script = format!(
+        "?[root_path] := *crate_context {{name: crate_name, root_path @ 'NOW' }}, crate_name = \"{crate_name}\""
+    );
+    let db_res = state.db.raw_query(&script)?;
+    let crate_root_path = db_res
+        .rows
+        .first()
+        .and_then(|c| c.first())
+        .ok_or_else(|| {
+            let msg = "Incorrect retrieval of crate context, no first row/column";
+            tracing::error!(msg);
+            ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(msg.to_string()))
+        })
+        .map(|v| v.get_str().expect("Crate must always be a string"))?;
+    let root_path = std::path::PathBuf::from(crate_root_path);
+    {
+        let mut system_guard = state.system.write().await;
+        system_guard.crate_focus = Some(root_path.clone());
+    }
+    state
+        .io_handle
+        .update_roots(
+            Some(vec![root_path]),
+            Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
+        )
+        .await;
+    Ok(())
 }
 
 pub(super) async fn scan_for_change(

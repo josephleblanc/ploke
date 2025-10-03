@@ -20,6 +20,10 @@ pub use core::{
 pub use dispatcher::state_manager;
 pub use events::MessageUpdatedEvent;
 
+// Test-only exports (use the crate feature so integration tests can call these helpers)
+#[cfg(feature = "test_harness")]
+pub use database::test_set_crate_focus_from_db;
+
 // Keep tests colocated under app_state after refactor
 #[cfg(test)]
 mod tests;
