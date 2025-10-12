@@ -463,7 +463,7 @@ async fn prepare_and_run_llm_call(
 ) -> Result<String, LlmError> {
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
-    let tools: Vec<ToolDefinition> = vec![
+    let tool_defs: Vec<ToolDefinition> = vec![
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
         GetFileMetadata::tool_def(),
@@ -480,9 +480,16 @@ async fn prepare_and_run_llm_call(
     use crate::llm::router_only;
     use crate::llm::router_only::openrouter;
 
-    // load tools, using defaults for now
-    let tools = Some(tools.clone());
-    let tool_choice = Some(ToolChoice::Auto);
+    // Gate tools by crate_focus: disable when no workspace is loaded
+    let crate_loaded = {
+        let sys = state.system.read().await;
+        sys.crate_focus.is_some()
+    };
+    let (tools, tool_choice) = if crate_loaded {
+        (Some(tool_defs.clone()), Some(ToolChoice::Auto))
+    } else {
+        (None, None)
+    };
 
     // Use the runtime-selected active model (includes optional variant)
     let model_id = {

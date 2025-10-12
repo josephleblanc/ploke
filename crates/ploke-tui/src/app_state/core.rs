@@ -280,10 +280,11 @@ impl AppState {
 #[derive(Debug, Default)]
 pub struct SystemStatus {
     pub(crate) crate_focus: Option<PathBuf>,
+    pub(crate) no_workspace_tip_shown: bool,
 }
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
-        Self { crate_focus }
+        Self { crate_focus, no_workspace_tip_shown: false }
     }
 }

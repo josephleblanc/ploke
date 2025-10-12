@@ -6,7 +6,7 @@ Note: If today is after Oct 4, disregard these priorities and reassess their rel
 
 In no particular order, these are the most important things to get done in the project.
 
-- fix the way the user's submitted message is handled so they will receive a helpful response from the LLM along with a system help message with instructions on how to index a target crate + how to use the "help" command. This will likely be the initial entrypoint for most users who will run the application and then just enter something, so it is important to make sure this case is handled well.
+- [x] fix the way the user's submitted message is handled so they will receive a helpful response from the LLM along with a system help message with instructions on how to index a target crate + how to use the "help" command. This will likely be the initial entrypoint for most users who will run the application and then just enter something, so it is important to make sure this case is handled well.
 
 - ensure there is a proper test harness for testing events, so we can add better tests for end-to-end event flows + mock LLM responses realistically for offline tests and check the values are as expected for online events at different checkpoints along the event flow of any given process.
 

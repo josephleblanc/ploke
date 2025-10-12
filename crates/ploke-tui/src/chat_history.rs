@@ -675,8 +675,8 @@ impl ChatHistory {
         }
 
         // Track whether current/tail are being deleted
-        let deletes_current = to_delete.iter().any(|n| *n == self.current);
-        let deletes_tail = to_delete.iter().any(|n| *n == self.tail);
+        let deletes_current = to_delete.contains(&self.current);
+        let deletes_tail = to_delete.contains(&self.tail);
 
         // Remove all collected nodes
         for node in to_delete {
@@ -1070,7 +1070,7 @@ pub(crate) async fn atomic_write(
     temp.write_all(content.as_bytes())?;
     // Map PersistError into a plain io::Error to satisfy the return type
     temp.persist(path)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -1511,19 +1511,20 @@ mod tests {
         ch.current = a1;
         ch.rebuild_path_cache();
 
-        // NOTE: Doesn't include the root message
+        // Include the root system prompt when non-empty
         let msgs = ch.current_path_as_llm_request_messages();
         // Expect: [System(non-empty), User, Assistant]
-        let printable = format!("messages:\n\n{:#?}\n", msgs);
+        let printable = format!("messages:
+
+{:#?}
+", msgs);
         eprintln!("{}", &printable);
-        assert_eq!(msgs.len(), 2);
-        // TODO: Think about changing methods to allow root message to be included, this seems
-        // buggy.
-        // assert_eq!(msgs[0].role, LlmRole::System);
-        // assert_eq!(msgs[0].content, "You are a helpful assistant.");
-        assert_eq!(msgs[0].role, LlmRole::User);
-        assert_eq!(msgs[0].content, "Hello?");
-        assert_eq!(msgs[1].role, LlmRole::Assistant);
-        assert_eq!(msgs[1].content, "Hi! How can I help?");
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, LlmRole::System);
+        assert!(msgs[0].content.contains("BEGIN SYSTEM PROMPT"));
+        assert_eq!(msgs[1].role, LlmRole::User);
+        assert_eq!(msgs[1].content, "Hello?");
+        assert_eq!(msgs[2].role, LlmRole::Assistant);
+        assert_eq!(msgs[2].content, "Hi! How can I help?");
     }
 }

@@ -209,3 +209,31 @@ pub async fn add_msg_immediate(
         tracing::error!("Failed to add message of kind: {}", kind);
     }
 }
+
+pub async fn add_msg_immediate_nofocus(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    kind: MessageKind,
+) {
+    tracing::trace!("Starting add_msg_immediate_nofocus");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
+        MessageKind::System => chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::Assistant => chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::Tool => panic!("Use add_tool_msg_immediate to add tool messages"),
+        MessageKind::SysInfo => chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone()),
+    };
+    drop(chat_guard);
+
+    if let Ok(message_id) = message_wrapper {
+        // Do NOT change current selection; emit event so UI can render the new message
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    } else {
+        tracing::error!("Failed to add message (nofocus) of kind: {}", kind);
+    }
+}
