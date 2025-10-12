@@ -169,3 +169,51 @@ pub struct CreateFileResult {
     /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
     pub auto_confirmed: bool,
 }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFileResult {
+    pub ok: bool,
+    pub file_path: String,
+    pub exists: bool,
+    pub byte_len: u64,
+    pub content: String,
+}
+
+#[cfg(test)]
+mod read_file_result_tests {
+    use super::*;
+
+    #[test]
+    fn serde_roundtrip_utf8() {
+        let v = ReadFileResult {
+            ok: true,
+            file_path: "/tmp/test.rs".to_string(),
+            exists: true,
+            byte_len: 12,
+            content: "fn main(){}".to_string(),
+        };
+        let s = serde_json::to_string(&v).expect("serialize");
+        let de: ReadFileResult = serde_json::from_str(&s).expect("deserialize");
+        assert!(de.ok);
+        assert_eq!(de.file_path, v.file_path);
+        assert!(de.exists);
+        assert_eq!(de.byte_len, 12u64);
+        assert_eq!(de.content, v.content);
+    }
+
+    #[test]
+    fn serde_roundtrip_base64() {
+        let v = ReadFileResult {
+            ok: true,
+            file_path: "/tmp/a.bin".to_string(),
+            exists: true,
+            byte_len: 4,
+            content: "AAECAw==".to_string(),
+        };
+        let s = serde_json::to_string(&v).expect("serialize");
+        let de: ReadFileResult = serde_json::from_str(&s).expect("deserialize");
+        assert!(de.ok);
+        assert_eq!(de.byte_len, 4u64);
+    }
+}
