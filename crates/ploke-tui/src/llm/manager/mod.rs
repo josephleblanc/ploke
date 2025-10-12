@@ -39,7 +39,7 @@ use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
 use crate::tools::{
-    FunctionCall, FunctionMarker, GetFileMetadata, RequestCodeContext, Tool as _, ToolCall,
+    FunctionCall, FunctionMarker, RequestCodeContext, Tool as _, ToolCall,
     ToolDefinition, ToolFunctionDef, ToolName,
 };
 use crate::utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT};
@@ -466,7 +466,6 @@ async fn prepare_and_run_llm_call(
     let tool_defs: Vec<ToolDefinition> = vec![
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
-        GetFileMetadata::tool_def(),
         crate::tools::create_file::CreateFile::tool_def(),
     ];
 
@@ -499,7 +498,7 @@ async fn prepare_and_run_llm_call(
 
     // WARN: Using default fields here, should try to load from registry first and use default if
     // the selected model is default or if the registry is not yet set up.
-    let mut req = OpenRouter::default_chat_completion()
+    let req = OpenRouter::default_chat_completion()
         .with_core_bundle(crate::llm::request::ChatCompReqCore::default())
         .with_model(model_id)
         .with_messages(messages)

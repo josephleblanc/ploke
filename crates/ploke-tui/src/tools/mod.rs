@@ -29,8 +29,6 @@ pub use request_code_context::{
 };
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
-pub mod get_file_metadata;
-pub use get_file_metadata::{GetFileMetadata, GetFileMetadataInput};
 pub mod create_file;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
@@ -38,7 +36,6 @@ pub mod create_file;
 pub enum ToolName {
     RequestCodeContext,
     ApplyCodeEdit,
-    GetFileMetadata,
     CreateFile,
 }
 
@@ -48,7 +45,6 @@ impl ToolName {
         match self {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
-            GetFileMetadata => "get_file_metadata",
             CreateFile => "create_file",
         }
     }
@@ -279,23 +275,6 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             code_edit::GatCodeEdit::emit_completed(&ctx, content);
             Ok(())
         }
-        ToolName::GetFileMetadata => {
-            let params = get_file_metadata::GetFileMetadata::deserialize_params(&args)?;
-            tracing::debug!(target: DEBUG_TOOLS, 
-                "params: {}\n",
-                format_args!("{:#?}", &params),
-            );
-            let ToolResult { content } =
-                get_file_metadata::GetFileMetadata::execute(params, ctx.clone())
-                    .await
-                    .inspect_err(|e| GetFileMetadata::emit_err(&ctx, e.to_string()))?;
-            tracing::debug!(target: DEBUG_TOOLS, 
-                "content: {}\n",
-                format_args!("{:#?}", &content),
-            );
-            get_file_metadata::GetFileMetadata::emit_completed(&ctx, content);
-            Ok(())
-        }
         ToolName::CreateFile => {
             let params = create_file::CreateFile::deserialize_params(&args)?;
             tracing::debug!(target: DEBUG_TOOLS,
@@ -408,7 +387,6 @@ mod tests {
             "request_code_context"
         );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
-        assert_eq!(ToolName::GetFileMetadata.as_str(), "get_file_metadata");
         assert_eq!(ToolName::CreateFile.as_str(), "create_file");
     }
 

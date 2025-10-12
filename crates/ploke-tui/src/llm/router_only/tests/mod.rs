@@ -367,7 +367,6 @@ fn test_chat_comp_request_serialization_minimal() {
     use crate::llm::request::ChatCompReqCore;
     use crate::llm::request::endpoint::ToolChoice;
     use crate::llm::router_only::default_model;
-    use crate::tools::GetFileMetadata;
 
     let messages = vec![
         RequestMessage::new_system("sys".to_string()),
@@ -390,7 +389,6 @@ fn test_chat_comp_request_serialization_minimal() {
     //     .with_temperature(0.0)
     //     .with_max_tokens(128);
     let mut req = req;
-    req.tools = Some(vec![GetFileMetadata::tool_def()]);
     req.tool_choice = Some(ToolChoice::Auto);
 
     let v = serde_json::to_value(&req).expect("serialize ChatCompRequest");
