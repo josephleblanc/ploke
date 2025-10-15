@@ -13,6 +13,7 @@ use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
+use crate::tools::create_file::CreateFileCtx;
 use crate::tools::ToolName;
 use crate::{
     app_state::{
@@ -78,76 +79,6 @@ impl ToolInput<serde_json::Value> for GetContextInput {
     }
 }
 
-pub async fn get_file_metadata_tool(tool_call_params: ToolCallParams) {
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-    // Validate args
-    let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
-        tool_call_params.tool_call_failed("Missing required argument 'file_path'".to_string());
-        return;
-    };
-
-    let path = PathBuf::from(file_path_str);
-    // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => {
-            let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);
-            // Get basic metadata
-            let (byte_len, modified_ms) = match tokio::fs::metadata(&path).await {
-                Ok(md) => {
-                    let len = md.len();
-                    let modified_ms = md.modified().ok().and_then(|mtime| {
-                        mtime
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .ok()
-                            .map(|d| d.as_millis() as i64)
-                    });
-                    (len, modified_ms)
-                }
-                Err(_) => (bytes.len() as u64, None),
-            };
-
-            let result = GetFileMetadataResult {
-                ok: true,
-                file_path: path.display().to_string(),
-                exists: true,
-                byte_len,
-                modified_ms,
-                file_hash: hash_uuid.to_string(),
-                tracking_hash: hash_uuid.to_string(),
-            };
-            let content = match serde_json::to_string(&result) {
-                Ok(s) => s,
-                Err(e) => {
-                    let err = format!("Failed to serialize GetFileMetadataResult: {}", e);
-                    tool_call_params.tool_call_failed(err);
-                    return;
-                }
-            };
-
-            let _ = event_bus
-                .realtime_tx
-                .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    content,
-                }));
-        }
-        Err(e) => {
-            let err = format!("Failed to read file '{}': {}", path.display(), e);
-            tool_call_params.tool_call_failed(err);
-        }
-    }
-}
-
 pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
@@ -155,7 +86,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         request_id,
         parent_id,
         name,
-        arguments,
+        typed_req,
         call_id,
     } = tool_call_params.clone();
     // Idempotency: guard duplicate requests
@@ -178,17 +109,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             return;
         }
     }
-
-    // Parse args (strongly typed). Prefer tagged enum request; 
-    // Old fall back to legacy direct splice mapping has been removed.
-    let typed_req: ApplyCodeEditRequest = match serde_json::from_value(arguments.clone()) {
-        Ok(v) => v,
-        Err(e) => {
-            let err = format!("Invalid apply_code_edit payload: {}", e);
-            tool_call_params.tool_call_failed(err);
-            return;
-        } 
-    };
 
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
@@ -626,225 +546,3 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-pub async fn create_file_tool(tool_call_params: ToolCallParams) {
-    use ploke_core::{CreateFileData, OnExists, PROJECT_NAMESPACE_UUID};
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-
-    // Parse typed params
-    #[derive(Deserialize)]
-    struct Params {
-        file_path: String,
-        content: String,
-        #[serde(default)]
-        on_exists: Option<String>,
-        #[serde(default)]
-        create_parents: bool,
-    }
-    let params: Params = match serde_json::from_value(arguments.clone()) {
-        Ok(v) => v,
-        Err(e) => {
-            tool_call_params.tool_call_failed(format!("Invalid create_file payload: {}", e));
-            return;
-        }
-    };
-
-    // Resolve absolute path against crate root when relative
-    let crate_root = { state.system.read().await.crate_focus.clone() };
-    let abs_path = {
-        let p = std::path::PathBuf::from(&params.file_path);
-        if let Some(root) = crate_root.as_ref() {
-            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-                Ok(pb) => pb,
-                Err(err) => {
-                    tool_call_params.tool_call_failed(format!("invalid path: {}", err));
-                    return;
-                }
-            }
-        } else if p.is_absolute() {
-            p
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join(p)
-        }
-    };
-
-    // Restrict to .rs files
-    if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
-        tool_call_params.tool_call_failed("only .rs files are supported".to_string());
-        return;
-    }
-
-    let on_exists = match params.on_exists.as_deref() {
-        Some("overwrite") => OnExists::Overwrite,
-        Some("error") | None => OnExists::Error,
-        Some(other) => {
-            tool_call_params.tool_call_failed(format!("invalid on_exists: {}", other));
-            return;
-        }
-    };
-
-    // Idempotency: prevent duplicate staging for same request_id
-    {
-        let reg = state.create_proposals.read().await;
-        if reg.contains_key(&request_id) {
-            let msg = format!(
-                "Duplicate create_file request ignored for request_id {}",
-                request_id
-            );
-            tool_call_params.tool_call_failed(msg.clone());
-            chat::add_msg_immediate(
-                &state,
-                &event_bus,
-                uuid::Uuid::new_v4(),
-                msg,
-                MessageKind::SysInfo,
-            )
-            .await;
-            return;
-        }
-    }
-
-    // Build IO request
-    let create_req = CreateFileData {
-        id: uuid::Uuid::new_v4(),
-        name: abs_path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| abs_path.display().to_string()),
-        file_path: abs_path.clone(),
-        content: params.content,
-        namespace: PROJECT_NAMESPACE_UUID,
-        on_exists,
-        create_parents: params.create_parents,
-    };
-
-    // Preview generation
-    let editing_cfg = { state.config.read().await.editing.clone() };
-    let before = String::new();
-    let after = create_req.content.clone();
-    let display_path = if let Some(root) = crate_root.as_ref() {
-        abs_path
-            .strip_prefix(root)
-            .unwrap_or(abs_path.as_path())
-            .to_path_buf()
-    } else {
-        abs_path.clone()
-    };
-
-    let truncate = |s: &str| -> String {
-        let max = editing_cfg.max_preview_lines;
-        let mut out = String::new();
-        for (i, line) in s.lines().enumerate() {
-            if i >= max {
-                out.push_str("... [truncated]");
-                break;
-            }
-            if i > 0 { out.push('\n'); }
-            out.push_str(line);
-        }
-        out
-    };
-
-    let per_file = vec![BeforeAfter {
-        file_path: display_path.clone(),
-        before: truncate(&before),
-        after: truncate(&after),
-    }];
-
-    let mut unified_diff = String::new();
-    if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        let header_a = format!("/dev/null");
-        let header_b = format!("b/{}", display_path.display());
-        let diff = TextDiff::from_lines(&before, &after)
-            .unified_diff()
-            .header(&header_a, &header_b)
-            .to_string();
-        unified_diff.push_str(&diff);
-        if !unified_diff.ends_with('\n') { unified_diff.push('\n'); }
-    }
-
-    // Stash proposal
-    {
-        let mut reg = state.create_proposals.write().await;
-        reg.insert(
-            request_id,
-            CreateProposal {
-                request_id,
-                parent_id,
-                call_id: call_id.clone(),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                creates: vec![create_req.clone()],
-                files: vec![abs_path.clone()],
-                preview: if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-                    crate::app_state::core::DiffPreview::UnifiedDiff { text: unified_diff.clone() }
-                } else {
-                    crate::app_state::core::DiffPreview::CodeBlocks { per_file: per_file.clone() }
-                },
-                status: EditProposalStatus::Pending,
-            },
-        );
-    }
-    crate::app_state::handlers::proposals::save_create_proposals(&state).await;
-
-    // Emit SysInfo summary
-    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        "diff"
-    } else {
-        "codeblock"
-    };
-    let summary = format!(
-        r#"Staged file creation (request_id: {request_id}, call_id: {call_id:?}).
-Files:
-    {file}
-
-Preview (mode={preview}, first {lines} lines per section):
-{snippet}
-
-Approve:  create approve {request_id}
-Deny:     create deny {request_id}{auto}"#,
-        file = display_path.display(),
-        preview = preview_label,
-        lines = editing_cfg.max_preview_lines,
-        snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) { unified_diff.clone() } else { format!("Before:\n\nAfter:\n{}", per_file[0].after) },
-        auto = if editing_cfg.auto_confirm_edits { "\n\nAuto-approval enabled: applying now..." } else { "" },
-    );
-    chat::add_msg_immediate(&state, &event_bus, Uuid::new_v4(), summary, MessageKind::SysInfo).await;
-
-    // Emit typed ToolCallCompleted result
-    let result = ploke_core::rag_types::CreateFileResult {
-        ok: true,
-        staged: 1,
-        applied: 0,
-        files: vec![display_path.display().to_string()],
-        preview_mode: preview_label.to_string(),
-        auto_confirmed: editing_cfg.auto_confirm_edits,
-    };
-    let content = match serde_json::to_string(&result) {
-        Ok(s) => s,
-        Err(e) => {
-            tool_call_params.tool_call_failed(format!("Failed to serialize CreateFileResult: {}", e));
-            return;
-        }
-    };
-    let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-        request_id,
-        parent_id,
-        call_id: call_id.clone(),
-        content,
-    }));
-
-    if editing_cfg.auto_confirm_edits {
-        let state2 = Arc::clone(&state);
-        let event_bus2 = Arc::clone(&event_bus);
-        tokio::spawn(async move { super::editing::approve_creations(&state2, &event_bus2, request_id).await; });
-    }
-}

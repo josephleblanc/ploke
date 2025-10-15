@@ -1,6 +1,7 @@
 use super::*;
-use crate::EventBus;
+use crate::{app_state::{core::{BeforeAfter, CreateProposal, EditProposalStatus, PreviewMode}, handlers::chat}, chat_history::MessageKind, rag::editing, EventBus};
 use ploke_core::rag_types::CreateFileResult;
+use similar::TextDiff;
 
 pub struct CreateFile;
 
@@ -22,6 +23,17 @@ pub struct CreateFileParamsOwned {
     pub content: String,
     pub on_exists: Option<String>,
     pub create_parents: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateFileCtx {
+    pub state: Arc<AppState>,
+    pub event_bus: Arc<EventBus>,
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub name: ToolName,
+    pub typed_req: CreateFileParamsOwned,
+    pub call_id: ArcStr,
 }
 
 impl super::Tool for CreateFile {
@@ -48,27 +60,25 @@ impl super::Tool for CreateFile {
         params: Self::Params<'a>,
         ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
-        use crate::rag::tools::create_file_tool;
         use crate::rag::utils::ToolCallParams;
 
-        let arguments = serde_json::to_value(CreateFileParamsOwned {
+        let typed_req = CreateFileParamsOwned {
             file_path: params.file_path.clone().into_owned(),
             content: params.content.clone().into_owned(),
             on_exists: params.on_exists.as_ref().map(|s| s.clone().into_owned()),
             create_parents: params.create_parents,
-        })
-        .map_err(|e| ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!("Failed to serialize CreateFileParams: {}", e))))?;
+        };
 
-        let env = ToolCallParams {
+        let create_file_ctx = CreateFileCtx {
             state: Arc::clone(&ctx.state),
             event_bus: Arc::clone(&ctx.event_bus),
             request_id: ctx.request_id,
             parent_id: ctx.parent_id,
             name: Self::name(),
-            arguments,
+            typed_req,
             call_id: ctx.call_id.clone(),
         };
-        create_file_tool(env).await;
+        create_file_tool(create_file_ctx).await;
 
         // Build typed result deterministically from proposal registry
         let proposal_opt = { ctx.state.create_proposals.read().await.get(&ctx.request_id).cloned() };
@@ -107,6 +117,235 @@ impl super::Tool for CreateFile {
         Err(ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
             "create_file failed to stage proposal (see ToolCallFailed)".to_string(),
         )))
+    }
+}
+
+impl CreateFileCtx {
+    pub(super) fn tool_call_failed(&self, error: String) {
+        let _ = self
+            .event_bus
+            .realtime_tx
+            .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: self.request_id,
+                parent_id: self.parent_id,
+                call_id: self.call_id.clone(),
+                error,
+            }));
+    }
+    pub(super) fn tool_call_err(&self, error: String) -> SystemEvent {
+        SystemEvent::ToolCallFailed {
+            request_id: self.request_id,
+            parent_id: self.parent_id,
+            call_id: self.call_id.clone(),
+            error,
+        }
+    }
+}
+
+pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
+    use ploke_core::{CreateFileData, OnExists, PROJECT_NAMESPACE_UUID};
+    let CreateFileCtx {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        typed_req,
+        call_id,
+    } = tool_call_params.clone();
+
+    let params: CreateFileParamsOwned = typed_req.clone();
+
+    // Resolve absolute path against crate root when relative
+    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let abs_path = {
+        let p = std::path::PathBuf::from(&params.file_path);
+        if let Some(root) = crate_root.as_ref() {
+            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                Ok(pb) => pb,
+                Err(err) => {
+                    tool_call_params.tool_call_failed(format!("invalid path: {}", err));
+                    return;
+                }
+            }
+        } else if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join(p)
+        }
+    };
+
+    // Restrict to .rs files
+    if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        tool_call_params.tool_call_failed("only .rs files are supported".to_string());
+        return;
+    }
+
+    let on_exists = match params.on_exists.as_deref() {
+        Some("overwrite") => OnExists::Overwrite,
+        Some("error") | None => OnExists::Error,
+        Some(other) => {
+            tool_call_params.tool_call_failed(format!("invalid on_exists: {}", other));
+            return;
+        }
+    };
+
+    // Idempotency: prevent duplicate staging for same request_id
+    {
+        let reg = state.create_proposals.read().await;
+        if reg.contains_key(&request_id) {
+            let msg = format!(
+                "Duplicate create_file request ignored for request_id {}",
+                request_id
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            chat::add_msg_immediate(
+                &state,
+                &event_bus,
+                uuid::Uuid::new_v4(),
+                msg,
+                MessageKind::SysInfo,
+            )
+            .await;
+            return;
+        }
+    }
+
+    // Build IO request
+    let create_req = CreateFileData {
+        id: uuid::Uuid::new_v4(),
+        name: abs_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| abs_path.display().to_string()),
+        file_path: abs_path.clone(),
+        content: params.content,
+        namespace: PROJECT_NAMESPACE_UUID,
+        on_exists,
+        create_parents: params.create_parents,
+    };
+
+    // Preview generation
+    let editing_cfg = { state.config.read().await.editing.clone() };
+    let before = String::new();
+    let after = create_req.content.clone();
+    let display_path = if let Some(root) = crate_root.as_ref() {
+        abs_path
+            .strip_prefix(root)
+            .unwrap_or(abs_path.as_path())
+            .to_path_buf()
+    } else {
+        abs_path.clone()
+    };
+
+    let truncate = |s: &str| -> String {
+        let max = editing_cfg.max_preview_lines;
+        let mut out = String::new();
+        for (i, line) in s.lines().enumerate() {
+            if i >= max {
+                out.push_str("... [truncated]");
+                break;
+            }
+            if i > 0 { out.push('\n'); }
+            out.push_str(line);
+        }
+        out
+    };
+
+    let per_file = vec![BeforeAfter {
+        file_path: display_path.clone(),
+        before: truncate(&before),
+        after: truncate(&after),
+    }];
+
+    let mut unified_diff = String::new();
+    if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let header_a = "/dev/null".to_string();
+        let header_b = format!("b/{}", display_path.display());
+        let diff = TextDiff::from_lines(&before, &after)
+            .unified_diff()
+            .header(&header_a, &header_b)
+            .to_string();
+        unified_diff.push_str(&diff);
+        if !unified_diff.ends_with('\n') { unified_diff.push('\n'); }
+    }
+
+    // Stash proposal
+    {
+        let mut reg = state.create_proposals.write().await;
+        reg.insert(
+            request_id,
+            CreateProposal {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                creates: vec![create_req.clone()],
+                files: vec![abs_path.clone()],
+                preview: if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+                    crate::app_state::core::DiffPreview::UnifiedDiff { text: unified_diff.clone() }
+                } else {
+                    crate::app_state::core::DiffPreview::CodeBlocks { per_file: per_file.clone() }
+                },
+                status: EditProposalStatus::Pending,
+            },
+        );
+    }
+    crate::app_state::handlers::proposals::save_create_proposals(&state).await;
+
+    // Emit SysInfo summary
+    let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        "diff"
+    } else {
+        "codeblock"
+    };
+    let summary = format!(
+        r#"Staged file creation (request_id: {request_id}, call_id: {call_id:?}).
+Files:
+    {file}
+
+Preview (mode={preview}, first {lines} lines per section):
+{snippet}
+
+Approve:  create approve {request_id}
+Deny:     create deny {request_id}{auto}"#,
+        file = display_path.display(),
+        preview = preview_label,
+        lines = editing_cfg.max_preview_lines,
+        snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) { unified_diff.clone() } else { format!("Before:\n\nAfter:\n{}", per_file[0].after) },
+        auto = if editing_cfg.auto_confirm_edits { "\n\nAuto-approval enabled: applying now..." } else { "" },
+    );
+    chat::add_msg_immediate(&state, &event_bus, Uuid::new_v4(), summary, MessageKind::SysInfo).await;
+
+    // Emit typed ToolCallCompleted result
+    let result = ploke_core::rag_types::CreateFileResult {
+        ok: true,
+        staged: 1,
+        applied: 0,
+        files: vec![display_path.display().to_string()],
+        preview_mode: preview_label.to_string(),
+        auto_confirmed: editing_cfg.auto_confirm_edits,
+    };
+    let content = match serde_json::to_string(&result) {
+        Ok(s) => s,
+        Err(e) => {
+            tool_call_params.tool_call_failed(format!("Failed to serialize CreateFileResult: {}", e));
+            return;
+        }
+    };
+    let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+        request_id,
+        parent_id,
+        call_id: call_id.clone(),
+        content,
+    }));
+
+    if editing_cfg.auto_confirm_edits {
+        let state2 = Arc::clone(&state);
+        let event_bus2 = Arc::clone(&event_bus);
+        tokio::spawn(async move { editing::approve_creations(&state2, &event_bus2, request_id).await; });
     }
 }
 
@@ -151,4 +390,5 @@ mod tests {
         assert!(owned.create_parents);
     }
 }
+
 
