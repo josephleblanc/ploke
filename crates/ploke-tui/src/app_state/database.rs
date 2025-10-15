@@ -25,7 +25,7 @@ use super::*;
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
-pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) -> ControlFlow<()> {
+pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
             msg: "Could not locate default config directory on system",
@@ -34,7 +34,7 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
     }) {
         dir.join("ploke").join("data")
     } else {
-        return ControlFlow::Break(());
+        return;
     };
     if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
         let msg = format!(
@@ -50,8 +50,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
         }));
     }
     let system_guard = state.system.read().await;
-    // TODO: This error handling feels really cumbersome, should rework.
-
     // make sure directory exists, otherwise report error
 
     // Using crate focus here, which we set when we perform indexing.
@@ -67,17 +65,21 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
         .filter_map(|cr| cr.to_str())
         .next()
     {
-        // let crate_focus_str = crate_focus.to_string_lossy();
-        let crate_name_version = if let Ok(db_result) = state
+        let crate_name_version = match state
             .db
             .get_crate_name_id(crate_focus)
             .map_err(ploke_error::Error::from)
-            .inspect_err(|e| {
+        {
+                Ok(db_result) => {
+                db_result
+            }
+            Err(e) => {
                 e.emit_warning();
-            }) {
-            db_result
-        } else {
-            return ControlFlow::Break(());
+                let err_msg = format!("Error loading crate: {}", e);
+                handlers::chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), err_msg, 
+                    chat_history::MessageKind::SysInfo).await;
+            return;
+            }
         };
 
         let file_dir = default_dir.join(crate_name_version);
@@ -95,8 +97,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
                 }
             }
         }
-        // TODO: Clones are bad. This is bad code. Fix it.
-        // - Wish I could blame the AI but its all me :( in a rush
         match state.db.backup_db(file_dir.clone()) {
             Ok(()) => {
                 event_bus.send(AppEvent::System(SystemEvent::BackupDb {
@@ -114,7 +114,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
             }
         };
     }
-    ControlFlow::Continue(())
 }
 
 /// Loads a previously saved database backup into the application.
@@ -157,6 +156,7 @@ pub(super) async fn load_db(
         event_bus.send(AppEvent::System(SystemEvent::LoadDb {
             crate_name: crate_name.clone(),
             file_dir: None,
+            root_path: None,
             is_success: false,
             error: Some(err_msg),
         }));
@@ -171,6 +171,7 @@ pub(super) async fn load_db(
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name: crate_name.clone(),
                 file_dir: Some(Arc::new(default_dir)),
+                root_path: None,
                 is_success: false,
                 error: Some(err_msg),
             }));
@@ -183,6 +184,7 @@ pub(super) async fn load_db(
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name: crate_name.clone(),
                 file_dir: Some(Arc::new(default_dir)),
+                root_path: None,
                 is_success: false,
                 error: Some(err_msg),
             }));
@@ -229,23 +231,25 @@ pub(super) async fn load_db(
                 state
                     .io_handle
                     .update_roots(
-                        Some(vec![root_path]),
+                        Some(vec![root_path.clone()]),
                         Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
                     )
                     .await;
+                event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                    crate_name,
+                    file_dir: Some(Arc::new(valid_file)),
+                    root_path: Some(Arc::new(root_path)),
+                    is_success: true,
+                    error: None,
+                }));
             }
-            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                crate_name,
-                file_dir: Some(Arc::new(valid_file)),
-                is_success: true,
-                error: None,
-            }));
             Ok(())
         }
         Ok(_count) => {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
                 file_dir: Some(Arc::new(valid_file)),
+                root_path: None,
                 is_success: false,
                 error: Some("Database backed up from file, but 0 relations found."),
             }));
@@ -504,7 +508,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
         let mut output = String::new();
         let (header, rows) = (named_rows.headers, named_rows.rows);
         let cols_num = header.len();
-        let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
+        let display_header = header.into_iter().map(|h| h.to_string()).join("|");
         tracing::info!(target: "write_query", "\n{display_header}");
         output.push('|');
         output.push_str(&display_header);
@@ -525,7 +529,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
             .map(|r| {
                 r.into_iter()
                     .map(|c| format!("{}", c))
-                    .map(|c| format!("{}", c))
+                    .map(|c| c.to_string())
                     .join("|")
             })
             .for_each(|r| {
@@ -794,7 +798,7 @@ mod test {
 
         dotenvy::dotenv().ok();
 
-        let mut config = config::Config::builder()
+        let config = config::Config::builder()
             .add_source(
                 config::File::with_name(
                     &dirs::config_dir()

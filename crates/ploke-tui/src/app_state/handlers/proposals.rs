@@ -29,14 +29,13 @@ pub async fn load_proposals(state: &Arc<AppState>) {
     let path = std::env::var("PLOKE_PROPOSALS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_path());
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content) {
+    if let Ok(content) = std::fs::read_to_string(path)
+        && let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content) {
             let mut map: HashMap<uuid::Uuid, EditProposal> = HashMap::new();
             for p in list.into_iter() { map.insert(p.request_id, p); }
             let mut guard = state.proposals.write().await;
             *guard = map;
         }
-    }
 }
 
 fn default_create_path() -> PathBuf {
@@ -61,14 +60,13 @@ pub async fn load_create_proposals(state: &Arc<AppState>) {
     let path = std::env::var("PLOKE_CREATE_PROPOSALS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_create_path());
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(list) = serde_json::from_str::<Vec<CreateProposal>>(&content) {
+    if let Ok(content) = std::fs::read_to_string(path)
+        && let Ok(list) = serde_json::from_str::<Vec<CreateProposal>>(&content) {
             let mut map: HashMap<uuid::Uuid, CreateProposal> = HashMap::new();
             for p in list.into_iter() { map.insert(p.request_id, p); }
             let mut guard = state.create_proposals.write().await;
             *guard = map;
         }
-    }
 }
 
 pub async fn save_proposals_to_path(state: &Arc<AppState>, path: &Path) {
@@ -82,12 +80,11 @@ pub async fn save_proposals_to_path(state: &Arc<AppState>, path: &Path) {
 }
 
 pub async fn load_proposals_from_path(state: &Arc<AppState>, path: &Path) {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content) {
+    if let Ok(content) = std::fs::read_to_string(path)
+        && let Ok(list) = serde_json::from_str::<Vec<EditProposal>>(&content) {
             let mut map: HashMap<uuid::Uuid, EditProposal> = HashMap::new();
             for p in list.into_iter() { map.insert(p.request_id, p); }
             let mut guard = state.proposals.write().await;
             *guard = map;
         }
-    }
 }

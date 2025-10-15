@@ -26,61 +26,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
 
         // LLM events routed into llm match arm below
 
-        AppEvent::EndpointsResults { model_id, endpoints } => todo!(),
-
-        AppEvent::ModelsEndpointsResults { model_id, providers } => {
-            // Defer selection and overlay close until after we release the borrow on model_browser
-            // let mut select_after: Option<(String, ArcStr)> = None;
-            // if let Some(mb) = app.model_browser.as_mut() {
-            //     if let Some(item) = mb.items.iter_mut().find(|i| i.id == model_id) {
-            //         // Map ProviderEntry -> ModelProviderRow
-            //         let rows = providers
-            //             .into_iter()
-            //             .map(|p| {
-            //                 let supports_tools = p.tool_use;
-            //                 ModelProviderRow {
-            //                     name: p.ep_name.clone(),
-            //                     context_length: p.ep_context_length,
-            //                     input_cost: p.ep_pricing_prompt,
-            //                     output_cost: p.ep_pricing_completion,
-            //                     supports_tools,
-            //                 }
-            //             })
-            //             .collect::<Vec<_>>();
-            //         item.providers = rows;
-            //         item.loading_providers = false;
-            //
-            //         // If user pressed 's' while loading, compute best provider now
-            //         if item.pending_select {
-            //             let provider_choice = item
-            //                 .providers
-            //                 .iter()
-            //                 .find(|p| p.supports_tools)
-            //                 .or_else(|| item.providers.first())
-            //                 .map(|p| p.name.clone());
-            //
-            //             if let Some(pid) = provider_choice {
-            //                 // Defer selection until after borrow ends
-            //                 select_after = Some((item.id.clone(), pid));
-            //             }
-            //             item.pending_select = false;
-            //         }
-            //     }
-            // }
-            // if let Some((mid, pid)) = select_after {
-            //     app.apply_model_provider_selection(&mid, Some(&pid));
-            //     app.model_browser = None;
-            // }
-        }
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
-        }
-        AppEvent::ModelSearchResults { keyword, items } => {
-            // Populate or update the Model Browser overlay with async results
-            app.open_model_browser(keyword, items);
-        }
-        AppEvent::ModelsEndpointsRequest { .. } => {
-            // Request event: handled by llm_manager; UI waits for ModelsEndpointsResults.
         }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
@@ -222,6 +169,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
+                    root_path,
                     is_success,
                     ..
                 } if is_success => {
@@ -230,8 +178,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         display_file_info(file_dir.as_ref()),
                     );
                     app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}", 
+                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}\nRoot project path set to: {}", 
                             display_file_info(file_dir.as_ref()), 
+                            display_file_info(root_path.as_ref())
                         ),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
@@ -240,6 +189,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 SystemEvent::LoadDb {
                     crate_name,
                     file_dir,
+                    root_path,
                     is_success,
                     error,
                 } if !is_success => {

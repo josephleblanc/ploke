@@ -618,12 +618,6 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     filtered.len(),
                     keyword_str
                 );
-                // Always emit results; UI will show "0 results" if none
-                emit_app_event(AppEvent::ModelSearchResults {
-                    keyword: keyword_str,
-                    items: filtered,
-                })
-                .await;
             }
             Err(e) => {
                 let _ = cmd_tx

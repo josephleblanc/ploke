@@ -11,21 +11,11 @@ use ratatui::{
 use crate::app_state::core::{DiffPreview, EditProposalStatus};
 use crate::app_state::AppState as _; // trait bounds
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ApprovalsState {
     pub selected: usize,
     pub help_visible: bool,
     pub view_lines: usize, // Number of lines to show in details view (None = unlimited)
-}
-
-impl Default for ApprovalsState {
-    fn default() -> Self {
-        Self {
-            selected: 0,
-            help_visible: false,
-            view_lines: 0, // 0 means no truncation (show all)
-        }
-    }
 }
 
 impl ApprovalsState {
@@ -193,8 +183,7 @@ pub fn render_approvals_overlay(
                     )]);
                     detail_lines.push(header);
 
-                    let mut lines_added = 0;
-                    for ln in text.lines() {
+                    for (lines_added, ln) in text.lines().enumerate() {
                         if lines_added >= line_limit {
                             detail_lines.push(Line::from(format!(
                                 "... [truncated at {} lines, use +/- to adjust]",
@@ -203,7 +192,6 @@ pub fn render_approvals_overlay(
                             break;
                         }
                         detail_lines.push(Line::from(ln.to_string()));
-                        lines_added += 1;
                     }
                 }
                 DiffPreview::CodeBlocks { per_file } => {

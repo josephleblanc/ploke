@@ -18,7 +18,7 @@ lazy_static! {
     pub static ref TEST_APP: Arc<Mutex<App>> = {
         // Build a realistic App instance without spawning UI/event loops.
         // Keep this synchronous for ergonomic use in tests.
-        let mut config = UserConfig::default();
+        let config = UserConfig::default();
         // Registry defaults are already represented by `Default` impls in llm; API keys are
         // resolved by routers at call time from env in tests.
 

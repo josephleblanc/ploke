@@ -29,13 +29,13 @@ pub fn handle_model_browser_input(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if mb.provider_select_active {
-                    if let Some(item) = mb.items.get(mb.selected) {
-                        if !item.providers.is_empty() {
-                            if mb.provider_selected > 0 {
-                                mb.provider_selected -= 1;
-                            } else {
-                                mb.provider_selected = item.providers.len().saturating_sub(1);
-                            }
+                    if let Some(item) = mb.items.get(mb.selected)
+                        && !item.providers.is_empty()
+                    {
+                        if mb.provider_selected > 0 {
+                            mb.provider_selected -= 1;
+                        } else {
+                            mb.provider_selected = item.providers.len().saturating_sub(1);
                         }
                     }
                 } else if mb.selected > 0 {
@@ -66,13 +66,13 @@ pub fn handle_model_browser_input(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if mb.provider_select_active {
-                    if let Some(item) = mb.items.get_mut(mb.selected) {
-                        if !item.providers.is_empty() {
-                            let idx = mb.provider_selected.min(item.providers.len() - 1);
-                            let chosen = item.providers[idx].provider_key.clone();
-                            chosen_model = Some(item.id.clone());
-                            chosen_provider = Some(chosen);
-                        }
+                    if let Some(item) = mb.items.get_mut(mb.selected)
+                        && !item.providers.is_empty()
+                    {
+                        let idx = mb.provider_selected.min(item.providers.len() - 1);
+                        let chosen = item.providers[idx].provider_key.clone();
+                        chosen_model = Some(item.id.clone());
+                        chosen_provider = Some(chosen);
                     }
                 } else if let Some(item) = mb.items.get_mut(mb.selected) {
                     item.expanded = !item.expanded;
@@ -128,7 +128,7 @@ pub fn handle_model_browser_input(app: &mut App, key: KeyEvent) {
             KeyCode::Char('h') => {
                 // Enter provider selection mode on current item; trigger load if needed
                 if let Some(item) = mb.items.get_mut(mb.selected) {
-                    if item.expanded && !mb.provider_select_active{
+                    if item.expanded && !mb.provider_select_active {
                         item.expanded = false;
                     }
                     mb.provider_select_active = false;

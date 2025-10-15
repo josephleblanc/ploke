@@ -318,28 +318,6 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(SystemEvent),
-    #[deprecated = "use llm::LlmEvent::Models(models::Event) instead"]
-    ModelSearchResults {
-        keyword: String,
-        items: Vec<llm::request::models::ResponseItem>,
-    },
-    #[deprecated = "use llm::LlmEvent::Endpoint(endpoint::Event) instead"]
-    ModelsEndpointsRequest {
-        // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
-        // the typed version for that specific router before making the request.
-        // + make model_id typed as ModelKey
-        model_id: ModelId,
-    },
-    #[deprecated = "use llm::LlmEvent::Models(models::Event) instead"]
-    ModelsEndpointsResults {
-        model_id: String,
-        providers: Vec<llm::request::endpoint::Endpoint>,
-    },
-    #[deprecated = "use llm::LlmEvent::Endpoint(endpoint::Event) instead"]
-    EndpointsResults {
-        model_id: String,
-        endpoints: EndpointsResponse,
-    },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
@@ -383,10 +361,6 @@ impl AppEvent {
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
-            AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
-            AppEvent::ModelsEndpointsRequest { .. } => EventPriority::Background,
-            AppEvent::ModelsEndpointsResults { .. } => EventPriority::Realtime,
-            AppEvent::EndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
@@ -405,10 +379,6 @@ impl AppEvent {
             AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
             AppEvent::Llm(llm_event) => EventPriority::Background,
 
-            // events sent to llm backend are background priority
-            // AppEvent::Llm(event) if event.is_realtime() => EventPriority::Background,
-            // events sent back to the UI are realtime priority
-            // AppEvent::Llm(ui_event) if ui_event.is_background() => EventPriority::Realtime,
         }
     }
     pub fn is_system(&self) -> bool {

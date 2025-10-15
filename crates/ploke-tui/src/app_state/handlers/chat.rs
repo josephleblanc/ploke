@@ -154,7 +154,7 @@ pub async fn add_tool_msg_immediate(
     let mut chat_guard = state.chat.0.write().await;
     let parent_id = chat_guard.current;
 
-    chat_guard.add_message_tool(parent_id, new_msg_id, MessageKind::Tool, content.clone(), Some( tool_call_id ));
+    let _ = chat_guard.add_message_tool(parent_id, new_msg_id, MessageKind::Tool, content.clone(), Some( tool_call_id ));
 }
 
 #[instrument(skip(state))]

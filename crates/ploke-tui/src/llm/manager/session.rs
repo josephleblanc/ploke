@@ -36,8 +36,7 @@ enum ParseOutcome {
 
 fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
     // First, detect provider-embedded errors inside a 200 body
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text) {
-        if let Some(err) = v.get("error") {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text) && let Some(err) = v.get("error") {
             let msg = err
                 .get("message")
                 .and_then(|m| m.as_str())
@@ -47,7 +46,6 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
                 status: code as u16,
                 message: msg.to_string(),
             });
-        }
     }
 
     // Parse into normalized response
@@ -59,24 +57,24 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
         // assuming if not present it is stop to trigger return from session
         let finish_reason = choice.finish_reason.unwrap_or(FinishReason::Stop);
         if let Some(msg) = choice.message {
+            // if there is a tool call, return with tool call info
             let content = msg.content;
             if let Some(tc) = msg.tool_calls {
                 return Ok(ParseOutcome::ToolCalls { calls: tc, content,
                 finish_reason});
             }
-            let content = content.unwrap_or_default();
-            return Ok(ParseOutcome::Content(content));
         } else if let Some(text) = choice.text {
+            // if there is no tool call, then just return the text content of the LLM response
             return Ok(ParseOutcome::Content(text));
         } else if let Some(_delta) = choice.delta {
             return Err(LlmError::Deserialization(
                 "Unexpected streaming delta".into(),
             ));
         } else {
-            return Err(LlmError::Deserialization("Empty choice".into()));
+            return Err(LlmError::Deserialization("Empty `choice` in LLM respnse".into()));
         }
     }
-    Err(LlmError::Deserialization("No choices".into()))
+    Err(LlmError::Deserialization("No `choice` in llm respnse".into()))
 
 }
 

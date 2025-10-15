@@ -410,7 +410,7 @@ impl TestModelItem {
     fn into_item(self) -> ModelBrowserItem {
         use std::str::FromStr;
         let id = crate::llm::ModelId::from_str(&self.id).expect("valid model id");
-        let name = self.name.map(|s| crate::llm::ModelName::new(s));
+        let name = self.name.map(crate::llm::ModelName::new);
         let providers = self
             .providers
             .into_iter()

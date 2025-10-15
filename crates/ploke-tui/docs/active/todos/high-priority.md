@@ -8,6 +8,10 @@ In no particular order, these are the most important things to get done in the p
 
 - [x] fix the way the user's submitted message is handled so they will receive a helpful response from the LLM along with a system help message with instructions on how to index a target crate + how to use the "help" command. This will likely be the initial entrypoint for most users who will run the application and then just enter something, so it is important to make sure this case is handled well.
 
+- [ ] Token tracking for both token count and token cost
+  - The models from Openrouter include a tokenizer model: This differentiates how the tokens are counted for each model.
+  - Find a way to use the same tokenizer model to count the tokens that are sent/received from the endpoint and display these to the user.
+
 - ensure there is a proper test harness for testing events, so we can add better tests for end-to-end event flows + mock LLM responses realistically for offline tests and check the values are as expected for online events at different checkpoints along the event flow of any given process.
 
 - Fix the way `Tool` messages are not being displayed. Currently we are just seeing the LLM's message that is part of their response while calling the tool (the `content` part of the message), but it would be good to additionally provide feedback so the user can see that our system is calling the tool.

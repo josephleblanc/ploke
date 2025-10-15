@@ -61,8 +61,8 @@ pub async fn index_workspace(
     let progress_rx = event_bus.index_subscriber();
 
     let state_arc = state.indexer_task.as_ref().map(Arc::clone);
-    if let Some(indexer_task) = state_arc {
-        if let Ok((callback_manager, db_callbacks, unreg_codes_arc, shutdown)) =
+    if let Some(indexer_task) = state_arc
+        && let Ok((callback_manager, db_callbacks, unreg_codes_arc, shutdown)) =
             ploke_db::CallbackManager::new_bounded(Arc::clone(&indexer_task.db), 1000)
         {
             let counter = callback_manager.clone_counter();
@@ -106,7 +106,6 @@ pub async fn index_workspace(
             }
             tracing::info!("Indexer task returned");
         }
-    }
 }
 
 pub async fn pause(state: &Arc<AppState>) {

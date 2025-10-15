@@ -101,7 +101,7 @@ pub async fn process_with_rag(
     }
 
     // Conversation-only fallback: prepend a short system notice then send PromptConstructed
-    let mut convo_only: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
+    let convo_only: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
     let (crate_loaded, first_tip): (bool, bool) = {
         let mut sys = state.system.write().await;
         let loaded = sys.crate_focus.is_some();

@@ -73,6 +73,7 @@ pub enum SystemEvent {
         crate_name: String,
         #[serde(skip)]
         file_dir: Option<Arc<std::path::PathBuf>>,
+        root_path: Option<Arc<std::path::PathBuf>>,
         is_success: bool,
         error: Option<&'static str>,
     },

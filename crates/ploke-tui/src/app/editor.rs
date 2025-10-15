@@ -5,11 +5,10 @@ use crate::app_state::core::RuntimeConfig;
 /// Resolve editor command from config or environment.
 /// Precedence: RuntimeConfig.ploke_editor -> PLOKE_EDITOR env -> None.
 pub fn resolve_editor_command(cfg: &RuntimeConfig) -> Option<String> {
-    if let Some(cmd) = cfg.ploke_editor.clone() {
-        if !cmd.trim().is_empty() {
+    if let Some(cmd) = cfg.ploke_editor.clone()
+        && !cmd.trim().is_empty() {
             return Some(cmd);
         }
-    }
     std::env::var("PLOKE_EDITOR").ok().filter(|s| !s.trim().is_empty())
 }
 
