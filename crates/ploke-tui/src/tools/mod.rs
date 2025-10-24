@@ -59,10 +59,6 @@ pub enum ToolDescr {
     )]
     ApplyCodeEdit,
     #[serde(
-        rename = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits."
-    )]
-    GetFileMetadata,
-    #[serde(
         rename = "Create a new Rust source file atomically within the workspace, staging for approval."
     )]
     CreateFile,

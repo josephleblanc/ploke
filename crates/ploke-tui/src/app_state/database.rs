@@ -81,6 +81,7 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
             return;
             }
         };
+        tracing::debug!(save_crate_focus = ?crate_focus);
 
         let file_dir = default_dir.join(crate_name_version);
         tracing::info!("Checking for previous database file {}", file_dir.display());
@@ -227,6 +228,7 @@ pub(super) async fn load_db(
                 let root_path = std::path::PathBuf::from(crate_root_path);
                 system_guard.crate_focus = Some(root_path.clone());
                 // Also update IoManager roots for IO-level enforcement
+                tracing::debug!(load_db_crate_focus = ?root_path);
                 drop(system_guard);
                 state
                     .io_handle

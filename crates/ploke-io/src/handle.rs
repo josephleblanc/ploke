@@ -177,6 +177,7 @@ impl IoManagerHandle {
     /// Normalizes the path against configured roots and symlink policy (if set),
     /// reads the file as UTF-8, parses as Rust to compute the tracking hash,
     /// and compares it to expected_hash.
+    #[tracing::instrument(skip(self))]
     pub async fn read_full_verified(
         &self,
         file_path: std::path::PathBuf,

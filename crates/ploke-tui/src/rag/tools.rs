@@ -370,6 +370,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             Ok(Ok(s)) => s,
             _ => "<unreadable or binary file>".to_string(),
         };
+        tracing::debug!(?before);
         // Apply all edits for this file in-memory (descending by start to keep indices stable)
         let mut bytes = before.clone().into_bytes();
         let mut file_edits: Vec<&WriteSnippetData> =

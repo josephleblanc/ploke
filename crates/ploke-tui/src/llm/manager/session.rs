@@ -62,6 +62,8 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
             if let Some(tc) = msg.tool_calls {
                 return Ok(ParseOutcome::ToolCalls { calls: tc, content,
                 finish_reason});
+            } else if let Some(text_content) = content {
+                return Ok(ParseOutcome::Content(text_content));
             }
         } else if let Some(text) = choice.text {
             // if there is no tool call, then just return the text content of the LLM response
@@ -74,7 +76,7 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
             return Err(LlmError::Deserialization("Empty `choice` in LLM respnse".into()));
         }
     }
-    Err(LlmError::Deserialization("No `choice` in llm respnse".into()))
+    Err(LlmError::Deserialization("No `choice` in llm response".into()))
 
 }
 
@@ -316,6 +318,12 @@ where
                         }
                     }
                     if finish_reason == FinishReason::ToolCalls {
+                        let remember_stop = "Tool Call completed. Remember to end with a 'stop' finish reason to return conversation control to the user.";
+                        state_cmd_tx.send(StateCommand::AddMessageImmediate { 
+                            msg: remember_stop.to_string(), 
+                            kind: MessageKind::System, 
+                            new_msg_id: Uuid::new_v4() 
+                        }).await.expect("state manager must be running");
                         continue;
                     } else {
                         if assistant_intro.is_empty() {assistant_intro.push_str("Calling tools")}

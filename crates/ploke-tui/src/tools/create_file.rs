@@ -84,6 +84,7 @@ impl super::Tool for CreateFile {
         let proposal_opt = { ctx.state.create_proposals.read().await.get(&ctx.request_id).cloned() };
         if let Some(prop) = proposal_opt {
             let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
+            tracing::debug!(crate_root = ?crate_root);
             let display_files: Vec<String> = prop
                 .files
                 .iter()
@@ -171,11 +172,13 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
         } else if p.is_absolute() {
             p
         } else {
+            tracing::warn!("No crate focus set, falling back to pwd");
             std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join(p)
         }
     };
+    tracing::debug!(crate_root = ?crate_root, abs_path = ?abs_path);
 
     // Restrict to .rs files
     if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {

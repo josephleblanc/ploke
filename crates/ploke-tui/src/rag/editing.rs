@@ -308,7 +308,7 @@ pub async fn approve_creations(
         let event_bus = Arc::clone(event_bus);
         async move {
             crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
-            let _ = scan_rx;
+            let _ = scan_rx.await.inspect_err(|e| tracing::error!(scan_error = ?e));
         }
     });
     chat::add_msg_immediate(
