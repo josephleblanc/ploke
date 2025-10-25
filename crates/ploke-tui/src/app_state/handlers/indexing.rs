@@ -17,21 +17,6 @@ pub async fn index_workspace(
 ) {
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
-        // let mut write_guard = state.system.write().await;
-        // let crate_focus = match std::env::current_dir() {
-        //     Ok(current_dir) => {
-        //         let mut pwd = current_dir;
-        //         pwd.push(&workspace);
-        //         pwd
-        //     }
-        //     Err(e) => {
-        //         tracing::error!("Error resolving current dir: {e}");
-        //         return;
-        //     }
-        // };
-        // tracing::debug!("Setting crate_focus to {}", crate_focus.display());
-        // write_guard.crate_focus = Some(crate_focus.clone());
-        // crate_focus
         match state.system.read().await.crate_focus.clone() {
             Some(path) => path,
             None => {
