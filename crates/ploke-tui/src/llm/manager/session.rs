@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashMap;
 
 use chrono::DateTime;
 use ploke_test_utils::workspace_root;
@@ -23,6 +24,7 @@ use crate::llm::manager::RequestMessage;
 use crate::llm::request::endpoint::ToolChoice;
 use crate::llm::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
+use crate::tools::ToolName;
 
 use super::LlmError;
 
@@ -138,6 +140,16 @@ where
     R::CompletionFields: ApiRoute,
 {
     pub async fn run(mut self) -> Result<String, LlmError> {
+        #[derive(serde::Deserialize)]
+        struct CodeEditArgsMinimal {
+            edits: Vec<CodeEditEditMinimal>,
+        }
+        #[derive(serde::Deserialize)]
+        struct CodeEditEditMinimal {
+            file: String,
+            code: String,
+        }
+
         // Use router-level constants for URL and API key
         let url = R::COMPLETION_URL;
         let api_key = R::resolve_api_key()
@@ -237,11 +249,27 @@ where
                     }
 
                     let mut task_set = tokio::task::JoinSet::new();
+                    let mut call_feedback: HashMap<ploke_core::ArcStr, (uuid::Uuid, Option<(String, String)>)> = HashMap::new();
                     for call in tool_calls.into_iter() {
+                        let tool_name = call.function.name;
+                        let args_json = call.function.arguments.clone();
                         let event_bus = self.event_bus.clone();
                         let parent_id = self.parent_id;
                         let request_id = Uuid::new_v4();
                         let call_id = call.call_id.clone();
+
+                        let summary = if matches!(tool_name, ToolName::ApplyCodeEdit) {
+                            if let Ok(parsed) = serde_json::from_str::<CodeEditArgsMinimal>(&args_json) {
+                                if let Some(first) = parsed.edits.first() {
+                                    let file = first.file.clone();
+                                    let snippet: String = first.code.chars().take(100).collect();
+                                    Some((file, snippet))
+                                } else { None }
+                            } else { None }
+                        } else { None };
+
+                        call_feedback.insert(call_id.clone(), (request_id, summary));
+
                         let mut rx = event_bus.realtime_tx.subscribe();
                         let cmd_tx = state_cmd_tx.clone();
                         let cmd_tx_clone = state_cmd_tx.clone();
@@ -294,7 +322,24 @@ where
                     while let Some(res) = task_set.join_next().await {
                         match res {
                             Ok((cid, Ok(content))) => {
-                                self.req.core.messages.push(RequestMessage::new_tool(content, cid));
+                                // Append the tool's raw JSON result for the next request
+                                self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
+
+                                // If this was an apply_code_edit call, also append a concise System summary
+                                if let Some((rid, Some((file, snippet)))) = call_feedback.get(&cid).cloned() {
+                                    let sys_msg = format!(
+                                        "Staged code edit recorded.
+request_id: {}
+file: {}
+snippet (first 100 chars):
+```
+{}
+```
+If you are ready to return control to the user, respond with finish_reason 'stop'.",
+                                        rid, file, snippet
+                                    );
+                                    self.req.core.messages.push(RequestMessage::new_system(sys_msg));
+                                }
                             }
                             Ok((cid, Err(err_string))) => {
                                 tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
