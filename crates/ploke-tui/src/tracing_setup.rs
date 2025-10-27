@@ -12,6 +12,10 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::filter;
 
 pub const SCAN_CHANGE: &str = "scan_change";
+/// A tracing target for items related to tracking messages in the conversation history, present
+/// in:
+///     - app_state/handlers/chat.rs
+pub const CHAT_TARGET: &str = "chat_tracing_target";
 
 pub struct LoggingGuards {
     /// Guard for the main app log

@@ -8,6 +8,7 @@ pub mod events;
 pub mod local;
 pub mod partial;
 pub mod providers;
+pub mod utils;
 
 #[cfg(test)]
 mod tests {

@@ -72,7 +72,9 @@ impl fmt::Debug for LocalEmbedder {
     }
 }
 
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, trace, warn};
+
+use crate::utils::trace_consts::EMBEDDING_TRACE;
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
@@ -161,7 +163,7 @@ impl LocalEmbedder {
 
             DevicePreference::ForceGpu => Device::new_cuda(config.cuda_device_index).or_else(|e| {
                 if config.allow_fallback {
-                    tracing::warn!("GPU unavailable ({e}), falling back to CPU");
+                    warn!("GPU unavailable ({e}), falling back to CPU");
                     Ok(Device::Cpu)
                 } else {
                     Err(EmbeddingError::GpuUnavailable)
@@ -170,7 +172,7 @@ impl LocalEmbedder {
 
             DevicePreference::Auto => {
                 Device::cuda_if_available(config.cuda_device_index).or_else(|e| {
-                    tracing::warn!("GPU unavailable ({e}), falling back to CPU");
+                    warn!("GPU unavailable ({e}), falling back to CPU");
                     Ok(Device::Cpu)
                 })
             }
@@ -199,7 +201,7 @@ impl LocalEmbedder {
         let config_str = std::fs::read_to_string(&config_path)?;
         // NOTE: The current default model "sentence-transformers/all-MiniLM-L6-v2" has this size,
         // but that does not mean that each other model will as well. We should probably find a
-        // good way to configure this in a good way.
+        // good way to configure the vector size at a higher level, perhaps in a config somewhere.
         // Self::validate_file_size(&config_path, 612)?;
         let mut model_config: Config =
             serde_json::from_str(&config_str).map_err(|e| EmbeddingError::Config(e.to_string()))?;
@@ -337,7 +339,8 @@ impl LocalEmbedder {
             .sqrt()?
             .clamp(1e-12, f32::MAX)?;
         let embeddings = embeddings.broadcast_div(&norms)?;
-        tracing::debug!(
+        debug!(
+            target: EMBEDDING_TRACE,
             "shapes: outputs={:?}, weights={:?}, norms={:?}",
             outputs.shape(),
             weights.shape(),
@@ -368,12 +371,12 @@ impl LocalEmbedder {
 
         let mut results = Vec::new();
         // FIXED: Use configurable batch size instead of hardcoded 8
-        tracing::trace!("Starting embed_batch for texts {:?}", texts);
+        trace!(target: EMBEDDING_TRACE, "Starting embed_batch for texts {:?}", texts);
         for chunk in texts.chunks(self.config.model_batch_size) {
             let batch_results = self.process_batch(chunk)?;
             results.extend(batch_results);
         }
-        tracing::trace!("Returning from embed_batch with results {:?}", results);
+        trace!(target: EMBEDDING_TRACE, "Returning from embed_batch with results {:?}", results);
         Ok(results)
     }
 
@@ -383,7 +386,8 @@ impl LocalEmbedder {
         level = "DEBUG"  // Demote to debug level
     )]
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
-        tracing::trace!("Starting process_batch for texts {:?}", texts);
+        let text_snippets = texts.iter().map(|t| t.chars().take(30));
+        tracing::trace!("Starting process_batch for texts {:?}", text_snippets);
         // Tokenize with attention masks
         let tokens = self.tokenizer.encode_batch(texts.to_vec(), true)?;
 
@@ -408,7 +412,7 @@ impl LocalEmbedder {
         let token_type_ids = Tensor::zeros(token_ids.shape(), token_ids.dtype(), &self.device)?;
 
         // Forward pass with correct dtypes
-        tracing::info!("Processing outputs with self.model.forward");
+        debug!("Processing outputs with self.model.forward");
         let outputs = self
             .model
             .forward(&token_ids, &token_type_ids, None)
@@ -425,7 +429,8 @@ impl LocalEmbedder {
             .map_err(|e| EmbeddingError::Dimension(e.to_string()))?;
 
         let sum_embeddings = (&outputs * &weights)?.sum_keepdim(1)?;
-        tracing::debug!(
+        trace!(
+            target: EMBEDDING_TRACE,
             "shapes: outputs={:?}, weights={:?}, sum_embeddings={:?}",
             outputs.shape(),
             weights.shape(),
@@ -441,7 +446,8 @@ impl LocalEmbedder {
             .sqrt()?
             .clamp(1e-12, f32::MAX)?;
         let embeddings = embeddings.broadcast_div(&norms)?;
-        tracing::debug!(
+        trace!(
+            target: EMBEDDING_TRACE,
             "shapes: outputs={:?}, weights={:?}, norms={:?}",
             outputs.shape(),
             weights.shape(),
@@ -460,7 +466,8 @@ impl LocalEmbedder {
             results.push(row.to_vec1()?);
         }
 
-        tracing::trace!(
+        trace!(
+            target: EMBEDDING_TRACE,
             "Returning {} embedding(s) with length {:?} from process_batch: {:?}",
             results.len(),
             results.first().map(|i| i.len()),

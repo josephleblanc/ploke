@@ -9,6 +9,7 @@ use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
 use tokio::sync::mpsc;
+use tracing::trace_span;
 
 use super::commands::StateCommand;
 use super::core::AppState;
@@ -34,7 +35,7 @@ pub async fn state_manager(
     };
 
     while let Some(cmd) = cmd_rx.recv().await {
-        let span = tracing::debug_span!("processing", cmd = %cmd.discriminant());
+        let span = trace_span!("processing", cmd = %cmd.discriminant());
         let _enter = span.enter();
 
         match cmd {

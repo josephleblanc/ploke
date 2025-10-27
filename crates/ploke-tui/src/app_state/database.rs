@@ -404,7 +404,7 @@ pub(super) async fn scan_for_change(
             full_mod_set = mods_in_file(*mod_id, full_mod_set, &tree);
             // full_mod_set.insert(mod_id.as_any());
             let printable_nodes = printable_nodes(&merged, full_mod_set.iter());
-            tracing::info!(
+            trace!(
                 "recursive printable nodes for module_id:\n{}\n{}",
                 mod_id,
                 printable_nodes
@@ -482,7 +482,7 @@ pub(super) async fn scan_for_change(
                     .db
                     .retract_embedded_files(file_id, node_ty)
                     .inspect_err(|e| tracing::error!("Error in retract_embed_files: {e}"))?;
-                tracing::info!("Raw return of retract_embedded_files:\n{:?}", query_res);
+                trace!("Raw return of retract_embedded_files:\n{:?}", query_res);
                 let to_print = query_res
                     .rows
                     .iter()
@@ -492,7 +492,7 @@ pub(super) async fn scan_for_change(
             }
         }
 
-        tracing::trace!("Finishing scanning, sending message to reindex workspace");
+        trace!("Finishing scanning, sending message to reindex workspace");
         event_bus.send(AppEvent::System(SystemEvent::ReIndex {
             workspace: crate_name.to_string(),
         }));
