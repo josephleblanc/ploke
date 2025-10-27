@@ -6,6 +6,7 @@ use crate::{
     write::write_snippets_batch,
 };
 use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
+use tracing::error;
 
 use super::*;
 
@@ -120,6 +121,7 @@ impl IoManager {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn handle_request(&self, request: IoRequest) {
         match request {
             IoRequest::ReadSnippetBatch {
@@ -621,7 +623,9 @@ impl IoManager {
         let _probe_guard = test_instrumentation::enter_for_namespace(file_data.namespace);
         #[cfg(test)]
         test_instrumentation::maybe_sleep().await;
-        let file_content = read_file_to_string_abs(&file_data.file_path).await?;
+        let file_content = read_file_to_string_abs(&file_data.file_path).await.inspect_err(|e| {
+            error!(target: "read_file", "Error reading file: {e}");
+        })?;
         let tokens = parse_tokens_from_str(&file_content, &file_data.file_path)?;
 
         let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);

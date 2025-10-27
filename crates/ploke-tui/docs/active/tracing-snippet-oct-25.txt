@@ -1,0 +1,42 @@
+
+   WARN ploke_tui::app::events: Unused system event in main app loop: ToolCallCompleted { request_id: fb5485fa-173f-4b7f-adbc-d9b06ae589d6, parent_id: 6ce9e266-df69-410e-8fad-a80fa7718496, call_id: "functions.apply_code_edit:0", content: "{\"applied\":0,\"ok\":false,\"results\":[{\"error\":\"Content changed for \\\"/home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/view/components/approvals.rs\\\"\",\"file_path\":\"/home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/app/view/components/approvals.rs\"}]}" }
+    at crates/ploke-tui/src/app/events.rs:223
+
+   INFO ploke_tui::event_bus: close
+    at crates/ploke-tui/src/event_bus/mod.rs:164
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 84561bba-cbe3-4ee6-ae67-d8807881ab42, content: "Applied edits for request_id fb5485fa-173f-4b7f-adbc-d9b06ae589d6", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: ApproveEdits
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+   INFO ploke_tui::app_state::handlers::chat: close
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:160
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 84561bba-cbe3-4ee6-ae67-d8807881ab42, content: "Applied edits for request_id fb5485fa-173f-4b7f-adbc-d9b06ae589d6", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: ApproveEdits
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+   INFO ploke_tui::app_state::database: scan_for_change in crate_name: ploke-tui
+    at crates/ploke-tui/src/app_state/database.rs:323
+    in ploke_tui::app_state::dispatcher::processing with cmd: ApproveEdits
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+   INFO ploke_tui::event_bus: close
+    at crates/ploke-tui/src/event_bus/mod.rs:164
+    in ploke_tui::event_bus::send
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 7918cfda-56b5-423e-85a6-c343298ea387, content: "Scheduled rescan of workspace after applying edits", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: ApproveEdits
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+   INFO ploke_tui::app_state::handlers::chat: close
+    at crates/ploke-tui/src/app_state/handlers/chat.rs:160
+    in ploke_tui::app_state::handlers::chat::add_msg_immediate with event_bus: EventBus { realtime_tx: broadcast::Sender, background_tx: broadcast::Sender, error_tx: broadcast::Sender, index_tx: broadcast::Sender }, new_msg_id: 7918cfda-56b5-423e-85a6-c343298ea387, content: "Scheduled rescan of workspace after applying edits", kind: SysInfo
+    in ploke_tui::app_state::dispatcher::processing with cmd: ApproveEdits
+    in ploke_tui::app_state::dispatcher::processing with cmd: AddMessageImmediate
+
+  ERROR ploke_tui::error: Error: Fatal(FileOperation { operation: "read", path: "/home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/tools/get_file_metadata.rs", source: Os { code: 2, kind: NotFound, message: "No such file or directory" } })
+    at crates/ploke-tui/src/error.rs:75
+
+  ERROR ploke_tui::app_state::handlers::db: Error in ScanForChange:
+I/O failure on "/home/brasides/code/openai-codex/ploke/crates/ploke-tui/src/tools/get_file_metadata.rs": read: No such file or directory (os error 2)
+    at crates/ploke-tui/src/app_state/handlers/db.rs:129
+

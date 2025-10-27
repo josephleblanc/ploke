@@ -58,6 +58,14 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## async
 - [ ] Look for opportunities to let things run in the background without `.await`, and then `join` them together. 
 
+## Notable Inefficiencies
+- [ ] Generating vector embeddings: By far the slowest part of the project.
+Need to add a way to handle this remotely and/or use gpu acceleration.
+- [ ] The process of identifying and removing nodes from a database in
+`scan_for_change` in `ploke-tui/src/app_state/database.rs` is noticeably slow
+and can likely be improved by changing the algorithm or allocation strategy
+within the function.
+
 ### Tests
 * Database
   * [ ] Tests for loading database from config file

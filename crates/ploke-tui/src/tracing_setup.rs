@@ -11,6 +11,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::filter;
 
+pub const SCAN_CHANGE: &str = "scan_change";
+
 pub struct LoggingGuards {
     /// Guard for the main app log
     pub main: WorkerGuard,
@@ -21,7 +23,7 @@ pub struct LoggingGuards {
 pub fn init_tracing() -> LoggingGuards {
     // -------- Main app log (unchanged from your version) --------
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("debug,ploke_db=error,cozo=error,tokenizer=error"));
+        .unwrap_or_else(|_| EnvFilter::new("debug,read_file=error,scan_change=trace,ploke_db=error,cozo=error,tokenizer=error"));
 
     let mut log_dir = workspace_root();
     log_dir.push("crates/ploke-tui/logs");

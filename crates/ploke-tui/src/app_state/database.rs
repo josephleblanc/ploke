@@ -4,7 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, NodeId};
+use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
@@ -14,11 +14,10 @@ use syn_parser::{
     resolve::RelationIndexer,
 };
 use tokio::sync::oneshot;
+use tracing::trace;
 
 use crate::{
-    app_state::helpers::{print_module_set, printable_nodes},
-    parser::{ParserOutput, run_parse_no_transform},
-    utils::helper::find_file_by_prefix,
+    app_state::helpers::{print_module_set, printable_nodes}, parser::{run_parse_no_transform, ParserOutput}, tracing_setup::SCAN_CHANGE, utils::helper::find_file_by_prefix
 };
 
 use super::*;
@@ -323,16 +322,21 @@ pub(super) async fn scan_for_change(
     tracing::info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(crate_name)?;
-    tracing::trace!("file_data: {:#?}", file_data);
+    trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
+
+    // 2.5. Check for files that have been removed
+    let (file_data, removed_file_data): ( Vec<_>, Vec<_> ) = file_data.into_iter().partition(|f| f.file_path.exists());
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
     //  - Note that this does not do anything for those files which may have been added, which will
     //  be handled in parsing during the IndexFiles event process mentioned in step 5 below.
-    let result = state.io_handle.scan_changes_batch(file_data).await?;
+    let result = state.io_handle.scan_changes_batch(file_data).await.inspect_err(|e| {
+            tracing::error!("Error in state.io_handle.scan_changes_batch: {e}");
+    })?;
     let vec_ok = result?;
 
-    if !vec_ok.iter().any(|f| f.is_some()) {
+    if !vec_ok.iter().any(|f| f.is_some()) && removed_file_data.is_empty() {
         // 4. if no changes, send complete in oneshot
         match scan_tx.send(None) {
             Ok(()) => {
@@ -346,7 +350,7 @@ pub(super) async fn scan_for_change(
         // 5. if changes, send IndexFiles event (not yet made) or handle here.
         //  Let's see how far we get handling it here first.
         //  - Since we are parsing the whole target in any case, we might as well do it
-        //  concurrently. Test sequential appraoch first, then move to be parallel earlier.
+        //  concurrently. Test sequential approach first, then move to be parallel earlier.
 
         // TODO: Move this into `syn_parser` probably
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
@@ -358,6 +362,7 @@ pub(super) async fn scan_for_change(
         let changed_filenames = vec_ok
             .iter()
             .filter_map(|opt| opt.as_ref().map(|f| f.file_path.clone()))
+            .chain(removed_file_data.iter().map(|f| f.file_path.clone()))
             .collect_vec();
         for file in changed_filenames.iter() {
             let filename = format!("{}", file.display());
@@ -371,7 +376,7 @@ pub(super) async fn scan_for_change(
                 .join("\n");
             tracing::info!(target:"file_hashes", "rows:\n {}", rows);
         }
-        // WARN: Half-assed implementation, this should be a recurisve function instead of simple
+        // WARN: Half-assed implementation, this should be a recursive function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
         let module_uuids = vec_ok.into_iter().filter_map(|f| f.map(|i| i.id));
@@ -465,7 +470,6 @@ pub(super) async fn scan_for_change(
         });
         // filter nodes
         merged.retain_all(filtered_union);
-        // merged.graph.modules.retain(|m| m.is_file_based() || m.is_inline());
 
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             tracing::error!("Error transforming partial graph into database:\n{e}");
