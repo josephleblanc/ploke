@@ -1,9 +1,8 @@
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(unused_variables, unused_imports, dead_code, private_interfaces)]
 //! ploke-tui main library entry.
 //!
 //! Dataflow overview:
-//! - Config load: `try_main` reads config (toml/env), merges curated defaults, refreshes
-//!   OpenRouter capabilities, then resolves API keys and spins up subsystems.
+//! - Config load: `try_main` reads config (toml/env), and spins up subsystems.
 //! - Commands: UI routes parsed commands to `StateCommand` via channels; model/provider
 //!   commands update `ModelRegistry` and emit `SystemEvent::ModelSwitched`.
 //! - Persistence: config can be saved/loaded atomically with optional key redaction.
@@ -18,17 +17,21 @@ pub mod chat_history;
 pub mod error;
 pub mod event_bus;
 pub mod file_man;
-pub mod llm;
 pub mod observability;
 pub mod parser;
 pub mod tracing_setup;
-pub mod user_config;
 pub mod utils;
 pub use event_bus::*;
 pub mod rag;
 pub mod tools;
 #[cfg(test)]
 mod tests;
+
+pub mod llm;
+
+pub mod user_config;
+
+use llm::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse, ModelId};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -45,7 +48,6 @@ use app_state::{
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
-use llm::{llm_manager, model_provider::EndpointData, openrouter_catalog::{ModelEntry, ProviderSummary}, provider_endpoints::ModelsEndpoint};
 use parser::run_parse;
 use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
 use ploke_embed::{
@@ -57,7 +59,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
 use ui::UiEvent;
-use user_config::{OPENROUTER_URL, ModelConfig, UserConfig, default_model};
+use user_config::{OPENROUTER_URL, UserConfig};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -132,7 +134,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         );
     }));
 
-    let mut config = config::Config::builder()
+    let config = config::Config::builder()
         .add_source(
             config::File::with_name(
                 &dirs::config_dir()
@@ -147,17 +149,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .try_deserialize::<UserConfig>()
         .unwrap_or_else(|_| UserConfig::default());
 
-    // Merge curated defaults with user overrides
-    config.registry = config.registry.with_defaults();
-
-    // Refresh OpenRouter model registry (capabilities, pricing) for better routing/validation.
-    if let Err(e) = config.registry.refresh_from_openrouter().await {
-        tracing::warn!("Failed to refresh OpenRouter model registry: {}", e);
-    }
-
-    // Apply API keys from environment variables to all providers
-    config.registry.load_api_keys();
-    tracing::debug!("Registry after merge: {:#?}", config.registry);
+    // llm: registry prefs are used directly; model lists/capabilities fetched via router APIs.
+    tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
@@ -220,6 +213,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
         proposals: RwLock::new(HashMap::new()),
+        create_proposals: RwLock::new(HashMap::new()),
         rag,
         // TODO: Add TokenBudget fields to Config
         budget: TokenBudget::default(),
@@ -227,6 +221,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Load persisted proposals (best-effort) before starting subsystems
     crate::app_state::handlers::proposals::load_proposals(&state).await;
+    crate::app_state::handlers::proposals::load_create_proposals(&state).await;
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
@@ -256,7 +251,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
-    tokio::spawn(llm_manager(
+    tokio::spawn(llm::manager::llm_manager(
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
@@ -313,8 +308,9 @@ pub enum RagEvent {
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm(llm::Event),
-    LlmTool(llm::ToolEvent),
+    Llm(llm::LlmEvent),
+    // placeholder
+    LlmTool(llm::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
     // TODO:
@@ -322,17 +318,6 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(SystemEvent),
-    ModelSearchResults {
-        keyword: String,
-        items: Vec<ModelsEndpoint>,
-    },
-    ModelsEndpointsRequest {
-        model_id: String,
-    },
-    ModelsEndpointsResults {
-        model_id: String,
-        providers: Vec<ProviderSummary>,
-    },
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
@@ -356,12 +341,13 @@ impl AppEvent {
     // TODO: Change EventPriority to isntead be either a field within the event struct itself or
     // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
+        use llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
-                llm::ToolEvent::Requested { .. } => EventPriority::Background,
-                llm::ToolEvent::Completed { .. } | llm::ToolEvent::Failed { .. } => {
+                ToolEvent::Requested { .. } => EventPriority::Background,
+                ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => {
                     EventPriority::Realtime
                 }
             },
@@ -375,9 +361,6 @@ impl AppEvent {
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
-            AppEvent::ModelSearchResults { .. } => EventPriority::Realtime,
-            AppEvent::ModelsEndpointsRequest { .. } => EventPriority::Background,
-            AppEvent::ModelsEndpointsResults { .. } => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallRequested { .. }) => EventPriority::Background,
             AppEvent::System(SystemEvent::ToolCallCompleted { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ToolCallFailed { .. }) => EventPriority::Realtime,
@@ -392,6 +375,10 @@ impl AppEvent {
             AppEvent::Rag(_) => EventPriority::Background,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => EventPriority::Background,
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
+            AppEvent::Llm(llm_event) => EventPriority::Background,
+
         }
     }
     pub fn is_system(&self) -> bool {

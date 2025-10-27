@@ -21,7 +21,7 @@ use ploke_db::TypedEmbedData;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{tools::{Ctx, ToolCall, ToolName}, ArcStr, UiError};
+use crate::{tools::{Ctx, ToolCall, ToolName}, ArcStr, ModelId, UiError};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SystemEvent {
@@ -33,7 +33,7 @@ pub enum SystemEvent {
     CommandDropped(&'static str),
     ReadSnippet(TypedEmbedData),
     CompleteReadSnip(Vec<String>),
-    ModelSwitched(String),
+    ModelSwitched(ModelId),
     ToolCallRequested {
         // request_id: Uuid,
         tool_call: ToolCall,
@@ -73,6 +73,7 @@ pub enum SystemEvent {
         crate_name: String,
         #[serde(skip)]
         file_dir: Option<Arc<std::path::PathBuf>>,
+        root_path: Option<Arc<std::path::PathBuf>>,
         is_success: bool,
         error: Option<&'static str>,
     },

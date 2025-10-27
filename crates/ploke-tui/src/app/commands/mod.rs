@@ -1,5 +1,7 @@
 pub(crate) mod exec;
+#[cfg(feature = "live_api_tests")]
 mod exec_live_tests;
+#[cfg(feature = "live_api_tests")]
 mod exec_real_tools_live_tests;
 pub mod parser;
 

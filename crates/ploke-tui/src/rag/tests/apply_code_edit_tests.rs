@@ -70,6 +70,7 @@ async fn create_test_tool_params(
 ) -> ToolCallParams {
     use crate::tools::ToolName;
     use ploke_core::ArcStr;
+    let typed_req: ApplyCodeEditRequest = serde_json::from_value(arguments).unwrap();
     
     ToolCallParams {
         state: Arc::clone(&harness.state),
@@ -77,7 +78,7 @@ async fn create_test_tool_params(
         request_id,
         parent_id: request_id, // Use same ID for simplicity in tests
         name: ToolName::ApplyCodeEdit,
-        arguments,
+        typed_req,
         call_id: ArcStr::from("test_call_id"),
     }
 }

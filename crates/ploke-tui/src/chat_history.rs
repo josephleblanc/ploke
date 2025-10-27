@@ -1,12 +1,16 @@
-use crate::AppEvent;
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
+use crate::rag::context::PROMPT_HEADER;
+use crate::{AppEvent, llm::manager::Role};
 
-use std::collections::HashMap;
+use fxhash::FxHashMap as HashMap;
+use once_cell::sync::Lazy;
 use std::fmt;
+use std::hash::RandomState;
 use std::io::Write as _;
 
 use color_eyre::Result;
+use ploke_core::ArcStr;
 
 #[derive(Debug, Clone, Copy)]
 pub enum NavigationDirection {
@@ -198,6 +202,58 @@ pub struct Message {
     pub content: String,
     /// The kind of the message's speaker, e.g. User, Assistant, System, etc
     pub kind: MessageKind,
+    /// If this is a Tool message that came from a tool call, the originating call id.
+    /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
+    pub tool_call_id: Option<ArcStr>,
+    /// The status of the message in the current LLM context window.
+    pub context_status: ContextStatus,
+}
+
+/// The status of the message in the current LLM context window.
+/// Pinned indicates that the message should be kept in the messages sent to the LLM, while
+/// Unpinned messages are left out of messages sent to the LLM.
+/// Pinned messages must have a reason for the pin, which will be evaluated when they run out of
+/// `turns_to_live`.
+/// A "turn to live" is decremented each time the conversation history is retrieved.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum ContextStatus {
+    /// The information on why an item is pinned, and how long until it will either be automatically
+    /// be removed from the context or reviewed and potentially re-pinned.
+    Pinned {
+        /// Number of LLM calls this message will live, defaults to 15
+        turns_to_live: TurnsToLive,
+        /// Optional reason this item is pinned
+        reason: Option<ArcStr>,
+        /// Optional field to indicate this message was pinned by a particular role.
+        pinned_by: Option<Role>,
+    },
+    /// Unpinned message not kept in LLM context window.
+    Unpinned,
+}
+
+impl Default for ContextStatus {
+    fn default() -> Self {
+        Self::Pinned {
+            // sane default, somewhat arbitrary
+            turns_to_live: TurnsToLive::default(),
+            reason: None,
+            pinned_by: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum TurnsToLive {
+    Limited(u16),
+    NoneRemaining,
+    Unlimited,
+}
+
+impl Default for TurnsToLive {
+    fn default() -> Self {
+        // sane default, somewhat arbitrary
+        Self::Limited(15)
+    }
 }
 
 /// Defines the author of a message.
@@ -293,6 +349,27 @@ impl Message {
     }
 }
 
+pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
+    let context_status = ContextStatus::Pinned {
+        turns_to_live: TurnsToLive::Unlimited,
+        reason: Some( ArcStr::from("Base system prompt should be pinned for entire conversation.") ),
+        pinned_by: Some( Role::System )
+    };
+    Message {
+        id: Uuid::new_v4(),
+        status: crate::chat_history::MessageStatus::Completed,
+        metadata: None,
+        parent: None,
+        children: Vec::new(),
+        selected_child: None,
+        content: PROMPT_HEADER.to_string(),
+        kind: MessageKind::System,
+        tool_call_id: None,
+        context_status,
+    }
+});
+
+
 /// Manages the complete branching conversation history using a tree structure.
 ///
 /// Stores all messages in a HashMap for efficient lookup and maintains
@@ -320,25 +397,50 @@ pub struct ChatHistory {
 }
 
 impl ChatHistory {
-    /// Creates a new ChatHistory with an empty root message.
+    /// Returns the conversation path (root → current) mapped to llm RequestMessage.
+    ///
+    /// Rules:
+    /// - Includes User, Assistant, and System messages.
+    /// - Skips System messages with empty content (root sentinel).
+    /// - Skips SysInfo (UI/diagnostic) messages.
+    /// - Skips Tool messages for now (requires tool_call_id which is not tracked here).
+    pub(crate) fn current_path_as_llm_request_messages(
+        &self,
+    ) -> Vec<crate::llm::manager::RequestMessage> {
+        use crate::llm::manager::RequestMessage as ReqMsg;
+
+        self.current_path_ids()
+            .filter_map(|id| self.messages.get(&id))
+            .filter_map(|m| match m.kind {
+                MessageKind::User => Some(ReqMsg::new_user(m.content.clone())),
+                MessageKind::Assistant => Some(ReqMsg::new_assistant(m.content.clone())),
+                MessageKind::System => {
+                    if m.content.trim().is_empty() {
+                        None
+                    } else {
+                        Some(ReqMsg::new_system(m.content.clone()))
+                    }
+                }
+                // Tool messages.
+                MessageKind::Tool => Some(ReqMsg::new_tool(
+                    m.content.clone(),
+                    m.tool_call_id
+                        .clone()
+                        .expect("Tool calls must have Some tool_call_id"),
+                )),
+                // UI/system info messages are not part of the API payload; omit.
+                MessageKind::SysInfo => None,
+            })
+            .collect()
+    }
+    /// Creates a new ChatHistory with the systm prompt message.
     ///
     /// The root message serves as the starting point for all conversations.
     /// Its content is intentionally left empty to allow natural branching.
     pub fn new() -> Self {
-        let root_id = Uuid::new_v4();
-        let root = Message {
-            id: root_id,
-            status: MessageStatus::Completed,
-            metadata: None,
-            parent: None,
-            children: Vec::new(),
-            selected_child: None,
-            content: String::new(),
-            kind: MessageKind::System,
-        };
+        let root = BASE_SYSTEM_PROMPT.clone();
         let root_id = root.id;
-
-        let mut messages = HashMap::new();
+        let mut messages = HashMap::default();
         messages.insert(root.id, root);
         Self {
             messages,
@@ -384,7 +486,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::User;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_llm(
@@ -395,7 +497,18 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
+    }
+
+    pub fn add_message_sysinfo(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        kind: MessageKind,
+        content: String,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_system(
@@ -406,7 +519,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, None)
     }
 
     pub fn add_message_tool(
@@ -415,14 +528,17 @@ impl ChatHistory {
         child_id: Uuid,
         kind: MessageKind,
         content: String,
+        tool_call_id: Option<ArcStr>,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind)
+        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id)
     }
 
     /// Adds a new child message to the conversation tree.
     /// Takes some data from the state of the chat history, modifies chat history state to include
     /// the new child and message, and returns the new child id.
+    ///
+    /// By default, the message is pinned for 15 turns of the conversation.
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
@@ -434,6 +550,7 @@ impl ChatHistory {
         content: &str,
         status: MessageStatus,
         kind: MessageKind,
+        tool_call_id: Option<ArcStr>,
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -444,7 +561,40 @@ impl ChatHistory {
             status,
             metadata: None,
             kind,
+            tool_call_id: None,
+            context_status: ContextStatus::default(),
         };
+
+        let parent = self
+            .messages
+            .get_mut(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+
+        parent.children.push(child_id);
+        parent.selected_child = Some(child_id);
+        self.messages.insert(child_id, child);
+        // NOTE: This could be problematic, maybe?
+        // Consider a case where multiple children are being added simultaneously.
+        // Forget it, we would likely need a different function for that.
+        self.tail = child_id;
+        self.rebuild_path_cache();
+        Ok(child_id)
+    }
+
+    /// Adds a new child message to the conversation tree.
+    /// Takes some data from the state of the chat history, modifies chat history state to include
+    /// the new child and message, and returns the new child id.
+    ///
+    /// Pins the message with a context status, including a given `TurnsToLive`, indicating the
+    /// number of turns of the conversation before the message is either reviewed or automatically
+    /// removed from the conversation. May be pinned with an Unlimited `TurnsToLive` if no
+    /// automatic context management is desired.
+    ///
+    /// # Panics
+    /// No explicit panics, but invalid parent_ids will result in orphaned messages
+    pub fn add_child_message(&mut self, child: Message) -> Result<Uuid, ChatError> {
+        let child_id = child.id;
+        let parent_id = child.parent.expect("child message must have parent");
 
         let parent = self
             .messages
@@ -477,6 +627,7 @@ impl ChatHistory {
         &mut self,
         sibling_id: Uuid,
         content: &str,
+        kind: MessageKind,
         status: MessageStatus,
     ) -> Result<Uuid, ChatError> {
         let sibling = self
@@ -487,9 +638,8 @@ impl ChatHistory {
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent, and generate a new message id
-        // NOTE: Assumes the same kind (safe for sibling of message)
         let new_id = Uuid::new_v4();
-        self.add_child(parent_id, new_id, content, status, sibling.kind)
+        self.add_child(parent_id, new_id, content, status, kind, None)
     }
 
     /// Deletes a message and its descendant subtree from the conversation history.
@@ -525,8 +675,8 @@ impl ChatHistory {
         }
 
         // Track whether current/tail are being deleted
-        let deletes_current = to_delete.iter().any(|n| *n == self.current);
-        let deletes_tail = to_delete.iter().any(|n| *n == self.tail);
+        let deletes_current = to_delete.contains(&self.current);
+        let deletes_tail = to_delete.contains(&self.tail);
 
         // Remove all collected nodes
         for node in to_delete {
@@ -871,6 +1021,43 @@ impl ChatHistory {
         });
         Ok(msg_with_id)
     }
+
+    /// Adds a new Tool message and attaches a tool_call_id.
+    pub fn add_tool_message(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        content: String,
+        call_id: ArcStr,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        let kind = MessageKind::Tool;
+        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id))
+    }
+
+    /// Decrement turns to live of messages in the currently selected message history.
+    /// Changes the context_status from Limited to NoneRemaining if turns to live goes from 1 to 0,
+    /// indicating that the message will either be automatically left out of the LLM context or
+    /// will need review and repinning.
+    pub fn decrement_ttl(&mut self) {
+        for msg_id in self.path_cache.iter() {
+            self.messages
+                .entry(*msg_id)
+                .and_modify(|m| match &mut m.context_status {
+                    ContextStatus::Pinned {
+                        turns_to_live: ttl, ..
+                    } => {
+                        if let TurnsToLive::Limited(n) = ttl {
+                            *n = n.saturating_sub(1);
+                        }
+                        if *ttl == TurnsToLive::Limited(0) {
+                            *ttl = TurnsToLive::NoneRemaining
+                        }
+                    }
+                    ContextStatus::Unpinned => {}
+                });
+        }
+    }
 }
 
 /// Atomically writes file contents using tempfile and rename
@@ -883,13 +1070,14 @@ pub(crate) async fn atomic_write(
     temp.write_all(content.as_bytes())?;
     // Map PersistError into a plain io::Error to satisfy the return type
     temp.persist(path)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::manager::Role as LlmRole;
     use tempfile::tempdir;
 
     #[test]
@@ -933,6 +1121,7 @@ mod tests {
             "User: hi",
             MessageStatus::Completed,
             MessageKind::User,
+            None,
         )
         .unwrap();
 
@@ -962,8 +1151,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -972,6 +1168,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -982,6 +1179,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1006,8 +1204,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1016,6 +1221,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1026,6 +1232,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1060,7 +1267,7 @@ mod tests {
         let mut ch = ChatHistory::new();
         let root = ch.current;
 
-        let res = ch.add_sibling(root, "x", MessageStatus::Completed);
+        let res = ch.add_sibling(root, "x", MessageKind::Assistant, MessageStatus::Completed);
 
         assert!(matches!(res, Err(ChatError::RootHasNoSiblings)));
     }
@@ -1071,8 +1278,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
         ch.current = u1;
 
         let res = ch.navigate_sibling(NavigationDirection::Next);
@@ -1090,8 +1304,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q1", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q1",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1100,6 +1321,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1113,8 +1335,15 @@ mod tests {
 
         // Deeper conversation
         let u2 = Uuid::new_v4();
-        ch.add_child(a1, u2, "Q2", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            a1,
+            u2,
+            "Q2",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a2 = Uuid::new_v4();
         ch.add_child(
@@ -1123,6 +1352,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1141,8 +1371,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1151,6 +1388,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1166,8 +1404,15 @@ mod tests {
         let root = ch.current;
 
         let u1 = Uuid::new_v4();
-        ch.add_child(root, u1, "Q", MessageStatus::Completed, MessageKind::User)
-            .unwrap();
+        ch.add_child(
+            root,
+            u1,
+            "Q",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
 
         let a1 = Uuid::new_v4();
         ch.add_child(
@@ -1176,6 +1421,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
         )
         .unwrap();
 
@@ -1196,5 +1442,89 @@ mod tests {
 
         let read = std::fs::read_to_string(&path).unwrap();
         assert_eq!(read, expected);
+    }
+
+    #[test]
+    fn current_path_as_llm_request_messages_maps_and_filters() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        // Add a visible system message (non-empty) – should be included
+        let sys1 = Uuid::new_v4();
+        ch.add_message_system(
+            root,
+            sys1,
+            MessageKind::System,
+            "You are a helpful assistant.".to_string(),
+        )
+        .unwrap();
+
+        // Add a user message
+        let u1 = Uuid::new_v4();
+        ch.add_child(
+            root,
+            u1,
+            "Hello?",
+            MessageStatus::Completed,
+            MessageKind::User,
+            None,
+        )
+        .unwrap();
+
+        // Add an assistant message
+        let a1 = Uuid::new_v4();
+        ch.add_child(
+            u1,
+            a1,
+            "Hi! How can I help?",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+            None,
+        )
+        .unwrap();
+
+        // Add a SysInfo message – should be excluded
+        let info = Uuid::new_v4();
+        ch.add_child(
+            a1,
+            info,
+            "(diagnostic) not part of request",
+            MessageStatus::Completed,
+            MessageKind::SysInfo,
+            None,
+        )
+        .unwrap();
+
+        // Add a Tool message – currently excluded (missing tool_call_id context)
+        let tool = Uuid::new_v4();
+        ch.add_child(
+            info,
+            tool,
+            "tool-output",
+            MessageStatus::Completed,
+            MessageKind::Tool,
+            Some(ArcStr::from("new_tool_call:0")),
+        )
+        .unwrap();
+
+        // Select the assistant message as current (root→sys1→u1→a1)
+        ch.current = a1;
+        ch.rebuild_path_cache();
+
+        // Include the root system prompt when non-empty
+        let msgs = ch.current_path_as_llm_request_messages();
+        // Expect: [System(non-empty), User, Assistant]
+        let printable = format!("messages:
+
+{:#?}
+", msgs);
+        eprintln!("{}", &printable);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, LlmRole::System);
+        assert!(msgs[0].content.contains("BEGIN SYSTEM PROMPT"));
+        assert_eq!(msgs[1].role, LlmRole::User);
+        assert_eq!(msgs[1].content, "Hello?");
+        assert_eq!(msgs[2].role, LlmRole::Assistant);
+        assert_eq!(msgs[2].content, "Hi! How can I help?");
     }
 }

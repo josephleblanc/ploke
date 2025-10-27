@@ -105,12 +105,6 @@ impl super::Tool for GatCodeEdit {
                 })
                 .collect(),
         };
-        let arguments = serde_json::to_value(typed_req).map_err(|e| {
-            ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
-                "Failed to serialize CodeEditParams: {}",
-                e
-            )))
-        })?;
         // Execute legacy staging path; rely on proposal store for result
         let request_id = ctx.request_id;
         let call_id = ctx.call_id;
@@ -120,7 +114,7 @@ impl super::Tool for GatCodeEdit {
             request_id,
             parent_id: ctx.parent_id,
             name: Self::name(),
-            arguments,
+            typed_req,
             call_id,
         };
         apply_code_edit_tool(params_env).await;
@@ -256,6 +250,7 @@ mod tests {
         );
     }
 }
+
 
 #[cfg(test)]
 mod gat_tests {

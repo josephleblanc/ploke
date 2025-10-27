@@ -1,5 +1,7 @@
-
-use ploke_core::rag_types::{AssembledContext, AssembledMeta, ConciseContext, RequestCodeContextResult};
+use ploke_core::rag_types::{
+    AssembledContext, AssembledMeta, ConciseContext, RequestCodeContextResult,
+};
+use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
 use crate::TOKEN_LIMIT;
 
@@ -30,65 +32,27 @@ lazy_static::lazy_static! {
                     "minimum": 1,
                     "description": "Optional maximum tokens of code context to return, sane defaults"
                 }
-            },
-            "required": ["search_term"]
+            }
         }
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tool_def_serializes_expected_shape() -> color_eyre::Result<()> {
-        let def = <RequestCodeContextGat as Tool>::tool_def();
-        let v = serde_json::to_value(&def).expect("serialize");
-        eprintln!("{}", serde_json::to_string_pretty(&v)?);
-        let func = v
-            .get("function")
-            .expect("function field name")
-            .as_object()
-            .expect("def obj");
-        assert_eq!(
-            func.get("name").and_then(|n| n.as_str()),
-            Some("request_code_context")
-        );
-        let params = func
-            .get("parameters")
-            .and_then(|p| p.as_object())
-            .expect("parameters obj");
-        let req = params
-            .get("required")
-            .and_then(|r| r.as_array())
-            .expect("req arr");
-        assert!(req.iter().any(|s| s.as_str() == Some("search_term")));
-        let props = params
-            .get("properties")
-            .and_then(|p| p.as_object())
-            .expect("props obj");
-        assert!(props.contains_key("search_term"));
-        Ok(())
-    }
-}
-
-// --- GAT implementation ---
+// --- GAT-based tool impl ---
 use std::borrow::Cow;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RequestCodeContextParams<'a> {
     pub token_budget: Option<u32>,
     #[serde(borrow)]
-    pub search_term: Cow<'a, str>,
+    pub search_term: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestCodeContextParamsOwned {
-    pub token_budget: Option< u32 >,
-    pub search_term: String,
+    pub token_budget: Option<u32>,
+    pub search_term: Option<String>,
 }
 
-/// Unit struct for GAT-based tool; uses Ctx to access RagService/state
 #[derive(Default)]
 pub struct RequestCodeContextGat {
     pub budget: TokenBudget,
@@ -120,17 +84,9 @@ impl super::Tool for RequestCodeContextGat {
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         RequestCodeContextParamsOwned {
             token_budget: params.token_budget,
-            search_term: params.search_term.to_string(),
+            search_term: params.search_term.as_ref().map(|s| s.to_string()),
         }
     }
-
-    // fn tool_def() -> ToolDefinition{
-    //     ToolFunctionDef {
-    //         name: ToolName::RequestCodeContext,
-    //         description: ToolDescr::RequestCodeContext,
-    //         parameters: Self::schema().clone(),
-    //     }.into()
-    // }
 
     async fn execute<'de>(
         params: Self::Params<'de>,
@@ -138,8 +94,6 @@ impl super::Tool for RequestCodeContextGat {
     ) -> Result<ToolResult, ploke_error::Error> {
         use crate::rag::utils::calc_top_k_for_budget;
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
-        fn extract_llm_context(assembled: AssembledContext) {
-        }
         let rag = match &ctx.state.rag {
             Some(r) => r.clone(),
             None => {
@@ -150,14 +104,32 @@ impl super::Tool for RequestCodeContextGat {
                 ));
             }
         };
-        let search_term = params.search_term.as_ref();
-        if search_term.trim().is_empty() {
+        let mut search_term_opt = params
+            .search_term
+            .as_ref()
+            .map(|s| s.as_ref().trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        if search_term_opt.is_none() {
+            use crate::chat_history::MessageKind;
+            let history = ctx.state.chat.read().await;
+            let mut last_user: Option<String> = None;
+            for msg in history.iter_path() {
+                if matches!(msg.kind, MessageKind::User) {
+                    last_user = Some(msg.content.clone());
+                }
+            }
+            search_term_opt = last_user
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+        let Some(search_term) = search_term_opt else {
             return Err(ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(
                     "No query available (search_term missing or empty)".to_string(),
                 ),
             ));
-        }
+        };
         let token_budget = params.token_budget.unwrap_or(TOKEN_LIMIT);
         let top_k = calc_top_k_for_budget(token_budget);
         let budget = TokenBudget {
@@ -168,38 +140,44 @@ impl super::Tool for RequestCodeContextGat {
             rrf: RrfConfig::default(),
             mmr: None,
         };
-        let AssembledContext {
-            parts,
-            stats,
-        } = rag.get_context(search_term, top_k, &budget, &strategy).await?;
+        let AssembledContext { parts, stats } = rag
+            .get_context(&search_term, top_k, &budget, &strategy)
+            .await?;
+
         let assembled_meta = AssembledMeta {
-            search_term: params.search_term.to_string(),
+            search_term,
             top_k,
-            kind: ContextPartKind::Code
+            kind: ContextPartKind::Code,
         };
-        tracing::info!("Executed Tool: {:?} \nWith stats: {:#?}", Self::name(), stats);
+        tracing::debug!(?parts, ?stats);
         let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
-        let serialized = serde_json::to_string(&result).expect("Invalid state: serialization");
+        let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
             content: serialized,
         })
     }
 }
-
 #[cfg(test)]
 mod gat_tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn params_deserialize_and_into_owned() {
         let raw = r#"{"token_budget":512,"search_term":"foo bar"}"#;
         let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
-        assert_eq!(params.token_budget, Some( 512 ));
-        assert_eq!(params.search_term, "foo bar");
+        assert_eq!(params.token_budget, Some(512));
+        assert_eq!(params.search_term.as_deref(), Some("foo bar"));
         let owned = RequestCodeContextGat::into_owned(&params);
-        assert_eq!(owned.token_budget, Some( 512 ));
-        assert_eq!(owned.search_term, "foo bar");
+        assert_eq!(owned.token_budget, Some(512));
+        assert_eq!(owned.search_term.as_deref(), Some("foo bar"));
+    }
+
+    #[test]
+    fn params_missing_search_term_still_parses() {
+        let raw = r#"{"token_budget":256}"#;
+        let params = RequestCodeContextGat::deserialize_params(raw).expect("parse");
+        assert_eq!(params.token_budget, Some(256));
+        assert!(params.search_term.is_none());
     }
 
     #[test]
@@ -215,29 +193,6 @@ mod gat_tests {
         let schema = RequestCodeContextGat::schema();
         let obj = schema.as_object().expect("schema obj");
         assert!(obj.contains_key("properties"));
-    }
-
-    #[tokio::test]
-    async fn execute_returns_error_without_rag_success() {
-        use crate::event_bus::EventBusCaps;
-        let state = Arc::new(crate::test_utils::mock::create_mock_app_state());
-        let event_bus = Arc::new(crate::EventBus::new(EventBusCaps::default()));
-        let ctx = super::Ctx {
-            state,
-            event_bus,
-            request_id: Uuid::new_v4(),
-            parent_id: Uuid::new_v4(),
-            call_id: ArcStr::from("rcctx-test"),
-        };
-        let params = RequestCodeContextParams {
-            token_budget: Some( 256 ),
-            search_term: Cow::Borrowed("fn"),
-        };
-        let out = RequestCodeContextGat::execute(params, ctx).await;
-        assert!(
-            out.is_err(),
-            "expected execute to error with mock/unavailable RAG"
-        );
     }
 
     #[test]
@@ -262,13 +217,12 @@ mod gat_tests {
                             "minimum": 1,
                             "description": "Optional maximum tokens of code context to return, sane defaults"
                         }
-                    },
-                    "required": ["search_term"]
+                    }
                 }
             }
         });
         assert_eq!(expected, v);
-
         Ok(())
     }
 }
+

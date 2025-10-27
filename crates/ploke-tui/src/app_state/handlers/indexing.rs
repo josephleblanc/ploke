@@ -17,21 +17,22 @@ pub async fn index_workspace(
 ) {
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
-        let mut write_guard = state.system.write().await;
-        let crate_focus = match std::env::current_dir() {
-            Ok(current_dir) => {
-                let mut pwd = current_dir;
-                pwd.push(&workspace);
-                pwd
+        match state.system.read().await.crate_focus.clone() {
+            Some(path) => path,
+            None => {
+                match std::env::current_dir() {
+                    Ok(current_dir) => {
+                        let mut pwd = current_dir;
+                        pwd.push(&workspace);
+                        pwd
+                    }
+                    Err(e) => {
+                        tracing::error!("Error resolving current dir: {e}");
+                        return;
+                    }
+                }
             }
-            Err(e) => {
-                tracing::error!("Error resolving current dir: {e}");
-                return;
-            }
-        };
-        tracing::debug!("Setting crate_focus to {}", crate_focus.display());
-        write_guard.crate_focus = Some(crate_focus.clone());
-        crate_focus
+        }
     };
 
     if needs_parse {
@@ -61,51 +62,50 @@ pub async fn index_workspace(
     let progress_rx = event_bus.index_subscriber();
 
     let state_arc = state.indexer_task.as_ref().map(Arc::clone);
-    if let Some(indexer_task) = state_arc {
-        if let Ok((callback_manager, db_callbacks, unreg_codes_arc, shutdown)) =
+    if let Some(indexer_task) = state_arc
+        && let Ok((callback_manager, db_callbacks, unreg_codes_arc, shutdown)) =
             ploke_db::CallbackManager::new_bounded(Arc::clone(&indexer_task.db), 1000)
-        {
-            let counter = callback_manager.clone_counter();
-            let callback_handler = std::thread::spawn(move || callback_manager.run());
-            let res = tokio::spawn(async move {
-                let indexing_result = ploke_embed::indexer::IndexerTask::index_workspace(
-                    indexer_task,
-                    workspace,
-                    progress_tx,
-                    progress_rx,
-                    control_rx,
-                    callback_handler,
-                    db_callbacks,
-                    counter,
-                    shutdown,
-                )
-                .await;
-                tracing::info!("Indexer task returned");
-                match indexing_result {
-                    Ok(_) => {
-                        tracing::info!("Indexer finished successfully");
-                        // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Completed
-                    }
-                    Err(e) => {
-                        tracing::warn!("Indexer finished with error: {}", e);
-                        // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Cancelled/Failed
-                    }
-                }
-            })
+    {
+        let counter = callback_manager.clone_counter();
+        let callback_handler = std::thread::spawn(move || callback_manager.run());
+        let res = tokio::spawn(async move {
+            let indexing_result = ploke_embed::indexer::IndexerTask::index_workspace(
+                indexer_task,
+                workspace,
+                progress_tx,
+                progress_rx,
+                control_rx,
+                callback_handler,
+                db_callbacks,
+                counter,
+                shutdown,
+            )
             .await;
-            match res {
+            tracing::info!("Indexer task returned");
+            match indexing_result {
                 Ok(_) => {
-                    tracing::info!("Sending Indexing Completed");
+                    tracing::info!("Indexer finished successfully");
+                    // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Completed
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Sending Indexing Failed with error message: {}",
-                        e.to_string()
-                    );
+                    tracing::warn!("Indexer finished with error: {}", e);
+                    // SSoT: Do not emit AppEvent here; run_event_bus will forward IndexingStatus::Cancelled/Failed
                 }
             }
-            tracing::info!("Indexer task returned");
+        })
+        .await;
+        match res {
+            Ok(_) => {
+                tracing::info!("Sending Indexing Completed");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Sending Indexing Failed with error message: {}",
+                    e.to_string()
+                );
+            }
         }
+        tracing::info!("Indexer task returned");
     }
 }
 

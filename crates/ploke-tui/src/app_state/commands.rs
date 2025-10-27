@@ -1,8 +1,10 @@
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 
+use crate::ModelId;
 use crate::chat_history::MessageKind;
-use crate::llm::{ChatHistoryTarget, LLMParameters};
+use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
+use ploke_core::ArcStr;
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -39,6 +41,8 @@ pub enum StateCommand {
     AddMessage {
         kind: MessageKind,
         content: String,
+        /// Currently unused, placeholder for adding multi-agent support and/or different branches
+        /// in the conversation history tree.
         target: ChatHistoryTarget,
         parent_id: Uuid,
         child_id: Uuid,
@@ -48,9 +52,15 @@ pub enum StateCommand {
         kind: MessageKind,
         new_msg_id: Uuid,
     },
+    AddMessageTool {
+        msg: String,
+        kind: MessageKind,
+        new_msg_id: Uuid,
+        tool_call_id: ArcStr
+    },
     AddUserMessage {
         content: String,
-        new_msg_id: Uuid,
+        new_user_msg_id: Uuid,
         completion_tx: oneshot::Sender<()>,
     },
     UpdateMessage {
@@ -60,6 +70,8 @@ pub enum StateCommand {
     DeleteMessage {
         id: Uuid,
     },
+    /// Decrement the chat history "turns to live"
+    DecrementChatTtl,
     DeleteNode {
         id: Uuid,
     },
@@ -90,6 +102,7 @@ pub enum StateCommand {
     },
     CreateAssistantMessage {
         parent_id: Uuid,
+        new_assistant_msg_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
     IndexWorkspace {
@@ -183,9 +196,15 @@ pub enum StateCommand {
     DenyEdits {
         request_id: Uuid,
     },
+    ApproveCreations {
+        request_id: Uuid,
+    },
+    DenyCreations {
+        request_id: Uuid,
+    },
     SelectModelProvider {
-        model_id: String,
-        provider_id: String,
+        model_id_string: String,
+        provider_key: Option<ProviderKey>,
     },
 }
 
@@ -197,6 +216,7 @@ impl StateCommand {
             DeleteMessage { .. } => "DeleteMessage",
             DeleteNode { .. } => "DeleteNode",
             AddUserMessage { .. } => "AddUserMessage",
+            AddMessageTool { .. } => "AddMessageTool",
             UpdateMessage { .. } => "UpdateMessage",
             ClearHistory { .. } => "ClearHistory",
             NewSession => "NewSession",
@@ -238,7 +258,10 @@ impl StateCommand {
             SetEditingAutoConfirm { .. } => "SetEditingAutoConfirm",
             ApproveEdits { .. } => "ApproveEdits",
             DenyEdits { .. } => "DenyEdits",
+            ApproveCreations { .. } => "ApproveCreations",
+            DenyCreations { .. } => "DenyCreations",
             SelectModelProvider { .. } => "SelectModelProvider",
+            DecrementChatTtl => "DecrementChatTtl",
         }
     }
 }

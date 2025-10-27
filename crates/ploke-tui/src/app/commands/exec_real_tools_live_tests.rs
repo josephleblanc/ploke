@@ -1,5 +1,11 @@
 #![cfg(test)]
 
+use crate::llm::request::endpoint::Endpoint;
+use crate::llm::request::models;
+use crate::llm::router_only::openrouter::OpenRouter;
+use crate::llm::router_only::HasEndpoint as _;
+use crate::llm::HasModels as _;
+use crate::EndpointsResponse;
 use lazy_static::lazy_static;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
@@ -19,9 +25,6 @@ use uuid::Uuid;
 use ploke_db::Database;
 use ploke_error::Error;
 
-use crate::llm::model_provider::{Endpoint, EndpointsResponse};
-use crate::llm::openrouter_catalog;
-use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
 use crate::test_harness::openrouter_env;
 use crate::tracing_setup::init_tracing;
 use crate::user_config::OPENROUTER_URL;
@@ -76,9 +79,9 @@ async fn post_with_retries(
 }
 
 /// Minimal price signal for an endpoint: prompt + completion (per 1M tokens)
-fn endpoint_price_hint(ep: &crate::llm::provider_endpoints::ModelsEndpoint) -> f64 {
-    let p = ep.pricing.prompt_or_default();
-    let c = ep.pricing.completion_or_default();
+fn endpoint_price_hint(ep: models::ResponseItem) -> f64 {
+    let p = ep.pricing.prompt;
+    let c = ep.pricing.completion;
     p + c
 }
 
@@ -519,106 +522,5 @@ async fn run_tool_roundtrip(
         Err(e) => {
             warn!("second leg '{}' failed: {}", tool_name, e);
         }
-    }
-}
-
-/// Live end-to-end test that:
-/// 1) Queries the OpenRouter /models/user for available models
-/// 2) For each model, fetches its endpoints
-/// 3) Selects a tools-capable provider endpoint (cheapest by prompt+completion price)
-/// 4) For each of our real tools, sends a forced tool call and performs the operation locally on temporary targets
-///
-/// Notes:
-/// - This test requires OPENROUTER_API_KEY and is ignored by default due to network and cost.
-/// - It performs local tool execution; tool schemas are aligned with our LLM plumbing.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn openrouter_real_tools_roundtrip_smoke() {
-    if std::env::var("PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS")
-        .ok()
-        .as_deref()
-        != Some("1")
-    {
-        eprintln!("Skipping: PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS!=1");
-        return;
-    }
-    let _guard = init_tracing();
-
-    let op = openrouter_env().expect("Skipping: OPENROUTER_API_KEY not set.");
-
-    let client = Client::builder()
-        .timeout(Duration::from_secs(45))
-        .default_headers(default_headers())
-        .build()
-        .expect("client");
-
-    // Fetch user-filtered models
-    let models = match openrouter_catalog::fetch_models(&client, op.base_url.clone(), &op.key).await
-    {
-        Ok(m) => m,
-        Err(e) => {
-            warn!("Failed to fetch OpenRouter catalog: {}", e);
-            return;
-        }
-    };
-    info!("models/user returned {} entries", models.len());
-
-    // Cap iteration for safety (can be increased locally)
-    for (processed, m) in models.into_iter().enumerate() {
-        if processed >= 5 {
-            break;
-        }
-
-        let model_id = m.id;
-        info!("model: {}", model_id);
-
-        let chosen =
-            choose_tools_endpoint_for_model(&client, op.base_url.as_str(), &op.key, &model_id)
-                .await;
-        let Some((author, slug, endpoint, provider_slug_hint)) = chosen else {
-            info!("  no tools-capable endpoints; skipping {}", model_id);
-            continue;
-        };
-
-        info!(
-            "  chosen endpoint: provider='{}' slug_hint='{}' context_length={} price (per M tokens) prompt=${:.4}, completion=${:.4}",
-            endpoint.name.as_ref(),
-            provider_slug_hint
-                .clone()
-                .unwrap_or_else(|| "-".to_string()),
-            endpoint.context_length,
-            endpoint.pricing.prompt * 1_000_000.0,
-            endpoint.pricing.completion * 1_000_000.0,
-        );
-
-        // Build our tool set and targeted args per tool
-        let tools = tool_defs();
-
-        // request_code_context
-        let rc_args = json!({"token_budget": 512, "hint":"SimpleStruct"});
-
-        // get_file_metadata | apply_code_edit prepare their own temporary targets internally
-        let gfm_args = json!({"file_path":"will_be_overridden_by_local_execution"});
-        let ace_args = json!({"edits":[{"file_path":"will_be_overridden_by_local_execution","expected_file_hash":"<unused>","start_byte":0,"end_byte":0,"replacement":"ploke"}]});
-
-        for (def, (name, args)) in tools.iter().zip(vec![
-            ("request_code_context", rc_args),
-            ("get_file_metadata", gfm_args),
-            ("apply_code_edit", ace_args),
-        ]) {
-            run_tool_roundtrip(
-                &client,
-                op.base_url.as_str(),
-                &op.key,
-                &model_id,
-                provider_slug_hint.as_deref(),
-                def,
-                name,
-                args,
-            )
-            .await;
-        }
-
-        // Be polite between models
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }

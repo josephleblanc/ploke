@@ -7,14 +7,14 @@ use uuid::Uuid;
 #[test]
 fn serde_roundtrip_request_code_context() {
     let args = RequestCodeContextArgs {
-        token_budget: 512,
-        search_term: Some("SimpleStruct".to_string()),
+        token_budget: Some( 512 ),
+        search_term: "SimpleStruct".to_string(),
     };
     let args_json = serde_json::to_string(&args).expect("serialize args");
     let args_back: RequestCodeContextArgs =
         serde_json::from_str(&args_json).expect("deserialize args");
-    assert_eq!(args_back.token_budget, 512);
-    assert_eq!(args_back.search_term.as_deref(), Some("SimpleStruct"));
+    assert_eq!(args_back.token_budget, Some( 512 ));
+    assert_eq!(args_back.search_term, "SimpleStruct");
 
     let part = ConciseContext {
         file_path: NodeFilepath("id://dummy".to_string()),

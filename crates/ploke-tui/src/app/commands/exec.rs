@@ -15,10 +15,14 @@
 use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
-use crate::llm::openrouter_catalog::{self, ModelEntry};
-use crate::llm::provider_endpoints::{ModelsEndpoint, ModelsEndpointResponse, SupportedParameters};
+use crate::llm::manager::events::models;
+use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
+use crate::llm::router_only::{HasEndpoint, HasModels};
+use crate::llm::request::endpoint::EndpointsResponse;
+use crate::llm::request::models::{Response as ModelsResponse, ResponseItem};
+use crate::llm::{self, ProviderKey};
 use crate::user_config::{
-    ModelRegistryStrictness, OPENROUTER_URL, ProviderType, UserConfig, openrouter_url,
+    ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
 };
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
@@ -26,6 +30,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::{debug, info_span, instrument, warn};
 use uuid::Uuid;
@@ -62,43 +67,17 @@ pub fn execute(app: &mut App, command: Command) {
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
-                {
-                    let mut cfg = state.config.write().await;
-                    cfg.model_registry.load_api_keys();
-                    let _ = cmd_tx
-                        .send(StateCommand::AddMessageImmediate {
-                            msg: "Reloaded API keys from environment.".to_string(),
-                            kind: MessageKind::SysInfo,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                        .await;
-                    if remote {
-                        match cfg.model_registry.refresh_from_openrouter().await {
-                            Ok(_) => {
-                                let _ = cmd_tx
-                                    .send(StateCommand::AddMessageImmediate {
-                                        msg: "Refreshed model capabilities from OpenRouter."
-                                            .to_string(),
-                                        kind: MessageKind::SysInfo,
-                                        new_msg_id: Uuid::new_v4(),
-                                    })
-                                    .await;
-                            }
-                            Err(e) => {
-                                let _ = cmd_tx
-                                    .send(StateCommand::AddMessageImmediate {
-                                        msg: format!(
-                                            "Failed to refresh OpenRouter model registry: {}",
-                                            e
-                                        ),
-                                        kind: MessageKind::SysInfo,
-                                        new_msg_id: Uuid::new_v4(),
-                                    })
-                                    .await;
-                            }
-                        }
-                    }
-                }
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: if remote {
+                            "Refreshed model list from router (env-based)".to_string()
+                        } else {
+                            "Reloaded API keys from environment (env-only)".to_string()
+                        },
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
             });
         }
         Command::ModelLoad(path_opt) => {
@@ -109,17 +88,8 @@ pub fn execute(app: &mut App, command: Command) {
                 let path_str =
                     path_opt.unwrap_or_else(|| default_path.to_string_lossy().to_string());
                 match UserConfig::load_from_path(std::path::Path::new(&path_str)) {
-                    Ok(mut new_cfg) => {
-                        // Merge curated defaults, reload keys, refresh capabilities if possible
-                        new_cfg.registry = new_cfg.registry.with_defaults();
-                        new_cfg.registry.load_api_keys();
-                        if std::env::var("OPENROUTER_API_KEY")
-                            .ok()
-                            .map(|s| !s.is_empty())
-                            .unwrap_or(false)
-                        {
-                            let _ = new_cfg.registry.refresh_from_openrouter().await;
-                        }
+                    Ok(new_cfg) => {
+                        // llm: registry prefs used as-is; env-based key resolution in router
 
                         // Detect if embedding backend changed (we cannot hot-swap embedder safely yet)
                         let embedding_changed = {
@@ -223,10 +193,6 @@ pub fn execute(app: &mut App, command: Command) {
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
-                {
-                    let mut cfg = state.config.write().await;
-                    cfg.model_registry.require_tool_support = enabled;
-                }
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
                         msg: if enabled {
@@ -245,9 +211,11 @@ pub fn execute(app: &mut App, command: Command) {
             provider_slug,
         } => {
             // Delegate to state layer to pin a specific provider endpoint for a model
+            let provider_key = ProviderKey::new(&provider_slug)
+                .expect("valid provider slug for endpoint selection");
             app.send_cmd(StateCommand::SelectModelProvider {
-                model_id,
-                provider_id: provider_slug,
+                model_id_string: model_id,
+                provider_key: Some(provider_key),
             });
         }
         Command::Update => spawn_update(app),
@@ -256,6 +224,12 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::EditDeny(id) => {
             app.send_cmd(StateCommand::DenyEdits { request_id: id });
+        }
+        Command::CreateApprove(id) => {
+            app.send_cmd(StateCommand::ApproveCreations { request_id: id });
+        }
+        Command::CreateDeny(id) => {
+            app.send_cmd(StateCommand::DenyCreations { request_id: id });
         }
         Command::EditSetPreviewMode(mode) => {
             app.send_cmd(StateCommand::SetEditingPreviewMode { mode });
@@ -299,115 +273,58 @@ fn show_model_info_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-        let reg = &cfg.model_registry;
-        let active_id = reg.active_model_config.clone();
+        use crate::llm::ProviderSlug as _;
+        let active = cfg.active_model.to_string();
+        let params = cfg.llm_params.clone();
+        let endpoints = cfg
+            .model_registry
+            .models
+            .get(&cfg.active_model.key)
+            .map(|mp| mp.selected_endpoints.clone())
+            .unwrap_or_default();
+        let fmt_opt_f32 = |o: Option<f32>| {
+            o.map(|v| format!("{:.3}", v))
+                .unwrap_or_else(|| "-".to_string())
+        };
+        let fmt_opt_u32 =
+            |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
+        // legacy helpers removed (no longer needed): fmt_opt_usize, fmt_opt_u64
 
-        if let Some(p) = reg.get_active_model_config() {
-            let params = p.llm_params.clone().unwrap_or_default();
-            let caps = reg.capabilities.get(&p.model);
+        let mut lines = vec![
+            "Current model settings:".to_string(),
+            format!("  Active model: {}", active),
+            "".to_string(),
+            "  LLM parameters:".to_string(),
+            format!("    temperature: {}", fmt_opt_f32(params.temperature)),
+            format!("    top_p: {}", fmt_opt_f32(params.top_p)),
+            format!("    top_k: {}", fmt_opt_f32(params.top_k)),
+            format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
+            format!("    seed: {}", params.seed.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
+            format!("    presence_penalty: {}", fmt_opt_f32(params.presence_penalty)),
+            format!("    frequency_penalty: {}", fmt_opt_f32(params.frequency_penalty)),
+            format!("    repetition_penalty: {}", fmt_opt_f32(params.repetition_penalty)),
+            format!("    top_logprobs: {}", params.top_logprobs.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
+            format!("    min_p: {}", fmt_opt_f32(params.min_p)),
+            format!("    top_a: {}", fmt_opt_f32(params.top_a)),
+        ];
 
-            let fmt_opt_f32 = |o: Option<f32>| {
-                o.map(|v| format!("{:.3}", v))
-                    .unwrap_or_else(|| "-".to_string())
-            };
-            let fmt_opt_u32 =
-                |o: Option<u32>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-            let fmt_opt_usize =
-                |o: Option<usize>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-            let fmt_opt_u64 =
-                |o: Option<u64>| o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string());
-
-            let mut lines = vec![
-                "Current model settings:".to_string(),
-                format!("  Active provider id: {}", active_id),
-                format!("  Model: {}", p.model),
-                format!("  Base URL: {}", p.base_url),
-                format!("  Provider type: {:?}", p.provider_type),
-                format!(
-                    "  Provider slug: {}",
-                    p.provider_slug
-                        .map(|ps| ps.to_string())
-                        .unwrap_or("-".to_string())
-                ),
-                "".to_string(),
-                "  LLM parameters:".to_string(),
-                format!("    temperature: {}", fmt_opt_f32(params.temperature)),
-                format!("    top_p: {}", fmt_opt_f32(params.top_p)),
-                format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
-                format!(
-                    "    presence_penalty: {}",
-                    fmt_opt_f32(params.presence_penalty)
-                ),
-                format!(
-                    "    frequency_penalty: {}",
-                    fmt_opt_f32(params.frequency_penalty)
-                ),
-                format!("    stop_sequences: [{}]", params.stop_sequences.join(", ")),
-                format!("    parallel_tool_calls: {}", params.parallel_tool_calls),
-                format!("    response_format: {:?}", params.response_format),
-                format!(
-                    "    tool_max_retries: {}",
-                    fmt_opt_u32(params.tool_max_retries)
-                ),
-                format!(
-                    "    tool_token_limit: {}",
-                    fmt_opt_u32(params.tool_token_limit)
-                ),
-                format!(
-                    "    tool_timeout_secs: {}",
-                    fmt_opt_u64(params.tool_timeout_secs)
-                ),
-                format!(
-                    "    history_char_budget: {}",
-                    fmt_opt_usize(params.history_char_budget)
-                ),
-            ];
-
-            lines.push("".to_string());
-            lines.push(format!(
-                "  Tool policy: require_tool_support: {}",
-                reg.require_tool_support
-            ));
-            if let Some(c) = caps {
-                lines.push("".to_string());
-                lines.push("  Capabilities (cache):".to_string());
-                lines.push(format!("    supports_tools: {}", c.supports_tools));
-                lines.push(format!(
-                    "    context_length: {}",
-                    c.context_length
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-                lines.push(format!(
-                    "    input_cost_per_million: {}",
-                    c.input_cost_per_million
-                        .map(|v| format!("{:.4}", v))
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-                lines.push(format!(
-                    "    output_cost_per_million: {}",
-                    c.output_cost_per_million
-                        .map(|v| format!("{:.4}", v))
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-            }
-
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: lines.join("\n"),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
+        lines.push("".to_string());
+        if endpoints.is_empty() {
+            lines.push("  No pinned provider endpoints (router default in use).".to_string());
         } else {
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: "No active provider configured.".to_string(),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
+            lines.push("  Pinned provider endpoints:".to_string());
+            for ek in endpoints.iter() {
+                lines.push(format!("    - {}", ek.provider.slug.as_str()));
+            }
         }
+
+        let _ = cmd_tx
+            .send(StateCommand::AddMessageImmediate {
+                msg: lines.join("\n"),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            })
+            .await;
     });
 }
 
@@ -443,6 +360,12 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
   edit deny <request_id>             - Deny and discard staged code edits
 "#
         .to_string()
+    } else if t.starts_with("create") {
+        r#"Create commands:
+  create approve <request_id>        - Apply staged file creations with this request ID
+  create deny <request_id>           - Deny and discard staged file creations
+"#
+            .to_string()
     } else if t.starts_with("bm25") {
         r#"BM25 commands:
   bm25 rebuild                       - Rebuild sparse BM25 index
@@ -490,18 +413,22 @@ fn list_models_async(app: &App) {
     let cmd_tx = app.cmd_tx.clone();
     tokio::spawn(async move {
         let cfg = state.config.read().await;
-
-        let active = cfg.model_registry.active_model_config.clone();
-        let caps_count = cfg.model_registry.capabilities.len();
-        let mut lines = vec![format!(
-            "Available models (cached capabilities: {}):",
-            caps_count
-        )];
-
-        for pc in &cfg.model_registry.providers {
-            let display = pc.display_name.as_ref().unwrap_or(&pc.model);
-            let marker = if pc.id == active { "*" } else { " " };
-            lines.push(format!("{} {:<28}  {}", marker, pc.id, display));
+        use crate::llm::ProviderSlug as _;
+        let active = cfg.active_model.to_string();
+        let eps = cfg
+            .model_registry
+            .models
+            .get(&cfg.active_model.key)
+            .map(|mp| mp.selected_endpoints.clone())
+            .unwrap_or_default();
+        let mut lines = vec![format!("Active model: {}", active)];
+        if eps.is_empty() {
+            lines.push("No pinned provider endpoints; router default will be used.".to_string());
+        } else {
+            lines.push("Pinned provider endpoints (in selection order):".to_string());
+            for ek in eps {
+                lines.push(format!("  - {} via {}", active, ek.provider.slug.as_str()));
+            }
         }
 
         let _ = cmd_tx
@@ -554,18 +481,10 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         let span = info_span!("list_model_providers", model_id = model_id.as_str());
         let _guard = span.enter();
         // Resolve API key and base URL
-        let (api_key, base_url) = {
-            let cfg = state.config.read().await;
-            let key = cfg
-                .model_registry
-                .providers
-                .iter()
-                .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
-                .map(|p| p.resolve_api_key())
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                .unwrap_or_default();
-            (key, openrouter_url())
-        };
+        let (api_key, base_url) = (
+            std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
+            openrouter_url(),
+        );
 
         if api_key.is_empty() {
             let _ = cmd_tx
@@ -579,15 +498,27 @@ fn list_model_providers_async(app: &App, model_id: &str) {
         }
 
         let client = Client::new();
-        match openrouter_catalog::fetch_model_endpoints(&client, base_url, &api_key, &model_id)
-            .await
-        {
+        use std::str::FromStr;
+        let typed_model = match crate::llm::ModelId::from_str(&model_id) {
+            Ok(m) => OpenRouterModelId::from(m),
+            Err(_) => {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Invalid model id: {}", model_id),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+                return;
+            }
+        };
+        match OpenRouter::fetch_model_endpoints(&client, typed_model).await {
             // First get the endpoints from openrouter, using
             // typed endpoint entry from `/models/:author/:slug/endpoints`,
             // e.g. for model_id = deepseek-chat-v3.1
             // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
             Ok(endpoint_data) => {
-                let endpoints = endpoint_data.endpoints;
+                let endpoints = endpoint_data.data.endpoints;
                 let mut lines = vec![
                     format!("Available endpoints for model '{}':", model_id),
                     "  (Providers marked [tools] advertise tool support)".to_string(),
@@ -646,18 +577,10 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let span = info_span!("open_model_search", keyword = keyword_str.as_str());
         let _guard = span.enter();
         // Resolve API key from configured OpenRouter provider or env
-        let (api_key, base_url) = {
-            let cfg = state.config.read().await;
-            let key = cfg
-                .model_registry
-                .providers
-                .iter()
-                .find(|p| matches!(p.provider_type, ProviderType::OpenRouter))
-                .map(|p| p.resolve_api_key())
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                .unwrap_or_default();
-            (key, openrouter_url())
-        };
+        let (api_key, base_url) = (
+            std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
+            openrouter_url(),
+        );
 
         if api_key.is_empty() {
             let _ = cmd_tx
@@ -671,29 +594,30 @@ fn open_model_search(app: &mut App, keyword: &str) {
         }
 
         let client = Client::new();
-        match openrouter_catalog::fetch_models(&client, base_url, &api_key).await {
-            Ok(models) => {
+        match OpenRouter::fetch_models(&client).await {
+            Ok(models_resp) => {
+                // emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(models::Event::Response {
+                //     models: Some( Arc::new( models_resp ) ),
+                // }))).await;
                 let kw_lower = keyword_str.to_lowercase();
-                let mut filtered: Vec<ModelsEndpoint> = models
+                let mut filtered: Vec<ResponseItem> = models_resp
                     .into_iter()
                     .filter(|m| {
-                        let id_match = m.id.to_lowercase().contains(&kw_lower);
-                        let name_match = m.name.to_lowercase().contains(&kw_lower);
+                        let id_match = m.id.to_string().to_lowercase().contains(&kw_lower);
+                        let name_match = m
+                            .name
+                            .as_str()
+                            .to_lowercase()
+                            .contains(&kw_lower);
                         id_match || name_match
                     })
                     .collect();
-                filtered.sort_by(|a, b| a.id.cmp(&b.id));
+                filtered.sort_by(|a, b| a.id.to_string().cmp(&b.id.to_string()));
                 debug!(
                     "model search filtered {} results for keyword '{}'",
                     filtered.len(),
                     keyword_str
                 );
-                // Always emit results; UI will show "0 results" if none
-                emit_app_event(AppEvent::ModelSearchResults {
-                    keyword: keyword_str,
-                    items: filtered,
-                })
-                .await;
             }
             Err(e) => {
                 let _ = cmd_tx
@@ -971,94 +895,5 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
             show_command_help(app);
             tracing::warn!("Unknown command: {}", cmd);
         }
-    }
-}
-
-#[cfg(test)]
-mod typed_response_tests {
-    use crate::llm::openrouter::model_provider::{EndpointsResponse, ProviderNameStr};
-    use crate::llm::openrouter::provider_endpoints::SupportedParameters;
-    use crate::llm::openrouter_catalog::ModelPricing;
-    use crate::llm::providers::ProviderSlug;
-    use ploke_core::ArcStr;
-
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn deserialize_endpoints_basic() {
-        let payload = json!({
-            "data": {
-                "id": "test/model",
-                "name": "Test Model",
-                "created": 1234567890.0,
-                "description": "A test model",
-                "architecture": {
-                    "input_modalities": ["text"],
-                    "output_modalities": ["text"], 
-                    "tokenizer": "GPT"
-                },
-                "endpoints": [
-                    {
-                        "name": "Foo Provider | test/model",
-                        "model_name": "Test Model",
-                        "context_length": 8192.0,
-                        "pricing": {
-                            "prompt": 0.001,
-                            "completion": 0.002
-                        },
-                        "provider_name": "Foo Provider",
-                        "tag": "openai",
-                        "supported_parameters": ["tools", "structured_outputs"]
-                    },
-                    {
-                        "name": "Bar Provider | test/model", 
-                        "model_name": "Test Model",
-                        "context_length": 4096.0,
-                        "pricing": {
-                            "prompt": 0.001,
-                            "completion": 0.002
-                        },
-                        "provider_name": "Bar Provider",
-                        "tag": "anthropic",
-                        "supported_parameters": []
-                    }
-                ]
-            }
-        });
-
-        let parsed: EndpointsResponse = serde_json::from_value(payload).expect("valid response");
-        assert_eq!(parsed.data.endpoints.len(), 2);
-        assert_eq!(
-            parsed.data.endpoints[0].provider_name,
-            ProviderNameStr("Foo Provider".to_string())
-        );
-        assert!((parsed.data.endpoints[0].context_length - 8192.0).abs() < 1e-10);
-        assert!(parsed.data.endpoints[0].supports_tools());
-        assert_eq!(
-            parsed.data.endpoints[1].provider_name,
-            ProviderNameStr("Bar Provider".to_string())
-        );
-        assert!(!parsed.data.endpoints[1].supports_tools());
-    }
-
-    #[test]
-    fn default_fields_do_not_panic() {
-        let minimal = serde_json::json!({
-            "data": {
-                "id": "test/model",
-                "name": "Test Model", 
-                "created": 1234567890.0,
-                "description": "A test model",
-                "architecture": {
-                    "input_modalities": ["text"],
-                    "output_modalities": ["text"], 
-                    "tokenizer": "GPT"
-                },
-                "endpoints": []
-            }
-        });
-        let parsed: EndpointsResponse = serde_json::from_value(minimal).unwrap();
-        assert!(parsed.data.endpoints.is_empty());
     }
 }

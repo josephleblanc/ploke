@@ -1,0 +1,8 @@
+---
+source: crates/ploke-tui/tests/ui_model_browser_snapshot.rs
+expression: text
+---
+Model Browser — 0 results for "qwen"
+Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, l to choose provider (Enter to apply), s to auto-select, ? for help, q/Esc to close.
+
+Loading models…

@@ -11,14 +11,14 @@ pub(crate) fn calc_top_k_for_budget(token_budget: u32) -> usize {
 }
 
 // Strongly-typed request for apply_code_edit
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyCodeEditRequest {
     pub edits: Vec<Edit>,
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Edit {
     Canonical {
@@ -105,7 +105,7 @@ pub struct ToolCallParams {
     pub request_id: Uuid,
     pub parent_id: Uuid,
     pub name: ToolName,
-    pub arguments: serde_json::Value,
+    pub typed_req: ApplyCodeEditRequest,
     pub call_id: ArcStr,
 }
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, NodeId};
+use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
@@ -14,18 +14,17 @@ use syn_parser::{
     resolve::RelationIndexer,
 };
 use tokio::sync::oneshot;
+use tracing::trace;
 
 use crate::{
-    app_state::helpers::{print_module_set, printable_nodes},
-    parser::{ParserOutput, run_parse_no_transform},
-    utils::helper::find_file_by_prefix,
+    app_state::helpers::{print_module_set, printable_nodes}, parser::{run_parse_no_transform, ParserOutput}, tracing_setup::SCAN_CHANGE, utils::helper::find_file_by_prefix
 };
 
 use super::*;
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
-pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) -> ControlFlow<()> {
+pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
             msg: "Could not locate default config directory on system",
@@ -34,7 +33,7 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
     }) {
         dir.join("ploke").join("data")
     } else {
-        return ControlFlow::Break(());
+        return;
     };
     if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
         let msg = format!(
@@ -50,8 +49,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
         }));
     }
     let system_guard = state.system.read().await;
-    // TODO: This error handling feels really cumbersome, should rework.
-
     // make sure directory exists, otherwise report error
 
     // Using crate focus here, which we set when we perform indexing.
@@ -67,18 +64,23 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
         .filter_map(|cr| cr.to_str())
         .next()
     {
-        // let crate_focus_str = crate_focus.to_string_lossy();
-        let crate_name_version = if let Ok(db_result) = state
+        let crate_name_version = match state
             .db
             .get_crate_name_id(crate_focus)
             .map_err(ploke_error::Error::from)
-            .inspect_err(|e| {
+        {
+                Ok(db_result) => {
+                db_result
+            }
+            Err(e) => {
                 e.emit_warning();
-            }) {
-            db_result
-        } else {
-            return ControlFlow::Break(());
+                let err_msg = format!("Error loading crate: {}", e);
+                handlers::chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), err_msg, 
+                    chat_history::MessageKind::SysInfo).await;
+            return;
+            }
         };
+        tracing::debug!(save_crate_focus = ?crate_focus);
 
         let file_dir = default_dir.join(crate_name_version);
         tracing::info!("Checking for previous database file {}", file_dir.display());
@@ -95,8 +97,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
                 }
             }
         }
-        // TODO: Clones are bad. This is bad code. Fix it.
-        // - Wish I could blame the AI but its all me :( in a rush
         match state.db.backup_db(file_dir.clone()) {
             Ok(()) => {
                 event_bus.send(AppEvent::System(SystemEvent::BackupDb {
@@ -114,7 +114,6 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
             }
         };
     }
-    ControlFlow::Continue(())
 }
 
 /// Loads a previously saved database backup into the application.
@@ -157,6 +156,7 @@ pub(super) async fn load_db(
         event_bus.send(AppEvent::System(SystemEvent::LoadDb {
             crate_name: crate_name.clone(),
             file_dir: None,
+            root_path: None,
             is_success: false,
             error: Some(err_msg),
         }));
@@ -171,6 +171,7 @@ pub(super) async fn load_db(
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name: crate_name.clone(),
                 file_dir: Some(Arc::new(default_dir)),
+                root_path: None,
                 is_success: false,
                 error: Some(err_msg),
             }));
@@ -183,6 +184,7 @@ pub(super) async fn load_db(
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name: crate_name.clone(),
                 file_dir: Some(Arc::new(default_dir)),
+                root_path: None,
                 is_success: false,
                 error: Some(err_msg),
             }));
@@ -221,24 +223,34 @@ pub(super) async fn load_db(
                         ))
                     })
                     .map(|v| v.get_str().expect("Crate must always be a string"))?;
-                let target_dir = std::env::current_dir()
-                    .inspect_err(|e| tracing::error!("Error finding current dir: {e}"))
-                    .ok();
-
-                system_guard.crate_focus = target_dir.map(|cd| cd.join(crate_root_path));
+                // crate_root_path is expected to be absolute from DB context; use directly
+                let root_path = std::path::PathBuf::from(crate_root_path);
+                system_guard.crate_focus = Some(root_path.clone());
+                // Also update IoManager roots for IO-level enforcement
+                tracing::debug!(load_db_crate_focus = ?root_path);
+                drop(system_guard);
+                state
+                    .io_handle
+                    .update_roots(
+                        Some(vec![root_path.clone()]),
+                        Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
+                    )
+                    .await;
+                event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                    crate_name,
+                    file_dir: Some(Arc::new(valid_file)),
+                    root_path: Some(Arc::new(root_path)),
+                    is_success: true,
+                    error: None,
+                }));
             }
-            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                crate_name,
-                file_dir: Some(Arc::new(valid_file)),
-                is_success: true,
-                error: None,
-            }));
             Ok(())
         }
         Ok(_count) => {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
                 file_dir: Some(Arc::new(valid_file)),
+                root_path: None,
                 is_success: false,
                 error: Some("Database backed up from file, but 0 relations found."),
             }));
@@ -246,6 +258,40 @@ pub(super) async fn load_db(
         }
         Err(e) => Err(e),
     }
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn test_set_crate_focus_from_db(
+    state: &Arc<AppState>,
+    crate_name: String,
+) -> Result<(), ploke_error::Error> {
+    let script = format!(
+        "?[root_path] := *crate_context {{name: crate_name, root_path @ 'NOW' }}, crate_name = \"{crate_name}\""
+    );
+    let db_res = state.db.raw_query(&script)?;
+    let crate_root_path = db_res
+        .rows
+        .first()
+        .and_then(|c| c.first())
+        .ok_or_else(|| {
+            let msg = "Incorrect retrieval of crate context, no first row/column";
+            tracing::error!(msg);
+            ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(msg.to_string()))
+        })
+        .map(|v| v.get_str().expect("Crate must always be a string"))?;
+    let root_path = std::path::PathBuf::from(crate_root_path);
+    {
+        let mut system_guard = state.system.write().await;
+        system_guard.crate_focus = Some(root_path.clone());
+    }
+    state
+        .io_handle
+        .update_roots(
+            Some(vec![root_path]),
+            Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
+        )
+        .await;
+    Ok(())
 }
 
 pub(super) async fn scan_for_change(
@@ -276,16 +322,21 @@ pub(super) async fn scan_for_change(
     tracing::info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(crate_name)?;
-    tracing::trace!("file_data: {:#?}", file_data);
+    trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
+
+    // 2.5. Check for files that have been removed
+    let (file_data, removed_file_data): ( Vec<_>, Vec<_> ) = file_data.into_iter().partition(|f| f.file_path.exists());
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
     //  - Note that this does not do anything for those files which may have been added, which will
     //  be handled in parsing during the IndexFiles event process mentioned in step 5 below.
-    let result = state.io_handle.scan_changes_batch(file_data).await?;
+    let result = state.io_handle.scan_changes_batch(file_data).await.inspect_err(|e| {
+            tracing::error!("Error in state.io_handle.scan_changes_batch: {e}");
+    })?;
     let vec_ok = result?;
 
-    if !vec_ok.iter().any(|f| f.is_some()) {
+    if !vec_ok.iter().any(|f| f.is_some()) && removed_file_data.is_empty() {
         // 4. if no changes, send complete in oneshot
         match scan_tx.send(None) {
             Ok(()) => {
@@ -299,7 +350,7 @@ pub(super) async fn scan_for_change(
         // 5. if changes, send IndexFiles event (not yet made) or handle here.
         //  Let's see how far we get handling it here first.
         //  - Since we are parsing the whole target in any case, we might as well do it
-        //  concurrently. Test sequential appraoch first, then move to be parallel earlier.
+        //  concurrently. Test sequential approach first, then move to be parallel earlier.
 
         // TODO: Move this into `syn_parser` probably
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
@@ -311,6 +362,7 @@ pub(super) async fn scan_for_change(
         let changed_filenames = vec_ok
             .iter()
             .filter_map(|opt| opt.as_ref().map(|f| f.file_path.clone()))
+            .chain(removed_file_data.iter().map(|f| f.file_path.clone()))
             .collect_vec();
         for file in changed_filenames.iter() {
             let filename = format!("{}", file.display());
@@ -324,7 +376,7 @@ pub(super) async fn scan_for_change(
                 .join("\n");
             tracing::info!(target:"file_hashes", "rows:\n {}", rows);
         }
-        // WARN: Half-assed implementation, this should be a recurisve function instead of simple
+        // WARN: Half-assed implementation, this should be a recursive function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
         let module_uuids = vec_ok.into_iter().filter_map(|f| f.map(|i| i.id));
@@ -352,7 +404,7 @@ pub(super) async fn scan_for_change(
             full_mod_set = mods_in_file(*mod_id, full_mod_set, &tree);
             // full_mod_set.insert(mod_id.as_any());
             let printable_nodes = printable_nodes(&merged, full_mod_set.iter());
-            tracing::info!(
+            trace!(
                 "recursive printable nodes for module_id:\n{}\n{}",
                 mod_id,
                 printable_nodes
@@ -418,7 +470,6 @@ pub(super) async fn scan_for_change(
         });
         // filter nodes
         merged.retain_all(filtered_union);
-        // merged.graph.modules.retain(|m| m.is_file_based() || m.is_inline());
 
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             tracing::error!("Error transforming partial graph into database:\n{e}");
@@ -431,7 +482,7 @@ pub(super) async fn scan_for_change(
                     .db
                     .retract_embedded_files(file_id, node_ty)
                     .inspect_err(|e| tracing::error!("Error in retract_embed_files: {e}"))?;
-                tracing::info!("Raw return of retract_embedded_files:\n{:?}", query_res);
+                trace!("Raw return of retract_embedded_files:\n{:?}", query_res);
                 let to_print = query_res
                     .rows
                     .iter()
@@ -441,7 +492,7 @@ pub(super) async fn scan_for_change(
             }
         }
 
-        tracing::trace!("Finishing scanning, sending message to reindex workspace");
+        trace!("Finishing scanning, sending message to reindex workspace");
         event_bus.send(AppEvent::System(SystemEvent::ReIndex {
             workspace: crate_name.to_string(),
         }));
@@ -463,7 +514,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
         let mut output = String::new();
         let (header, rows) = (named_rows.headers, named_rows.rows);
         let cols_num = header.len();
-        let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
+        let display_header = header.into_iter().map(|h| h.to_string()).join("|");
         tracing::info!(target: "write_query", "\n{display_header}");
         output.push('|');
         output.push_str(&display_header);
@@ -484,7 +535,7 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
             .map(|r| {
                 r.into_iter()
                     .map(|c| format!("{}", c))
-                    .map(|c| format!("{}", c))
+                    .map(|c| c.to_string())
                     .join("|")
             })
             .for_each(|r| {
@@ -704,7 +755,7 @@ mod test {
     use ploke_rag::RagService;
     use syn_parser::parser::nodes::ToCozoUuid;
 
-    use crate::tracing_setup::init_tracing;
+    use crate::{llm::manager::llm_manager, tracing_setup::init_tracing};
 
     use super::*;
     use ploke_embed::{
@@ -753,7 +804,7 @@ mod test {
 
         dotenvy::dotenv().ok();
 
-        let mut config = config::Config::builder()
+        let config = config::Config::builder()
             .add_source(
                 config::File::with_name(
                     &dirs::config_dir()
@@ -768,12 +819,7 @@ mod test {
             .try_deserialize::<crate::user_config::UserConfig>()
             .unwrap_or_else(|_| crate::user_config::UserConfig::default());
 
-        // Merge curated defaults with user overrides
-        config.registry = config.registry.with_defaults();
-
-        // Apply API keys from environment variables to all providers
-        // config.registry.load_api_keys();
-        tracing::debug!("Registry after merge: {:#?}", config.registry);
+        tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
         let new_db = ploke_db::Database::new(cozo_db);
         let db_handle = Arc::new(new_db);
 
@@ -814,6 +860,7 @@ mod test {
             embedder: Arc::clone(&proc_arc),
             io_handle: io_handle.clone(),
             proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             rag: Some(Arc::new(rag)),
             budget: TokenBudget::default(), // rag_tx: rag_event_tx.clone()
         });

@@ -1,0 +1,21 @@
+- 2025-09-13T20:37:28Z — 8836d215
+  - Scope: `model_browser.rs` migrated to strict types (`ModelId`, `ModelName`).
+  - UI: Title rendering updated to use typed IDs and names; fallback to `id.to_string()` when name empty/absent.
+  - Pricing: Leaves numeric `f64` (`input_cost`/`output_cost`) but multiplies by 1e6 for display; recommend adding unit label and considering strong newtypes for currency units.
+  - Docs: Found incomplete doc comment for `input_cost`; recommended fix.
+  - Formatting: `rustfmt --check` suggests small tidy-ups (imports order, whitespace).
+  - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → 27 errors, 10 warnings (unrelated broader refactor).
+- 2025-09-13T23:16:25Z — 8a83934a
+  - Scope: Propagate llm2 types into state dispatcher and events; `SystemEvent::ModelSwitched` now carries `ModelId`.
+  - Dispatcher: `SelectModelProvider` now builds typed `EndpointKey { model, variant, provider }` and sets `cfg.active_model` to `ModelId`.
+  - Events: Began migration but still references old endpoint fields and strings; needs updates to new endpoint/pricing fields and to use `ProviderKey` for selection.
+  - Formatting: rustfmt shows small diffs in both files.
+  - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → 36 errors, 19 warnings, concentrated in down‑stream modules expecting `String` and old field names.
+- 2025-09-14T01:50:09Z — 59c5ea13
+  - Fix: Removed stray file `'`; gated `exec_live_tests` and `exec_real_tools_live_tests` behind `live_api_tests` feature.
+  - Exec: Provider select builds `ProviderKey` and passes `model_id_string`; adjusted model search to typed ids/names; sorted by string form.
+  - Events: Routed `AppEvent::Llm2` to handlers; implemented endpoints response mapping using typed `ProviderKey` from `Endpoint.tag`.
+  - Endpoint types: `Endpoint.provider_name` uses OpenRouter `ProviderName` (Display), not string newtype.
+  - Model Browser: Provider rows now use typed name; pricing labeled `USD/1M tok` and avoid double scaling; doc comment completed.
+  - Test harness: Removed outdated `RegistryPrefs::with_defaults()`/`load_api_keys()` calls.
+  - Build: `cargo check -p ploke-tui --features "test_harness llm_refactor"` → success; warnings remain (deprecated events, visibility).

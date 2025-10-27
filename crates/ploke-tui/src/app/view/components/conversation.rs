@@ -177,16 +177,13 @@ impl ConversationView {
 
 impl EventSubscriber for ConversationView {
     fn on_event(&mut self, event: &AppEvent) {
-        match event {
-            AppEvent::MessageUpdated(_) => {
-                // When a message is updated/added, request a snap-to-bottom if either:
-                // - auto-follow is enabled (user is following the tail), or
-                // - we're in free-scrolling (typing/editing) to reveal full new content.
-                if self.auto_follow || self.free_scrolling {
-                    self.request_bottom();
-                }
+        if let AppEvent::MessageUpdated(_) = event {
+            // When a message is updated/added, request a snap-to-bottom if either:
+            // - auto-follow is enabled (user is following the tail), or
+            // - we're in free-scrolling (typing/editing) to reveal full new content.
+            if self.auto_follow || self.free_scrolling {
+                self.request_bottom();
             }
-            _ => {}
         }
     }
 }

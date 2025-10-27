@@ -13,10 +13,11 @@ use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
+use crate::tools::create_file::CreateFileCtx;
 use crate::tools::ToolName;
 use crate::{
     app_state::{
-        core::{BeforeAfter, EditProposal, EditProposalStatus, PreviewMode},
+        core::{BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode},
         handlers::chat,
     },
     chat_history::MessageKind,
@@ -78,76 +79,6 @@ impl ToolInput<serde_json::Value> for GetContextInput {
     }
 }
 
-pub async fn get_file_metadata_tool(tool_call_params: ToolCallParams) {
-    let ToolCallParams {
-        state,
-        event_bus,
-        request_id,
-        parent_id,
-        name,
-        arguments,
-        call_id,
-    } = tool_call_params.clone();
-    // Validate args
-    let Some(file_path_str) = arguments.get("file_path").and_then(|v| v.as_str()) else {
-        tool_call_params.tool_call_failed("Missing required argument 'file_path'".to_string());
-        return;
-    };
-
-    let path = PathBuf::from(file_path_str);
-    // Read file and compute a deterministic TrackingHash UUID (v5 over file bytes within project namespace)
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => {
-            let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &bytes);
-            // Get basic metadata
-            let (byte_len, modified_ms) = match tokio::fs::metadata(&path).await {
-                Ok(md) => {
-                    let len = md.len();
-                    let modified_ms = md.modified().ok().and_then(|mtime| {
-                        mtime
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .ok()
-                            .map(|d| d.as_millis() as i64)
-                    });
-                    (len, modified_ms)
-                }
-                Err(_) => (bytes.len() as u64, None),
-            };
-
-            let result = GetFileMetadataResult {
-                ok: true,
-                file_path: path.display().to_string(),
-                exists: true,
-                byte_len,
-                modified_ms,
-                file_hash: hash_uuid.to_string(),
-                tracking_hash: hash_uuid.to_string(),
-            };
-            let content = match serde_json::to_string(&result) {
-                Ok(s) => s,
-                Err(e) => {
-                    let err = format!("Failed to serialize GetFileMetadataResult: {}", e);
-                    tool_call_params.tool_call_failed(err);
-                    return;
-                }
-            };
-
-            let _ = event_bus
-                .realtime_tx
-                .send(AppEvent::System(SystemEvent::ToolCallCompleted {
-                    request_id,
-                    parent_id,
-                    call_id: call_id.clone(),
-                    content,
-                }));
-        }
-        Err(e) => {
-            let err = format!("Failed to read file '{}': {}", path.display(), e);
-            tool_call_params.tool_call_failed(err);
-        }
-    }
-}
-
 pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
@@ -155,7 +86,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         request_id,
         parent_id,
         name,
-        arguments,
+        typed_req,
         call_id,
     } = tool_call_params.clone();
     // Idempotency: guard duplicate requests
@@ -178,17 +109,6 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             return;
         }
     }
-
-    // Parse args (strongly typed). Prefer tagged enum request; 
-    // Old fall back to legacy direct splice mapping has been removed.
-    let typed_req: ApplyCodeEditRequest = match serde_json::from_value(arguments.clone()) {
-        Ok(v) => v,
-        Err(e) => {
-            let err = format!("Invalid apply_code_edit payload: {}", e);
-            tool_call_params.tool_call_failed(err);
-            return;
-        } 
-    };
 
     if typed_req.edits.is_empty() {
         tool_call_params.tool_call_failed("No edits provided".to_string());
@@ -220,10 +140,17 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 namespace,
             } => {
                 let p = PathBuf::from(file_path);
-                let abs_path = if p.is_absolute() {
+                let abs_path = if let Some(root) = crate_root.as_ref() {
+                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                        Ok(pb) => pb,
+                        Err(err) => {
+                            let msg = format!("invalid path: {}", err);
+                            tool_call_params.tool_call_failed(msg);
+                            return;
+                        }
+                    }
+                } else if p.is_absolute() {
                     p
-                } else if let Some(root) = crate_root.as_ref() {
-                    root.join(p)
                 } else {
                     std::env::current_dir()
                         .unwrap_or_else(|_| PathBuf::from("."))
@@ -259,20 +186,23 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
-                let (abs_path, file_is_relative) = {
-                    let p = PathBuf::from(file);
-                    if p.is_absolute() {
-                        (p, false)
-                    } else if let Some(root) = crate_root.as_ref() {
-                        (root.join(file), true)
-                    } else {
-                        (
-                            std::env::current_dir()
-                                .unwrap_or_else(|_| PathBuf::from("."))
-                                .join(file),
-                            true,
-                        )
+                let p = PathBuf::from(file);
+                let file_was_relative = !p.is_absolute();
+                let abs_path = if let Some(root) = crate_root.as_ref() {
+                    match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                        Ok(pb) => pb,
+                        Err(err) => {
+                            let msg = format!("invalid path: {}", err);
+                            tool_call_params.tool_call_failed(msg);
+                            return;
+                        }
                     }
+                } else if p.is_absolute() {
+                    p
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join(p)
                 };
                 let canon_trim = canon.trim();
                 if canon_trim.is_empty() {
@@ -339,7 +269,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         .filter(|ed| {
                             if ed.file_path == abs_path {
                                 true
-                            } else if file_is_relative {
+                            } else if file_was_relative {
                                 ed.file_path.to_string_lossy().ends_with(file)
                             } else {
                                 false
@@ -440,6 +370,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             Ok(Ok(s)) => s,
             _ => "<unreadable or binary file>".to_string(),
         };
+        tracing::debug!(?before);
         // Apply all edits for this file in-memory (descending by start to keep indices stable)
         let mut bytes = before.clone().into_bytes();
         let mut file_edits: Vec<&WriteSnippetData> =
@@ -615,3 +546,4 @@ Deny:     edit deny {request_id}{2}"#,
         });
     }
 }
+

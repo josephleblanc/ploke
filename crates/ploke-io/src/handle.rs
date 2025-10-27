@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::{TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
 
 /**
 A handle to the IoManager actor.
@@ -100,6 +100,20 @@ impl IoManagerHandle {
         IoManagerBuilder::default()
     }
 
+    /// Update the configured roots and symlink policy at runtime for the running IoManager.
+    ///
+    /// Pass `None` to clear roots/policy and disable path scoping enforcement.
+    pub async fn update_roots(
+        &self,
+        roots: Option<Vec<std::path::PathBuf>>,
+        policy: Option<crate::path_policy::SymlinkPolicy>,
+    ) {
+        let _ = self
+            .request_sender
+            .send(IoManagerMessage::UpdateRoots { roots, policy })
+            .await;
+    }
+
     /// Read a batch of UTF-8-safe snippets from files with per-request hash verification.
     ///
     /// - Preserves input order in the returned vector.
@@ -163,6 +177,7 @@ impl IoManagerHandle {
     /// Normalizes the path against configured roots and symlink policy (if set),
     /// reads the file as UTF-8, parses as Rust to compute the tracking hash,
     /// and compares it to expected_hash.
+    #[tracing::instrument(skip(self))]
     pub async fn read_full_verified(
         &self,
         file_path: std::path::PathBuf,
@@ -298,6 +313,24 @@ impl IoManagerHandle {
         };
         self.request_sender
             .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError)
+            .map_err(IoError::from)?;
+        response_rx
+            .await
+            .map_err(|_| RecvError::RecvError)
+            .map_err(IoError::from)
+    }
+
+    /// Create (or overwrite) a Rust source file atomically, enforcing path policy.
+    pub async fn create_file(
+        &self,
+        request: CreateFileData,
+    ) -> Result<Result<CreateFileResult, PlokeError>, IoError> {
+        let (responder, response_rx) = oneshot::channel();
+        let req = IoRequest::CreateFile { request, responder };
+        self.request_sender
+            .send(IoManagerMessage::Request(req))
             .await
             .map_err(|_| RecvError::SendError)
             .map_err(IoError::from)?;

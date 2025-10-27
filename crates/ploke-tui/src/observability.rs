@@ -13,7 +13,6 @@ use crate::app_state::MessageUpdatedEvent;
 use crate::chat_history::{Message, MessageKind};
 use crate::tools::ToolName;
 use crate::{AppEvent, EventBus, EventPriority};
-use crate::llm::ToolEvent;
 
 use crate::app_state::AppState;
 
@@ -233,11 +232,14 @@ async fn persist_tool_requested(
     let args_json = serde_json::to_string(&params.arguments).unwrap_or_else(|_| "null".to_string());
     let (model, provider_slug) = {
         let cfg = state.config.read().await;
-        if let Some(p) = cfg.model_registry.get_active_model_config() {
-            (p.model.clone(), p.provider_slug.map(|ps| ps.to_string()))
-        } else {
-            ("".to_string(), None)
-        }
+        let model_str = cfg.active_model.to_string();
+        let prov = cfg
+            .model_registry
+            .models
+            .get(&cfg.active_model.key)
+            .and_then(|mp| mp.selected_endpoints.last())
+            .map(|ek| ek.provider.slug.as_str().to_string());
+        (model_str, prov)
     };
     let req = ToolCallReq {
         request_id: params.request_id,

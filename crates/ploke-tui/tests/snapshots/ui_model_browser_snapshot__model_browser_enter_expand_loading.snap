@@ -1,0 +1,13 @@
+---
+source: crates/ploke-tui/tests/ui_model_browser_snapshot.rs
+expression: text
+---
+Model Browser — 1 results for "openai"
+Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, l to choose provider (Enter to apply), s to auto-select, ? for help, q/Esc to close.
+
+> openai/gpt-4o — OpenAI: GPT-4o
+    context_length: 128000
+    supports_tools: true
+    pricing: in=5.000000 out=15.000000
+    providers:
+      (loading…)

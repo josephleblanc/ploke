@@ -77,8 +77,8 @@ async fn test_race_condition_without_oneshot() {
         async {
             tx1.send(super::commands::StateCommand::AddUserMessage {
                 content: "tell me a haiku".to_string(),
-                new_msg_id: user_msg_id,
-                completion_tx: oneshot::channel().0, // dummy
+                completion_tx: oneshot::channel().0,
+                new_user_msg_id: user_msg_id,
             })
             .await
             .unwrap();
@@ -138,7 +138,7 @@ async fn test_fix_with_oneshot() {
     cmd_tx
         .send(super::commands::StateCommand::AddUserMessage {
             content: "tell me a haiku".to_string(),
-            new_msg_id: user_msg_id,
+            new_user_msg_id: user_msg_id,
             completion_tx: tx,
         })
         .await
@@ -205,7 +205,7 @@ async fn test_concurrency_with_fuzzing() {
         cmd_tx
             .send(super::commands::StateCommand::AddUserMessage {
                 content: format!("message {}", i),
-                new_msg_id: user_msg_id,
+                new_user_msg_id: user_msg_id,
                 completion_tx: tx,
             })
             .await

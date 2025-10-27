@@ -174,6 +174,7 @@ pub mod watcher;
 pub use watcher::{FileChangeEvent, FileEventKind};
 mod tests_skeleton;
 mod write;
+mod create;
 #[cfg(test)]
 mod write_tests;
 use futures::future::join_all;

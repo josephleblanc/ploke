@@ -1,5 +1,8 @@
-use crate::llm::model_provider::EndpointData;
-use crate::llm::provider_endpoints::SupportsTools as _;
+use crate::llm::manager::events::endpoint;
+use crate::llm::request::models;
+use crate::llm::router_only::RouterVariants;
+use crate::llm::router_only::openrouter::OpenRouter;
+use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -20,8 +23,7 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
-use crate::llm::openrouter_catalog::ModelEntry;
-use crate::user_config::{ModelConfig, OPENROUTER_URL, ProviderType};
+use crate::user_config::OPENROUTER_URL;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -41,9 +43,12 @@ use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
-use view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use view::components::approvals::{
+    ApprovalsState, ProposalKind, render_approvals_overlay, unified_items,
+};
 use view::components::model_browser::{
-    ModelBrowserItem, ModelBrowserState, ModelProviderRow, render_model_browser,
+    ModelBrowserItem, ModelBrowserState, ModelProviderRow, compute_browser_scroll,
+    model_browser_focus_line, model_browser_total_lines, render_model_browser,
 };
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
@@ -85,8 +90,10 @@ pub struct App {
     state: Arc<AppState>,
     /// A channel to send commands to the state manager.
     cmd_tx: mpsc::Sender<StateCommand>,
-    /// A channel to receive broadcasted application events.
+    /// A channel to receive real-time broadcasted application events.
     event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
+    /// A channel to receive background-priority broadcasted application events.
+    bg_event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
     pub input_buffer: String,
@@ -126,6 +133,7 @@ impl App {
             state,
             cmd_tx,
             event_rx: event_bus.subscribe(EventPriority::Realtime),
+            bg_event_rx: event_bus.subscribe(EventPriority::Background),
             input_buffer: String::new(),
             mode: Mode::default(),
             command_style,
@@ -168,6 +176,7 @@ impl App {
     {
         use futures::StreamExt;
         self.running = true;
+        #[allow(clippy::collapsible_if)]
         if opts.setup_terminal_modes {
             if let Err(e) = execute!(
                 std::io::stdout(),
@@ -329,9 +338,15 @@ impl App {
                 }
             }
 
-            // Application events
-            Ok(app_event) = self.event_rx.recv() => {
-                events::handle_event(&mut self, app_event).await;
+            // Application events (realtime)
+            Ok(app_event_rt) = self.event_rx.recv() => {
+                events::handle_event(&mut self, app_event_rt).await;
+                self.needs_redraw = true;
+            }
+
+            // Application events (background)
+            Ok(app_event_bg) = self.bg_event_rx.recv() => {
+                events::handle_event(&mut self, app_event_bg).await;
                 self.needs_redraw = true;
             }
 
@@ -427,7 +442,7 @@ impl App {
         let selected_index_opt = self
             .list
             .selected()
-            .map(|i| i.min(path_len.saturating_sub(1)));
+            .map(|i| i.min(path_len.saturating_sub( 1 )));
 
         // Prepare and render conversation via ConversationView
         self.conversation.prepare(
@@ -524,8 +539,8 @@ impl App {
         frame.render_widget(model_display, model_info_area);
 
         // Flash indicator for model changes
-        if let Some((_, timestamp)) = &self.active_model_indicator {
-            if timestamp.elapsed().as_secs() < 2 {
+        if let Some((_, timestamp)) = &self.active_model_indicator
+            && timestamp.elapsed().as_secs() < 2 {
                 let flash_indicator = Paragraph::new("✓");
                 frame.render_widget(
                     flash_indicator,
@@ -536,22 +551,29 @@ impl App {
                         1,
                     ),
                 );
-            }
         }
 
         // Render model browser overlay if visible
-        if let Some(mb) = &self.model_browser {
+        if let Some(mb) = &mut self.model_browser {
             let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
+
+            // Keep focused row visible and clamp vscroll
+            compute_browser_scroll(body_area, mb);
 
             let widget = Paragraph::new(lines)
                 .style(overlay_style)
                 .block(
                     Block::bordered()
-                        .title(" Model Browser ")
+                        .title(format!(
+                            " Model Browser — {} results for \"{}\" ",
+                            mb.items.len(),
+                            mb.keyword
+                        ))
                         .style(overlay_style),
                 )
                 // Preserve leading indentation in detail lines
-                .wrap(ratatui::widgets::Wrap { trim: false });
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .scroll((mb.vscroll, 0));
             frame.render_widget(widget, body_area);
 
             // Footer: bottom-right help toggle or expanded help
@@ -643,27 +665,34 @@ impl App {
                 return true;
             }
             KeyCode::Char('o') => {
-                // Open-in-editor for the first file of selected proposal
+                // Open-in-editor for the first file of selected proposal (edit or create)
                 if let Some(st) = &self.approvals {
                     let sel_index = st.selected;
                     let state = Arc::clone(&self.state);
                     let cmd_tx = self.cmd_tx.clone();
                     tokio::spawn(async move {
-                        let guard = state.proposals.read().await;
-                        let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-                        ids.sort();
-                        if let Some(id) = ids.get(sel_index) {
-                            if let Some(p) = guard.get(id) {
-                                if let Some(path) = p.files.first() {
-                                    let cfg = state.config.read().await;
-                                    let editor = resolve_editor_command(&cfg);
-                                    drop(cfg);
-                                    if let Some(cmd) = editor {
-                                        let args = build_editor_args(path, None);
-                                        let _ = std::process::Command::new(cmd).args(args).spawn();
-                                    } else {
-                                        let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
-                                    }
+                        // Build unified ordering to match overlay
+                        let items = unified_items(&state);
+                        if let Some((kind, id, _)) = items.get(sel_index).cloned() {
+                            let path_opt = match kind {
+                                ProposalKind::Edit => {
+                                    let guard = state.proposals.read().await;
+                                    guard.get(&id).and_then(|p| p.files.first().cloned())
+                                }
+                                ProposalKind::Create => {
+                                    let guard = state.create_proposals.read().await;
+                                    guard.get(&id).and_then(|p| p.files.first().cloned())
+                                }
+                            };
+                            if let Some(path) = path_opt {
+                                let cfg = state.config.read().await;
+                                let editor = resolve_editor_command(&cfg);
+                                drop(cfg);
+                                if let Some(cmd) = editor {
+                                    let args = build_editor_args(&path, None);
+                                    let _ = std::process::Command::new(cmd).args(args).spawn();
+                                } else {
+                                    let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
                                 }
                             }
                         }
@@ -683,14 +712,34 @@ impl App {
                 let state = Arc::clone(&self.state);
                 let cmd_tx = self.cmd_tx.clone();
                 tokio::spawn(async move {
-                    let guard = state.proposals.read().await;
-                    let mut ids: Vec<uuid::Uuid> = guard.keys().cloned().collect();
-                    ids.sort();
-                    if let Some(id) = ids.get(sel_index) {
-                        let _ = if approve {
-                            cmd_tx.try_send(StateCommand::ApproveEdits { request_id: *id })
-                        } else {
-                            cmd_tx.try_send(StateCommand::DenyEdits { request_id: *id })
+                    // Build unified item list asynchronously to avoid blocking UI thread
+                    let (p_guard, c_guard) = {
+                        let p = state.proposals.read().await;
+                        let c = state.create_proposals.read().await;
+                        (p, c)
+                    };
+                    let mut items: Vec<(ProposalKind, uuid::Uuid)> = Vec::new();
+                    for (id, _) in p_guard.iter() {
+                        items.push((ProposalKind::Edit, *id));
+                    }
+                    for (id, _) in c_guard.iter() {
+                        items.push((ProposalKind::Create, *id));
+                    }
+                    items.sort_by_key(|(_, id)| *id);
+                    if let Some((kind, id)) = items.get(sel_index).cloned() {
+                        let _ = match (approve, kind) {
+                            (true, ProposalKind::Edit) => {
+                                cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
+                            }
+                            (true, ProposalKind::Create) => {
+                                cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
+                            }
+                            (false, ProposalKind::Edit) => {
+                                cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
+                            }
+                            (false, ProposalKind::Create) => {
+                                cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
+                            }
                         };
                     }
                 });
@@ -722,7 +771,7 @@ impl App {
             // If the current message isn't in the path for some reason, select nothing.
             self.list.select(None);
         }
-    } // The read lock `guard` is dropped here.
+    }
 
     /// Handles the key events and updates application state via high-level Actions.
     ///
@@ -734,112 +783,22 @@ impl App {
         }
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
-            let mut chosen_id: Option<String> = None;
-            if let Some(mb) = self.model_browser.as_mut() {
-                use KeyCode::*;
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        self.model_browser = None;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if mb.selected > 0 {
-                            mb.selected -= 1;
-                        } else {
-                            mb.selected = mb.items.len().saturating_sub(1);
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if mb.items.is_empty() {
-                            // nothing
-                        } else if mb.selected + 1 < mb.items.len() {
-                            mb.selected += 1;
-                        } else {
-                            mb.selected = 0;
-                        }
-                    }
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        if let Some(item) = mb.items.get_mut(mb.selected) {
-                            item.expanded = !item.expanded;
-                            // On expand, if providers not yet loaded, request endpoints
-                            if item.expanded && item.providers.is_empty() && !item.loading_providers
-                            {
-                                item.loading_providers = true;
-                                let model_id = item.id.clone();
-                                tokio::spawn(async move {
-                                    crate::emit_app_event(
-                                        crate::AppEvent::ModelsEndpointsRequest { model_id },
-                                    )
-                                    .await;
-                                });
-                            }
-                        }
-                    }
-                    KeyCode::Char('s') => {
-                        if let Some(item) = mb.items.get_mut(mb.selected) {
-                            if item.providers.is_empty() {
-                                // Fetch endpoints first, then auto-select when results arrive
-                                if !item.loading_providers {
-                                    item.loading_providers = true;
-                                    item.pending_select = true;
-                                    let model_id = item.id.clone();
-                                    tokio::spawn(async move {
-                                        crate::emit_app_event(
-                                            crate::AppEvent::ModelsEndpointsRequest { model_id },
-                                        )
-                                        .await;
-                                    });
-                                } else {
-                                    // Already loading; just mark pending select
-                                    item.pending_select = true;
-                                }
-                            } else {
-                                // Choose a provider that supports tools if available, otherwise first provider
-                                let provider_choice = item
-                                    .providers
-                                    .iter()
-                                    .find(|p| p.supports_tools)
-                                    .or_else(|| item.providers.first())
-                                    .map(|p| p.name.clone());
-                                if let Some(pid) = provider_choice {
-                                    chosen_id = Some(format!("{}::{}", item.id, pid.as_ref()));
-                                } else {
-                                    chosen_id = Some(item.id.clone());
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('?') => {
-                        mb.help_visible = !mb.help_visible;
-                    }
-                    _ => {}
-                }
-            }
-            // Drop the mutable borrow of self.model_browser before switching model
-            if let Some(id) = chosen_id {
-                // id format: "model_id::provider_id" when provider selected, or just model_id
-                if let Some((model_id, provider_id)) = id.split_once("::") {
-                    self.apply_model_provider_selection(model_id, Some(provider_id));
-                } else {
-                    self.apply_model_provider_selection(&id, None);
-                }
-                self.model_browser = None;
-            }
+            input::model_browser::handle_model_browser_input(self, key);
             self.needs_redraw = true;
             return;
         }
 
         // Global action mapping (including OpenApprovals)
-        if let Some(action) = to_action(self.mode, key, self.command_style) {
-            use Action::*;
-            if let OpenApprovals = action {
-                if self.approvals.is_some() {
-                    self.approvals = None;
-                } else {
-                    self.approvals = Some(ApprovalsState::default());
-                }
-                self.needs_redraw = true;
-                return;
+        if let Some(action) = to_action(self.mode, key, self.command_style)
+            && Action::OpenApprovals == action
+        {
+            if self.approvals.is_some() {
+                self.approvals = None;
+            } else {
+                self.approvals = Some(ApprovalsState::default());
             }
+            self.needs_redraw = true;
+            return;
         }
 
         // Insert mode input history navigation
@@ -890,12 +849,16 @@ impl App {
         self.needs_redraw = true;
     }
 
-    fn apply_model_provider_selection(&mut self, model_id: &str, provider_slug: Option<&str>) {
+    fn apply_model_provider_selection(
+        &mut self,
+        // keeps this string because we need to look it up in the registry from user input.
+        model_id_string: String,
+        provider_key: Option<ProviderKey>,
+    ) {
         // Delegate persistence and broadcasts to the state manager (non-blocking for UI)
-        let provider_id = provider_slug.unwrap_or("-");
         self.send_cmd(StateCommand::SelectModelProvider {
-            model_id: model_id.to_string(),
-            provider_id: provider_id.to_string(),
+            model_id_string,
+            provider_key,
         });
         self.needs_redraw = true;
     }
@@ -955,15 +918,18 @@ impl App {
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
                     let (completion_tx, completion_rx) = oneshot::channel();
                     let (scan_tx, scan_rx) = oneshot::channel();
-                    let new_msg_id = Uuid::new_v4();
+                    let new_user_msg_id = Uuid::new_v4();
+                    let next_llm_msg_id = Uuid::new_v4();
+                    // TODO: Add new event with user + llm message ids to co-ordinate how they are
+                    // received in the llm loop
                     self.send_cmd(StateCommand::AddUserMessage {
                         content: self.input_buffer.clone(),
-                        new_msg_id,
+                        new_user_msg_id,
                         completion_tx,
                     });
                     self.send_cmd(StateCommand::ScanForChange { scan_tx });
                     self.send_cmd(StateCommand::EmbedMessage {
-                        new_msg_id,
+                        new_msg_id: new_user_msg_id,
                         completion_rx,
                         scan_rx,
                     });
@@ -971,8 +937,8 @@ impl App {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),
                         target: llm::ChatHistoryTarget::Main,
-                        parent_id: new_msg_id,
-                        child_id: Uuid::new_v4(),
+                        parent_id: new_user_msg_id,
+                        child_id: next_llm_msg_id,
                     });
                     // Snap to bottom to ensure the full assistant/system response is visible.
                     self.conversation.request_bottom();
@@ -1199,22 +1165,20 @@ impl App {
         self.input_buffer = self.input_history[last].clone();
     }
 
-    fn open_model_browser(&mut self, keyword: String, items: Vec<ModelsEndpoint>) {
+    fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
         let items = items
             .into_iter()
             .map(|m| {
+                let supports_tools = m.supports_tools();
                 // Model-level tools: true if any provider supports tools OR model supported_parameters says so
-                let model_supports_tools = m.supports_tools();
-
                 ModelBrowserItem {
-                    id: m.id,
-                    name: Some( m.name ),
-                    context_length: m
-                        .context_length
-                        .or_else(|| m.top_provider.context_length),
-                    input_cost: Some( m.pricing.prompt ),
-                    output_cost: Some( m.pricing.completion ),
-                    supports_tools: model_supports_tools,
+                    id: m.id.clone(),
+                    name: Some(m.name),
+                    context_length: m.context_length.or(m.top_provider.context_length),
+                    // Display pricing in USD per 1M tokens (aligns with provider rows)
+                    input_cost: Some(m.pricing.prompt * 1_000_000.0),
+                    output_cost: Some(m.pricing.completion * 1_000_000.0),
+                    supports_tools,
                     // Provider rows will be populated later by `list_model_providers_async` after the
                     // command `Command::ModelProviders(model_id)`, the details are empty to start with.
                     providers: Vec::new(),
@@ -1231,6 +1195,10 @@ impl App {
             selected: 0,
             items,
             help_visible: false,
+            provider_select_active: false,
+            provider_selected: 0,
+            vscroll: 0,
+            viewport_height: 0,
         });
         self.needs_redraw = true;
     }
@@ -1241,37 +1209,24 @@ impl App {
     }
 
     fn switch_to_model(&mut self, model_id: &str) {
-        // Mutate runtime config to promote or select the model, then broadcast info
+        // Update runtime active model selection via llm types
         let state = Arc::clone(&self.state);
+        let mid = model_id.to_string();
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut cfg = state.config.write().await;
-                let reg = &mut cfg.model_registry;
-
-                let exists = reg.providers.iter().any(|p| p.id == model_id);
-                if !exists {
-                    // Promote discovered model into registry
-                    reg.providers.push(ModelConfig {
-                        id: model_id.to_string(),
-                        api_key: String::new(),
-                        provider_slug: None,
-                        api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-                        base_url: OPENROUTER_URL.to_string(),
-                        model: model_id.to_string(),
-                        display_name: Some(model_id.to_string()),
-                        provider_type: ProviderType::OpenRouter,
-                        llm_params: Some(crate::llm::LLMParameters {
-                            model: model_id.to_string(),
-                            ..Default::default()
-                        }),
-                    });
-                    // Load keys across providers
-                    reg.load_api_keys();
+            use std::str::FromStr;
+            tokio::runtime::Handle::current().block_on(async move {
+                match crate::llm::ModelId::from_str(&mid) {
+                    Ok(parsed) => {
+                        let mut cfg = state.config.write().await;
+                        cfg.model_registry
+                            .models
+                            .entry(parsed.key.clone())
+                            .or_default();
+                        cfg.active_model = parsed;
+                    }
+                    Err(e) => tracing::error!("Failed to write model to registry"),
                 }
-
-                // Switch active provider
-                reg.active_model_config = model_id.to_string();
-            });
+            })
         });
 
         self.active_model_id = model_id.to_string();
@@ -1299,7 +1254,7 @@ impl App {
         });
     }
 
-    /// Lists all registered provider configurations in the chat window.
+    /// Lists all registered endpoint configurations in the chat window.
     ///
     /// Reads the current provider registry from shared state (blocking only the
     /// calling thread) and emits a nicely-formatted list of available models,
@@ -1311,9 +1266,8 @@ impl App {
 
         let mut lines = vec!["Available models:".to_string()];
 
-        for pc in &cfg.model_registry.providers {
-            let display = pc.display_name.as_ref().unwrap_or(&pc.model);
-            lines.push(format!("  {:<28}  {}", pc.id, display));
+        for mk in cfg.model_registry.models.keys() {
+            lines.push(format!("{:<4}", mk));
         }
 
         self.send_cmd(StateCommand::AddMessageImmediate {

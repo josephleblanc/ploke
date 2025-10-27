@@ -5,11 +5,66 @@ use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
 use uuid::Uuid;
+use ploke_core::{CreateFileData, OnExists, CreateFileResult};
 
 fn compute_hash(content: &str, file_path: &Path, namespace: Uuid) -> TrackingHash {
     let file = syn::parse_file(content).expect("Failed to parse content");
     let tokens = file.into_token_stream();
     TrackingHash::generate(namespace, file_path, &tokens)
+}
+
+#[tokio::test]
+async fn test_create_file_success_and_hash() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("new_file.rs");
+    let content = "fn created() { let x = 1; }\n".to_string();
+
+    let req = CreateFileData {
+        id: Uuid::new_v4(),
+        name: "new_file.rs".to_string(),
+        file_path: file_path.clone(),
+        content: content.clone(),
+        namespace: PROJECT_NAMESPACE_UUID,
+        on_exists: OnExists::Error,
+        create_parents: false,
+    };
+
+    let handle = IoManagerHandle::new();
+    let res = handle.create_file(req).await.unwrap();
+    let out = res.expect("create should succeed");
+
+    // Verify content on disk
+    let disk = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(disk, content);
+
+    // Verify hash matches recomputed
+    let recomputed = compute_hash(&disk, &file_path, PROJECT_NAMESPACE_UUID);
+    assert_eq!(out.new_file_hash, recomputed);
+
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_create_file_exists_error_policy() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("exists.rs");
+    let content = "fn a() {}\n";
+    fs::write(&file_path, content).unwrap();
+
+    let req = CreateFileData {
+        id: Uuid::new_v4(),
+        name: "exists.rs".to_string(),
+        file_path: file_path.clone(),
+        content: content.to_string(),
+        namespace: PROJECT_NAMESPACE_UUID,
+        on_exists: OnExists::Error,
+        create_parents: false,
+    };
+
+    let handle = IoManagerHandle::new();
+    let res = handle.create_file(req).await.unwrap();
+    assert!(res.is_err(), "expected AlreadyExists error");
+    handle.shutdown().await;
 }
 
 #[tokio::test]

@@ -13,7 +13,6 @@ use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
-use crate::llm::openrouter_catalog::ModelEntry;
 use crate::user_config::CommandStyle;
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
@@ -39,6 +38,7 @@ pub fn create_mock_app_state() -> AppState {
         embedder,
         io_handle,
         proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
         rag: Some(rag),
         budget,
     }

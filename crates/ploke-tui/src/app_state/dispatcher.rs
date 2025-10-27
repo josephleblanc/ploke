@@ -1,11 +1,15 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::llm::providers::ProviderSlug;
+use crate::llm::ProviderSlug;
+use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
+use crate::llm::router_only::RouterVariants;
+use crate::llm::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
 use serde::Deserialize;
 use tokio::sync::mpsc;
+use tracing::trace_span;
 
 use super::commands::StateCommand;
 use super::core::AppState;
@@ -31,7 +35,7 @@ pub async fn state_manager(
     };
 
     while let Some(cmd) = cmd_rx.recv().await {
-        let span = tracing::debug_span!("processing", cmd = %cmd.discriminant());
+        let span = trace_span!("processing", cmd = %cmd.discriminant());
         let _enter = span.enter();
 
         match cmd {
@@ -50,13 +54,13 @@ pub async fn state_manager(
             }
             StateCommand::AddUserMessage {
                 content,
-                new_msg_id,
                 completion_tx,
+                new_user_msg_id,
             } => {
                 handlers::chat::add_user_message(
                     &state,
                     &event_bus,
-                    new_msg_id,
+                    new_user_msg_id,
                     content,
                     completion_tx,
                 )
@@ -79,6 +83,9 @@ pub async fn state_manager(
             } => {
                 handlers::chat::add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
+            StateCommand::AddMessageTool { msg, kind, new_msg_id, tool_call_id } => {
+                handlers::chat::add_tool_msg_immediate(&state, &event_bus, new_msg_id, msg, tool_call_id ).await;
+            }
             StateCommand::PruneHistory { max_messages: _ } => {
                 handlers::chat::prune_history().await;
             }
@@ -86,11 +93,18 @@ pub async fn state_manager(
                 handlers::chat::navigate_list(&state, &event_bus, direction).await;
             }
             StateCommand::CreateAssistantMessage {
+                new_assistant_msg_id,
                 parent_id,
                 responder,
             } => {
-                handlers::chat::create_assistant_message(&state, &event_bus, parent_id, responder)
-                    .await;
+                handlers::chat::create_assistant_message(
+                    &state,
+                    &event_bus,
+                    parent_id,
+                    responder,
+                    new_assistant_msg_id,
+                )
+                .await;
             }
 
             StateCommand::IndexWorkspace {
@@ -262,50 +276,81 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
+            StateCommand::ApproveCreations { request_id } => {
+                rag::editing::approve_creations(&state, &event_bus, request_id).await;
+            }
+            StateCommand::DenyCreations { request_id } => {
+                rag::editing::deny_creations(&state, &event_bus, request_id).await;
+            }
             StateCommand::SelectModelProvider {
-                model_id,
-                provider_id,
+                model_id_string,
+                provider_key,
             } => {
-                {
-                    let mut cfg = state.config.write().await;
-                    let reg = &mut cfg.model_registry;
-
-                    if let Some(p) = reg.providers.iter_mut().find(|p| p.id == model_id) {
-                        p.model = model_id.clone();
-                        p.base_url = crate::user_config::OPENROUTER_URL.to_string();
-                        p.provider_type = crate::user_config::ProviderType::OpenRouter;
-                        p.llm_params.get_or_insert_with(Default::default).model = model_id.clone();
-                        p.provider_slug = ProviderSlug::from_str(&provider_id).ok();
-                    } else {
-                        reg.providers.push(crate::user_config::ModelConfig {
-                            id: model_id.clone(),
-                            api_key: String::new(),
-                            api_key_env: Some("OPENROUTER_API_KEY".to_string()),
-                            base_url: crate::user_config::OPENROUTER_URL.to_string(),
-                            model: model_id.clone(),
-                            display_name: Some(model_id.clone()),
-                            provider_type: crate::user_config::ProviderType::OpenRouter,
-                            llm_params: Some(crate::llm::LLMParameters {
-                                model: model_id.clone(),
-                                ..Default::default()
-                            }),
-                            provider_slug: ProviderSlug::from_str(&provider_id).ok(),
-                        });
+                // Check registry for model, then
+                // Update registry prefs and active runtime selection to match user's choice.
+                let mut cfg = state.config.write().await;
+                let reg = &mut cfg.model_registry;
+                let model_id = match ModelId::from_str(&model_id_string) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        let msg = format!( "Invalid model id: {}, expected `{{auther}}/{{model}}:{{variant}}` where `:{{variant}}` is optional", model_id_string );
+                        add_msg_shortcut(&msg).await;
+                        continue
                     }
-                    // Ensure keys are resolved and activate this provider/model
-                    reg.load_api_keys();
-                    reg.active_model_config = model_id.clone();
+                };
+
+                // Ensure a ModelPrefs entry exists for this model key
+                reg.models
+                    .entry(model_id.clone().key)
+                    .or_insert_with(|| ModelPrefs {
+                        model_key: model_id.clone().key,
+                        ..Default::default()
+                    });
+
+                // Ensure OpenRouter is allowed (for now we only support OpenRouter)
+                let mp = reg
+                    .models
+                    .get_mut(&model_id.clone().key)
+                    .expect("entry ensured above");
+                if !mp
+                    .allowed_routers
+                    .iter()
+                    .any(|r| matches!(r, RouterVariants::OpenRouter(_)))
+                {
+                    mp.allowed_routers.push(RouterVariants::OpenRouter(
+                        crate::llm::router_only::openrouter::OpenRouter,
+                    ));
                 }
 
+                let msg = if let Some(provider) = provider_key {
+                    // Add/update selected endpoint preference
+                    let ModelId { key, variant } = model_id.clone();
+                    let ek = EndpointKey {
+                        model: key,
+                        provider: provider.clone(),
+                        variant,
+                    };
+                    if !mp.selected_endpoints.iter().any(|e| e == &ek) {
+                        mp.selected_endpoints.push(ek);
+                    }
+                    // otherwise selected model without provider, which is fine.
+                    format!(
+                        "Switched active model to {} via provider {}",
+                        model_id, provider.slug.as_str() 
+                    )
+                } else {
+                    format!("Switched active model to {} with auto provider selection", model_id)
+                };
+
                 // Inform the user and update the UI via events
+
+                // Set active runtime model to the chosen id (includes optional variant)
+                cfg.active_model = model_id.clone();
                 handlers::chat::add_msg_immediate(
                     &state,
                     &event_bus,
                     Uuid::new_v4(),
-                    format!(
-                        "Switched active model to {} via provider {}",
-                        model_id, provider_id
-                    ),
+                    msg,
                     MessageKind::SysInfo,
                 )
                 .await;
@@ -313,6 +358,10 @@ pub async fn state_manager(
                 event_bus.send(crate::AppEvent::System(SystemEvent::ModelSwitched(
                     model_id,
                 )));
+            }
+            StateCommand::DecrementChatTtl => {
+                let mut chat_history = state.chat.write().await;
+                chat_history.decrement_ttl();
             }
 
             _ => {}

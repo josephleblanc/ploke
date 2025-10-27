@@ -78,3 +78,33 @@ impl WriteResult {
         Self { new_file_hash }
     }
 }
+
+// Create-file support (IO-level)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OnExists {
+    Error,
+    Overwrite,
+}
+
+impl Default for OnExists {
+    fn default() -> Self { Self::Error }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFileData {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub file_path: PathBuf,
+    pub content: String,
+    pub namespace: uuid::Uuid,
+    #[serde(default)]
+    pub on_exists: OnExists,
+    #[serde(default)]
+    pub create_parents: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFileResult {
+    pub new_file_hash: TrackingHash,
+}

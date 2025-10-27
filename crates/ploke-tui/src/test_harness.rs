@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, file_man::FileManager, llm::llm_manager, observability, run_event_bus, user_config::{default_model, openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
+    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, default_model, file_man::FileManager, llm::manager::llm_manager, observability, run_event_bus, user_config::{openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
@@ -18,11 +18,9 @@ lazy_static! {
     pub static ref TEST_APP: Arc<Mutex<App>> = {
         // Build a realistic App instance without spawning UI/event loops.
         // Keep this synchronous for ergonomic use in tests.
-        let mut config = UserConfig::default();
-        // Merge curated defaults with user overrides (none in tests by default)
-        config.registry = config.registry.with_defaults();
-        // Apply any API keys from env for more realistic behavior if present
-        config.registry.load_api_keys();
+        let config = UserConfig::default();
+        // Registry defaults are already represented by `Default` impls in llm; API keys are
+        // resolved by routers at call time from env in tests.
 
         // Convert to runtime configuration
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
@@ -99,6 +97,7 @@ lazy_static! {
             embedder: Arc::clone(&proc_arc),
             io_handle: io_handle.clone(),
             proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
             rag,
             budget: TokenBudget::default(),
         });
@@ -184,7 +183,7 @@ impl OpenRouterEnv {
     }
 }
 
-pub fn openrouter_env() -> Option<OpenRouterEnv >{
+pub fn openrouter_env() -> Option<OpenRouterEnv> {
     // Try current process env first; if missing, load from .env as a fallback
     let key_opt = std::env::var("OPENROUTER_API_KEY").ok();
     let key = match key_opt {
@@ -192,7 +191,9 @@ pub fn openrouter_env() -> Option<OpenRouterEnv >{
         _ => {
             let _ = dotenvy::dotenv();
             let k = std::env::var("OPENROUTER_API_KEY").ok()?;
-            if k.trim().is_empty() { return None; }
+            if k.trim().is_empty() {
+                return None;
+            }
             k
         }
     };

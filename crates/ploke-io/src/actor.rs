@@ -5,7 +5,8 @@ use crate::{
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
     write::write_snippets_batch,
 };
-use ploke_core::{TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
+use tracing::error;
 
 use super::*;
 
@@ -22,6 +23,8 @@ pub struct IoManager {
 #[derive(Debug)]
 pub enum IoManagerMessage {
     Request(IoRequest),
+    /// Update path roots and symlink policy at runtime
+    UpdateRoots { roots: Option<Vec<PathBuf>>, policy: Option<SymlinkPolicy> },
     Shutdown,
 }
 
@@ -46,6 +49,10 @@ pub enum IoRequest {
         expected_hash: TrackingHash,
         namespace: uuid::Uuid,
         responder: oneshot::Sender<Result<String, PlokeError>>,
+    },
+    CreateFile {
+        request: CreateFileData,
+        responder: oneshot::Sender<Result<CreateFileResult, PlokeError>>,
     },
 }
 
@@ -104,12 +111,17 @@ impl IoManager {
     pub async fn run(mut self) {
         while let Some(message) = self.request_receiver.recv().await {
             match message {
+                IoManagerMessage::UpdateRoots { roots, policy } => {
+                    self.roots = roots.map(Arc::new);
+                    self.symlink_policy = policy;
+                }
                 IoManagerMessage::Request(request) => self.handle_request(request).await,
                 IoManagerMessage::Shutdown => break,
             }
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn handle_request(&self, request: IoRequest) {
         match request {
             IoRequest::ReadSnippetBatch {
@@ -221,6 +233,27 @@ impl IoManager {
                     }
                     .await;
 
+                    let _ = responder.send(res);
+                });
+            }
+            IoRequest::CreateFile { request, responder } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                #[cfg(feature = "watcher")]
+                let events_tx = self.events_tx.clone();
+                tokio::spawn(async move {
+                    let res = crate::create::create_file(request.clone(), roots, symlink_policy)
+                        .await
+                        .map_err(ploke_error::Error::from);
+                    #[cfg(feature = "watcher")]
+                    if let (Some(tx), Ok(_)) = (events_tx, res.as_ref()) {
+                        let _ = tx.send(crate::watcher::FileChangeEvent {
+                            path: request.file_path.clone(),
+                            kind: crate::watcher::FileEventKind::Created,
+                            old_path: None,
+                            origin: None,
+                        });
+                    }
                     let _ = responder.send(res);
                 });
             }
@@ -590,7 +623,9 @@ impl IoManager {
         let _probe_guard = test_instrumentation::enter_for_namespace(file_data.namespace);
         #[cfg(test)]
         test_instrumentation::maybe_sleep().await;
-        let file_content = read_file_to_string_abs(&file_data.file_path).await?;
+        let file_content = read_file_to_string_abs(&file_data.file_path).await.inspect_err(|e| {
+            error!(target: "read_file", "Error reading file: {e}");
+        })?;
         let tokens = parse_tokens_from_str(&file_content, &file_data.file_path)?;
 
         let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);

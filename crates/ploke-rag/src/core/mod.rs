@@ -11,6 +11,7 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_io::IoManagerHandle;
+use tracing::trace;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -534,17 +535,10 @@ impl RagService {
             );
         }
 
-        debug!(
-            "Dense search collected {} results across {} node types",
-            all_results.len(),
-            NodeType::primary_nodes().len()
-        );
-
         // Sort by score (highest first) and take top_k
         all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(top_k);
 
-        debug!("Dense search returning {} results", all_results.len());
         Ok(all_results)
     }
 

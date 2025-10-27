@@ -29,15 +29,14 @@ pub use request_code_context::{
 };
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
-pub mod get_file_metadata;
-pub use get_file_metadata::{GetFileMetadata, GetFileMetadataInput};
+pub mod create_file;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolName {
     RequestCodeContext,
     ApplyCodeEdit,
-    GetFileMetadata,
+    CreateFile,
 }
 
 impl ToolName {
@@ -46,7 +45,7 @@ impl ToolName {
         match self {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
-            GetFileMetadata => "get_file_metadata",
+            CreateFile => "create_file",
         }
     }
 }
@@ -60,12 +59,12 @@ pub enum ToolDescr {
     )]
     ApplyCodeEdit,
     #[serde(
-        rename = "Fetch current file metadata to obtain the expected_file_hash (tracking hash UUID) for safe edits."
+        rename = "Create a new Rust source file atomically within the workspace, staging for approval."
     )]
-    GetFileMetadata,
+    CreateFile,
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq)]
 pub struct FunctionMarker;
 
 impl FunctionMarker {
@@ -109,7 +108,7 @@ impl<'de> Deserialize<'de> for FunctionMarker {
 }
 
 // OpenAI tool/function definition (for request payload)
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolDefinition {
     #[serde(rename = "type")]
     pub r#type: FunctionMarker,
@@ -125,7 +124,7 @@ impl From<ToolFunctionDef> for ToolDefinition {
     }
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolFunctionDef {
     pub name: ToolName,
     pub description: ToolDescr,
@@ -272,23 +271,23 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             code_edit::GatCodeEdit::emit_completed(&ctx, content);
             Ok(())
         }
-        ToolName::GetFileMetadata => {
-            let params = get_file_metadata::GetFileMetadata::deserialize_params(&args)?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+        ToolName::CreateFile => {
+            let params = create_file::CreateFile::deserialize_params(&args)?;
+            tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
             let ToolResult { content } =
-                get_file_metadata::GetFileMetadata::execute(params, ctx.clone())
+                create_file::CreateFile::execute(params, ctx.clone())
                     .await
-                    .inspect_err(|e| GetFileMetadata::emit_err(&ctx, e.to_string()))?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+                    .inspect_err(|e| create_file::CreateFile::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            get_file_metadata::GetFileMetadata::emit_completed(&ctx, content);
+            create_file::CreateFile::emit_completed(&ctx, content);
             Ok(())
-        } // more here
+        }
     }
 }
 
@@ -384,7 +383,7 @@ mod tests {
             "request_code_context"
         );
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
-        assert_eq!(ToolName::GetFileMetadata.as_str(), "get_file_metadata");
+        assert_eq!(ToolName::CreateFile.as_str(), "create_file");
     }
 
     #[test]
@@ -409,64 +408,5 @@ mod tests {
             Some("apply_code_edit")
         );
         assert!(f.contains_key("parameters"));
-    }
-
-    #[tokio::test]
-    async fn process_tool_emits_completed_for_get_file_metadata() {
-        use crate::test_utils::mock::create_mock_app_state;
-        use crate::{AppEvent, EventBus, event_bus::EventBusCaps};
-
-        // Prepare ctx
-        let state = Arc::new(create_mock_app_state());
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let call_id = ArcStr::from("test-call");
-        let ctx = Ctx {
-            state: Arc::clone(&state),
-            event_bus: Arc::clone(&event_bus),
-            request_id: Uuid::new_v4(),
-            parent_id: Uuid::new_v4(),
-            call_id: call_id.clone(),
-        };
-
-        // Create a temporary file
-        let tmp = std::env::temp_dir().join(format!("gat_meta_{}.txt", Uuid::new_v4()));
-        std::fs::write(&tmp, b"abc").expect("write temp");
-
-        // Build ToolCall
-        let args = json!({"file_path": tmp.display().to_string()}).to_string();
-        let tc = ToolCall {
-            call_id: ArcStr::from("test-call"),
-            call_type: FunctionMarker,
-            function: FunctionCall {
-                name: ToolName::GetFileMetadata,
-                arguments: args,
-            },
-        };
-
-        let mut rx = event_bus.realtime_tx.subscribe();
-        process_tool(tc, ctx.clone()).await.expect("process ok");
-
-        // Expect a ToolCallCompleted with matching call_id
-        let got = timeout(Duration::from_secs(1), async move {
-            loop {
-                match rx.recv().await {
-                    Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
-                        call_id,
-                        content,
-                        ..
-                    })) => {
-                        if call_id == ctx.call_id {
-                            break Some(content);
-                        }
-                    }
-                    Ok(_) => continue,
-                    Err(_) => break None,
-                }
-            }
-        })
-        .await
-        .expect("timeout waiting for event");
-
-        assert!(got.is_some(), "no ToolCallCompleted captured");
     }
 }

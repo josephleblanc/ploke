@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
+use ploke_core::ArcStr;
 use tokio::sync::oneshot;
-use tracing::instrument;
+use tracing::{instrument, trace, debug};
 use uuid::Uuid;
 
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
+use crate::llm::manager::events::ChatEvt;
+use crate::llm::LlmEvent;
+use crate::tracing_setup::CHAT_TARGET;
 use crate::utils::helper::truncate_string;
-use crate::{EventBus, llm};
+use crate::EventBus;
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
-// How can we add tracking during our test so we can ensure we see the expected outcomes? For now
-// we just want to be able to see what the LLM is doing when we send the tool call request, but we
-// would also like to find a way of actually testing that the tool runs as expected. Let's start by
 #[instrument(skip(state, event_bus, update), fields(msg_id = %id, new_status = ?update.status))]
 pub async fn update_message(
     state: &Arc<AppState>,
@@ -39,7 +40,8 @@ pub async fn update_message(
         let new_status = update.status.clone().unwrap_or(old_status.clone());
         match message.try_update(update) {
             Ok(_) => {
-                tracing::info!(
+                debug!(
+                    target: CHAT_TARGET,
                     msg_id = %id,
                     kind = ?msg_kind,
                     old_status = ?old_status,
@@ -50,6 +52,7 @@ pub async fn update_message(
             }
             Err(e) => {
                 tracing::error!(
+                    target: CHAT_TARGET,
                     msg_id = %id,
                     kind = ?msg_kind,
                     old_status = ?old_status,
@@ -105,7 +108,7 @@ pub async fn add_message(
         MessageStatus::Completed
     };
 
-    if let Ok(new_message_id) = chat_guard.add_child(parent_id, child_id, &content, status, kind) {
+    if let Ok(new_message_id) = chat_guard.add_child(parent_id, child_id, &content, status, kind, None) {
         chat_guard.current = new_message_id;
         event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
     }
@@ -126,13 +129,13 @@ pub async fn create_assistant_message(
     event_bus: &Arc<EventBus>,
     parent_id: Uuid,
     responder: oneshot::Sender<Uuid>,
+    new_assistant_msg_id: Uuid,
 ) {
     let mut chat_guard = state.chat.0.write().await;
-    let child_id = Uuid::new_v4();
     let status = MessageStatus::Generating;
     let kind = crate::chat_history::MessageKind::Assistant;
 
-    if let Ok(new_id) = chat_guard.add_child(parent_id, child_id, "Pending...", status, kind) {
+    if let Ok(new_id) = chat_guard.add_child(parent_id, new_assistant_msg_id, "Pending...", status, kind, None) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
         event_bus.send(MessageUpdatedEvent::new(new_id).into());
@@ -143,7 +146,20 @@ pub async fn prune_history() {
     todo!("Handle PruneHistory")
 }
 
-#[instrument(skip(state))]
+pub async fn add_tool_msg_immediate(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    tool_call_id: ArcStr
+) {
+    trace!(target: CHAT_TARGET, "Starting add_msg_immediate");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+
+    let _ = chat_guard.add_message_tool(parent_id, new_msg_id, MessageKind::Tool, content.clone(), Some( tool_call_id ));
+}
+#[instrument(skip(state), level = "trace")]
 pub async fn add_msg_immediate(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -151,25 +167,23 @@ pub async fn add_msg_immediate(
     content: String,
     kind: MessageKind,
 ) {
-    tracing::trace!("Starting add_msg_immediate");
+    trace!("Starting add_msg_immediate");
     let mut chat_guard = state.chat.0.write().await;
     let parent_id = chat_guard.current;
 
     let message_wrapper = match kind {
         MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
         MessageKind::System => {
-            tracing::error!("System message used with add_msg_immediate");
-            todo!("System message used with add_msg_immediate")
-            // chat_guard.add_message_tool(parent_id, new_msg_id, kind, content.clone())
+            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
         },
         MessageKind::Assistant => {
             chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
         }
         MessageKind::Tool => {
-            chat_guard.add_message_tool(parent_id, new_msg_id, kind, content.clone())
+            panic!("Use add_tool_msg_immediate to add tool messages");
         },
         MessageKind::SysInfo => {
-            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
+            chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
         }
     };
     drop(chat_guard);
@@ -181,14 +195,12 @@ pub async fn add_msg_immediate(
         event_bus.send(MessageUpdatedEvent::new(message_id).into());
 
         if kind == MessageKind::User {
-            let llm_request = AppEvent::Llm(llm::Event::Request {
-                request_id: Uuid::new_v4(),
+            let llm_request = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
                 parent_id: message_id,
-                new_msg_id,
-                prompt: content,
-                parameters: Default::default(),
-            });
-            tracing::info!(
+                request_msg_id: Uuid::new_v4(),
+                }));
+            trace!(
+                target: CHAT_TARGET,
                 "sending llm_request wrapped in an AppEvent::Llm of kind {kind} with ids 
                 new_msg_id (not sent): {new_msg_id},
                 parent_id: {parent_id}
@@ -198,5 +210,33 @@ pub async fn add_msg_immediate(
         }
     } else {
         tracing::error!("Failed to add message of kind: {}", kind);
+    }
+}
+
+pub async fn add_msg_immediate_nofocus(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    kind: MessageKind,
+) {
+    trace!(target: CHAT_TARGET, "Starting add_msg_immediate_nofocus");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
+        MessageKind::System => chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::Assistant => chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::Tool => panic!("Use add_tool_msg_immediate to add tool messages"),
+        MessageKind::SysInfo => chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone()),
+    };
+    drop(chat_guard);
+
+    if let Ok(message_id) = message_wrapper {
+        // Do NOT change current selection; emit event so UI can render the new message
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    } else {
+        tracing::error!("Failed to add message (nofocus) of kind: {}", kind);
     }
 }

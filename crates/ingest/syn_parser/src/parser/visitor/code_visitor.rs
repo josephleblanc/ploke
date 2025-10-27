@@ -159,13 +159,16 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Rename(rename) => {
                 // Base case: Renaming an imported item.
-                let original_name = rename.ident.to_string();
+                let mut original_name = rename.ident.to_string();
                 let visible_name = rename.rename.to_string(); // The 'as' name
 
                 let span = rename.extract_span_bytes();
 
                 // Register the new node ID
                 let registration_result = if visible_name.as_str() == "_" {
+                    // salt original name with "_" to prevent conflicts when both the anonymous and
+                    // a named import are used in the same file, e.g. both `use X` and `use X as _`
+                    original_name.push_str("::_");
                     self.register_new_node_id(
                         &original_name,
                         ItemKind::Import,

@@ -4,6 +4,7 @@
 
 use crate::app_state::SystemStatus;
 use crate::app_state::events::SystemEvent;
+use crate::llm::manager::llm_manager;
 use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -17,11 +18,10 @@ use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use ratatui::{Terminal, backend::TestBackend};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate as tui;
+use crate::{self as tui, default_model};
 use tui::app::{App, RunOptions};
 use tui::app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState};
-use tui::llm::llm_manager;
-use tui::user_config::{UserConfig, default_model};
+use tui::user_config::UserConfig;
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};
 
 use ploke_db::{Database, bm25_index, create_index_primary};
@@ -62,12 +62,7 @@ impl AppHarness {
     /// Spawn the App with TestBackend, state_manager, and llm_manager.
     pub async fn spawn() -> color_eyre::Result<Self> {
         // Config + registry
-        let mut config = UserConfig::default();
-        config.registry = config.registry.with_defaults();
-        config.registry.load_api_keys();
-        if let Some(openrouter_env) = openrouter_env() {
-            config.registry.set_openrouter_key(&openrouter_env.key)
-        }
+        let config = UserConfig::default();
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
 
         // DB from shared fixture
@@ -126,6 +121,7 @@ impl AppHarness {
             embedder: Arc::clone(&proc_arc),
             io_handle,
             proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
             rag,
             budget: TokenBudget::default(),
         });
@@ -199,7 +195,7 @@ impl AppHarness {
             .cmd_tx
             .send(StateCommand::AddUserMessage {
                 content: content.into(),
-                new_msg_id,
+                new_user_msg_id: new_msg_id,
                 completion_tx,
             })
             .await;

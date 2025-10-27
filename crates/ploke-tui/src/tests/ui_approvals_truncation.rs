@@ -47,6 +47,7 @@ async fn test_truncation_controls_no_panic() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(proposals),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     // Test different truncation settings
@@ -98,6 +99,7 @@ async fn test_help_display_truncation() {
         rag: None,
         budget: ploke_rag::TokenBudget::default(),
         proposals: RwLock::new(proposals),
+        create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
 
     // Test help visible with different settings
