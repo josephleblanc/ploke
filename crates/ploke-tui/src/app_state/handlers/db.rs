@@ -30,24 +30,25 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                     ty.relation_str()
                 );
             }
-            Err(_) => {
+            Err(e) => {
                 match replace_index_warn(&state.db, ty) {
                     Ok(_) => {
                         tracing::info!(
-                            "Database index updated by replace_index_warn for rel: {}",
+                            "Database index updated by replace_index_warn for rel: {}\nPrevious attempt to create index failed with err msg: {e}",
                             ty.relation_str()
                         );
                     }
-                    Err(_) => {
-                        tracing::warn!("The attempt to replace the index at the database failed")
+                    Err(nested_e) => {
+                        tracing::warn!("The attempt to replace the index at the database failed for rel: {}\nnested_e: {nested_e}",
+                            ty.relation_str()
+                        );
                     }
                 }
-                tracing::warn!("The attempt to create the index at the database failed")
             }
         }
     }
     let after = time::Instant::now();
-    let msg = format!("..finished in {}", after.duration_since(start).as_millis());
+    let msg = format!("..finished in {} millis", after.duration_since(start).as_millis());
 
     super::chat::add_msg_immediate(
         state,

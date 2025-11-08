@@ -7,6 +7,7 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
+use tracing::trace;
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -97,7 +98,7 @@ impl ParsedCodeGraph {
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
-        log::trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
+        trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
         for mut graph in graphs {
             if found_context.is_none() {
                 log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
@@ -318,7 +319,7 @@ impl ParsedCodeGraph {
             })
             .collect_vec();
         let removed_secondary_ids = pruned_item_initial - pruned_item_ids.len();
-        log::info!(target: "debug_dup", "\n{} {}
+        trace!(target: "debug_dup", "\n{} {}
 Item ids to prune total before removing secondary ids: {}
 Number of ignored Variants/Fields/Param/GenericParam: {}
 Remaining ids to prune: {}",
@@ -329,12 +330,12 @@ Remaining ids to prune: {}",
             format!("{}", pruned_item_ids.len()).log_path(),
         );
 
-        log::info!(target: "debug_dup", "\nBegin removing items\ntotal_count_diff: {total_count_diff}");
+        trace!(target: "debug_dup", "\nBegin removing items\ntotal_count_diff: {total_count_diff}");
         let func_count_pre = self.functions().len();
         self.functions_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += func_count_pre - self.functions().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "functions".log_step(),
             format!("{}", func_count_pre - self.functions().len() ).log_path(),
             "functions",
@@ -344,7 +345,7 @@ Remaining ids to prune: {}",
         self.defined_types_mut()
             .retain(|defty| !pruned_item_ids.contains(&defty.any_id()));
         total_count_diff += defined_types_count_pre - self.defined_types().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "defined_types".log_step(),
             format!("{}", defined_types_count_pre - self.defined_types().len() ).log_path(),
             "defined_types",
@@ -354,7 +355,7 @@ Remaining ids to prune: {}",
         self.consts_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += consts_count_pre - self.consts().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "consts".log_step(),
             format!("{}", consts_count_pre - self.consts().len() ).log_path(),
             "consts",
@@ -364,7 +365,7 @@ Remaining ids to prune: {}",
         self.statics_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += statics_count_pre - self.statics().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "statics".log_step(),
             format!("{}", statics_count_pre - self.statics().len() ).log_path(),
             "statics",
@@ -374,7 +375,7 @@ Remaining ids to prune: {}",
         self.macros_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += macros_count_pre - self.macros().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "macros".log_step(),
             format!("{}", macros_count_pre - self.macros().len() ).log_path(),
             "macros",
@@ -384,7 +385,7 @@ Remaining ids to prune: {}",
         self.use_statements_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += use_statements_count_pre - self.use_statements().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "use_statements".log_step(),
             format!("{}", use_statements_count_pre - self.use_statements().len() ).log_path(),
             "use_statements",
@@ -400,7 +401,7 @@ Remaining ids to prune: {}",
         self.impls_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += impls_count_pre - self.impls().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "impls".log_step(),
             format!("{}", impls_count_pre - self.impls().len() ).log_path(),
             "impls",
@@ -410,7 +411,7 @@ Remaining ids to prune: {}",
         self.traits_mut()
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         total_count_diff += traits_count_pre - self.traits().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "traits".log_step(),
             format!("{}", traits_count_pre - self.traits().len() ).log_path(),
             "traits",
@@ -422,7 +423,7 @@ Remaining ids to prune: {}",
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         total_count_diff += methods_count_pre - methods_count_post;
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "methods".log_step(),
             format!("{}", methods_count_pre - methods_count_post ).log_path(),
             "methods",
@@ -434,7 +435,7 @@ Remaining ids to prune: {}",
         self.modules_mut()
             .retain(|m| !pruned_items.pruned_module_ids.contains(&m.id));
         let removed_file_mods_count = modules_files_pre - self.modules().len();
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "file-based modules".log_step(),
             format!("{}", modules_files_pre - self.modules().len() ).log_path(),
             "file-based modules",
@@ -446,7 +447,7 @@ Remaining ids to prune: {}",
             .retain(|m| !pruned_item_ids.contains(&m.id.as_any()));
         let removed_nonfile_mods_count = nonfile_modules_count_pre - self.modules().len();
         total_count_diff += removed_nonfile_mods_count;
-        log::info!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
+        trace!(target: "debug_dup", "\nRemoving {}\nremoved {} {}\ntotal_count_diff: {total_count_diff}",
             "non file-based modules".log_step(),
             format!("{}", removed_nonfile_mods_count ).log_path(),
             "non file-based modules",
@@ -457,7 +458,7 @@ Remaining ids to prune: {}",
             // pruned_items.pruned_module_ids.len() + pruned_item_ids.iter().filter(|i| matches!(i, AnyNodeId::Module(_) )).count(),
             "Count of expected pruned modules vs. pruned modules does not match."
         );
-        // log::info!(target: "debug_dup", "\nCount of removed_nonfile_mods_count: {removed_nonfile_mods_count}");
+        // trace!(target: "debug_dup", "\nCount of removed_nonfile_mods_count: {removed_nonfile_mods_count}");
 
         let mut removed_items = Vec::new();
         if total_count_diff != pruned_item_ids.len() {
@@ -478,7 +479,7 @@ Remaining ids to prune: {}",
             {
                 log::error!(target: "debug_dup", "\nNode not found or removed: {}", item);
             }
-            log::info!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
+            trace!(target: "debug_dup", "Number of removed items: {}", removed_items.len());
         }
         assert_eq!(
             // total_count_diff + removed_mods_count,
