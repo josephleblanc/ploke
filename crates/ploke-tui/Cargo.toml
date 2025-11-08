@@ -108,11 +108,6 @@ test_harness = []
 json_visitor = []
 xxx = []
 
-[profile.bench]
-debug = false
-lto = "thin"
-codegen-units = 1
-
 [[bench]]
 name = "ui_measure"
 harness = false

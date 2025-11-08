@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use ploke_io::path_policy::SymlinkPolicy;
 
 use crate::app_state::AppState;
 use crate::parser::run_parse;
@@ -34,6 +35,19 @@ pub async fn index_workspace(
             }
         }
     };
+
+    // Set crate focus to the resolved target directory and update IO roots
+    {
+        let mut system_guard = state.system.write().await;
+        system_guard.crate_focus = Some(target_dir.clone());
+    }
+    state
+        .io_handle
+        .update_roots(
+            Some(vec![target_dir.clone()]),
+            Some(SymlinkPolicy::DenyCrossRoot),
+        )
+        .await;
 
     if needs_parse {
         match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
