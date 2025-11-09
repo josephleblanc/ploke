@@ -16,14 +16,12 @@ use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::manager::events::models;
-use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
-use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::request::models::{Response as ModelsResponse, ResponseItem};
+use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
+use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, ProviderKey};
-use crate::user_config::{
-    ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
-};
+use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use reqwest::Client;
@@ -32,7 +30,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::oneshot;
-use tracing::{debug, info_span, instrument, warn};
+use tracing::{debug, debug_span, info_span, instrument, warn};
 use uuid::Uuid;
 
 const DATA_DIR: &str = "crates/ploke-tui/data";
@@ -299,11 +297,32 @@ fn show_model_info_async(app: &App) {
             format!("    top_p: {}", fmt_opt_f32(params.top_p)),
             format!("    top_k: {}", fmt_opt_f32(params.top_k)),
             format!("    max_tokens: {}", fmt_opt_u32(params.max_tokens)),
-            format!("    seed: {}", params.seed.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
-            format!("    presence_penalty: {}", fmt_opt_f32(params.presence_penalty)),
-            format!("    frequency_penalty: {}", fmt_opt_f32(params.frequency_penalty)),
-            format!("    repetition_penalty: {}", fmt_opt_f32(params.repetition_penalty)),
-            format!("    top_logprobs: {}", params.top_logprobs.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())),
+            format!(
+                "    seed: {}",
+                params
+                    .seed
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!(
+                "    presence_penalty: {}",
+                fmt_opt_f32(params.presence_penalty)
+            ),
+            format!(
+                "    frequency_penalty: {}",
+                fmt_opt_f32(params.frequency_penalty)
+            ),
+            format!(
+                "    repetition_penalty: {}",
+                fmt_opt_f32(params.repetition_penalty)
+            ),
+            format!(
+                "    top_logprobs: {}",
+                params
+                    .top_logprobs
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
             format!("    min_p: {}", fmt_opt_f32(params.min_p)),
             format!("    top_a: {}", fmt_opt_f32(params.top_a)),
         ];
@@ -365,7 +384,7 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
   create approve <request_id>        - Apply staged file creations with this request ID
   create deny <request_id>           - Deny and discard staged file creations
 "#
-            .to_string()
+        .to_string()
     } else if t.starts_with("bm25") {
         r#"BM25 commands:
   bm25 rebuild                       - Rebuild sparse BM25 index
@@ -574,7 +593,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
     let keyword_str = keyword.to_string();
 
     tokio::spawn(async move {
-        let span = info_span!("open_model_search", keyword = keyword_str.as_str());
+        let span = debug_span!("open_model_search", keyword = keyword_str.as_str());
         let _guard = span.enter();
         // Resolve API key from configured OpenRouter provider or env
         let (api_key, base_url) = (
@@ -596,19 +615,20 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let client = Client::new();
         match OpenRouter::fetch_models(&client).await {
             Ok(models_resp) => {
-                // emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(models::Event::Response {
-                //     models: Some( Arc::new( models_resp ) ),
-                // }))).await;
+                emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(
+                    models::Event::Response {
+                        // NOTE: Very bad clone, this is only here while we use the `models_resp`
+                        // for debugging
+                        models: Some(Arc::new(models_resp.clone())),
+                    },
+                )))
+                .await;
                 let kw_lower = keyword_str.to_lowercase();
                 let mut filtered: Vec<ResponseItem> = models_resp
                     .into_iter()
                     .filter(|m| {
                         let id_match = m.id.to_string().to_lowercase().contains(&kw_lower);
-                        let name_match = m
-                            .name
-                            .as_str()
-                            .to_lowercase()
-                            .contains(&kw_lower);
+                        let name_match = m.name.as_str().to_lowercase().contains(&kw_lower);
                         id_match || name_match
                     })
                     .collect();
@@ -618,6 +638,12 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     filtered.len(),
                     keyword_str
                 );
+                // emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(
+                //     models::Event::Response {
+                //         models: Some(Arc::new(filtered)),
+                //     },
+                // )))
+                // .await;
             }
             Err(e) => {
                 let _ = cmd_tx
