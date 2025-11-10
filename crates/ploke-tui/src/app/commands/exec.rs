@@ -17,13 +17,13 @@ use super::parser::Command;
 use crate::app::App;
 use crate::llm::manager::events::models;
 use crate::llm::request::endpoint::EndpointsResponse;
-use crate::llm::request::models::{Response as ModelsResponse, ResponseItem};
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
+use ploke_core::ArcStr;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -615,35 +615,22 @@ fn open_model_search(app: &mut App, keyword: &str) {
         let client = Client::new();
         match OpenRouter::fetch_models(&client).await {
             Ok(models_resp) => {
+                let total_models = models_resp.data.len();
+                let models_arc = Arc::new(models_resp);
+                let search_kw = ArcStr::from(keyword_str);
                 emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(
                     models::Event::Response {
-                        // NOTE: Very bad clone, this is only here while we use the `models_resp`
-                        // for debugging
-                        models: Some(Arc::new(models_resp.clone())),
+                        models: Some(models_arc),
+                        // search_kw is ArcStr, which uses Arc::clone under the hood
+                        search_keyword: Some(search_kw.clone()),
                     },
                 )))
                 .await;
-                let kw_lower = keyword_str.to_lowercase();
-                let mut filtered: Vec<ResponseItem> = models_resp
-                    .into_iter()
-                    .filter(|m| {
-                        let id_match = m.id.to_string().to_lowercase().contains(&kw_lower);
-                        let name_match = m.name.as_str().to_lowercase().contains(&kw_lower);
-                        id_match || name_match
-                    })
-                    .collect();
-                filtered.sort_by(|a, b| a.id.to_string().cmp(&b.id.to_string()));
                 debug!(
-                    "model search filtered {} results for keyword '{}'",
-                    filtered.len(),
-                    keyword_str
+                    ?search_kw,
+                    total = total_models,
+                    "model search results enqueued on event bus"
                 );
-                // emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(
-                //     models::Event::Response {
-                //         models: Some(Arc::new(filtered)),
-                //     },
-                // )))
-                // .await;
             }
             Err(e) => {
                 let _ = cmd_tx

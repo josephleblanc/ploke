@@ -19,7 +19,7 @@ pub(crate) enum IdError {
 
 macro_rules! newtype_arcstr {
     ($name:ident) => {
-        #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd)]
         #[serde(transparent)]
         pub(crate) struct $name(ploke_core::ArcStr);
         impl $name {
@@ -45,7 +45,7 @@ newtype_arcstr!(EndpointPath);
 newtype_arcstr!(ModelName);
 
 // ----- strongly-typed string wrappers (easy to swap inner later) -----
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(transparent)]
 pub(crate) struct Author(String);
 impl fmt::Debug for Author {
@@ -66,7 +66,7 @@ impl Author {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(transparent)]
 pub(crate) struct ModelSlug(String);
 impl fmt::Debug for ModelSlug {

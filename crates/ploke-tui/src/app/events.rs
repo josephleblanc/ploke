@@ -6,8 +6,10 @@ use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use std::sync::Arc;
 use std::time::Instant;
+use itertools::Itertools;
 use ploke_core::ArcStr;
 use uuid::Uuid;
+use tracing::{warn, info, trace, error, debug};
 
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
@@ -59,7 +61,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         }
         AppEvent::IndexingStarted => {}
         AppEvent::IndexingCompleted => {
-            tracing::info!("Indexing Succeeded!");
+            info!("Indexing Succeeded!");
             app.indexing_state = None;
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg: String::from("Indexing Succeeded"),
@@ -69,7 +71,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.send_cmd(StateCommand::UpdateDatabase)
         }
         AppEvent::IndexingFailed => {
-            tracing::error!("Indexing Failed");
+            error!("Indexing Failed");
             app.indexing_state = None;
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg: String::from("Indexing Failed"),
@@ -82,7 +84,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::System(system_event) => {
             match system_event {
                 SystemEvent::ModelSwitched(new_model) => {
-                    tracing::debug!("SystemEvent::ModelSwitched {}", new_model);
+                    debug!("SystemEvent::ModelSwitched {}", new_model);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!(
                             "model changed from {} to {}",
@@ -98,7 +100,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     file_name,
                     query_name,
                 } => {
-                    tracing::debug!("App receives event: {}", file_name);
+                    debug!("App receives event: {}", file_name);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!("Reading file for query called {query_name}:\n\t{file_name}"),
                         kind: MessageKind::SysInfo,
@@ -109,7 +111,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     query_name,
                     query_content,
                 } => {
-                    tracing::debug!(
+                    debug!(
                         "App receives WriteQuery from FileManager for {query_name}:\n{query_content}"
                     );
                     let shortened_query = query_content.chars().take(20).collect::<String>();
@@ -124,7 +126,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     });
                 }
                 SystemEvent::HistorySaved { file_path } => {
-                    tracing::debug!("App receives HistorySaved: {}", file_path);
+                    debug!("App receives HistorySaved: {}", file_path);
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!("Chat history exported to {}", file_path),
                         kind: MessageKind::SysInfo,
@@ -136,7 +138,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     is_success,
                     ..
                 } if is_success => {
-                    tracing::debug!(
+                    debug!(
                         "App receives BackupDb successful db save to file: {}",
                         &file_dir
                     );
@@ -153,7 +155,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     is_success,
                     error,
                 } if !is_success => {
-                    tracing::debug!(
+                    debug!(
                         "App receives BackupDb unsuccessful event: {}\nwith error: {:?}",
                         &file_dir,
                         &error
@@ -173,7 +175,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     is_success,
                     ..
                 } if is_success => {
-                    tracing::debug!(
+                    debug!(
                         "App receives LoadDb successful db save to file: {:?}",
                         display_file_info(file_dir.as_ref()),
                     );
@@ -193,7 +195,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     is_success,
                     error,
                 } if !is_success => {
-                    tracing::debug!(
+                    debug!(
                         "App receives LoadDb unsuccessful event: {}\nwith error: {:?}",
                         display_file_info(file_dir.as_ref()),
                         &error
@@ -217,10 +219,10 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 #[cfg(all(feature = "test_harness", feature = "live_api_tests"))]
                 SystemEvent::TestHarnessApiResponse { .. } => {
                     // Test harness API response - handled by test subscribers, no UI action needed
-                    tracing::debug!("Test harness API response event received");
+                    debug!("Test harness API response event received");
                 }
                 other => {
-                    tracing::warn!("Unused system event in main app loop: {:?}", other)
+                    warn!("Unused system event in main app loop: {:?}", other)
                 }
             }
         }
@@ -230,10 +232,85 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
     }
 }
 
+// TODO: Now we are getting another issue, where the model browser is loading the list of returned
+// models for the search, filtered correctly, BUT when an item is expanded by pressing `l` on the
+// selected item, while there is a filled in "context_length", "supports_tools", "pricing" with
+// both "in" and "out", the "providers" field, which should be a list of the various providers for
+// that specific model (along with other info like the prices for that provider or other
+// variations), we only see a "(loading...)", which never resolves.
 fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
-        
-    if let models::Event::Response { models } = models_event {
+    let models::Event::Response { models, search_keyword } = models_event else {
+        debug!("Unexpected event type");
+        return;
+    };
+
+    let Some( models_payload ) = models else {
+        send_warning(app, "Model search response missing payload.");
+        return;
+    };
+    
+    let Some(mb) = app.model_browser.as_ref() else {
+        debug!("Received model list response without open browser");
+        return;
+    };
+
+    let Some(keyword_snapshot) = app.model_browser.as_ref().map(|mb| mb.keyword.clone()) else {
+        debug!("Received model list response without an open browser; ignoring");
+        return;
+    };
+
+    if let Some(kw) = search_keyword.as_deref().filter(|k| *k != mb.keyword) {
+        debug!("Dropping stale results, expected '{}', got '{}')", mb.keyword, kw);
+        return;
     }
+
+    let filtered = filter_models_for_keyword(models_payload.as_ref(), &mb.keyword);
+    if filtered.is_empty() {
+        let warning = format!("No models matched '{}'. Try a broader search.", keyword_snapshot);
+        send_warning(app, &warning);
+    }
+
+    if let Some(mb) = app.model_browser.as_mut() {
+        // Drop results if another search replaced the keyword while this async request completed.
+        if mb.keyword != keyword_snapshot {
+            debug!(
+                "Model browser keyword changed from '{}' → '{}' while request was pending",
+                keyword_snapshot,
+                mb.keyword,
+            );
+            return;
+        }
+
+        let mapped = App::build_model_browser_items(filtered);
+        let previous_selection = mb.selected;
+        mb.items = mapped;
+        if mb.items.is_empty() {
+            mb.selected = 0;
+        } else if previous_selection >= mb.items.len() {
+            mb.selected = mb.items.len() - 1;
+        }
+        mb.vscroll = 0;
+        app.needs_redraw = true;
+    }
+}
+
+fn filter_models_for_keyword(
+    models: &crate::llm::request::models::Response,
+    keyword: &str,
+) -> Vec<crate::llm::request::models::ResponseItem> {
+    let kw_lower = keyword.to_lowercase();
+    let filtered: Vec<_> = models
+        .data
+        .iter()
+        .filter(|model| {
+            let id_match = model.id.to_string().to_lowercase().contains(&kw_lower);
+            let name_match = model.name.as_str().to_lowercase().contains(&kw_lower);
+            id_match || name_match
+        })
+        .sorted_by_key(|x| &x.id)
+        .cloned()
+        .collect();
+    filtered
 }
 
 fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event) {
@@ -305,12 +382,96 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
 
 fn send_warning(app: &mut App, message: &str) {
     let msg = String::from(message);
-    tracing::warn!(msg);
+    warn!(msg);
     app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
 }
 
 fn send_error(app: &mut App, message: &str) {
     let msg = String::from(message);
-    tracing::warn!(msg);
+    warn!(msg);
     app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn filters_models_by_keyword_case_insensitively() {
+        let resp = sample_response();
+        let filtered = filter_models_for_keyword(&resp, "gPt");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id.to_string(), "openai/gpt-4o");
+    }
+
+    #[test]
+    fn returns_all_models_when_keyword_empty() {
+        let resp = sample_response();
+        let filtered = filter_models_for_keyword(&resp, "");
+        assert_eq!(filtered.len(), 2);
+    }
+
+    fn sample_response() -> crate::llm::request::models::Response {
+        serde_json::from_value(json!({
+            "data": [
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "created": 0,
+                    "description": "primary test model",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Llama4",
+                        "instruct_type": null
+                    },
+                    "top_provider": {
+                        "context_length": 8192,
+                        "is_moderated": false,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": "0.000002",
+                        "completion": "0.000004"
+                    },
+                    "canonical_slug": null,
+                    "context_length": 8192,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"]
+                },
+                {
+                    "id": "meta/llama-3.1",
+                    "name": "Meta Llama",
+                    "created": 0,
+                    "description": "secondary model entry",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Llama3",
+                        "instruct_type": null
+                    },
+                    "top_provider": {
+                        "context_length": 4096,
+                        "is_moderated": false,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002"
+                    },
+                    "canonical_slug": null,
+                    "context_length": 4096,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"]
+                }
+            ]
+        }))
+        .expect("valid response fixture")
+    }
 }

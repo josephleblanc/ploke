@@ -70,6 +70,8 @@ pub(crate) mod endpoint {
 }
 
 pub(crate) mod models {
+    use ploke_core::ArcStr;
+
     use crate::llm::request;
 
     use super::*;
@@ -89,6 +91,9 @@ pub(crate) mod models {
             /// cycles.
             // Larger response, make an Arc to hold it
             models: Option<Arc<request::models::Response>>,
+            /// Optional search keyword that initiated this response, so consumers can drop stale
+            /// payloads when a newer search is already in-flight.
+            search_keyword: Option<ArcStr>,
         },
         Error {
             request_id: Uuid,

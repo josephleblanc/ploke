@@ -23,15 +23,15 @@ pub mod tracing_setup;
 pub mod utils;
 pub use event_bus::*;
 pub mod rag;
-pub mod tools;
 #[cfg(test)]
 mod tests;
+pub mod tools;
 
 pub mod llm;
 
 pub mod user_config;
 
-use llm::{manager::events::ChatEvt, router_only::default_model, EndpointsResponse, ModelId};
+use llm::{EndpointsResponse, ModelId, manager::events::ChatEvt, router_only::default_model};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -44,7 +44,8 @@ pub mod test_harness;
 
 use app::App;
 use app_state::{
-    core::RuntimeConfig, events::SystemEvent, state_manager, AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState
+    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
+    core::RuntimeConfig, events::SystemEvent, state_manager,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -85,10 +86,11 @@ static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex
 
 pub const TOP_K: usize = 15;
 lazy_static! {
-    static ref RETRIEVAL_STRATEGY: ploke_rag::RetrievalStrategy = ploke_rag::RetrievalStrategy::Hybrid {
-        rrf: RrfConfig::default(),
-        mmr: None,
-    };
+    static ref RETRIEVAL_STRATEGY: ploke_rag::RetrievalStrategy =
+        ploke_rag::RetrievalStrategy::Hybrid {
+            rrf: RrfConfig::default(),
+            mmr: None,
+        };
 }
 
 /// The number of tool retries to allow if model fails to call tool correctly.
@@ -344,12 +346,13 @@ impl AppEvent {
         use llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            AppEvent::Llm(_) => EventPriority::Background,
+            // NOTE: I'm fairly sure that there should be better handling of AppEvent::Llm beyond
+            // this blanket implementation for Background, but check here first if there is an
+            // error the LLM event handling.
+            // AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
                 ToolEvent::Requested { .. } => EventPriority::Background,
-                ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => {
-                    EventPriority::Realtime
-                }
+                ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => EventPriority::Realtime,
             },
             AppEvent::Quit => EventPriority::Realtime,
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
@@ -375,10 +378,13 @@ impl AppEvent {
             AppEvent::Rag(_) => EventPriority::Background,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
-            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => EventPriority::Background,
-            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => EventPriority::Realtime,
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => {
+                EventPriority::Background
+            }
+            AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Response { .. })) => {
+                EventPriority::Realtime
+            }
             AppEvent::Llm(llm_event) => EventPriority::Background,
-
         }
     }
     pub fn is_system(&self) -> bool {

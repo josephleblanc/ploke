@@ -27,7 +27,6 @@ pub enum SupportedParameters {
     WebSearchOptions,
 }
 
-
 pub(crate) trait SupportsTools {
     fn supports_tools(&self) -> bool;
 }
@@ -44,7 +43,7 @@ impl SupportsTools for &Vec<SupportedParameters> {
 }
 
 /// Possible input modalities that a model can accept.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InputModality {
     Text,
@@ -55,7 +54,7 @@ pub(crate) enum InputModality {
 }
 
 /// Possible output modalities that a model can produce.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OutputModality {
     Text,
@@ -63,7 +62,7 @@ pub(crate) enum OutputModality {
     Audio, // no endpoints actually have the audio field?
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum Modality {
@@ -75,7 +74,7 @@ pub(crate) enum Modality {
     TextImageToTextImage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
 pub(crate) enum Tokenizer {
     Claude,
     Cohere,
@@ -95,8 +94,7 @@ pub(crate) enum Tokenizer {
     Router,
 }
 
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
 pub(crate) enum InstructType {
     #[serde(rename = "qwq")]
     Qwq,
@@ -138,7 +136,7 @@ pub(crate) enum InstructType {
 // - `bf16`: Brain floating point (16 bit)
 // - `fp32`: Floating point (32 bit)
 // - `unknown`: Unknown
-/// The level of quantization of the endpoint, e.g. 
+/// The level of quantization of the endpoint, e.g.
 ///     "quantization": "fp4",
 #[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, PartialOrd, Eq, Hash)]
 #[allow(non_camel_case_types)]
@@ -151,7 +149,7 @@ pub(crate) enum Quant {
     fp16,
     bf16,
     fp32,
-    unknown
+    unknown,
 }
 
 impl Quant {

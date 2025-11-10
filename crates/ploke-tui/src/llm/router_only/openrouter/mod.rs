@@ -64,7 +64,7 @@ impl HasEndpoint for OpenRouter {
 
 /// Provider-specific information about the model.
 /// - Unique type only used by OpenRouter
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, PartialOrd, Eq)]
 pub(crate) struct TopProvider {
     /// Whether this model is subject to content moderation.
     pub(crate) is_moderated: bool,
@@ -110,7 +110,11 @@ impl From<ModelId> for OpenRouterModelId {
 
 impl OpenRouterModelId {
     fn from_parts(value: EndpointKey, variant: Option<ModelVariant>) -> Self {
-        let EndpointKey { model, variant, provider } = value;
+        let EndpointKey {
+            model,
+            variant,
+            provider,
+        } = value;
         Self {
             key: model,
             variant: variant.map(OpenRouterModelVariant::from),
@@ -469,11 +473,9 @@ pub(crate) struct MaxPrice {
 impl ProviderPreferences {
     pub(crate) fn merge_union(mut self, other: &Self) -> Self {
         if let Some(order) = other.order.as_ref() {
-            self.order = self.order.map(|ord| {
-                ord.union(order)
-                    .cloned()
-                    .collect::<HashSet<ProviderSlug>>()
-            });
+            self.order = self
+                .order
+                .map(|ord| ord.union(order).cloned().collect::<HashSet<ProviderSlug>>());
         }
         if let Some(allow_fallbacks) = other.allow_fallbacks {
             self.allow_fallbacks = other.allow_fallbacks;
@@ -485,25 +487,19 @@ impl ProviderPreferences {
             self.data_collection = other.data_collection;
         }
         if let Some(only) = other.only.as_ref() {
-            self.only = self.only.map(|o| {
-                o.union(only)
-                    .cloned()
-                    .collect::<HashSet<ProviderSlug>>()
-            });
+            self.only = self
+                .only
+                .map(|o| o.union(only).cloned().collect::<HashSet<ProviderSlug>>());
         }
         if let Some(ignore) = other.ignore.as_ref() {
-            self.ignore = self.ignore.map(|i| {
-                i.union(ignore)
-                    .cloned()
-                    .collect::<HashSet<ProviderSlug>>()
-            });
+            self.ignore = self
+                .ignore
+                .map(|i| i.union(ignore).cloned().collect::<HashSet<ProviderSlug>>());
         }
         if let Some(quantizations) = other.quantizations.as_ref() {
-            self.quantizations = self.quantizations.map(|q| {
-                q.union(quantizations)
-                    .cloned()
-                    .collect::<HashSet<Quant>>()
-            });
+            self.quantizations = self
+                .quantizations
+                .map(|q| q.union(quantizations).cloned().collect::<HashSet<Quant>>());
         }
         if let Some(sort) = other.sort {
             self.sort = other.sort;

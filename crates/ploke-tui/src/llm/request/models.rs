@@ -25,8 +25,10 @@ use ploke_test_utils::workspace_root;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::{
-        router_only::{openrouter::TopProvider, HasModelId}, types::{model_types::Architecture, newtypes::ModelName}, ModelId, SupportedParameters, SupportsTools
-    };
+    ModelId, SupportedParameters, SupportsTools,
+    router_only::{HasModelId, openrouter::TopProvider},
+    types::{model_types::Architecture, newtypes::ModelName},
+};
 
 use once_cell::sync::Lazy;
 use serde_json::Value;
@@ -68,7 +70,7 @@ impl IntoIterator for Response {
 ///     - hugging_face_id: missing for 43/323 models
 ///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
 ///     - architecture.instruct_type: missing for most (~65%), 208/323
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct ResponseItem {
     /// canonical endpoint name ({author}/{slug}:{variant}), e.g.
     /// - deepseek/deepseek-chat-v3.1
@@ -116,6 +118,12 @@ pub(crate) struct ResponseItem {
     /// (also appears in endpoints)
     #[serde(default)]
     pub(crate) supported_parameters: Option<Vec<SupportedParameters>>,
+}
+
+impl PartialOrd for ResponseItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
 }
 
 impl HasModelId for ResponseItem {

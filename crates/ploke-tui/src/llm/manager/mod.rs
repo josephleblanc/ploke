@@ -275,10 +275,12 @@ pub async fn llm_manager(
                             // Unblock the UI even on error with an empty provider list.
                             event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
                                 models: None,
+                                search_keyword: None,
                             })));
                         });
                     event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
                         models: result.ok(),
+                        search_keyword: None,
                     })));
                 });
             }

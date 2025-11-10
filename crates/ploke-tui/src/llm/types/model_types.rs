@@ -1,5 +1,8 @@
 use ploke_core::ArcStr;
-use std::{fmt::{self, Display}, str::FromStr};
+use std::{
+    fmt::{self, Display},
+    str::FromStr,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +11,7 @@ use crate::llm::{
     registry::user_prefs::DEFAULT_MODEL,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(try_from = "&str")]
 /// The ModelKey is in the form {author}/{model}, and does not contain the `:{variant}` convention
 /// that may vary across routers/providers, e.g. for OpenRouter
@@ -51,7 +54,7 @@ impl<'a> TryFrom<&'a str> for ModelKey {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Default, PartialOrd, Ord)]
 pub(crate) struct ModelId {
     pub(crate) key: ModelKey,
     pub(crate) variant: Option<ModelVariant>,
@@ -72,11 +75,11 @@ impl ModelId {
         Self { key, variant }
     }
     pub(crate) fn to_request_string(&self) -> String {
-        let Self {key, variant} = self;
+        let Self { key, variant } = self;
         let mut out = key.to_string();
-        if let Some(v) = variant { 
+        if let Some(v) = variant {
             out.push(':');
-            out.push_str( v.as_str() );
+            out.push_str(v.as_str());
         }
         out
     }
@@ -93,7 +96,7 @@ where
     serializer.serialize_str(&model_id.to_request_string())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub(crate) enum ModelVariant {
     Free,
     Beta,
@@ -177,7 +180,7 @@ impl FromStr for ModelId {
 }
 
 /// Architecture details of a model, including input/output modalities and tokenizer info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq, Eq)]
 pub(crate) struct Architecture {
     /// Input modalities supported by this model (text, image, audio, video).
     pub input_modalities: Vec<InputModality>,
@@ -214,7 +217,11 @@ mod tests {
             let mid = ModelId::from_str($s).expect("ModelId parse ok");
             assert_eq!(mid.key.author.as_str(), $author);
             assert_eq!(mid.key.slug.as_str(), $slug);
-            assert!(matches!(mid.variant, $variant_pat), "variant mismatch: {:?}", mid.variant);
+            assert!(
+                matches!(mid.variant, $variant_pat),
+                "variant mismatch: {:?}",
+                mid.variant
+            );
             assert_eq!(mid.to_string(), $s.trim(), "round-trip display");
         }};
     }
@@ -364,8 +371,8 @@ mod tests {
 
     #[test]
     fn test_architecture_from_arch_file() {
-        use ploke_test_utils::workspace_root;
         use crate::llm::router_only::MODELS_JSON_ARCH;
+        use ploke_test_utils::workspace_root;
 
         let mut p = workspace_root();
         p.push(MODELS_JSON_ARCH);
@@ -376,43 +383,58 @@ mod tests {
 
         let contains = |pred: &dyn Fn(&Architecture) -> bool| items.iter().any(pred);
 
-        assert!(contains(&|a| {
-            a.input_modalities == vec![InputModality::Text]
-                && a.modality == Modality::TextToText
-                && a.output_modalities == vec![OutputModality::Text]
-                && a.tokenizer == Tokenizer::Qwen3
-                && a.instruct_type.is_none()
-        }), "expected Qwen3 text->text archetype present");
+        assert!(
+            contains(&|a| {
+                a.input_modalities == vec![InputModality::Text]
+                    && a.modality == Modality::TextToText
+                    && a.output_modalities == vec![OutputModality::Text]
+                    && a.tokenizer == Tokenizer::Qwen3
+                    && a.instruct_type.is_none()
+            }),
+            "expected Qwen3 text->text archetype present"
+        );
 
-        assert!(contains(&|a| {
-            a.input_modalities == vec![InputModality::Text, InputModality::Image]
-                && a.modality == Modality::TextImageToText
-                && a.output_modalities == vec![OutputModality::Text]
-                && a.tokenizer == Tokenizer::Other
-        }), "expected text+image->text Other present");
+        assert!(
+            contains(&|a| {
+                a.input_modalities == vec![InputModality::Text, InputModality::Image]
+                    && a.modality == Modality::TextImageToText
+                    && a.output_modalities == vec![OutputModality::Text]
+                    && a.tokenizer == Tokenizer::Other
+            }),
+            "expected text+image->text Other present"
+        );
 
-        assert!(contains(&|a| {
-            a.input_modalities == vec![InputModality::Image, InputModality::Text]
-                && a.modality == Modality::TextImageToTextImage
-                && a.output_modalities == vec![OutputModality::Image, OutputModality::Text]
-                && a.tokenizer == Tokenizer::Gemini
-        }), "expected text+image->text+image Gemini present");
+        assert!(
+            contains(&|a| {
+                a.input_modalities == vec![InputModality::Image, InputModality::Text]
+                    && a.modality == Modality::TextImageToTextImage
+                    && a.output_modalities == vec![OutputModality::Image, OutputModality::Text]
+                    && a.tokenizer == Tokenizer::Gemini
+            }),
+            "expected text+image->text+image Gemini present"
+        );
 
-        assert!(contains(&|a| {
-            a.input_modalities == vec![InputModality::Text]
-                && a.modality == Modality::TextToText
-                && a.output_modalities == vec![OutputModality::Text]
-                && a.tokenizer == Tokenizer::Llama3
-                && a.instruct_type == Some(InstructType::Llama3)
-        }), "expected Llama3 text->text with instruct llama3 present");
+        assert!(
+            contains(&|a| {
+                a.input_modalities == vec![InputModality::Text]
+                    && a.modality == Modality::TextToText
+                    && a.output_modalities == vec![OutputModality::Text]
+                    && a.tokenizer == Tokenizer::Llama3
+                    && a.instruct_type == Some(InstructType::Llama3)
+            }),
+            "expected Llama3 text->text with instruct llama3 present"
+        );
 
-        assert!(contains(&|a| {
-            a.input_modalities == vec![InputModality::Text]
-                && a.modality == Modality::TextToText
-                && a.output_modalities == vec![OutputModality::Text]
-                && a.tokenizer == Tokenizer::Qwen
-                && a.instruct_type == Some(InstructType::DeepSeekR1)
-        }), "expected Qwen text->text with instruct deepseek-r1 present");
+        assert!(
+            contains(&|a| {
+                a.input_modalities == vec![InputModality::Text]
+                    && a.modality == Modality::TextToText
+                    && a.output_modalities == vec![OutputModality::Text]
+                    && a.tokenizer == Tokenizer::Qwen
+                    && a.instruct_type == Some(InstructType::DeepSeekR1)
+            }),
+            "expected Qwen text->text with instruct deepseek-r1 present"
+        );
     }
 
     // -- `ModelKey` tests --
@@ -501,4 +523,3 @@ mod tests {
         assert_eq!(mid.to_string(), "openai/gpt-4o:beta");
     }
 }
-

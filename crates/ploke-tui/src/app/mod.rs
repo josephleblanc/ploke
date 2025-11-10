@@ -1166,29 +1166,7 @@ impl App {
     }
 
     fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
-        let items = items
-            .into_iter()
-            .map(|m| {
-                let supports_tools = m.supports_tools();
-                // Model-level tools: true if any provider supports tools OR model supported_parameters says so
-                ModelBrowserItem {
-                    id: m.id.clone(),
-                    name: Some(m.name),
-                    context_length: m.context_length.or(m.top_provider.context_length),
-                    // Display pricing in USD per 1M tokens (aligns with provider rows)
-                    input_cost: Some(m.pricing.prompt * 1_000_000.0),
-                    output_cost: Some(m.pricing.completion * 1_000_000.0),
-                    supports_tools,
-                    // Provider rows will be populated later by `list_model_providers_async` after the
-                    // command `Command::ModelProviders(model_id)`, the details are empty to start with.
-                    providers: Vec::new(),
-                    expanded: false,
-                    loading_providers: false,
-                    pending_select: false,
-                }
-            })
-            .collect::<Vec<_>>();
-
+        let items = Self::build_model_browser_items(items);
         self.model_browser = Some(ModelBrowserState {
             visible: true,
             keyword,
@@ -1201,6 +1179,30 @@ impl App {
             viewport_height: 0,
         });
         self.needs_redraw = true;
+    }
+
+    fn build_model_browser_items(items: Vec<models::ResponseItem>) -> Vec<ModelBrowserItem> {
+        items
+            .into_iter()
+            .map(|m| {
+                let supports_tools = m.supports_tools();
+                // Model-level tools: true if any provider supports tools OR model supported_parameters says so
+                ModelBrowserItem {
+                    id: m.id.clone(),
+                    name: Some(m.name),
+                    context_length: m.context_length.or(m.top_provider.context_length),
+                    // Display pricing in USD per 1M tokens (aligns with provider rows)
+                    input_cost: Some(m.pricing.prompt * 1_000_000.0),
+                    output_cost: Some(m.pricing.completion * 1_000_000.0),
+                    supports_tools,
+                    // Provider rows populated later
+                    providers: Vec::new(),
+                    expanded: false,
+                    loading_providers: false,
+                    pending_select: false,
+                }
+            })
+            .collect::<Vec<_>>()
     }
 
     fn close_model_browser(&mut self) {
