@@ -252,80 +252,56 @@ async fn test_malformed_json_handling() {
         // Missing "edits" field
     });
 
-    // Observe actual dispatcher behavior with malformed payloads before invoking the legacy helper.
-    {
-        use crate::tools::{self, FunctionCall, FunctionMarker, ToolCall, ToolName};
-        use ploke_core::ArcStr;
+    // Observe dispatcher behavior and ensure malformed payloads emit ToolCallFailed.
+    use crate::tools::{self, FunctionCall, FunctionMarker, ToolCall, ToolName};
+    use ploke_core::ArcStr;
 
-        let mut dispatcher_rx = harness.event_bus.subscribe(EventPriority::Realtime);
-        let dispatcher_call_id = ArcStr::from("malformed_dispatch");
-        let tool_call = ToolCall {
-            call_id: dispatcher_call_id.clone(),
-            call_type: FunctionMarker,
-            function: FunctionCall {
-                name: ToolName::ApplyCodeEdit,
-                arguments: malformed_json.to_string(),
-            },
-        };
-        let ctx = tools::Ctx {
-            state: Arc::clone(&harness.state),
-            event_bus: Arc::clone(&harness.event_bus),
-            request_id,
-            parent_id: request_id,
-            call_id: dispatcher_call_id.clone(),
-        };
-
-        let dispatcher_result = tools::process_tool(tool_call, ctx).await;
-        let dispatcher_err = dispatcher_result.expect_err("malformed payload should fail");
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
-        let mut dispatcher_failure_event = false;
-        while let Ok(event) = dispatcher_rx.try_recv() {
-            if let AppEvent::System(system_event) = event {
-                if format!("{:?}", system_event).contains("ToolCallFailed") {
-                    dispatcher_failure_event = true;
-                    break;
-                }
-            }
-        }
-        println!(
-            "process_tool malformed payload result: {dispatcher_err}; ToolCallFailed observed: {dispatcher_failure_event}"
-        );
-    }
-
-    // Set up event listener to capture tool call failures from legacy call path
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
-
-    let params = match create_test_tool_params(&harness, request_id, malformed_json).await {
-        Ok(params) => params,
-        Err(err) => {
-            panic!(
-                "Malformed JSON rejected before apply_code_edit_tool execution: {err}"
-            );
-        }
+    let dispatcher_call_id = ArcStr::from("malformed_dispatch");
+    let tool_call = ToolCall {
+        call_id: dispatcher_call_id.clone(),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::ApplyCodeEdit,
+            arguments: malformed_json.to_string(),
+        },
+    };
+    let ctx = tools::Ctx {
+        state: Arc::clone(&harness.state),
+        event_bus: Arc::clone(&harness.event_bus),
+        request_id,
+        parent_id: request_id,
+        call_id: dispatcher_call_id.clone(),
     };
 
-    // Should handle gracefully without creating proposal
-    apply_code_edit_tool(params).await;
+    let dispatcher_result = tools::process_tool(tool_call, ctx).await;
+    let dispatcher_err = dispatcher_result.expect_err("malformed payload should fail");
 
-    // Allow time for events to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-    // Verify that a failure event was emitted (stronger validation)
-    let mut found_failure = false;
+    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    let mut dispatcher_failure_event = false;
     while let Ok(event) = event_rx.try_recv() {
         if let AppEvent::System(system_event) = event {
-            println!("DEBUG: System event: {:?}", system_event);
             if format!("{:?}", system_event).contains("ToolCallFailed") {
-                found_failure = true;
+                dispatcher_failure_event = true;
                 break;
             }
         }
     }
-
+    println!(
+        "process_tool malformed payload result: {dispatcher_err}; ToolCallFailed observed: {dispatcher_failure_event}"
+    );
     assert!(
-        found_failure,
-        "Malformed JSON should emit ToolCallFailed event"
+        dispatcher_failure_event,
+        "Malformed JSON should emit ToolCallFailed event from dispatcher"
+    );
+
+    // create_test_tool_params should reject the malformed payload before reaching apply_code_edit_tool.
+    let err = create_test_tool_params(&harness, request_id, malformed_json)
+        .await
+        .expect_err("Malformed JSON should fail to deserialize into ApplyCodeEditRequest");
+    assert!(
+        err.to_string().contains("missing field `edits`"),
+        "Expected serde error for missing edits, got: {err:?}"
     );
 
     {

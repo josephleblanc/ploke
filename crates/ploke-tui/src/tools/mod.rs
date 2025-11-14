@@ -239,7 +239,12 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
-            let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)?;
+            let params =
+                request_code_context::RequestCodeContextGat::deserialize_params(&args).inspect_err(
+                    |err| {
+                        request_code_context::RequestCodeContextGat::emit_err(&ctx, err.to_string());
+                    },
+                )?;
             tracing::debug!(target: DEBUG_TOOLS, 
                 "params: {}\n",
                 format_args!("{:#?}", &params),
@@ -256,7 +261,9 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
-            let params = code_edit::GatCodeEdit::deserialize_params(&args)?;
+            let params = code_edit::GatCodeEdit::deserialize_params(&args).inspect_err(|err| {
+                code_edit::GatCodeEdit::emit_err(&ctx, err.to_string());
+            })?;
             tracing::debug!(target: DEBUG_TOOLS, 
                 "params: {}\n",
                 format_args!("{:#?}", &params),
@@ -272,7 +279,9 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::CreateFile => {
-            let params = create_file::CreateFile::deserialize_params(&args)?;
+            let params = create_file::CreateFile::deserialize_params(&args).inspect_err(|err| {
+                create_file::CreateFile::emit_err(&ctx, err.to_string());
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
