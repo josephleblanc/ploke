@@ -28,6 +28,10 @@ Operational Notes
 - Reference key docs from plan files so future agents easily discover prior work.
 - Inter-crate contracts (new docs, ongoing)
 - Before costly test runs, execute `cargo xtask verify-fixtures` (see `/xtask`) to confirm required ancillary assets are present; extend that command when new fixtures or generated files become mandatory.
+- Cozo integration discipline:
+  - Treat `ploke-db` and `ploke-transform` Cozo scripts as source of truth; never invent syntax or data types that are not already present in the repository or the Cozo docs stored under `docs/dependency_details/cozo/`.
+  - When proposing schema/index changes, cite the existing Cozo script or doc excerpt you are extending and call out any open questions rather than guessing (e.g., if Cozo lacks an unsigned integer type).
+  - Run or reference relevant tests/queries (`ploke-db` unit tests, `::hnsw` scripts) before documenting a change so planning notes never contradict actual Cozo capabilities.
 
 ## Ongoing Plan: Agentic System
 
