@@ -76,12 +76,12 @@ async fn create_test_tool_params(
     harness: &AppHarness,
     request_id: Uuid,
     arguments: serde_json::Value,
-) -> ToolCallParams {
+) -> Result<ToolCallParams, serde_json::Error> {
     use crate::tools::ToolName;
     use ploke_core::ArcStr;
-    let typed_req: ApplyCodeEditRequest = serde_json::from_value(arguments).unwrap();
+    let typed_req: ApplyCodeEditRequest = serde_json::from_value(arguments)?;
 
-    ToolCallParams {
+    Ok(ToolCallParams {
         state: Arc::clone(&harness.state),
         event_bus: Arc::clone(&harness.event_bus),
         request_id,
@@ -89,7 +89,7 @@ async fn create_test_tool_params(
         name: ToolName::ApplyCodeEdit,
         typed_req,
         call_id: ArcStr::from("test_call_id"),
-    }
+    })
 }
 
 // ============================================================================
@@ -112,7 +112,9 @@ async fn test_duplicate_request_detection() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments.clone()).await;
+    let params = create_test_tool_params(&harness, request_id, arguments.clone())
+        .await
+        .expect("valid apply_code_edit params");
 
     // Set up event listener to capture tool call results
     use crate::{AppEvent, EventPriority};
@@ -199,7 +201,9 @@ async fn test_empty_edits_validation() {
     };
 
     let arguments = serde_json::to_value(&empty_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     // Call should complete but not create proposal due to empty edits
     apply_code_edit_tool(params).await;
@@ -241,17 +245,65 @@ async fn test_malformed_json_handling() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
 
-    // Set up event listener to capture tool call failures
     use crate::{AppEvent, EventPriority};
-    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
-
     // Invalid JSON structure - missing required fields
     let malformed_json = json!({
         "confidence": 0.5,
         // Missing "edits" field
     });
 
-    let params = create_test_tool_params(&harness, request_id, malformed_json).await;
+    // Observe actual dispatcher behavior with malformed payloads before invoking the legacy helper.
+    {
+        use crate::tools::{self, FunctionCall, FunctionMarker, ToolCall, ToolName};
+        use ploke_core::ArcStr;
+
+        let mut dispatcher_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+        let dispatcher_call_id = ArcStr::from("malformed_dispatch");
+        let tool_call = ToolCall {
+            call_id: dispatcher_call_id.clone(),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name: ToolName::ApplyCodeEdit,
+                arguments: malformed_json.to_string(),
+            },
+        };
+        let ctx = tools::Ctx {
+            state: Arc::clone(&harness.state),
+            event_bus: Arc::clone(&harness.event_bus),
+            request_id,
+            parent_id: request_id,
+            call_id: dispatcher_call_id.clone(),
+        };
+
+        let dispatcher_result = tools::process_tool(tool_call, ctx).await;
+        let dispatcher_err = dispatcher_result.expect_err("malformed payload should fail");
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        let mut dispatcher_failure_event = false;
+        while let Ok(event) = dispatcher_rx.try_recv() {
+            if let AppEvent::System(system_event) = event {
+                if format!("{:?}", system_event).contains("ToolCallFailed") {
+                    dispatcher_failure_event = true;
+                    break;
+                }
+            }
+        }
+        println!(
+            "process_tool malformed payload result: {dispatcher_err}; ToolCallFailed observed: {dispatcher_failure_event}"
+        );
+    }
+
+    // Set up event listener to capture tool call failures from legacy call path
+    let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
+
+    let params = match create_test_tool_params(&harness, request_id, malformed_json).await {
+        Ok(params) => params,
+        Err(err) => {
+            panic!(
+                "Malformed JSON rejected before apply_code_edit_tool execution: {err}"
+            );
+        }
+    };
 
     // Should handle gracefully without creating proposal
     apply_code_edit_tool(params).await;
@@ -307,7 +359,9 @@ async fn test_canonical_resolution_success() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -356,7 +410,9 @@ async fn test_canonical_resolution_not_found() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -386,7 +442,9 @@ async fn test_canonical_resolution_wrong_node_type() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -417,7 +475,9 @@ async fn test_canonical_fallback_resolver() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -457,7 +517,9 @@ async fn test_unified_diff_preview_generation() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -500,7 +562,9 @@ async fn test_codeblock_preview_generation() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -555,7 +619,9 @@ async fn test_preview_truncation() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -619,7 +685,9 @@ async fn test_proposal_creation_and_storage() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -667,7 +735,9 @@ async fn test_auto_confirm_workflow() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -698,7 +768,9 @@ async fn test_tool_result_structure() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -775,7 +847,9 @@ async fn test_multiple_files_batch_processing() {
     };
 
     let arguments = serde_json::to_value(&multi_edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -844,7 +918,9 @@ async fn test_unsupported_node_type() {
     };
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -896,7 +972,9 @@ async fn test_invalid_canonical_path_format() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     apply_code_edit_tool(params).await;
 
@@ -944,7 +1022,9 @@ async fn test_complete_canonical_edit_flow_integration() {
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
-    let params = create_test_tool_params(&harness, request_id, arguments).await;
+    let params = create_test_tool_params(&harness, request_id, arguments)
+        .await
+        .expect("valid apply_code_edit params");
 
     // Execute the complete flow
     apply_code_edit_tool(params).await;

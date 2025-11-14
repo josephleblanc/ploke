@@ -19,3 +19,6 @@ Notes:
 - Implement token accounting centrally (e.g., at request assembly in LLM module) to feed both SysInfo and any UI indicators.
 - Color semantics should be accessible and theme-aware; consider patterns for low-contrast terminals.
 
+## Tool Dispatcher Error Handling
+- Add dispatcher-level tests that drive `tools::process_tool` with malformed ApplyCodeEdit payloads (missing `edits`, wrong schema, etc.) and assert that the full event pipeline (ToolCallRequested → ToolCallFailed) fires as expected. This covers suggestion 3 once we have time for more comprehensive testing.
+- Propagate `Tool::deserialize_params` failures through `SystemEvent::ToolCallFailed` (and add structured tracing) instead of only returning `ToolError::DeserializationError`, so malformed payloads become observable; this tracks suggestion 4.
