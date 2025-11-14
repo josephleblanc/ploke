@@ -25,7 +25,7 @@
 
 ## Impact Highlights
 
-  - Section 1 of the new doc details how to split embeddings out of node rows,
+  - Section 1 of this doc details how to split embeddings out of node rows,
   migrate data, and add CLI/database commands for listing/removing/activating
   embedding sets while keeping HNSW indexes per (node_type, model, dimension).
   - Section 2 maps out the trait stack modernization: introducing

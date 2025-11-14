@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
 use crate::rag::tools::apply_code_edit_tool;
@@ -29,19 +28,29 @@ const BACKUP_FIXTURE: &str = "tests/fixture_crates/fixture_nodes_copy/src/struct
 /// Restores the fixture in ORIGINAL_FIXTURE from the backup copy in BACKUP_FIXTURE
 fn restore_fixture() {
     use std::fs;
-    
+
     let mut original_path = workspace_root();
-    original_path.push( ORIGINAL_FIXTURE );
+    original_path.push(ORIGINAL_FIXTURE);
     let mut backup_path = workspace_root();
-    backup_path.push( BACKUP_FIXTURE );
-    
+    backup_path.push(BACKUP_FIXTURE);
+
     // Read the backup file content
-    let backup_content = fs::read_to_string(&backup_path)
-        .unwrap_or_else(|e| panic!("Failed to read backup fixture at {}: {}", backup_path.display(), e));
-    
+    let backup_content = fs::read_to_string(&backup_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read backup fixture at {}: {}",
+            backup_path.display(),
+            e
+        )
+    });
+
     // Write the backup content to the original file
-    fs::write(&original_path, backup_content)
-        .unwrap_or_else(|e| panic!("Failed to restore fixture to {}: {}", original_path.display(), e));
+    fs::write(&original_path, backup_content).unwrap_or_else(|e| {
+        panic!(
+            "Failed to restore fixture to {}: {}",
+            original_path.display(),
+            e
+        )
+    });
 }
 
 // Helper functions for test setup
@@ -71,7 +80,7 @@ async fn create_test_tool_params(
     use crate::tools::ToolName;
     use ploke_core::ArcStr;
     let typed_req: ApplyCodeEditRequest = serde_json::from_value(arguments).unwrap();
-    
+
     ToolCallParams {
         state: Arc::clone(&harness.state),
         event_bus: Arc::clone(&harness.event_bus),
@@ -99,7 +108,7 @@ async fn test_duplicate_request_detection() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: i32, }",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -114,13 +123,13 @@ Some(0.9f32),
 
     // Add a small delay to allow async operations to complete and capture events
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Check for any tool call failed events
     while let Ok(event) = event_rx.try_recv() {
         match event {
             AppEvent::System(system_event) => {
                 println!("DEBUG: Captured system event: {:?}", system_event);
-            },
+            }
             _ => {}
         }
     }
@@ -131,23 +140,30 @@ Some(0.9f32),
         if !proposals.contains_key(&request_id) {
             // Debug information to understand what went wrong
             println!("DEBUG: No proposal found for request_id: {}", request_id);
-            println!("DEBUG: Proposals in state: {:?}", proposals.keys().collect::<Vec<_>>());
-            
+            println!(
+                "DEBUG: Proposals in state: {:?}",
+                proposals.keys().collect::<Vec<_>>()
+            );
+
             // Check database is actually loaded
             let db = &harness.state.db;
             // Try a simpler query to check if database has any relations
-            match db.run_script("::relations", Default::default(), cozo::ScriptMutability::Immutable) {
+            match db.run_script(
+                "::relations",
+                Default::default(),
+                cozo::ScriptMutability::Immutable,
+            ) {
                 Ok(result) => {
                     println!("DEBUG: Database relations: {:?}", result.rows.len());
                     for row in result.rows.iter().take(5) {
                         println!("DEBUG: Relation: {:?}", row);
                     }
-                },
+                }
                 Err(e) => {
                     println!("DEBUG: Database error listing relations: {:?}", e);
                 }
             }
-            
+
             panic!("First call should create proposal - debug info printed above");
         }
     }
@@ -174,7 +190,7 @@ async fn test_empty_edits_validation() {
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
-    use crate::{EventPriority, AppEvent};
+    use crate::{AppEvent, EventPriority};
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
 
     let empty_request = ApplyCodeEditRequest {
@@ -187,7 +203,7 @@ async fn test_empty_edits_validation() {
 
     // Call should complete but not create proposal due to empty edits
     apply_code_edit_tool(params).await;
-    
+
     // Allow time for events to be processed
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -203,7 +219,10 @@ async fn test_empty_edits_validation() {
         }
     }
 
-    assert!(found_no_edits_error, "Empty edits should emit 'No edits provided' ToolCallFailed event");
+    assert!(
+        found_no_edits_error,
+        "Empty edits should emit 'No edits provided' ToolCallFailed event"
+    );
 
     // Should not create any proposals
     {
@@ -223,7 +242,7 @@ async fn test_malformed_json_handling() {
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
-    use crate::{EventPriority, AppEvent};
+    use crate::{AppEvent, EventPriority};
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
 
     // Invalid JSON structure - missing required fields
@@ -236,7 +255,7 @@ async fn test_malformed_json_handling() {
 
     // Should handle gracefully without creating proposal
     apply_code_edit_tool(params).await;
-    
+
     // Allow time for events to be processed
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -252,7 +271,10 @@ async fn test_malformed_json_handling() {
         }
     }
 
-    assert!(found_failure, "Malformed JSON should emit ToolCallFailed event");
+    assert!(
+        found_failure,
+        "Malformed JSON should emit ToolCallFailed event"
+    );
 
     {
         let proposals = harness.state.proposals.read().await;
@@ -391,7 +413,7 @@ async fn test_canonical_fallback_resolver() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: String, }",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -431,7 +453,7 @@ async fn test_unified_diff_preview_generation() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: String, pub added_field: bool, }",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -474,7 +496,7 @@ async fn test_codeblock_preview_generation() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: String, pub added_field: bool, }",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -529,7 +551,7 @@ async fn test_preview_truncation() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         long_replacement,
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -561,16 +583,16 @@ Some(0.9f32),
                 // 2. Preview respects the 3-line limit (not 50!)
                 let line_count = before_after.after.lines().count();
                 let has_truncation = before_after.after.contains("... [truncated]");
-                
+
                 println!("DEBUG: max_preview_lines was set to 3");
                 println!("DEBUG: Actual line count: {}", line_count);
                 println!("DEBUG: Has truncation marker: {}", has_truncation);
-                
+
                 // This test should FAIL if truncation is broken - that's the point!
                 assert!(
                     has_truncation || line_count <= 5, // Allow small buffer for context
                     "Preview truncation is broken! Expected ≤5 lines or truncation marker, got {} lines. \
-                     This test SHOULD fail to highlight the truncation bug that needs fixing.", 
+                     This test SHOULD fail to highlight the truncation bug that needs fixing.",
                     line_count
                 );
             }
@@ -641,7 +663,7 @@ async fn test_auto_confirm_workflow() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: String, new_field_usize: usize}",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -672,7 +694,7 @@ async fn test_tool_result_structure() {
         "crate::structs::SampleStruct",
         NodeType::Struct,
         "pub struct SampleStruct { pub field: String, }",
-Some(0.9f32),
+        Some(0.9f32),
     );
 
     let arguments = serde_json::to_value(&edit_request).expect("serialize request");
@@ -807,7 +829,7 @@ async fn test_unsupported_node_type() {
     let request_id = Uuid::new_v4();
 
     // Set up event listener to capture tool call failures
-    use crate::{EventPriority, AppEvent};
+    use crate::{AppEvent, EventPriority};
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);
 
     // Use a non-primary node type (should be rejected)
@@ -825,7 +847,7 @@ async fn test_unsupported_node_type() {
     let params = create_test_tool_params(&harness, request_id, arguments).await;
 
     apply_code_edit_tool(params).await;
-    
+
     // Allow time for events to be processed
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
@@ -834,8 +856,9 @@ async fn test_unsupported_node_type() {
     while let Ok(event) = event_rx.try_recv() {
         if let AppEvent::System(system_event) = event {
             let event_str = format!("{:?}", system_event);
-            if event_str.contains("ToolCallFailed") && 
-               (event_str.contains("primary_nodes") || event_str.contains("node type")) {
+            if event_str.contains("ToolCallFailed")
+                && (event_str.contains("primary_nodes") || event_str.contains("node type"))
+            {
                 found_node_type_error = true;
                 println!("DEBUG: Found expected node type error: {:?}", system_event);
                 break;
@@ -843,7 +866,10 @@ async fn test_unsupported_node_type() {
         }
     }
 
-    assert!(found_node_type_error, "Unsupported node type should emit ToolCallFailed event mentioning node type restriction");
+    assert!(
+        found_node_type_error,
+        "Unsupported node type should emit ToolCallFailed event mentioning node type restriction"
+    );
 
     // Should not create proposal due to unsupported node type
     {

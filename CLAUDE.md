@@ -20,6 +20,7 @@ The project is actively developing an agentic workflow with these principles:
 After recently finishing internal SDK for OpenRouter API, we are expanding our UI
 - Updating our model picker overlay with expanded functionality
 - See TODO list at the end of this document.
+- Use the `xtask` helper (`cargo xtask verify-fixtures`, see `/xtask`) before running suites so fixture requirements are enforced consistently across machines.
 
 ## Build Commands
 

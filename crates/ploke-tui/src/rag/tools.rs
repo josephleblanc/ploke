@@ -13,8 +13,8 @@ use ploke_db::NodeType;
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
-use crate::tools::create_file::CreateFileCtx;
 use crate::tools::ToolName;
+use crate::tools::create_file::CreateFileCtx;
 use crate::{
     app_state::{
         core::{BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode},
@@ -97,6 +97,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 "Duplicate apply_code_edit request ignored for request_id {}",
                 request_id
             );
+            #[cfg(test)]
+            eprintln!("Detected duplicate for state.proposals.read");
             tool_call_params.tool_call_failed(msg.clone());
             chat::add_msg_immediate(
                 &state,
@@ -180,7 +182,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             } => {
                 if !NodeType::primary_nodes().contains(node_type) {
                     let err = format!(
-                        "Unsupported node type '{}': only primary_nodes() are supported for code editing", 
+                        "Unsupported node type '{}': only primary_nodes() are supported for code editing",
                         node_type.relation_str()
                     );
                     tool_call_params.tool_call_failed(err);
@@ -546,4 +548,3 @@ Deny:     edit deny {request_id}{2}"#,
         });
     }
 }
-

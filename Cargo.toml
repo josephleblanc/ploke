@@ -39,6 +39,7 @@ members = [
     "crates/ploke-rag",
     "crates/ploke-io",
     "crates/ploke-ty-mcp",
+    "xtask",
     # Add more modules as needed
 ]
 

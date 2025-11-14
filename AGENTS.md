@@ -27,6 +27,7 @@ Operational Notes
 - Plans, logs, and reports live in `crates/ploke-tui/docs/plans/agentic-system-plan/` and `crates/ploke-tui/docs/reports/`.
 - Reference key docs from plan files so future agents easily discover prior work.
 - Inter-crate contracts (new docs, ongoing)
+- Before costly test runs, execute `cargo xtask verify-fixtures` (see `/xtask`) to confirm required ancillary assets are present; extend that command when new fixtures or generated files become mandatory.
 
 ## Ongoing Plan: Agentic System
 

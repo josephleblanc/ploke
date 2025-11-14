@@ -29,6 +29,7 @@
 - Place unit tests near code; integration tests in `tests/`.
 - Gate live tests behind `live_api_tests`; do not report green unless the live path was exercised (tool calls observed, proposal staged/applied, file delta verified).
 - For e2e, prefer `test_harness` feature; include brief pass/fail/ignored counts and artifact paths in PRs.
+- Run `cargo xtask verify-fixtures` from the workspace root before substantive test runs to catch missing ancillary assets; the helper lives in `/xtask` and should be updated when new fixtures are required.
 
 ## Commit & Pull Request Guidelines
 - Use Conventional Commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`. Example: `feat(openrouter): add tool trait for request_more_context`.
