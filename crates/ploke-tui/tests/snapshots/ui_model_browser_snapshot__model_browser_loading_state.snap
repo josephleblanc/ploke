@@ -1,0 +1,5 @@
+---
+source: crates/ploke-tui/tests/ui_model_browser_snapshot.rs
+expression: text
+---
+Loading models…

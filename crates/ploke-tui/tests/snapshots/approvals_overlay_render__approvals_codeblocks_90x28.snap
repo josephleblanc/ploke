@@ -4,7 +4,7 @@ expression: red
 ---
 ┌ Approvals ─────────────────────────────────────────────────────────────────────────────┐
 │┌ Pending Proposals ──────────────┐┌ Details ──────────────────────────────────────────┐│
-││87654321  Pending  files:1       ││request_id: <UUID>   ││
+││[E] 87654321  Pending  files:1   ││request_id: <UUID>   ││
 ││                                 ││status: Pending  files:1                           ││
 ││                                 ││Before/After:                                      ││
 ││                                 ││--- /home/brasides/code/openai-codex/ploke/crates/p││

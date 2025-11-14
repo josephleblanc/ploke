@@ -7,7 +7,6 @@ use uuid::Uuid;
 use ploke_tui as tui;
 use tui::app_state::{AppState, StateCommand};
 use tui::event_bus::{EventBus, EventBusCaps, EventPriority};
-use tui::AppEvent;
 
 use ploke_db::Database;
 use ploke_embed::indexer::EmbeddingProcessor;
@@ -97,7 +96,6 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
                         break;
                     }
                 }
-                Ok(_) => continue,
                 Err(_) => panic!("event channel closed"),
             }
         }
@@ -156,7 +154,6 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
                         break;
                     }
                 }
-                Ok(_) => continue,
                 Err(_) => panic!("event channel closed"),
             }
         }

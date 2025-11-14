@@ -2,38 +2,35 @@
 source: crates/ploke-tui/tests/ui_model_browser_snapshot.rs
 expression: text
 ---
-Model Browser — 8 results for "openai"
-Instructions: ↑/↓ or j/k to navigate, Enter/Space to expand, l to choose provider (Enter to apply), s to auto-select, ? for help, q/Esc to close.
-
   openai/gpt-4o-0 — OpenAI: GPT-4o 0
     context_length: 128000
     supports_tools: true
-    pricing: in=5.000000 out=15.000000
+    pricing: in=$5.000 out=$15.000
     providers:
-      - OpenAI  tools=true  ctx=128000  pricing (USD/1M tok): in=5.000 out=15.000
-      - Azure  tools=true  ctx=128000  pricing (USD/1M tok): in=5.200 out=15.200
+      - OpenAI in=$5.000 out=$15.000 ctx=128000 tools=true
+      - Azure in=$5.200 out=$15.200 ctx=128000 tools=true
   openai/gpt-4o-1 — OpenAI: GPT-4o 1
   openai/gpt-4o-2 — OpenAI: GPT-4o 2
     context_length: 128000
     supports_tools: true
-    pricing: in=7.000000 out=17.000000
+    pricing: in=$7.000 out=$17.000
     providers:
-      - OpenAI  tools=true  ctx=128000  pricing (USD/1M tok): in=7.000 out=17.000
-      - Azure  tools=true  ctx=128000  pricing (USD/1M tok): in=7.200 out=17.200
+      - OpenAI in=$7.000 out=$17.000 ctx=128000 tools=true
+      - Azure in=$7.200 out=$17.200 ctx=128000 tools=true
   openai/gpt-4o-3 — OpenAI: GPT-4o 3
   openai/gpt-4o-4 — OpenAI: GPT-4o 4
     context_length: 128000
     supports_tools: true
-    pricing: in=9.000000 out=19.000000
+    pricing: in=$9.000 out=$19.000
     providers:
-      - OpenAI  tools=true  ctx=128000  pricing (USD/1M tok): in=9.000 out=19.000
-      - Azure  tools=true  ctx=128000  pricing (USD/1M tok): in=9.200 out=19.200
+      - OpenAI in=$9.000 out=$19.000 ctx=128000 tools=true
+      - Azure in=$9.200 out=$19.200 ctx=128000 tools=true
 > openai/gpt-4o-5 — OpenAI: GPT-4o 5
   openai/gpt-4o-6 — OpenAI: GPT-4o 6
     context_length: 128000
     supports_tools: true
-    pricing: in=11.000000 out=21.000000
+    pricing: in=$11.000 out=$21.000
     providers:
-      - OpenAI  tools=true  ctx=128000  pricing (USD/1M tok): in=11.000 out=21.000
-      - Azure  tools=true  ctx=128000  pricing (USD/1M tok): in=11.200 out=21.200
+      - OpenAI in=$11.000 out=$21.000 ctx=128000 tools=true
+      - Azure in=$11.200 out=$21.200 ctx=128000 tools=true
   openai/gpt-4o-7 — OpenAI: GPT-4o 7

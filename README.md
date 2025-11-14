@@ -15,6 +15,12 @@ parse the target directory and may crash.
 
 ![It works! Mostly!](./assets/ploke_rust_vector_embeddings.png)
 
+#### New feature! Model Picker
+
+You can easily browse and select OpenRouter models directly from Ploke!
+
+https://github.com/user-attachments/assets/391b3f5a-dcbb-46a5-afa9-f4bdeb0b5d01
+
 <details>
   <summary>
     Note on not using LLM-generated docs
@@ -58,7 +64,7 @@ Go ahead and clone the repo, and you can compile and run it with the following c
 ```bash
 git clone https://github.com/josephleblanc/ploke
 cd ploke
-cargo run
+cargo run -p ploke-tui
 ```
 
 The only necessary setup is to have an Openrouter API key in your environment

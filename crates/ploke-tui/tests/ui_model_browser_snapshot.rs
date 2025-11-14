@@ -2,9 +2,81 @@ use insta::assert_snapshot;
 use ploke_tui::app::view::components::model_browser::{snapshot_text_for_test, TestModelItem, TestProviderRow};
 
 #[test]
-fn snapshot_model_browser_initial_loading() {
+fn snapshot_model_browser_loading_state() {
     let text = snapshot_text_for_test(vec![], "qwen", 0, false, 0);
-    assert_snapshot!("model_browser_initial_loading", text);
+    assert_snapshot!("model_browser_loading_state", text);
+}
+
+#[test]
+fn snapshot_model_browser_qwen_results() {
+    // Capture a realistic /model search qwen result list with mixed provider states.
+    let models = vec![
+        TestModelItem {
+            id: "qwen/qwen-2.5-1.5b-instruct".to_string(),
+            name: Some("Qwen2.5 1.5B Instruct".to_string()),
+            context_length: Some(32768),
+            input_cost: Some(0.08),
+            output_cost: Some(0.20),
+            supports_tools: true,
+            providers: vec![
+                TestProviderRow {
+                    provider_slug: "siliconflow".to_string(),
+                    context_length: 32768,
+                    input_cost: 0.08,
+                    output_cost: 0.20,
+                    supports_tools: true,
+                },
+                TestProviderRow {
+                    provider_slug: "alibaba".to_string(),
+                    context_length: 32768,
+                    input_cost: 0.07,
+                    output_cost: 0.18,
+                    supports_tools: true,
+                },
+            ],
+            expanded: true,
+            loading_providers: false,
+        },
+        TestModelItem {
+            id: "qwen/qwen-2.5-7b-instruct".to_string(),
+            name: Some("Qwen2.5 7B Instruct".to_string()),
+            context_length: Some(131072),
+            input_cost: Some(0.30),
+            output_cost: Some(0.90),
+            supports_tools: true,
+            providers: vec![
+                TestProviderRow {
+                    provider_slug: "parasail".to_string(),
+                    context_length: 131072,
+                    input_cost: 0.32,
+                    output_cost: 0.95,
+                    supports_tools: true,
+                },
+                TestProviderRow {
+                    provider_slug: "deepinfra".to_string(),
+                    context_length: 65536,
+                    input_cost: 0.36,
+                    output_cost: 1.10,
+                    supports_tools: true,
+                },
+            ],
+            expanded: false,
+            loading_providers: false,
+        },
+        TestModelItem {
+            id: "qwen/qwen-2.5-32b-instruct".to_string(),
+            name: Some("Qwen2.5 32B Instruct".to_string()),
+            context_length: Some(32768),
+            input_cost: Some(1.20),
+            output_cost: Some(3.60),
+            supports_tools: true,
+            providers: vec![],
+            expanded: true,
+            loading_providers: true,
+        },
+    ];
+    let text = snapshot_text_for_test(models, "qwen", 0, true, 1);
+    assert_snapshot!("model_browser_qwen_results", text);
 }
 
 #[test]

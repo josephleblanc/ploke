@@ -11,7 +11,8 @@ developer/agent runs the same commands via `cargo xtask <command>`.
     - `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
       (AppHarness + apply_code_edit tests).
     - `crates/ploke-tui/data/models/all_pricing_parsed.json`
-      (pricing tests that parse OpenRouter data).
+      (pricing tests that parse OpenRouter data). Generate this via
+      `./scripts/openrouter_pricing_sync.py`.
 
 If a file is missing the command prints a remediation hint and exits non-zero,
 making it safe to gate test runs or CI hooks on this helper.
