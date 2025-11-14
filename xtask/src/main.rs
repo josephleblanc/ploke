@@ -48,10 +48,11 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
         id: "pricing_json",
         rel_path: "crates/ploke-tui/data/models/all_pricing_parsed.json",
         description: "Pricing metadata consumed by llm::request::pricing tests.",
-        remediation: "Copy from the canonical desktop checkout or regenerate via scripts/openrouter_pricing_sync.sh.",
+        remediation: "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
     },
 ];
 
+// TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures() -> ExitCode {
     let root = workspace_root();
     println!("Verifying fixtures under {}", root.display());
