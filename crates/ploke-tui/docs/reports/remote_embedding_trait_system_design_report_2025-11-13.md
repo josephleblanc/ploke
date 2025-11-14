@@ -7,7 +7,15 @@
 - Current embedding executor code still relies on ad-hoc enums and direct HTTP clients without shared abstractions (`crates/ingest/ploke-embed/src/indexer/mod.rs:32-118`, `crates/ploke-embed/src/providers/{hugging_face,openai}.rs`, `crates/ploke-tui/src/user_config.rs:81-180`).
 
 ## Problem Statement
-Remote embeddings must (a) talk to multiple providers with different shapes, (b) propagate provider metadata into database schemas/index builders, and (c) let the TUI reconfigure providers at runtime. Today we have fixed 384-dimension schemas, no provenance tracking, single-startup embedder instantiation, and per-provider bespoke HTTP structs, which blocks remote indexing and makes it hard to extend beyond OpenAI/Hugging Face (`crates/ploke-tui/docs/reports/remote_vector_indexing_support_report_2025-02-18.md:20-35`). We need a trait-based system mirroring the chat router layer so that remote embedding support inherits strong typing, config ergonomics, and testing hooks from the agentic roadmap.
+Remote embeddings must 
+
+(a) talk to multiple providers with different shapes, 
+
+(b) propagate provider metadata into database schemas/index builders, and 
+
+(c) let the TUI reconfigure providers at runtime.
+
+Today we have fixed 384-dimension schemas, no provenance tracking, single-startup embedder instantiation, and per-provider bespoke HTTP structs, which blocks remote indexing and makes it hard to extend beyond OpenAI/Hugging Face (`crates/ploke-tui/docs/reports/remote_vector_indexing_support_report_2025-02-18.md:20-35`). We need a trait-based system mirroring the chat router layer so that remote embedding support inherits strong typing, config ergonomics, and testing hooks from the agentic roadmap.
 
 ## Key Findings From Research
 - **API Surface Differences** – Hugging Face encodes the model ID in the URL and expects `{"inputs": [...], "options": {...}}`, while OpenAI uses a fixed `/v1/embeddings` endpoint with `{ "model": "...", "input": [...] }`. Both return vectors but at different lengths (384–3072+) and have strict RPM/TPM quotas that require batching + backoff (`crates/ploke-tui/docs/reports/deep-research_remote_embedding.md:3-117`).
@@ -43,6 +51,8 @@ These traits live in a new `crates/ploke-tui/src/embedding/` module so we can co
 - **Error + Rate Limit Types** – Expand `EmbedError` with structured variants (`RateLimited { retry_after, quota }`, `DimensionsMismatch { expected, got }`) so the TUI can give actionable messages and the indexing HUD can surface remote failures.
 
 ### Request / Response Flow
+REVIEW NOTE: The below point (1) needs review. There is already a set of events dedicated to managing the embeddings, which is far from perfect but we will likely want to use already present event types over creating another new event type as suggested in (1) below.
+
 1. `EmbeddingCommand` (new TUI command) resolves the desired provider and model via the registry, producing an `EmbeddingProviderConfig`.
 2. `EmbeddingProviderFactory` builds the router-specific struct (e.g., `HuggingFaceRouter`) → `EmbeddingRequestBuilder::new(router).with_inputs(snippets)…`.
 3. The builder produces an `EmbeddingWireRequest` with the right headers (HF bearer token vs. OpenAI `Authorization`), request body, and `expected_dimensions`.
@@ -54,7 +64,11 @@ These traits live in a new `crates/ploke-tui/src/embedding/` module so we can co
 - **Batching + Backoff** – Include a `BatchPolicy` on each router to enforce provider quotas (e.g., ≤8191 tokens per request, 200 RPM for HF free tier per `deep-research_remote_embedding.md:15-21`). Integrate with `tokio::Semaphore` inside the provider implementation.
 - **Retry Budget** – On 429/5xx, apply exponential backoff up to `max_attempts`, log to `IndexingStatus.errors`, and write structured spans so we can reference them in evidence artifacts.
 - **Telemetry Artifacts** – Each indexing run writes a `target/test-output/embedding/<timestamp>.json` blob summarizing provider name, model, batch counts, error tallies, and average latency to align with the “evidence-based changes” principle in AGENTS.md.
+  - REVIEW NOTE: use `tracing` library for the telemetry, store in a `logs` directory rather than `test` directory for not-test builds.
 - **Config Hot Reload** – Use an `EmbeddingManager` similar to `llm::manager` so `/embedding use openai --model text-embedding-3-small` tears down the existing processor, rebuilds dependencies, and informs the UI banner which provider is active.
+  - REVIEW Q: Suppose a user has indexed the target code base with some embedding model, MODEL_ONE, which has some dimensionality X. What should happen if they switch to using some second embedding model MODEL_TWO with a different dimensionality Y? E.g. do the old embeddings get cached? Are there different fields for the embeddings dependent upon the model/dims used for the embeddings so the user can switch easily back and forth without reprocessing? 
+  - REVIEW Q: How are the embeddings stored in the database currently? Are they stored as distinct nodes from the nodes representing code items like functions and structs, or are they fields in the funciton/struct nodes? If they are currently fields, perhaps we should refactor to add a new node type that represents a given embedding (and has metadata such as model/dims + date, where date is inherent in the cozo time-travel feature)?
+  - REVIEW TODO: We should add an impact analysis of refactoring nodes, if they currently contain the vector embedding, to store the vector embeddings as separate nodes connected to the node they are embedded from with an edge. Creating this impact analysis will need to look at both where the on-device vector embedding processing functions are created as well as where the HNSW indices are generated, and identify any other locations where the vector embeddings are referenced to ensure a smooth migration to a new system. The impact analysis will also require suggested commands to manage the multiple embeddings, such as commands to remove old embeddings or list the embeddings currently generated/actively used for the currently loaded code graph.
 
 ## Implementation Plan
 1. **Module + Trait Scaffolding**
