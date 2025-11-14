@@ -4,8 +4,8 @@ expression: red2
 ---
 ┌ Approvals ───────────────────────────────────────────────────────────────────┐
 │┌ Pending Proposals ──────────┐┌ Details ────────────────────────────────────┐│
-││aaaaaaaa  Pending  files:1   ││request_id: bbbbbbbb-cccc-dddd-eeee-fffffffff││
-││bbbbbbbb  Pending  files:1   ││status: Pending  files:1                     ││
+││[E] aaaaaaaa  Pending  files:││request_id: bbbbbbbb-cccc-dddd-eeee-fffffffff││
+││[E] bbbbbbbb  Pending  files:││status: Pending  files:1                     ││
 ││                             ││Unified Diff:                                ││
 ││                             ││two                                          ││
 ││                             ││                                             ││

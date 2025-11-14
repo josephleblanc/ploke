@@ -367,10 +367,19 @@ fn test_chat_comp_request_serialization_minimal() {
     use crate::llm::request::ChatCompReqCore;
     use crate::llm::request::endpoint::ToolChoice;
     use crate::llm::router_only::default_model;
+    use crate::tools::{GatCodeEdit, RequestCodeContextGat, Tool};
+    use crate::tools::create_file::CreateFile;
 
     let messages = vec![
         RequestMessage::new_system("sys".to_string()),
         RequestMessage::new_user("hello".to_string()),
+    ];
+
+    // Mirror the runtime default tool set (tool GAT pilots)
+    let tools = vec![
+        RequestCodeContextGat::tool_def(),
+        GatCodeEdit::tool_def(),
+        CreateFile::tool_def(),
     ];
 
     let default_model = default_model();
@@ -380,16 +389,9 @@ fn test_chat_comp_request_serialization_minimal() {
         .unwrap()
         .with_messages(messages)
         .with_temperature(0.0)
-        .with_max_tokens(128);
-    // let req = openrouter::ChatCompFields::default()
-    //     .completion_core(ChatCompReqCore::default())
-    //     .with_model_str(&default_model)
-    //     .map(|r| r.with_messages(messages))
-    //     .unwrap()
-    //     .with_temperature(0.0)
-    //     .with_max_tokens(128);
-    let mut req = req;
-    req.tool_choice = Some(ToolChoice::Auto);
+        .with_max_tokens(128)
+        .with_tools(Some(tools.clone()))
+        .with_tool_choice(Some(ToolChoice::Auto));
 
     let v = serde_json::to_value(&req).expect("serialize ChatCompRequest");
     // Top-level fields present
@@ -407,10 +409,10 @@ fn test_chat_comp_request_serialization_minimal() {
     assert_eq!(msgs[0].get("role").and_then(|r| r.as_str()), Some("system"));
     assert_eq!(msgs[1].get("role").and_then(|r| r.as_str()), Some("user"));
     // Tools
-    let tools = v.get("tools").and_then(|t| t.as_array()).expect("tools");
-    assert_eq!(tools.len(), 1);
+    let serialized_tools = v.get("tools").and_then(|t| t.as_array()).expect("tools");
+    assert_eq!(serialized_tools.len(), tools.len());
     assert_eq!(
-        tools[0].get("type").and_then(|s| s.as_str()),
+        serialized_tools[0].get("type").and_then(|s| s.as_str()),
         Some("function")
     );
 }

@@ -109,6 +109,20 @@ async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<A
     (state, ids)
 }
 
+fn isolate_persisted_proposals() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proposals_path = dir.path().join("proposals.json");
+    let create_path = dir.path().join("create_proposals.json");
+    // Point persistence to a temp location so tests don't mutate user data and always start empty.
+    unsafe {
+        std::env::set_var("PLOKE_PROPOSALS_PATH", &proposals_path);
+        std::env::set_var("PLOKE_CREATE_PROPOSALS_PATH", &create_path);
+    }
+    let _ = std::fs::remove_file(&proposals_path);
+    let _ = std::fs::remove_file(&create_path);
+    dir
+}
+
 #[test]
 fn approvals_overlay_renders_empty_list() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
@@ -210,6 +224,7 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
 
 #[test]
 fn approvals_overlay_renders_multiple_and_moves_selection() {
+    let _persist_guard = isolate_persisted_proposals();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     rt.block_on(async {
         let backend = TestBackend::new(80, 24);
