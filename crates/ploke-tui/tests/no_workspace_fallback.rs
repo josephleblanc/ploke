@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use ploke_tui as tui;
@@ -29,11 +29,8 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
     // App state with no crate_focus and a valid (empty) DB + RAG service
     let db = Arc::new(Database::new_init().expect("init db"));
     let embedder = Arc::new(mock_embedder());
-    let rag = Arc::new(RagService::new(
-        Arc::clone(&db),
-        Arc::clone(&embedder),
-    )
-    .expect("rag service"));
+    let rag =
+        Arc::new(RagService::new(Arc::clone(&db), Arc::clone(&embedder)).expect("rag service"));
     let io_handle = IoManagerHandle::new();
     let (rag_tx, _rag_rx) = mpsc::channel(8);
     let state = Arc::new(AppState::new(
@@ -112,7 +109,10 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
             .filter(|m| m.kind == tui::chat_history::MessageKind::SysInfo)
             .filter(|m| m.content.starts_with("No workspace is selected."))
             .count();
-        assert_eq!(tip_count, 1, "guidance tip should appear exactly once so far");
+        assert_eq!(
+            tip_count, 1,
+            "guidance tip should appear exactly once so far"
+        );
         assert_eq!(
             chat.current, user_msg_id_1,
             "current selection should remain on the user message, not the tip"
@@ -150,7 +150,8 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
             match bg_rx.recv().await {
                 Ok(e) => {
                     let dbg = format!("{:?}", e);
-                    if dbg.contains("PromptConstructed") && dbg.contains(&user_msg_id_2.to_string()) {
+                    if dbg.contains("PromptConstructed") && dbg.contains(&user_msg_id_2.to_string())
+                    {
                         break;
                     }
                 }
@@ -159,7 +160,10 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
         }
     })
     .await;
-    assert!(evt2.is_ok(), "timed out waiting for second PromptConstructed");
+    assert!(
+        evt2.is_ok(),
+        "timed out waiting for second PromptConstructed"
+    );
 
     // Tip should still be exactly once; current should be the second user message
     let chat = state.chat.0.read().await;
@@ -169,10 +173,12 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
         .filter(|m| m.kind == tui::chat_history::MessageKind::SysInfo)
         .filter(|m| m.content.starts_with("No workspace is selected."))
         .count();
-    assert_eq!(tip_count_total, 1, "guidance tip should be emitted only once per session");
+    assert_eq!(
+        tip_count_total, 1,
+        "guidance tip should be emitted only once per session"
+    );
     assert_eq!(
         chat.current, user_msg_id_2,
         "current selection should remain on the latest user message"
     );
 }
-

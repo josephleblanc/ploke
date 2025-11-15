@@ -1,8 +1,8 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::hint::black_box;
-use tokio::runtime::Runtime;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fxhash::FxBuildHasher;
 use std::collections::HashMap;
+use std::hint::black_box;
+use tokio::runtime::Runtime;
 
 mod common;
 use common::{DIntern, GLOBAL_RODEO, gen_repeated_inputs, preseed_global_rodeo};
@@ -52,7 +52,7 @@ where
 fn bench_tokio_end2end(c: &mut Criterion) {
     // dataset: repeated to highlight interning benefits
     let inputs = gen_repeated_inputs(1_000, 100); // 100k total
-    preseed_global_rodeo(&inputs);                // warm once
+    preseed_global_rodeo(&inputs); // warm once
 
     let rt = Runtime::new().unwrap();
 
@@ -63,7 +63,8 @@ fn bench_tokio_end2end(c: &mut Criterion) {
             &tasks,
             |b, &tasks| {
                 b.to_async(&rt).iter(|| async {
-                    let map = end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url).await;
+                    let map =
+                        end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url).await;
                     black_box(map);
                 })
             },
@@ -75,7 +76,12 @@ fn bench_tokio_end2end(c: &mut Criterion) {
             &tasks,
             |b, &tasks| {
                 b.to_async(&rt).iter(|| async {
-                    let map = end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url_concat_known).await;
+                    let map = end2end_intern_async_with(
+                        &inputs,
+                        tasks,
+                        DIntern::endpoints_url_concat_known,
+                    )
+                    .await;
                     black_box(map);
                 })
             },
@@ -87,7 +93,12 @@ fn bench_tokio_end2end(c: &mut Criterion) {
             &tasks,
             |b, &tasks| {
                 b.to_async(&rt).iter(|| async {
-                    let map = end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url_prealloc_write).await;
+                    let map = end2end_intern_async_with(
+                        &inputs,
+                        tasks,
+                        DIntern::endpoints_url_prealloc_write,
+                    )
+                    .await;
                     black_box(map);
                 })
             },
@@ -99,7 +110,9 @@ fn bench_tokio_end2end(c: &mut Criterion) {
             &tasks,
             |b, &tasks| {
                 b.to_async(&rt).iter(|| async {
-                    let map = end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url_replace).await;
+                    let map =
+                        end2end_intern_async_with(&inputs, tasks, DIntern::endpoints_url_replace)
+                            .await;
                     black_box(map);
                 })
             },

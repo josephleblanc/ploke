@@ -41,3 +41,4 @@ criterion = "0.7"
 [features]
 defaults = []
 type_bearing_ids = []
+multi_embedding_experiment = []

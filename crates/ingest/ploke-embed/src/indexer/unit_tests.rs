@@ -109,7 +109,9 @@ async fn test_batch_attributes() -> Result<(), Error> {
 // NOTE: passing
 async fn test_batch_cyclic_types() -> Result<(), Error> {
     if !should_run("test_batch_cyclic_types") {
-        eprintln!("skipping test_batch_cyclic_types (set PLOKE_EMBED_RUN_TEST_BATCH_CYCLIC_TYPES=1)");
+        eprintln!(
+            "skipping test_batch_cyclic_types (set PLOKE_EMBED_RUN_TEST_BATCH_CYCLIC_TYPES=1)"
+        );
         return Ok(());
     }
     let _guard = init_test_tracing(Level::INFO);
@@ -173,7 +175,9 @@ async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
 // NOTE: passing
 async fn test_batch_tracking_hash() -> Result<(), Error> {
     if !should_run("test_batch_tracking_hash") {
-        eprintln!("skipping test_batch_tracking_hash (set PLOKE_EMBED_RUN_TEST_BATCH_TRACKING_HASH=1)");
+        eprintln!(
+            "skipping test_batch_tracking_hash (set PLOKE_EMBED_RUN_TEST_BATCH_TRACKING_HASH=1)"
+        );
         return Ok(());
     }
     let _guard = init_test_tracing(Level::DEBUG);

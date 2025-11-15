@@ -1,6 +1,6 @@
 use lasso::{Spur, ThreadedRodeo};
 use once_cell::sync::Lazy;
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::fmt::Write as _;
 
 // encode `:` only (OpenRouter models path needs %3A)
@@ -50,7 +50,12 @@ impl DIntern {
             id.push_str(rodeo.resolve(&v.0));
         }
         // Baseline approach using percent-encoding + format!
-        format!("{}{}{}", URL_PREFIX, utf8_percent_encode(&id, PATH_ENCODE), URL_SUFFIX)
+        format!(
+            "{}{}{}",
+            URL_PREFIX,
+            utf8_percent_encode(&id, PATH_ENCODE),
+            URL_SUFFIX
+        )
     }
 
     // Alternative 1: direct concat with known encoding (encode only ':')
@@ -60,8 +65,18 @@ impl DIntern {
         let g = rodeo.resolve(&self.slug.0);
         // allocate exactly: prefix + a + '/' + g + ("%3A"+v | nothing) + suffix
         let var = self.variant.map(|v| rodeo.resolve(&v.0));
-        let extra = if var.is_some() { 3 /*"%3A"*/ } else { 0 };
-        let cap = URL_PREFIX.len() + a.len() + 1 + g.len() + extra + var.as_ref().map(|v| v.len()).unwrap_or(0) + URL_SUFFIX.len();
+        let extra = if var.is_some() {
+            3 /*"%3A"*/
+        } else {
+            0
+        };
+        let cap = URL_PREFIX.len()
+            + a.len()
+            + 1
+            + g.len()
+            + extra
+            + var.as_ref().map(|v| v.len()).unwrap_or(0)
+            + URL_SUFFIX.len();
         let mut url = String::with_capacity(cap);
         url.push_str(URL_PREFIX);
         url.push_str(a);
@@ -82,7 +97,8 @@ impl DIntern {
         let var = self.variant.map(|v| rodeo.resolve(&v.0));
         let id_len = a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
         let encoded_growth = if var.is_some() { 2 } else { 0 }; // ':' -> "%3A"
-        let mut out = String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
+        let mut out =
+            String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
         out.push_str(URL_PREFIX);
         let mut tmp = String::with_capacity(id_len);
         tmp.push_str(a);
@@ -103,7 +119,9 @@ impl DIntern {
         let a = rodeo.resolve(&self.author.0);
         let g = rodeo.resolve(&self.slug.0);
         let var = self.variant.map(|v| rodeo.resolve(&v.0));
-        let mut id = String::with_capacity(a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0));
+        let mut id = String::with_capacity(
+            a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0),
+        );
         id.push_str(a);
         id.push('/');
         id.push_str(g);

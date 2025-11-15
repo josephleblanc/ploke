@@ -2,18 +2,24 @@
 //! Overlay + fixture-backed render tests using the global TEST_APP.
 //! This leverages the lazy-static app to avoid repeated heavy setup across tests.
 
-use ratatui::{backend::TestBackend, Terminal};
 use ratatui::layout::Rect;
+use ratatui::{Terminal, backend::TestBackend};
 
-use ploke_tui::app::view::components::approvals::{render_approvals_overlay, ApprovalsState};
-use ploke_tui::app_state::core::{EditProposal, EditProposalStatus, DiffPreview};
+use ploke_tui::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use ploke_tui::app_state::core::{DiffPreview, EditProposal, EditProposalStatus};
 
 fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
     let buf = term.backend().buffer();
     let mut out = String::new();
     for y in 0..buf.area.height {
         for x in 0..buf.area.width {
-            let ch = buf.cell((x, y)).expect("cell").symbol().chars().next().unwrap_or(' ');
+            let ch = buf
+                .cell((x, y))
+                .expect("cell")
+                .symbol()
+                .chars()
+                .next()
+                .unwrap_or(' ');
             out.push(ch);
         }
         out.push('\n');
@@ -43,7 +49,9 @@ async fn overlay_renders_with_fixture_app_state() {
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
                 files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
-                preview: DiffPreview::UnifiedDiff { text: "sample diff".into() },
+                preview: DiffPreview::UnifiedDiff {
+                    text: "sample diff".into(),
+                },
                 status: EditProposalStatus::Pending,
             },
         );

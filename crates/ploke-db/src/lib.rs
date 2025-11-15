@@ -13,6 +13,9 @@ mod result;
 mod span;
 pub(crate) mod utils;
 
+#[cfg(feature = "multi_embedding_experiment")]
+pub mod multi_embedding_experiment;
+
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
 pub use index::hnsw::{

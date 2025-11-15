@@ -11,11 +11,11 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_io::IoManagerHandle;
-use tracing::trace;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use tracing::trace;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {

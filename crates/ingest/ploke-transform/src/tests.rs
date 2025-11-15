@@ -8,8 +8,8 @@ macro_rules! crate_test_transform {
     ($test_name:ident, $crate_name:expr) => {
         #[test]
         pub fn $test_name() -> Result<(), ploke_error::Error> {
-            use tracing::Level;
             use ploke_test_utils::{init_tracing_tests, parse_and_build_tree};
+            use tracing::Level;
             // init tracing, silent fail if global registry already set
             let test_prefix = "ploke-db::tests";
             let test_name = stringify!($test_name);

@@ -103,7 +103,11 @@ mod tests {
     use super::*;
     use crate::get_by_id::{GetNodeInfo, NodePaths};
     use crate::utils::test_utils::TEST_DB_NODES;
-    use crate::{database::{to_string, to_uuid}, result::get_pos, Database, NodeType, QueryResult};
+    use crate::{
+        database::{to_string, to_uuid},
+        result::get_pos,
+        Database, NodeType, QueryResult,
+    };
     use std::fs;
     use std::path::PathBuf;
 
@@ -138,10 +142,7 @@ mod tests {
             let node_paths: NodePaths = paths_rows.try_into().expect("NodePaths");
             log.push_str(&format!(
                 "Checking id={} name={}\n  canon={}\n  file={}\n",
-                id,
-                name,
-                node_paths.canon,
-                node_paths.file
+                id, name, node_paths.canon, node_paths.file
             ));
 
             // Split canon into module path and item name
@@ -149,10 +150,7 @@ mod tests {
             let last_sep = canon.rfind("::").expect("canon has module path");
             let module_str = &canon[..last_sep];
             let item_name = &canon[last_sep + 2..];
-            let module_vec: Vec<String> = module_str
-                .split("::")
-                .map(|s| s.to_string())
-                .collect();
+            let module_vec: Vec<String> = module_str.split("::").map(|s| s.to_string()).collect();
 
             // Try strict helper for each primary relation; expect exactly one to match by id
             let mut matched = false;
@@ -209,10 +207,7 @@ mod tests {
                             ));
                         }
                         Err(e) => {
-                            log.push_str(&format!(
-                                "  relaxed relation={} error: {}\n",
-                                rel, e
-                            ));
+                            log.push_str(&format!("  relaxed relation={} error: {}\n", rel, e));
                         }
                     }
                 }
@@ -223,7 +218,11 @@ mod tests {
             let _ = fs::create_dir_all(&out_dir);
             let out_path = out_dir.join("test-output.txt");
             let _ = fs::write(&out_path, &log);
-            assert!(matched, "resolve_nodes_by_canon_in_file failed to resolve id={} canon={} file={}", id, canon, node_paths.file);
+            assert!(
+                matched,
+                "resolve_nodes_by_canon_in_file failed to resolve id={} canon={} file={}",
+                id, canon, node_paths.file
+            );
         }
         fs::write(out_path, log).expect("write artifact");
     }
@@ -250,10 +249,7 @@ mod tests {
         let node_paths: NodePaths = paths_rows.try_into().expect("NodePaths");
 
         // Split canon
-        let last_sep = node_paths
-            .canon
-            .rfind("::")
-            .expect("canon has module path");
+        let last_sep = node_paths.canon.rfind("::").expect("canon has module path");
         let module_vec: Vec<String> = node_paths.canon[..last_sep]
             .split("::")
             .map(|s| s.to_string())
@@ -298,6 +294,9 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(relaxed_any, "relaxed resolver should recover and include target id");
+        assert!(
+            relaxed_any,
+            "relaxed resolver should recover and include target id"
+        );
     }
 }

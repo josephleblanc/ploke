@@ -24,7 +24,10 @@ pub struct IoManager {
 pub enum IoManagerMessage {
     Request(IoRequest),
     /// Update path roots and symlink policy at runtime
-    UpdateRoots { roots: Option<Vec<PathBuf>>, policy: Option<SymlinkPolicy> },
+    UpdateRoots {
+        roots: Option<Vec<PathBuf>>,
+        policy: Option<SymlinkPolicy>,
+    },
     Shutdown,
 }
 
@@ -623,9 +626,11 @@ impl IoManager {
         let _probe_guard = test_instrumentation::enter_for_namespace(file_data.namespace);
         #[cfg(test)]
         test_instrumentation::maybe_sleep().await;
-        let file_content = read_file_to_string_abs(&file_data.file_path).await.inspect_err(|e| {
-            error!(target: "read_file", "Error reading file: {e}");
-        })?;
+        let file_content = read_file_to_string_abs(&file_data.file_path)
+            .await
+            .inspect_err(|e| {
+                error!(target: "read_file", "Error reading file: {e}");
+            })?;
         let tokens = parse_tokens_from_str(&file_content, &file_data.file_path)?;
 
         let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);

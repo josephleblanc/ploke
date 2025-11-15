@@ -62,7 +62,11 @@ fn normalize_parent_for_create(
         // Use symlink policy when provided
         match symlink_policy {
             Some(policy) => normalize_against_roots_with_policy(parent, roots.as_ref(), policy),
-            None => normalize_against_roots_with_policy(parent, roots.as_ref(), SymlinkPolicy::DenyCrossRoot),
+            None => normalize_against_roots_with_policy(
+                parent,
+                roots.as_ref(),
+                SymlinkPolicy::DenyCrossRoot,
+            ),
         }
     } else {
         // No configured roots; accept absolute parent as-is (best effort canonicalization not needed)
@@ -81,19 +85,20 @@ pub(crate) async fn create_file(
 
     ensure_rust_extension(&req.file_path)?;
     let parent_canon = normalize_parent_for_create(&req.file_path, roots.clone(), symlink_policy)?;
-    let target_path = parent_canon.join(
-        req.file_path
-            .file_name()
-            .ok_or_else(|| IoError::FileOperation {
-                operation: "create",
-                path: req.file_path.clone(),
-                kind: std::io::ErrorKind::InvalidInput,
-                source: Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "invalid file name",
-                )),
-            })?,
-    );
+    let target_path =
+        parent_canon.join(
+            req.file_path
+                .file_name()
+                .ok_or_else(|| IoError::FileOperation {
+                    operation: "create",
+                    path: req.file_path.clone(),
+                    kind: std::io::ErrorKind::InvalidInput,
+                    source: Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "invalid file name",
+                    )),
+                })?,
+        );
 
     // Enforce root containment on the resulting full path when roots configured
     if let Some(roots) = roots.as_ref() {
@@ -177,14 +182,15 @@ pub(crate) async fn create_file(
         .join(format!(".plokeio-{}.tmp", uuid::Uuid::new_v4()));
 
     {
-        let mut f = tokio::fs::File::create(&tmp_path)
-            .await
-            .map_err(|e| IoError::FileOperation {
-                operation: "write",
-                path: tmp_path.clone(),
-                kind: e.kind(),
-                source: Arc::new(e),
-            })?;
+        let mut f =
+            tokio::fs::File::create(&tmp_path)
+                .await
+                .map_err(|e| IoError::FileOperation {
+                    operation: "write",
+                    path: tmp_path.clone(),
+                    kind: e.kind(),
+                    source: Arc::new(e),
+                })?;
         f.write_all(req.content.as_bytes())
             .await
             .map_err(|e| IoError::FileOperation {
@@ -222,6 +228,7 @@ pub(crate) async fn create_file(
     })
     .await;
 
-    Ok(CreateFileResult { new_file_hash: new_hash })
+    Ok(CreateFileResult {
+        new_file_hash: new_hash,
+    })
 }
-

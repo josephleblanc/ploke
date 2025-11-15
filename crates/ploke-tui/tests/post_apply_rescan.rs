@@ -10,8 +10,11 @@ use std::sync::Arc;
 
 use ploke_core::ArcStr;
 use ploke_tui::{
-    app_state::core::{AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig, SystemState},
     EventBus,
+    app_state::core::{
+        AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig,
+        SystemState,
+    },
     event_bus::EventBusCaps,
 };
 use tokio::sync::RwLock;
@@ -43,16 +46,21 @@ async fn approve_emits_rescan_sysinfo() {
     let req_id = uuid::Uuid::new_v4();
     {
         let mut guard = state.proposals.write().await;
-        guard.insert(req_id, EditProposal {
-            request_id: req_id,
-            parent_id: uuid::Uuid::new_v4(),
-            call_id: ArcStr::from("test_tool_call:0"),
-            proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-            edits: vec![],
-            files: vec![],
-            preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff { text: String::new() },
-            status: EditProposalStatus::Pending,
-        });
+        guard.insert(
+            req_id,
+            EditProposal {
+                request_id: req_id,
+                parent_id: uuid::Uuid::new_v4(),
+                call_id: ArcStr::from("test_tool_call:0"),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                edits: vec![],
+                files: vec![],
+                preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
+                    text: String::new(),
+                },
+                status: EditProposalStatus::Pending,
+            },
+        );
     }
 
     // Approve and wait briefly
@@ -70,5 +78,8 @@ async fn approve_emits_rescan_sysinfo() {
         m.kind == ploke_tui::chat_history::MessageKind::SysInfo
             && m.content.contains("Scheduled rescan of workspace")
     });
-    assert!(found, "expected scheduled rescan SysInfo message in chat history");
+    assert!(
+        found,
+        "expected scheduled rescan SysInfo message in chat history"
+    );
 }

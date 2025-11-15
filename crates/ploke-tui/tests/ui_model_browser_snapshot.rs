@@ -1,5 +1,7 @@
 use insta::assert_snapshot;
-use ploke_tui::app::view::components::model_browser::{snapshot_text_for_test, TestModelItem, TestProviderRow};
+use ploke_tui::app::view::components::model_browser::{
+    TestModelItem, TestProviderRow, snapshot_text_for_test,
+};
 
 #[test]
 fn snapshot_model_browser_loading_state() {
@@ -90,8 +92,20 @@ fn snapshot_model_browser_with_providers_selection() {
         output_cost: Some(0.8),
         supports_tools: true,
         providers: vec![
-            TestProviderRow { provider_slug: "chutes".to_string(), context_length: 163840, input_cost: 0.2, output_cost: 0.8, supports_tools: true },
-            TestProviderRow { provider_slug: "deepinfra".to_string(), context_length: 131072, input_cost: 0.25, output_cost: 0.9, supports_tools: true },
+            TestProviderRow {
+                provider_slug: "chutes".to_string(),
+                context_length: 163840,
+                input_cost: 0.2,
+                output_cost: 0.8,
+                supports_tools: true,
+            },
+            TestProviderRow {
+                provider_slug: "deepinfra".to_string(),
+                context_length: 131072,
+                input_cost: 0.25,
+                output_cost: 0.9,
+                supports_tools: true,
+            },
         ],
         expanded: true,
         loading_providers: false,
@@ -110,8 +124,20 @@ fn snapshot_model_browser_with_providers_selection_second() {
         output_cost: Some(0.8),
         supports_tools: true,
         providers: vec![
-            TestProviderRow { provider_slug: "chutes".to_string(), context_length: 163840, input_cost: 0.2, output_cost: 0.8, supports_tools: true },
-            TestProviderRow { provider_slug: "deepinfra".to_string(), context_length: 131072, input_cost: 0.25, output_cost: 0.9, supports_tools: true },
+            TestProviderRow {
+                provider_slug: "chutes".to_string(),
+                context_length: 163840,
+                input_cost: 0.2,
+                output_cost: 0.8,
+                supports_tools: true,
+            },
+            TestProviderRow {
+                provider_slug: "deepinfra".to_string(),
+                context_length: 131072,
+                input_cost: 0.25,
+                output_cost: 0.9,
+                supports_tools: true,
+            },
         ],
         expanded: true,
         loading_providers: false,
@@ -145,10 +171,24 @@ fn snapshot_many_results_openai_multiple_expanded() {
         let expanded = i % 2 == 0; // expand every other
         let providers = if expanded {
             vec![
-                TestProviderRow { provider_slug: "openai".to_string(), context_length: 128000, input_cost: 5.0 + i as f64, output_cost: 15.0 + i as f64, supports_tools: true },
-                TestProviderRow { provider_slug: "azure".to_string(), context_length: 128000, input_cost: 5.2 + i as f64, output_cost: 15.2 + i as f64, supports_tools: true },
+                TestProviderRow {
+                    provider_slug: "openai".to_string(),
+                    context_length: 128000,
+                    input_cost: 5.0 + i as f64,
+                    output_cost: 15.0 + i as f64,
+                    supports_tools: true,
+                },
+                TestProviderRow {
+                    provider_slug: "azure".to_string(),
+                    context_length: 128000,
+                    input_cost: 5.2 + i as f64,
+                    output_cost: 15.2 + i as f64,
+                    supports_tools: true,
+                },
             ]
-        } else { vec![] };
+        } else {
+            vec![]
+        };
         models.push(TestModelItem {
             id: format!("openai/gpt-4o-{}", i),
             name: Some(format!("OpenAI: GPT-4o {}", i)),

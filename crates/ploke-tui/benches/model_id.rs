@@ -3,9 +3,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use lasso::{Spur, ThreadedRodeo};
 use once_cell::sync::Lazy;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-use std::fmt::Write as _;
 use smol_str::SmolStr;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::hint::black_box;
 
 static GLOBAL_RODEO: Lazy<ThreadedRodeo> = Lazy::new(ThreadedRodeo::default);
@@ -93,7 +93,12 @@ impl AString {
             id.push(':');
             id.push_str(v);
         }
-        format!("{}{}{}", URL_PREFIX, utf8_percent_encode(&id, PATH_ENCODE), URL_SUFFIX)
+        format!(
+            "{}{}{}",
+            URL_PREFIX,
+            utf8_percent_encode(&id, PATH_ENCODE),
+            URL_SUFFIX
+        )
     }
 
     // Alternative 1: concat with known encoding (encode only ':')
@@ -123,9 +128,13 @@ impl AString {
 
     // Alternative 2: prealloc + write! percent-encoder (avoid format!)
     fn endpoints_url_prealloc_write(&self) -> String {
-        let id_len = self.author.len() + 1 + self.slug.len() + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
+        let id_len = self.author.len()
+            + 1
+            + self.slug.len()
+            + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
         let encoded_growth = if self.variant.is_some() { 2 } else { 0 };
-        let mut out = String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
+        let mut out =
+            String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
         out.push_str(URL_PREFIX);
         let mut tmp = String::with_capacity(id_len);
         tmp.push_str(&self.author);
@@ -203,7 +212,12 @@ impl BSmol {
             id.push(':');
             id.push_str(v.as_str());
         }
-        format!("{}{}{}", URL_PREFIX, utf8_percent_encode(&id, PATH_ENCODE), URL_SUFFIX)
+        format!(
+            "{}{}{}",
+            URL_PREFIX,
+            utf8_percent_encode(&id, PATH_ENCODE),
+            URL_SUFFIX
+        )
     }
 
     fn endpoints_url_concat_known(&self) -> String {
@@ -231,9 +245,13 @@ impl BSmol {
     }
 
     fn endpoints_url_prealloc_write(&self) -> String {
-        let id_len = self.author.len() + 1 + self.slug.len() + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
+        let id_len = self.author.len()
+            + 1
+            + self.slug.len()
+            + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
         let encoded_growth = if self.variant.is_some() { 2 } else { 0 };
-        let mut out = String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
+        let mut out =
+            String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
         out.push_str(URL_PREFIX);
         let mut tmp = String::with_capacity(id_len);
         tmp.push_str(self.author.as_str());
@@ -317,7 +335,12 @@ impl CArray {
             id.push(':');
             id.push_str(v.as_str());
         }
-        format!("{}{}{}", URL_PREFIX, utf8_percent_encode(id.as_str(), PATH_ENCODE), URL_SUFFIX)
+        format!(
+            "{}{}{}",
+            URL_PREFIX,
+            utf8_percent_encode(id.as_str(), PATH_ENCODE),
+            URL_SUFFIX
+        )
     }
 
     fn endpoints_url_concat_known(&self) -> String {
@@ -345,9 +368,13 @@ impl CArray {
     }
 
     fn endpoints_url_prealloc_write(&self) -> String {
-        let id_len = self.author.len() + 1 + self.slug.len() + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
+        let id_len = self.author.len()
+            + 1
+            + self.slug.len()
+            + self.variant.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
         let encoded_growth = if self.variant.is_some() { 2 } else { 0 };
-        let mut out = String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
+        let mut out =
+            String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
         out.push_str(URL_PREFIX);
         let mut tmp = String::with_capacity(id_len);
         tmp.push_str(self.author.as_str());
@@ -423,7 +450,12 @@ impl DIntern {
             id.push(':');
             id.push_str(rodeo.resolve(&v.0));
         }
-        format!("{}{}{}", URL_PREFIX, utf8_percent_encode(&id, PATH_ENCODE), URL_SUFFIX)
+        format!(
+            "{}{}{}",
+            URL_PREFIX,
+            utf8_percent_encode(&id, PATH_ENCODE),
+            URL_SUFFIX
+        )
     }
 
     fn endpoints_url_concat_known(&self, rodeo: &ThreadedRodeo) -> String {
@@ -458,7 +490,8 @@ impl DIntern {
         let var = self.variant.map(|v| rodeo.resolve(&v.0));
         let id_len = a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0);
         let encoded_growth = if var.is_some() { 2 } else { 0 };
-        let mut out = String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
+        let mut out =
+            String::with_capacity(URL_PREFIX.len() + id_len + encoded_growth + URL_SUFFIX.len());
         out.push_str(URL_PREFIX);
         let mut tmp = String::with_capacity(id_len);
         tmp.push_str(a);
@@ -477,7 +510,9 @@ impl DIntern {
         let a = rodeo.resolve(&self.author.0);
         let g = rodeo.resolve(&self.slug.0);
         let var = self.variant.map(|v| rodeo.resolve(&v.0));
-        let mut id = String::with_capacity(a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0));
+        let mut id = String::with_capacity(
+            a.len() + 1 + g.len() + var.as_ref().map(|v| 1 + v.len()).unwrap_or(0),
+        );
         id.push_str(a);
         id.push('/');
         id.push_str(g);
@@ -599,91 +634,157 @@ fn bench_url_build(c: &mut Criterion, label: &str, inputs: &[String]) {
     });
 
     // Alt 1: concat with known encoding
-    group.bench_function(BenchmarkId::new("String+concat_known", parsed_a.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_a.iter().map(|id| id.endpoints_url_concat_known()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("String+concat_known", parsed_a.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_a
+                    .iter()
+                    .map(|id| id.endpoints_url_concat_known())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("SmolStr+concat_known", parsed_b.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_b.iter().map(|id| id.endpoints_url_concat_known()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("SmolStr+concat_known", parsed_b.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_b
+                    .iter()
+                    .map(|id| id.endpoints_url_concat_known())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("ArrayString+concat_known", parsed_c.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_c.iter().map(|id| id.endpoints_url_concat_known()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("ArrayString+concat_known", parsed_c.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_c
+                    .iter()
+                    .map(|id| id.endpoints_url_concat_known())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("Intern(lasso)+concat_known", parsed_d.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_d.iter().map(|id| id.endpoints_url_concat_known(&rodeo)).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("Intern(lasso)+concat_known", parsed_d.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_d
+                    .iter()
+                    .map(|id| id.endpoints_url_concat_known(&rodeo))
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
     // Alt 2: prealloc + write! encoder
-    group.bench_function(BenchmarkId::new("String+prealloc_write", parsed_a.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_a.iter().map(|id| id.endpoints_url_prealloc_write()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("String+prealloc_write", parsed_a.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_a
+                    .iter()
+                    .map(|id| id.endpoints_url_prealloc_write())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("SmolStr+prealloc_write", parsed_b.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_b.iter().map(|id| id.endpoints_url_prealloc_write()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("SmolStr+prealloc_write", parsed_b.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_b
+                    .iter()
+                    .map(|id| id.endpoints_url_prealloc_write())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("ArrayString+prealloc_write", parsed_c.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_c.iter().map(|id| id.endpoints_url_prealloc_write()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("ArrayString+prealloc_write", parsed_c.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_c
+                    .iter()
+                    .map(|id| id.endpoints_url_prealloc_write())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("Intern(lasso)+prealloc_write", parsed_d.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_d.iter().map(|id| id.endpoints_url_prealloc_write(&rodeo)).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("Intern(lasso)+prealloc_write", parsed_d.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_d
+                    .iter()
+                    .map(|id| id.endpoints_url_prealloc_write(&rodeo))
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
     // Alt 3: replace(':', "%3A")
     group.bench_function(BenchmarkId::new("String+replace", parsed_a.len()), |b| {
         b.iter(|| {
-            let urls: Vec<_> = parsed_a.iter().map(|id| id.endpoints_url_replace()).collect();
+            let urls: Vec<_> = parsed_a
+                .iter()
+                .map(|id| id.endpoints_url_replace())
+                .collect();
             black_box(urls)
         })
     });
 
     group.bench_function(BenchmarkId::new("SmolStr+replace", parsed_b.len()), |b| {
         b.iter(|| {
-            let urls: Vec<_> = parsed_b.iter().map(|id| id.endpoints_url_replace()).collect();
+            let urls: Vec<_> = parsed_b
+                .iter()
+                .map(|id| id.endpoints_url_replace())
+                .collect();
             black_box(urls)
         })
     });
 
-    group.bench_function(BenchmarkId::new("ArrayString+replace", parsed_c.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_c.iter().map(|id| id.endpoints_url_replace()).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("ArrayString+replace", parsed_c.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_c
+                    .iter()
+                    .map(|id| id.endpoints_url_replace())
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("Intern(lasso)+replace", parsed_d.len()), |b| {
-        b.iter(|| {
-            let urls: Vec<_> = parsed_d.iter().map(|id| id.endpoints_url_replace(&rodeo)).collect();
-            black_box(urls)
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("Intern(lasso)+replace", parsed_d.len()),
+        |b| {
+            b.iter(|| {
+                let urls: Vec<_> = parsed_d
+                    .iter()
+                    .map(|id| id.endpoints_url_replace(&rodeo))
+                    .collect();
+                black_box(urls)
+            })
+        },
+    );
 
     group.finish();
 }

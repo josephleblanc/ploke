@@ -141,7 +141,9 @@ impl NodeType {
         ]
     }
     pub fn is_primary(type_name: &str) -> bool {
-        Self::primary_nodes().iter().any(|pn| pn.relation_str() == type_name)
+        Self::primary_nodes()
+            .iter()
+            .any(|pn| pn.relation_str() == type_name)
     }
     pub fn embeddable_nodes() -> String {
         let star: &'static str = " *";

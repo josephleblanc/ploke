@@ -26,11 +26,14 @@
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
-use ratatui::{backend::TestBackend, Terminal};
 use ratatui::layout::Rect;
+use ratatui::{Terminal, backend::TestBackend};
 
-use ploke_tui::app::view::components::approvals::{render_approvals_overlay, ApprovalsState};
-use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig, SystemState};
+use ploke_tui::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use ploke_tui::app_state::core::{
+    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
+    SystemState,
+};
 use tokio::sync::RwLock;
 
 fn buffer_to_lines(term: &Terminal<TestBackend>) -> Vec<String> {
@@ -68,7 +71,9 @@ fn redact(text: &str) -> String {
     out
 }
 
-async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<AppState>, Vec<uuid::Uuid>) {
+async fn make_state_with_ids(
+    previews: Vec<(uuid::Uuid, DiffPreview)>,
+) -> (Arc<AppState>, Vec<uuid::Uuid>) {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
@@ -94,16 +99,19 @@ async fn make_state_with_ids(previews: Vec<(uuid::Uuid, DiffPreview)>) -> (Arc<A
         let mut guard = state.proposals.write().await;
         for (i, (id, preview)) in previews.into_iter().enumerate() {
             ids.push(id);
-            guard.insert(id, EditProposal {
-                request_id: id,
-                parent_id: uuid::Uuid::new_v4(),
-                call_id: ArcStr::from( format!("call-{i}") ),
-                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
-                edits: vec![],
-                files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
-                preview,
-                status: EditProposalStatus::Pending,
-            });
+            guard.insert(
+                id,
+                EditProposal {
+                    request_id: id,
+                    parent_id: uuid::Uuid::new_v4(),
+                    call_id: ArcStr::from(format!("call-{i}")),
+                    proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                    edits: vec![],
+                    files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
+                    preview,
+                    status: EditProposalStatus::Pending,
+                },
+            );
         }
     }
     (state, ids)
@@ -125,7 +133,10 @@ fn isolate_persisted_proposals() -> tempfile::TempDir {
 
 #[test]
 fn approvals_overlay_renders_empty_list() {
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let backend = TestBackend::new(60, 20);
         let mut term = Terminal::new(backend).expect("terminal");
@@ -153,7 +164,8 @@ fn approvals_overlay_renders_empty_list() {
         term.draw(|f| {
             let area = Rect::new(0, 0, 60, 20);
             let _ = render_approvals_overlay(f, area, &state, &ui);
-        }).expect("draw");
+        })
+        .expect("draw");
 
         let text = buffer_to_lines(&term).join("\n");
         assert!(text.contains(" Approvals "));
@@ -166,18 +178,28 @@ fn approvals_overlay_renders_empty_list() {
 
 #[test]
 fn approvals_overlay_renders_single_proposal_unified_diff() {
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let backend = TestBackend::new(80, 24);
         let mut term = Terminal::new(backend).expect("terminal");
         let id = uuid::Uuid::from_u128(0x12345678_1234_5678_1234_567812345678);
-        let (state, ids) = make_state_with_ids(vec![(id, DiffPreview::UnifiedDiff { text: "diff --git a/src b/src\n- old\n+ new\n".into() })]).await;
+        let (state, ids) = make_state_with_ids(vec![(
+            id,
+            DiffPreview::UnifiedDiff {
+                text: "diff --git a/src b/src\n- old\n+ new\n".into(),
+            },
+        )])
+        .await;
         let ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
             let _ = render_approvals_overlay(f, area, &state, &ui);
-        }).expect("draw");
+        })
+        .expect("draw");
 
         let text = buffer_to_lines(&term).join("\n");
         assert!(text.contains(" Approvals "));
@@ -195,24 +217,32 @@ fn approvals_overlay_renders_single_proposal_unified_diff() {
 
 #[test]
 fn approvals_overlay_renders_codeblocks_preview_and_selection() {
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let backend = TestBackend::new(90, 28);
         let mut term = Terminal::new(backend).expect("terminal");
         let id = uuid::Uuid::from_u128(0x87654321_4321_8765_4321_876543218765);
-        let (state, _ids) = make_state_with_ids(vec![(id, DiffPreview::CodeBlocks {
-            per_file: vec![ploke_tui::app_state::core::BeforeAfter {
-                file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
-                before: "fn a() {}\nfn b() {}".into(),
-                after: "fn a() {}\nfn c() {}".into(),
-            }],
-        })]).await;
+        let (state, _ids) = make_state_with_ids(vec![(
+            id,
+            DiffPreview::CodeBlocks {
+                per_file: vec![ploke_tui::app_state::core::BeforeAfter {
+                    file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
+                    before: "fn a() {}\nfn b() {}".into(),
+                    after: "fn a() {}\nfn c() {}".into(),
+                }],
+            },
+        )])
+        .await;
         let ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 90, 28);
             let _ = render_approvals_overlay(f, area, &state, &ui);
-        }).expect("draw");
+        })
+        .expect("draw");
         let text = buffer_to_lines(&term).join("\n");
         assert!(text.contains("Before/After:"));
         assert!(text.contains("- fn a() {}"));
@@ -225,7 +255,10 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
 #[test]
 fn approvals_overlay_renders_multiple_and_moves_selection() {
     let _persist_guard = isolate_persisted_proposals();
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         let backend = TestBackend::new(80, 24);
         let mut term = Terminal::new(backend).expect("terminal");
@@ -234,13 +267,15 @@ fn approvals_overlay_renders_multiple_and_moves_selection() {
         let (state, ids) = make_state_with_ids(vec![
             (id1, DiffPreview::UnifiedDiff { text: "one".into() }),
             (id2, DiffPreview::UnifiedDiff { text: "two".into() }),
-        ]).await;
+        ])
+        .await;
         let mut ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
             let _ = render_approvals_overlay(f, area, &state, &ui);
-        }).expect("draw");
+        })
+        .expect("draw");
         let text1 = buffer_to_lines(&term).join("\n");
         assert!(text1.contains(&ploke_tui::app::utils::truncate_uuid(ids[0])));
 
@@ -248,7 +283,8 @@ fn approvals_overlay_renders_multiple_and_moves_selection() {
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
             let _ = render_approvals_overlay(f, area, &state, &ui);
-        }).expect("draw");
+        })
+        .expect("draw");
         let text2 = buffer_to_lines(&term).join("\n");
         assert!(text2.contains(&ploke_tui::app::utils::truncate_uuid(ids[1])));
         let red1 = redact(&text1);

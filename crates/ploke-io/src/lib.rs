@@ -1,4 +1,9 @@
-#![allow(unused_variables, unused_imports, dead_code, clippy::duplicated_attributes)]
+#![allow(
+    unused_variables,
+    unused_imports,
+    dead_code,
+    clippy::duplicated_attributes
+)]
 //! ploke-io — Async I/O actor for safe, concurrent file operations
 //!
 //! ploke-io provides an actor-style I/O service that runs on its own Tokio runtime
@@ -172,9 +177,9 @@ pub mod scan;
 pub mod watcher;
 #[cfg(feature = "watcher")]
 pub use watcher::{FileChangeEvent, FileEventKind};
+mod create;
 mod tests_skeleton;
 mod write;
-mod create;
 #[cfg(test)]
 mod write_tests;
 use futures::future::join_all;
