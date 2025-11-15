@@ -561,7 +561,7 @@ mod tests {
         assert_err!(e.clone());
         let err_msg = String::from( "Database error: Index hnsw_idx not found on relation function" );
         let expect_err = ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(err_msg));
-        let actual_err = e.expect_err("expect error");
+        let actual_err = e.clone().expect_err("expect error");
         assert!(matches!(actual_err,ploke_error::Error::Warning(_) ));
         Ok(())
     }

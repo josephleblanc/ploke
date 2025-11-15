@@ -51,6 +51,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
+* [ ] abstract the commonly used rules like `parent_of`, `ancestor`, and `has_embeddings`, or any other rules used in more than one place to either a const that serves as a common reference for creating the cozo scripts, or a rule that is loaded into the cozo database and then may be assumed to be loaded by the functions which would otherwise re-create these scripts.
 
 ## Tests
 - [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`
