@@ -23,6 +23,10 @@
   today, so we need a new embedding_nodes relation plus joins/view helpers
   before multi-model support is possible.
 
+## Implementation entrypoint
+
+- All planning/governance docs for attempt 002 now live under `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/` (see that directory's `README.md` for links to execution plan, feature flags, fixtures, telemetry, and implementation logs). Treat this document as the long-lived analysis, and use the attempt-002 hub for day-to-day execution notes and evidence.
+
 ## Impact Highlights
 
   - Section 1 of this doc details how to split embeddings out of node rows,

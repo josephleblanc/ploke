@@ -31,6 +31,10 @@ Purpose
 - Only add items that block progress or significantly determine future direction.
 - For each item, include: context, options (with tradeoffs), recommended default, and any deadline.
 
+## Remote embedding attempt 002 – decisions location
+
+Remote-embedding specific questions now live under `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/governance/decisions_required_remote_embedding.md`. Consult that file for the latest open/closed items (e.g., REM-EMB-001/002). Summaries should be mirrored back here only after resolution for historical tracking.
+
 Open decisions (M0 focus)
 1) Chat history file path and naming
    - Context: FileManager::save_content currently writes a temp file; final path needs to be stable and user-visible.
