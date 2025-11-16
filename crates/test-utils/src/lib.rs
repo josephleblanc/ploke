@@ -221,7 +221,6 @@ fn seed_metadata_rows(
     db: &ploke_db::Database,
     spec: &'static ExperimentalNodeRelationSpec,
 ) -> Result<Vec<Uuid>, ploke_error::Error> {
-    println!("seeding metadata for {}", spec.name);
     ensure_metadata_relation(db, spec)?;
     let projection_fields = metadata_projection_fields(spec);
     if projection_fields.is_empty() {
@@ -230,7 +229,8 @@ fn seed_metadata_rows(
     let columns_csv = projection_fields.join(", ");
     let base_relation = spec.node_type.relation_str();
     let script = format!(
-        "?[{columns}] :=\n    *{base} {{ {columns} @ 'NOW' }}",
+        r#"?[{columns}] :=
+    *{base} {{ {columns} @ 'NOW' }}"#,
         columns = columns_csv,
         base = base_relation,
     );
@@ -277,11 +277,6 @@ fn seed_vector_rows(
         return Ok(());
     }
     for dim_spec in vector_dimension_specs() {
-        println!(
-            "seeding vectors for {} dimension {}",
-            spec.name,
-            dim_spec.dims()
-        );
         let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
         ensure_vector_relation(db, &relation)?;
         for node_id in node_ids {
@@ -348,14 +343,12 @@ fn run_script(
     params: BTreeMap<String, DataValue>,
     mutability: ScriptMutability,
 ) -> Result<NamedRows, ploke_error::Error> {
-    db.run_script(script, params, mutability)
-        .map_err(|err| {
-            eprintln!("script failed: {script}");
-            let mut msg = err.to_string();
-            msg.push_str(" | script: ");
-            msg.push_str(script);
-            ploke_error::Error::from(DbError::Cozo(msg))
-        })
+    db.run_script(script, params, mutability).map_err(|err| {
+        let mut msg = err.to_string();
+        msg.push_str(" | script: ");
+        msg.push_str(script);
+        ploke_error::Error::from(DbError::Cozo(msg))
+    })
 }
 
 #[cfg(feature = "multi_embedding_schema")]
@@ -403,9 +396,9 @@ mod tests {
         relation_name: &str,
         column_name: &str,
     ) -> Result<bool, ploke_error::Error> {
-        println!("checking relation {relation_name} column {column_name}");
         let script = format!(
-            "?[{column}] :=\n    *{rel} {{ {column} @ 'NOW' }}",
+            r#"?[{column}] :=
+    *{rel} {{ {column} @ 'NOW' }}"#,
             column = column_name,
             rel = relation_name
         );

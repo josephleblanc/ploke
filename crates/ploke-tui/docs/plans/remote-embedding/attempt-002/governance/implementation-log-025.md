@@ -55,3 +55,15 @@
 - Layered the adapter traits so `ExperimentalEmbeddingDatabaseExt` now extends a public `ExperimentalEmbeddingDbExt`, and implemented the base trait for both `Db<MemStorage>` and `Database`. This keeps the API stable while still allowing alternate backends to plug in later.
 - Added `HnswDistance` to `create_idx` so we can switch between L2/Cosine/IP metrics per Cozo docs, cached the supported-dimension set via `lazy_static!`, and guarded vector relation creation to avoid redundant `:create` calls.
 - Expanded negative coverage with a metadata-parse failure test and ensured helper calls propagate `DbError::ExperimentalMetadataParse` instead of panicking. All adapter tests now pass via `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment`.
+
+## Progress — 2025-11-16 (Phase B sub-step B1 – metadata helper refactor, unstable)
+- Reviewed `feature_flags.md` to reaffirm that schema-only work must stay behind `multi_embedding_schema` while dual-write/runtime flags remain disabled. Confirmed we are still in Slice 1 scope.
+- Documented the Phase B sub-step plan (B1–B4) inside `experimental_fixtures_plan.md`, clarifying which checkpoints are expected to be unstable vs. stable and when the workspace should compile again.
+- Began sub-step **B1**: exposed reusable dimension/node specs plus adapter helpers in `crates/ploke-db/src/multi_embedding_experiment.rs`, then started porting the logic into `ploke-test-utils::setup_db_full_embeddings`. Added helper functions for seeding metadata/vector relations and a gated integration test (`seeds_multi_embedding_relations_for_fixture_nodes`).
+- Current status: `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment` is green (helpers verified). `cargo test -p ploke-test-utils --features multi_embedding_schema` fails because the interim metadata query emitted by the helper is syntactically invalid; vectors aren’t fully wired yet. The repository is intentionally unstable until B1 finishes. Next step is to fix the helper’s Cozo query (see task tracker) before attempting vector seeding assertions.
+
+## Progress — 2025-11-16 (Phase B sub-step B1 stabilized)
+- Fixed the `ploke-test-utils` metadata query generator so it emits valid Cozo syntax (proper `{}` escaping, newline structure) and added relation/column parameterization so the helper can target metadata vs. vector relations.
+- Completed the metadata helper refactor and unblocked the gated integration test: `cargo test -p ploke-test-utils --features "multi_embedding_schema" -- tests::seeds_multi_embedding_relations_for_fixture_nodes --nocapture` now passes, producing seeded metadata + per-dimension vector rows derived from the experiment specs.
+- Cleaned up temporary debug prints and kept the new seeding utilities behind the `multi_embedding_schema` feature so they can coexist with the legacy single-embedding fixtures.
+- Ready to start **B2** (vector seeding polish + broader fixture coverage) next; until then, fixture regeneration and `xtask verify-fixtures` remain untouched, so the workspace outside the schema flag is still considered unstable for Phase B.

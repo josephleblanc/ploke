@@ -34,6 +34,17 @@ Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/
 3. Introduce new fixture files if needed for multi-provider coverage (e.g., `fixture_nodes_multi_embed`). Document them in `fixtures/README.md`.
 4. Ensure all fixture regen steps are validated via `cargo xtask verify-fixtures` before committing. Store the fixture hash/evidence in `target/test-output/embedding/fixtures/<timestamp>.json`.
 
+**Phase B working notes / unstable sub-steps:** Because this fixture refactor touches multiple crates, we will explicitly work through smaller checkpoints before expecting the workspace to compile with all flags enabled. During these checkpoints we will keep feature flags (`multi_embedding_schema`, future db/runtime flags) OFF by default and note any unstable commits in the governance log so they can be rolled back if needed.
+
+| Sub-step | Description | Exit signal | Expected build state |
+| --- | --- | --- | --- |
+| **B1 – metadata helpers** | Refactor `ploke-db::multi_embedding_experiment` to expose reusable specs + add `ploke-test-utils` helpers that seed metadata rows only (no vectors). Harden unit tests for adapter traits. | `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment` green; `ploke-test-utils` metadata helper compiles but vectors still TODO. | Unstable: `ploke-test-utils` tests may fail under `multi_embedding_schema`. |
+| **B2 – vector seeding + tests** | Extend helpers to write vectors per dimension, ensure `setup_db_full_embeddings` exposes seeded rows, and add integration tests (`seeds_multi_embedding_relations_for_fixture_nodes`). | `cargo test -p ploke-test-utils --features multi_embedding_schema` passes locally; document evidence path. | Stable under `multi_embedding_schema`; still need fixture regen + xtask work. |
+| **B3 – fixture regeneration & verify command** | Regenerate fixture backups (per docs), update metadata/README, and extend `cargo xtask verify-fixtures --multi-embedding` to assert the new relations. | `cargo xtask verify-fixtures --multi-embedding` green locally; new fixture hashes recorded under `target/test-output/embedding/fixtures/`. | Build should be stable with schema flag ON. |
+| **B4 – telemetry + documentation** | Capture Phase B telemetry artifact (`target/test-output/embedding/fixtures/<run>.json`) and summarize in governance docs + slice report before unlocking Slice 2. | Telemetry artifact referenced in `remote-embedding-slice1-report.md`; implementation log updated. | Stable (expected to match pre-refactor tests). |
+
+Agents should only attempt to run the broader fixture/test matrix after completing a sub-step that is marked “stable.” If a detour is required (e.g., unexpected fixture blast radius), add a note to the governance log with the new sub-step identifier (B1a, B2-detour, etc.) so reviewers can follow the progression.
+
 **Stop & Test:** Before moving to Phase C, run `cargo xtask verify-fixtures --multi-embedding` (with schema flag ON) and `cargo test -p test-utils setup_db_full_embeddings` to confirm fixtures and helpers behave as expected. Document results + hashes in the slice report.
 
 ### Phase C – Enhance `cargo xtask verify-fixtures`
