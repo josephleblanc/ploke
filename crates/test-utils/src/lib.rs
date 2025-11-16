@@ -9,15 +9,29 @@ pub mod nodes;
 
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "multi_embedding_schema")]
+use std::collections::BTreeMap;
+
 use cozo::MemStorage;
+#[cfg(feature = "multi_embedding_schema")]
+use cozo::{DataValue, NamedRows, ScriptMutability, UuidWrapper};
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
 pub use ploke_core::NodeId;
+#[cfg(feature = "multi_embedding_schema")]
+use ploke_db::multi_embedding_experiment::{
+    embedding_entry, experimental_node_relation_specs, vector_dimension_specs,
+    ExperimentalEmbeddingDbExt, ExperimentalNodeRelationSpec, ExperimentalVectorRelation,
+};
+#[cfg(feature = "multi_embedding_schema")]
+use ploke_db::DbError;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::nodes::TypeDefNode;
 use syn_parser::parser::{analyze_files_parallel, ParsedCodeGraph};
 // TODO: Change import path of `CodeGraph` and `NodeId`, probably better organized to use `ploke-core`
 use syn_parser::CodeGraph;
+#[cfg(feature = "multi_embedding_schema")]
+use uuid::Uuid;
 
 // Should return result
 pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
@@ -184,10 +198,222 @@ pub fn setup_db_full_embeddings(
 
     let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
+    #[cfg(feature = "multi_embedding_schema")]
+    seed_multi_embedding_schema(&db)?;
+
     let limit = 100;
     let cursor = 0;
     // let embedding_data = db.get_nodes_for_embedding(100, None)?;
     db.get_unembedded_node_data(limit, cursor)
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn seed_multi_embedding_schema(db: &ploke_db::Database) -> Result<(), ploke_error::Error> {
+    for spec in experimental_node_relation_specs() {
+        let node_ids = seed_metadata_rows(db, spec)?;
+        seed_vector_rows(db, spec, &node_ids)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn seed_metadata_rows(
+    db: &ploke_db::Database,
+    spec: &'static ExperimentalNodeRelationSpec,
+) -> Result<Vec<Uuid>, ploke_error::Error> {
+    println!("seeding metadata for {}", spec.name);
+    ensure_metadata_relation(db, spec)?;
+    let projection_fields = metadata_projection_fields(spec);
+    if projection_fields.is_empty() {
+        return Ok(Vec::new());
+    }
+    let columns_csv = projection_fields.join(", ");
+    let base_relation = spec.node_type.relation_str();
+    let script = format!(
+        "?[{columns}] :=\n    *{base} {{ {columns} @ 'NOW' }}",
+        columns = columns_csv,
+        base = base_relation,
+    );
+    let NamedRows { headers, rows, .. } =
+        run_script(db, &script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    let embeddings_template: Vec<DataValue> = vector_dimension_specs()
+        .iter()
+        .map(|dim_spec| embedding_entry(dim_spec.embedding_model(), dim_spec.dims()))
+        .collect();
+    let mut node_ids = Vec::new();
+    for row in rows {
+        let mut params = BTreeMap::new();
+        for (idx, header) in headers.iter().enumerate() {
+            params.insert(header.clone(), row[idx].clone());
+        }
+        params.insert(
+            "embeddings".into(),
+            DataValue::List(embeddings_template.clone()),
+        );
+        let insert_script = spec.metadata_schema.script_put(&params);
+        run_script(
+            db,
+            &insert_script,
+            params.clone(),
+            ScriptMutability::Mutable,
+        )?;
+        let node_id_value = params.get("id").ok_or_else(|| {
+            ploke_error::Error::from(DbError::ExperimentalMetadataParse {
+                reason: format!("metadata params missing id for {}", spec.name),
+            })
+        })?;
+        node_ids.push(data_value_to_uuid(node_id_value)?);
+    }
+    Ok(node_ids)
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn seed_vector_rows(
+    db: &ploke_db::Database,
+    spec: &'static ExperimentalNodeRelationSpec,
+    node_ids: &[Uuid],
+) -> Result<(), ploke_error::Error> {
+    if node_ids.is_empty() {
+        return Ok(());
+    }
+    for dim_spec in vector_dimension_specs() {
+        println!(
+            "seeding vectors for {} dimension {}",
+            spec.name,
+            dim_spec.dims()
+        );
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        ensure_vector_relation(db, &relation)?;
+        for node_id in node_ids {
+            relation
+                .insert_row(db, *node_id, dim_spec)
+                .map_err(ploke_error::Error::from)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn ensure_metadata_relation(
+    db: &ploke_db::Database,
+    spec: &ExperimentalNodeRelationSpec,
+) -> Result<(), ploke_error::Error> {
+    match db.ensure_relation_registered(spec.metadata_schema.relation()) {
+        Ok(()) => Ok(()),
+        Err(DbError::ExperimentalRelationMissing { .. }) => {
+            run_script(
+                db,
+                &spec.metadata_schema.script_create(),
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )?;
+            Ok(())
+        }
+        Err(err) => Err(ploke_error::Error::from(err)),
+    }
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn ensure_vector_relation(
+    db: &ploke_db::Database,
+    relation: &ExperimentalVectorRelation,
+) -> Result<(), ploke_error::Error> {
+    match db.ensure_relation_registered(&relation.relation_name()) {
+        Ok(()) => Ok(()),
+        Err(DbError::ExperimentalRelationMissing { .. }) => {
+            run_script(
+                db,
+                &relation.script_create(),
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )?;
+            Ok(())
+        }
+        Err(err) => Err(ploke_error::Error::from(err)),
+    }
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn metadata_projection_fields(spec: &ExperimentalNodeRelationSpec) -> Vec<&'static str> {
+    spec.metadata_schema
+        .field_names()
+        .filter(|field| *field != "embeddings")
+        .collect()
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn run_script(
+    db: &ploke_db::Database,
+    script: &str,
+    params: BTreeMap<String, DataValue>,
+    mutability: ScriptMutability,
+) -> Result<NamedRows, ploke_error::Error> {
+    db.run_script(script, params, mutability)
+        .map_err(|err| {
+            eprintln!("script failed: {script}");
+            let mut msg = err.to_string();
+            msg.push_str(" | script: ");
+            msg.push_str(script);
+            ploke_error::Error::from(DbError::Cozo(msg))
+        })
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+fn data_value_to_uuid(value: &DataValue) -> Result<Uuid, ploke_error::Error> {
+    if let DataValue::Uuid(UuidWrapper(uuid)) = value {
+        Ok(*uuid)
+    } else {
+        Err(ploke_error::Error::from(
+            DbError::ExperimentalMetadataParse {
+                reason: "id column must be a uuid".into(),
+            },
+        ))
+    }
+}
+
+#[cfg(all(test, feature = "test_setup"))]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "multi_embedding_schema")]
+    #[test]
+    fn seeds_multi_embedding_relations_for_fixture_nodes() -> Result<(), ploke_error::Error> {
+        let raw_db = setup_db_full("fixture_nodes")?;
+        let database = ploke_db::Database::new(raw_db);
+        seed_multi_embedding_schema(&database)?;
+        assert!(
+            relation_has_rows(&database, "function_multi_embedding", "id")?,
+            "expected function metadata rows"
+        );
+        assert!(
+            relation_has_rows(&database, "function_embedding_vectors_384", "node_id")?,
+            "expected function vector rows for 384 dims"
+        );
+        let nodes = database.get_unembedded_node_data(16, 0)?;
+        assert!(
+            nodes.iter().any(|typed| !typed.v.is_empty()),
+            "embedding batches should be available after seeding"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_schema")]
+    fn relation_has_rows(
+        db: &ploke_db::Database,
+        relation_name: &str,
+        column_name: &str,
+    ) -> Result<bool, ploke_error::Error> {
+        println!("checking relation {relation_name} column {column_name}");
+        let script = format!(
+            "?[{column}] :=\n    *{rel} {{ {column} @ 'NOW' }}",
+            column = column_name,
+            rel = relation_name
+        );
+        let rows = db
+            .run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| ploke_error::Error::from(DbError::Cozo(err.to_string())))?;
+        Ok(!rows.rows.is_empty())
+    }
 }
 
 use fmt::format::FmtSpan;

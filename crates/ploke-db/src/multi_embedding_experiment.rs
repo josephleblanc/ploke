@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::database::Database;
 use crate::error::DbError;
+use crate::NodeType;
 use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -59,6 +60,10 @@ pub struct ExperimentalRelationSchema {
 impl ExperimentalRelationSchema {
     pub fn relation(&self) -> &'static str {
         self.relation
+    }
+
+    pub fn field_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.fields.iter().map(CozoField::st)
     }
 
     fn script_identity(&self) -> String {
@@ -137,8 +142,8 @@ macro_rules! define_relation_schema {
     };
 }
 
-#[derive(Copy, Clone)]
-struct VectorDimensionSpec {
+#[derive(Copy, Clone, Debug)]
+pub struct VectorDimensionSpec {
     dims: i64,
     provider: &'static str,
     embedding_model: &'static str,
@@ -146,6 +151,36 @@ struct VectorDimensionSpec {
     hnsw_m: i64,
     hnsw_ef_construction: i64,
     hnsw_search_ef: i64,
+}
+
+impl VectorDimensionSpec {
+    pub fn dims(&self) -> i64 {
+        self.dims
+    }
+
+    pub fn provider(&self) -> &'static str {
+        self.provider
+    }
+
+    pub fn embedding_model(&self) -> &'static str {
+        self.embedding_model
+    }
+
+    pub fn offset(&self) -> f32 {
+        self.offset
+    }
+
+    pub fn hnsw_m(&self) -> i64 {
+        self.hnsw_m
+    }
+
+    pub fn hnsw_ef_construction(&self) -> i64 {
+        self.hnsw_ef_construction
+    }
+
+    pub fn hnsw_search_ef(&self) -> i64 {
+        self.hnsw_search_ef
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -165,7 +200,7 @@ impl HnswDistance {
     }
 }
 
-const VECTOR_DIMENSION_SPECS: [VectorDimensionSpec; 4] = [
+pub const VECTOR_DIMENSION_SPECS: [VectorDimensionSpec; 4] = [
     VectorDimensionSpec {
         dims: 384,
         provider: "local-transformers",
@@ -204,6 +239,10 @@ const VECTOR_DIMENSION_SPECS: [VectorDimensionSpec; 4] = [
     },
 ];
 
+pub fn vector_dimension_specs() -> &'static [VectorDimensionSpec] {
+    &VECTOR_DIMENSION_SPECS
+}
+
 lazy_static! {
     static ref SUPPORTED_DIMENSION_SET: HashSet<i64> = VECTOR_DIMENSION_SPECS
         .iter()
@@ -217,11 +256,7 @@ fn supported_dimension_set() -> &'static HashSet<i64> {
 
 pub trait ExperimentalEmbeddingDbExt {
     fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError>;
-    fn assert_vector_column_layout(
-        &self,
-        relation_name: &str,
-        dims: i64,
-    ) -> Result<(), DbError>;
+    fn assert_vector_column_layout(&self, relation_name: &str, dims: i64) -> Result<(), DbError>;
     fn enumerate_metadata_models(
         &self,
         relation_name: &str,
@@ -258,11 +293,7 @@ impl ExperimentalEmbeddingDbExt for Db<MemStorage> {
         }
     }
 
-    fn assert_vector_column_layout(
-        &self,
-        relation_name: &str,
-        dims: i64,
-    ) -> Result<(), DbError> {
+    fn assert_vector_column_layout(&self, relation_name: &str, dims: i64) -> Result<(), DbError> {
         let script = format!("::columns {}", relation_name);
         let rows = self
             .run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
@@ -376,11 +407,7 @@ impl ExperimentalEmbeddingDbExt for Database {
         )
     }
 
-    fn assert_vector_column_layout(
-        &self,
-        relation_name: &str,
-        dims: i64,
-    ) -> Result<(), DbError> {
+    fn assert_vector_column_layout(&self, relation_name: &str, dims: i64) -> Result<(), DbError> {
         <Db<MemStorage> as ExperimentalEmbeddingDbExt>::assert_vector_column_layout(
             self.deref(),
             relation_name,
@@ -539,45 +566,57 @@ impl ExperimentalEmbeddingDatabaseExt for Database {
     }
 }
 #[derive(Copy, Clone, Debug)]
-struct ExperimentalVectorRelation {
+pub struct ExperimentalVectorRelation {
     dims: i64,
     relation_base: &'static str,
 }
 
 impl ExperimentalVectorRelation {
-    fn try_new(dims: i64, relation_base: &'static str) -> Result<Self, DbError> {
+    pub fn try_new(dims: i64, relation_base: &'static str) -> Result<Self, DbError> {
         if supported_dimension_set().contains(&dims) {
-            Ok(Self { dims, relation_base })
+            Ok(Self {
+                dims,
+                relation_base,
+            })
         } else {
             Err(DbError::UnsupportedEmbeddingDimension { dims })
         }
     }
 
-    fn new(dims: i64, relation_base: &'static str) -> Self {
+    pub fn new(dims: i64, relation_base: &'static str) -> Self {
         Self::try_new(dims, relation_base).expect("dimension must be supported")
     }
 
-    fn dims(&self) -> i64 {
+    pub fn dims(&self) -> i64 {
         self.dims
     }
 
-    fn relation_name(&self) -> String {
+    pub fn relation_name(&self) -> String {
         format!("{}_{}", self.relation_base, self.dims)
     }
 
-    fn script_identity(&self) -> String {
+    pub fn script_identity(&self) -> String {
         format!(
             "{} {{ node_id, embedding_model, provider, at => embedding_dims, vector }}",
             self.relation_name()
         )
     }
 
-    fn script_create(&self) -> String {
+    pub fn script_create(&self) -> String {
         format!(
             ":create {} {{ node_id: Uuid, embedding_model: String, provider: String, at: Validity => embedding_dims: Int, vector: <F32; {}> }}",
             self.relation_name(),
             self.dims
         )
+    }
+
+    pub fn insert_row(
+        &self,
+        db: &Database,
+        node_id: Uuid,
+        dim_spec: &VectorDimensionSpec,
+    ) -> Result<(), DbError> {
+        insert_vector_row(db.deref(), self, node_id, dim_spec)
     }
 }
 
@@ -755,7 +794,108 @@ define_relation_schema!(UNION_MULTI_EMBEDDING_SCHEMA {
     embeddings: "[(String, Int)]"
 });
 
-fn embedding_entry(model: &str, dims: i64) -> DataValue {
+#[derive(Copy, Clone)]
+pub struct ExperimentalNodeRelationSpec {
+    pub name: &'static str,
+    pub node_type: NodeType,
+    pub metadata_schema: &'static ExperimentalRelationSchema,
+    pub vector_relation_base: &'static str,
+}
+
+impl ExperimentalNodeRelationSpec {
+    pub fn relation_name(&self) -> &'static str {
+        self.metadata_schema.relation()
+    }
+}
+
+pub const EXPERIMENTAL_NODE_RELATION_SPECS: [ExperimentalNodeRelationSpec; 12] = [
+    ExperimentalNodeRelationSpec {
+        name: "function",
+        node_type: NodeType::Function,
+        metadata_schema: &FUNCTION_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "function_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "const",
+        node_type: NodeType::Const,
+        metadata_schema: &CONST_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "const_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "enum",
+        node_type: NodeType::Enum,
+        metadata_schema: &ENUM_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "enum_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "impl",
+        node_type: NodeType::Impl,
+        metadata_schema: &IMPL_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "impl_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "import",
+        node_type: NodeType::Import,
+        metadata_schema: &IMPORT_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "import_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "macro",
+        node_type: NodeType::Macro,
+        metadata_schema: &MACRO_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "macro_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "module",
+        node_type: NodeType::Module,
+        metadata_schema: &MODULE_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "module_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "static",
+        node_type: NodeType::Static,
+        metadata_schema: &STATIC_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "static_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "struct",
+        node_type: NodeType::Struct,
+        metadata_schema: &STRUCT_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "struct_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "trait",
+        node_type: NodeType::Trait,
+        metadata_schema: &TRAIT_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "trait_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "type_alias",
+        node_type: NodeType::TypeAlias,
+        metadata_schema: &TYPE_ALIAS_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "type_alias_embedding_vectors",
+    },
+    ExperimentalNodeRelationSpec {
+        name: "union",
+        node_type: NodeType::Union,
+        metadata_schema: &UNION_MULTI_EMBEDDING_SCHEMA,
+        vector_relation_base: "union_embedding_vectors",
+    },
+];
+
+pub fn experimental_node_relation_specs() -> &'static [ExperimentalNodeRelationSpec] {
+    &EXPERIMENTAL_NODE_RELATION_SPECS
+}
+
+pub fn experimental_spec_for_node(
+    node_type: NodeType,
+) -> Option<&'static ExperimentalNodeRelationSpec> {
+    EXPERIMENTAL_NODE_RELATION_SPECS
+        .iter()
+        .find(|spec| spec.node_type == node_type)
+}
+
+pub fn embedding_entry(model: &str, dims: i64) -> DataValue {
     DataValue::List(vec![
         DataValue::Str(model.into()),
         DataValue::Num(Num::Int(dims)),
@@ -806,22 +946,28 @@ fn insert_vector_row(
 }
 
 fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String, i64)>, DbError> {
-    let entries = value.get_slice().ok_or_else(|| DbError::ExperimentalMetadataParse {
-        reason: "embeddings column should contain a list".into(),
-    })?;
+    let entries = value
+        .get_slice()
+        .ok_or_else(|| DbError::ExperimentalMetadataParse {
+            reason: "embeddings column should contain a list".into(),
+        })?;
     let mut parsed = Vec::new();
     for entry in entries {
-        let tuple = entry.get_slice().ok_or_else(|| DbError::ExperimentalMetadataParse {
-            reason: "embedding metadata tuple should be a list".into(),
-        })?;
+        let tuple = entry
+            .get_slice()
+            .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                reason: "embedding metadata tuple should be a list".into(),
+            })?;
         if tuple.len() != 2 {
             return Err(DbError::ExperimentalMetadataParse {
                 reason: "embedding metadata tuples must be (model, dims)".into(),
             });
         }
-        let model = tuple[0].get_str().ok_or_else(|| DbError::ExperimentalMetadataParse {
-            reason: "tuple[0] should be embedding model string".into(),
-        })?;
+        let model = tuple[0]
+            .get_str()
+            .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                reason: "tuple[0] should be embedding model string".into(),
+            })?;
         let dims = match &tuple[1] {
             DataValue::Num(Num::Int(val)) => *val,
             other => {
@@ -846,83 +992,57 @@ mod tests {
     }
 
     struct ExperimentalNodeSpec {
-        name: &'static str,
-        metadata_schema: &'static ExperimentalRelationSchema,
-        vector_relation_base: &'static str,
+        base: &'static ExperimentalNodeRelationSpec,
         sample_builder: fn() -> SampleNodeData,
     }
 
     const EXPERIMENTAL_NODE_SPECS: &[ExperimentalNodeSpec] = &[
         ExperimentalNodeSpec {
-            name: "function",
-            metadata_schema: &FUNCTION_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "function_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[0],
             sample_builder: sample_function_params,
         },
         ExperimentalNodeSpec {
-            name: "const",
-            metadata_schema: &CONST_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "const_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[1],
             sample_builder: sample_const_params,
         },
         ExperimentalNodeSpec {
-            name: "enum",
-            metadata_schema: &ENUM_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "enum_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[2],
             sample_builder: sample_enum_params,
         },
         ExperimentalNodeSpec {
-            name: "impl",
-            metadata_schema: &IMPL_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "impl_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[3],
             sample_builder: sample_impl_params,
         },
         ExperimentalNodeSpec {
-            name: "import",
-            metadata_schema: &IMPORT_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "import_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[4],
             sample_builder: sample_import_params,
         },
         ExperimentalNodeSpec {
-            name: "macro",
-            metadata_schema: &MACRO_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "macro_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[5],
             sample_builder: sample_macro_params,
         },
         ExperimentalNodeSpec {
-            name: "module",
-            metadata_schema: &MODULE_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "module_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[6],
             sample_builder: sample_module_params,
         },
         ExperimentalNodeSpec {
-            name: "static",
-            metadata_schema: &STATIC_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "static_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[7],
             sample_builder: sample_static_params,
         },
         ExperimentalNodeSpec {
-            name: "struct",
-            metadata_schema: &STRUCT_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "struct_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[8],
             sample_builder: sample_struct_params,
         },
         ExperimentalNodeSpec {
-            name: "trait",
-            metadata_schema: &TRAIT_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "trait_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[9],
             sample_builder: sample_trait_params,
         },
         ExperimentalNodeSpec {
-            name: "type_alias",
-            metadata_schema: &TYPE_ALIAS_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "type_alias_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[10],
             sample_builder: sample_type_alias_params,
         },
         ExperimentalNodeSpec {
-            name: "union",
-            metadata_schema: &UNION_MULTI_EMBEDDING_SCHEMA,
-            vector_relation_base: "union_embedding_vectors",
+            base: &EXPERIMENTAL_NODE_RELATION_SPECS[11],
             sample_builder: sample_union_params,
         },
     ];
@@ -931,9 +1051,9 @@ mod tests {
         spec: &ExperimentalNodeSpec,
     ) -> Result<(Database, SampleNodeData), DbError> {
         let db = init_db();
-        let relation_name = spec.metadata_schema.relation().to_string();
+        let relation_name = spec.base.metadata_schema.relation().to_string();
         db.run_script(
-            &spec.metadata_schema.script_create(),
+            &spec.base.metadata_schema.script_create(),
             BTreeMap::new(),
             ScriptMutability::Mutable,
         )
@@ -953,7 +1073,7 @@ mod tests {
         spec: &ExperimentalNodeSpec,
         sample: &SampleNodeData,
     ) -> Result<(), DbError> {
-        let insert_script = spec.metadata_schema.script_put(&sample.params);
+        let insert_script = spec.base.metadata_schema.script_put(&sample.params);
         db.run_script(
             &insert_script,
             sample.params.clone(),
@@ -961,7 +1081,7 @@ mod tests {
         )
         .map_err(|err| DbError::ExperimentalScriptFailure {
             action: "metadata_insert",
-            relation: spec.metadata_schema.relation().to_string(),
+            relation: spec.base.metadata_schema.relation().to_string(),
             details: err.to_string(),
         })
         .map(|_| ())
@@ -978,7 +1098,7 @@ mod tests {
         dim_spec: &VectorDimensionSpec,
     ) -> Result<ExperimentalVectorRelation, DbError> {
         let vector_relation =
-            ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+            ExperimentalVectorRelation::new(dim_spec.dims, spec.base.vector_relation_base);
         let relation_name = vector_relation.relation_name();
         match db.ensure_relation_registered(&relation_name) {
             Ok(()) => {}
@@ -1019,7 +1139,7 @@ mod tests {
         let spec = default_spec();
         let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
         let rows = db
-            .vector_metadata_rows(spec.metadata_schema.relation(), sample.node_id)
+            .vector_metadata_rows(spec.base.metadata_schema.relation(), sample.node_id)
             .expect("metadata rows");
         assert_eq!(rows.rows.len(), 1, "expected single metadata row");
     }
@@ -1206,12 +1326,12 @@ mod tests {
 
     fn validate_schema_spec(spec: &ExperimentalNodeSpec) -> Result<(), DbError> {
         let (db, sample) = seed_metadata_relation(spec)?;
-        let relation_name = spec.metadata_schema.relation().to_string();
+        let relation_name = spec.base.metadata_schema.relation().to_string();
 
         let metadata_rows = db.vector_metadata_rows(&relation_name, sample.node_id)?;
         if metadata_rows.rows.len() != 1 {
             return Err(DbError::ExperimentalMetadataParse {
-                reason: format!("expected metadata row for {}", spec.name),
+                reason: format!("expected metadata row for {}", spec.base.name),
             });
         }
         let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
@@ -1220,17 +1340,17 @@ mod tests {
             VECTOR_DIMENSION_SPECS.len(),
             "expected {} metadata tuples for {}",
             VECTOR_DIMENSION_SPECS.len(),
-            spec.name
+            spec.base.name
         );
         let metadata_set: HashSet<(String, i64)> =
             metadata_entries.into_iter().collect::<HashSet<_>>();
         let enumerated_metadata = db
-            .enumerate_metadata_models(spec.metadata_schema.relation())
+            .enumerate_metadata_models(spec.base.metadata_schema.relation())
             .expect("enumerate metadata");
         assert_eq!(
             metadata_set, enumerated_metadata,
             "metadata enumeration should match parsed tuples for {}",
-            spec.name
+            spec.base.name
         );
 
         let mut vector_set = HashSet::new();
@@ -1251,7 +1371,7 @@ mod tests {
                 return Err(DbError::ExperimentalMetadataParse {
                     reason: format!(
                         "expected single vector row for {} dimension {}",
-                        spec.name, dim_spec.dims
+                        spec.base.name, dim_spec.dims
                     ),
                 });
             }
@@ -1283,12 +1403,12 @@ mod tests {
             assert!(
                 provider == dim_spec.provider,
                 "provider mismatch for {}",
-                spec.name
+                spec.base.name
             );
             assert!(
                 !matches!(row[3], DataValue::Null),
                 "vector column must be populated for {} ({})",
-                spec.name,
+                spec.base.name,
                 dim_spec.dims
             );
             vector_set.insert((model, dims_val));
@@ -1298,12 +1418,12 @@ mod tests {
         assert_eq!(
             metadata_set, vector_set,
             "metadata tuples must align with vector rows for {}",
-            spec.name
+            spec.base.name
         );
         let mut enumerated_vectors = HashSet::new();
         for dim_spec in VECTOR_DIMENSION_SPECS {
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.base.vector_relation_base);
             enumerated_vectors.extend(
                 db.enumerate_vector_models(&relation.relation_name())
                     .expect("enumerate vectors"),
@@ -1312,18 +1432,18 @@ mod tests {
         assert_eq!(
             enumerated_vectors, metadata_set,
             "vector enumeration should list the same models for {}",
-            spec.name
+            spec.base.name
         );
         assert_eq!(
             observed_dim_relations,
             supported_dimension_set().clone(),
             "must observe every supported dimension relation for {}",
-            spec.name
+            spec.base.name
         );
 
         let second_sample = (spec.sample_builder)();
         let second_node_id = second_sample.node_id;
-        let second_insert = spec.metadata_schema.script_put(&second_sample.params);
+        let second_insert = spec.base.metadata_schema.script_put(&second_sample.params);
         db.run_script(
             &second_insert,
             second_sample.params.clone(),
@@ -1336,22 +1456,22 @@ mod tests {
         })?;
         for dim_spec in VECTOR_DIMENSION_SPECS {
             let vector_relation =
-                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.base.vector_relation_base);
             insert_vector_row(&db, &vector_relation, second_sample.node_id, &dim_spec)?;
         }
 
         let dedup_metadata = db
-            .enumerate_metadata_models(spec.metadata_schema.relation())
+            .enumerate_metadata_models(spec.base.metadata_schema.relation())
             .expect("dedup metadata");
         assert_eq!(
             dedup_metadata, metadata_set,
             "metadata enumeration must dedupe across rows for {}",
-            spec.name
+            spec.base.name
         );
         let mut dedup_vectors = HashSet::new();
         for dim_spec in VECTOR_DIMENSION_SPECS {
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.base.vector_relation_base);
             dedup_vectors.extend(
                 db.enumerate_vector_models(&relation.relation_name())
                     .expect("dedup vectors"),
@@ -1360,12 +1480,12 @@ mod tests {
         assert_eq!(
             dedup_vectors, metadata_set,
             "vector enumeration must dedupe across rows for {}",
-            spec.name
+            spec.base.name
         );
 
         for dim_spec in VECTOR_DIMENSION_SPECS {
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.base.vector_relation_base);
             let relation_name = relation.relation_name();
             db.create_idx(
                 &relation_name,
@@ -1382,7 +1502,7 @@ mod tests {
                 return Err(DbError::ExperimentalMetadataParse {
                     reason: format!(
                         "expected single HNSW match for {} ({})",
-                        spec.name, dim_spec.dims
+                        spec.base.name, dim_spec.dims
                     ),
                 });
             }
@@ -1392,7 +1512,7 @@ mod tests {
                         return Err(DbError::ExperimentalMetadataParse {
                             reason: format!(
                                 "unexpected node id {id} returned for {} ({})",
-                                spec.name, dim_spec.dims
+                                spec.base.name, dim_spec.dims
                             ),
                         });
                     }
@@ -1726,5 +1846,4 @@ mod tests {
             params,
         }
     }
-
 }
