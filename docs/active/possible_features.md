@@ -18,6 +18,11 @@ Add a default file name for instructions for the LLM, similar to the AGENT.md fo
 
 For example, it would be nice if the LLM could refactor by submitting a new organizational structure for functions, methods, etc, without needing to submit a full code edit. That way the LLm lan reason about the abstractions around project architecture and implement the user's requests. Stops the user from needing to copy/paste items around when doing refactoring, speeds things up.
 
+- Do a parse of the suggested edits by the LLM to use semantic search or other
+methods to determine if there is already code elsewhere in the project that
+does the same thing. That might be a good way to prevent a common issue when
+using LLMs, like creating essentially the same function in multiple places.
+
 ## Code Context Map
 Crate a map that shows how the code snippets are connected in addition to
 providing code snippets relevant to the user query. The code-graph structure
