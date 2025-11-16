@@ -31,3 +31,11 @@
 - Execute Phase A of the experimental scaffolding plan before editing production schemas.
 - Start drafting telemetry/evidence expectations document (per planning checklist).
 - Maintain this implementation log by appending new entries per slice, referencing artifacts and decisions as work proceeds.
+
+## Plan-adjustment guardrails
+- While reviewing work-in-progress slices, capture potential plan changes here (e.g., switching to per-dimension vector relations, additional verification gates, fixture ownership clarifications). Treat this section as a discussion queue rather than an auto-merge policy.
+- Any proposed tweak must include (a) impact summary, (b) affected docs/files, (c) blocking reason if we postpone it. This keeps future agents aware of emerging risks without silently mutating the plan.
+- **Do not update the core planning docs/flag references unless a human explicitly requests the change.** Use this guardrail to document hypotheses and surface them during review, then wait for user approval before editing the authoritative plans.
+
+## Recent updates
+- Confirmed user-approved shift to runtime-created per-dimension vector relations (create the `<F32; dims>` relation on demand, validate via `::relations`/`::columns`). Execution + fixture plans now mention the `ensure_embedding_relation` helper so future slices follow the same approach.

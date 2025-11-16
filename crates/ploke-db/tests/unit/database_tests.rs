@@ -1,8 +1,10 @@
 use cozo::DataValue;
+use ploke_db::create_index;
 use ploke_db::to_usize;
 use ploke_db::Database;
-use uuid::Uuid;
+use ploke_db::NodeType;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 #[cfg(test)]
 #[ignore = "outdated test, not useful"]
@@ -27,17 +29,33 @@ fn create_test_db_for_embedding_updates() -> Database {
         "#;
 
     let mut function_params = BTreeMap::new();
-    function_params.insert("function_id".to_string(), DataValue::Uuid(cozo::UuidWrapper(function_id)));
-    function_params.insert("tracking_hash".to_string(), DataValue::Uuid(cozo::UuidWrapper(Uuid::new_v4())));
-    function_params.insert("module_id".to_string(), DataValue::Uuid(cozo::UuidWrapper(module_id)));
+    function_params.insert(
+        "function_id".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(function_id)),
+    );
+    function_params.insert(
+        "tracking_hash".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(Uuid::new_v4())),
+    );
+    function_params.insert(
+        "module_id".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(module_id)),
+    );
     function_params.insert("name".to_string(), DataValue::Str("test_function".into()));
-    function_params.insert("span".to_string(), DataValue::List(vec![DataValue::Num(cozo::Num::Int(0)), DataValue::Num(cozo::Num::Int(100))]));
+    function_params.insert(
+        "span".to_string(),
+        DataValue::List(vec![
+            DataValue::Num(cozo::Num::Int(0)),
+            DataValue::Num(cozo::Num::Int(100)),
+        ]),
+    );
 
     db.run_script(
         function_script,
         function_params,
         cozo::ScriptMutability::Mutable,
-    ).unwrap();
+    )
+    .unwrap();
 
     let module_script = r#"
         ?[id, path] <- [
@@ -47,14 +65,21 @@ fn create_test_db_for_embedding_updates() -> Database {
         "#;
 
     let mut module_params = BTreeMap::new();
-    module_params.insert("module_id".to_string(), DataValue::Uuid(cozo::UuidWrapper(module_id)));
-    module_params.insert("path".to_string(), DataValue::List(vec![DataValue::Str("crate".into())]));
+    module_params.insert(
+        "module_id".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(module_id)),
+    );
+    module_params.insert(
+        "path".to_string(),
+        DataValue::List(vec![DataValue::Str("crate".into())]),
+    );
 
     db.run_script(
         module_script,
         module_params,
         cozo::ScriptMutability::Mutable,
-    ).unwrap();
+    )
+    .unwrap();
 
     db
 }
@@ -72,8 +97,8 @@ async fn test_update_embeddings_batch_single() {
     let db = create_test_db_for_embedding_updates();
     let id = Uuid::new_v4();
     // Use 384-dimensional vector to match schema
-    let embedding = vec![0.5f32; 384]; 
-    
+    let embedding = vec![0.5f32; 384];
+
     db.update_embeddings_batch(vec![(id, embedding)])
         .await
         .unwrap();
@@ -83,8 +108,10 @@ async fn test_update_embeddings_batch_single() {
 #[ignore = "outdated test, needs update"]
 async fn test_update_embeddings_invalid_input() {
     let db = create_test_db_for_embedding_updates();
-    let result = db.update_embeddings_batch(vec![(Uuid::new_v4(), vec![])]).await;
-    
+    let result = db
+        .update_embeddings_batch(vec![(Uuid::new_v4(), vec![])])
+        .await;
+
     assert!(
         result.is_err(),
         "Update with invalid vector length should fail"
@@ -99,12 +126,62 @@ async fn test_pending_embedding_count() {
     assert!(count > 0, "Expected pending embeddings");
 }
 
+/// Mirrors the example in `Database::clear_relations` to ensure we keep the contract
+/// that user relations are removed while system relations remain.
+#[tokio::test]
+async fn clear_relations_removes_user_relations() {
+    let db = Database::init_with_schema().expect("failed to init schema");
+    let before = db.relations_vec().expect("failed to read relations");
+    assert!(
+        before.iter().any(|name| !name.contains(':')),
+        "fixture should include user-defined relations: {before:?}"
+    );
+
+    db.clear_relations()
+        .await
+        .expect("clear_relations should succeed");
+
+    let after = db
+        .relations_vec()
+        .expect("failed to read relations after clear");
+    assert!(
+        after.iter().all(|name| name.contains(':')),
+        "user relations should be removed, remaining: {after:?}"
+    );
+}
+
+/// Verifies that `clear_hnsw_idx` removes every `:<relation>:hnsw_idx` entry so
+/// we can safely rebuild indices during database maintenance.
+#[tokio::test]
+async fn clear_hnsw_idx_drops_all_indices() {
+    let db = Database::init_with_schema().expect("failed to init schema");
+    create_index(&db, NodeType::Function).expect("failed to create hnsw index");
+
+    let relations = db.relations_vec().expect("failed to read relations");
+    assert!(
+        relations.iter().any(|name| name.ends_with(":hnsw_idx")),
+        "expected at least one hnsw index relation, got: {relations:?}"
+    );
+
+    db.clear_hnsw_idx()
+        .await
+        .expect("clear_hnsw_idx should succeed");
+
+    let remaining = db
+        .relations_vec()
+        .expect("failed to read relations after drop attempt");
+    assert!(
+        remaining.iter().all(|name| !name.ends_with(":hnsw_idx")),
+        "expected all hnsw indices removed, remaining: {remaining:?}"
+    );
+}
+
 #[test]
 fn test_into_usize_valid() {
     let mut rows = vec![vec![DataValue::from(42i64)]];
     let row = rows.pop().unwrap();
     let result = to_usize(&row[0]);
-    
+
     assert_eq!(result.unwrap(), 42);
 }
 
@@ -113,7 +190,7 @@ fn test_into_usize_invalid() {
     let mut rows = vec![vec![DataValue::Null]];
     let row = rows.pop().unwrap();
     let result = to_usize(&row[0]);
-    
+
     assert!(result.is_err());
 }
 
@@ -133,12 +210,31 @@ async fn test_simple_function_insert() {
     "#;
 
     let mut params = BTreeMap::new();
-    params.insert("function_id".to_string(), DataValue::Uuid(cozo::UuidWrapper(function_id)));
-    params.insert("tracking_hash".to_string(), DataValue::Uuid(cozo::UuidWrapper(tracking_hash)));
-    params.insert("module_id".to_string(), DataValue::Uuid(cozo::UuidWrapper(module_id)));
+    params.insert(
+        "function_id".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(function_id)),
+    );
+    params.insert(
+        "tracking_hash".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(tracking_hash)),
+    );
+    params.insert(
+        "module_id".to_string(),
+        DataValue::Uuid(cozo::UuidWrapper(module_id)),
+    );
     params.insert("name".to_string(), DataValue::Str("test_function".into()));
-    params.insert("span".to_string(), DataValue::List(vec![DataValue::Num(cozo::Num::Int(0)), DataValue::Num(cozo::Num::Int(100))]));
+    params.insert(
+        "span".to_string(),
+        DataValue::List(vec![
+            DataValue::Num(cozo::Num::Int(0)),
+            DataValue::Num(cozo::Num::Int(100)),
+        ]),
+    );
 
     let result = db.run_script(script, params, cozo::ScriptMutability::Mutable);
-    assert!(result.is_ok(), "Failed to insert function: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to insert function: {:?}",
+        result.err()
+    );
 }

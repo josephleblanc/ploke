@@ -15,13 +15,14 @@ Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/
 ### Phase A – Expand the experimental Cozo module
 1. Generalize the schema macro invocations to cover every primary node relation (functions, structs, enums, type aliases, modules, constants). Each relation gets:
    - `<node>_multi_embedding` metadata table with `{node_id, embeddings: [(model, dims)], ...}` mirroring the function schema.
-   - `<node>_embedding_vectors` relation keyed by `{node_id, provider, model_id, embedding_dims}` plus vectors per supported dimension.
+   - Dimension-specific `<node>_embedding_vectors_<dims>` relations keyed by `{node_id, provider, model_id}` where each relation owns a single `<F32; dims>` column. Adopt a shared naming helper so `embedding_vectors_384`, `embedding_vectors_768`, etc. are enforced consistently.
 2. Add helper builders to generate synthetic vectors per dimension (384, 768, 1024, 1536) so future providers are easy to test.
 3. Extend the unit tests to iterate over all schema pairs, verifying:
    - Metadata tuples match vector rows one-to-one.
-   - Dimension-specific vector columns are mutually exclusive (only the matching dimension slot is populated).
+   - The correct per-dimension relation receives the vector (no cross-contamination between dimensions).
    - HNSW index creation/search works for each dimension (use filters per schema/dimension).
-4. Store reusable fixtures produced by these tests under `target/test-output/embedding/experiment/` for reference.
+4. Add a validation helper that queries `::relations`/`::columns` to ensure every `<node>_embedding_vectors_<dims>` relation has the expected suffix + column definition, and fails fast if an unknown dimension is introduced (this becomes the template for the runtime `ensure_embedding_relation` helper).
+5. Store reusable fixtures produced by these tests under `target/test-output/embedding/experiment/` for reference.
 
 **Stop & Test:** After Phase A changes, run `cargo test -p ploke-db multi_embedding_experiment` (with `multi_embedding_schema` enabled) and attach the pass/fail summary plus artifact paths to `remote-embedding-slice1-report.md` before touching shared fixtures.
 
@@ -29,7 +30,7 @@ Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/
 1. Update `ploke_test_utils::setup_db_full_embeddings` so when `multi_embedding_schema` is enabled it seeds the DB with:
    - Metadata rows for each node in the fixture using the experimental schema definitions.
    - Corresponding entries in the vector relations (using real or synthetic vectors depending on fixture coverage).
-2. Regenerate the canonical fixtures (those consumed by `setup_db_full`, `setup_db_minimal`, etc.) with the new relations present.
+2. Regenerate the canonical fixtures (those consumed by `setup_db_full`, `setup_db_minimal`, etc.) with the new per-dimension relations present; the fixture documentation should explicitly list which dimension-specific relations were emitted so downstream tooling can audit them.
 3. Introduce new fixture files if needed for multi-provider coverage (e.g., `fixture_nodes_multi_embed`). Document them in `fixtures/README.md`.
 4. Ensure all fixture regen steps are validated via `cargo xtask verify-fixtures` before committing. Store the fixture hash/evidence in `target/test-output/embedding/fixtures/<timestamp>.json`.
 
@@ -37,8 +38,8 @@ Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/
 
 ### Phase C – Enhance `cargo xtask verify-fixtures`
 1. Add `--multi-embedding` flag (and config default) so CI can enforce that fixture dumps contain:
-   - All `<node>_multi_embedding` and `<node>_embedding_vectors` relations.
-   - Matching counts between metadata tuples and vector rows.
+   - All `<node>_multi_embedding` relations plus the required `<node>_embedding_vectors_<dims>` relations.
+   - Matching counts between metadata tuples and vector rows, broken down per dimension.
    - Expected provider/model/dimension tuples for canonical fixtures.
 2. When the flag is enabled, `verify-fixtures` must fail if any relation is missing, mis-specified, or if sample vectors are absent.
 3. Pipe the verification summary (pass/fail counts, fixture hash, flag state) to `target/test-output/embedding/fixtures/verify-fixtures.json` for documentation per AGENTS guidelines.

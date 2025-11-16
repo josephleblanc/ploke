@@ -127,7 +127,7 @@ lazy_static! {
             is_mutable: false,
             value: Some("\"Linux specific\""), // Correct value from fixture
             attributes: vec![], // cfg is handled separately
-            docstring: Some("This is a documented static variable."),
+            docstring: Some("This is a documented static variable.\n\nThis variable is specifically configured for Linux targets and contains a\nstring that describes its platform-specific behavior.\n\n# Test Edit\nThis comment was added by the AI assistant for testing purposes."),
             tracking_hash_check: true,
             // Note: cfg string includes quotes as parsed by syn
             cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here

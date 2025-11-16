@@ -202,41 +202,32 @@ impl Database {
     ///
     /// This method removes all relations that were created by the application,
     /// excluding system relations that contain ":". It's useful for resetting
-    /// the database state during testing or when reprocessing data.
+    /// the database state during testing or when reprocessing data. Internally
+    /// we rely on the relation names returned by `::relations`, which wrap user
+    /// tables in quotes. The implementation strips those quotes and builds a
+    /// single `::remove <rel1> <rel2> ...` statement, so even though the Cozo
+    /// output looks unusual the resulting removal script is valid.
     ///
     /// # Examples
     ///
     /// ```
     /// # tokio_test::block_on(async {
-    ///
     /// use ploke_db::Database;
-    /// use cozo::ScriptMutability;
     ///
-    /// // Initialize database with schema
     /// let db = Database::init_with_schema().unwrap();
+    /// let before = db.relations_vec().unwrap();
+    /// assert!(
+    ///     before.iter().any(|name| !name.contains(':')),
+    ///     "fixture should contain user relations: {before:?}"
+    /// );
     ///
-    /// // Get initial relations
-    /// let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
-    /// let initial_count = initial_relations.rows.len();
-    /// assert!(initial_count > 0, "Should have some relations after schema creation");
-    ///
-    /// // Clear all user relations
     /// db.clear_relations().await.unwrap();
     ///
-    /// // Verify no user relations remain
-    /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
-    /// let user_relations: Vec<_> = remaining_relations.rows
-    ///     .into_iter()
-    ///     .filter(|row| {
-    ///         if let cozo::DataValue::Str(name) = &row[0] {
-    ///             !name.starts_with("::")
-    ///         } else {
-    ///             false
-    ///         }
-    ///     })
-    ///     .collect();
-    ///
-    /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
+    /// let after = db.relations_vec().unwrap();
+    /// assert!(
+    ///     after.iter().all(|name| name.contains(':')),
+    ///     "only system relations should remain: {after:?}"
+    /// );
     /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
@@ -282,76 +273,56 @@ impl Database {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// # tokio_test::block_on(async {
-    ///     use ploke_db::Database;
-    ///     use cozo::ScriptMutability;
-    ///     
-    ///     // Initialize database with schema
-    ///     let mut db = Database::init_with_schema().expect("Could not init database with schema");
-    ///     
-    ///     // Create some HNSW indices for testing
-    ///     // WARN: This doesn't actually work because we don't have anything to index yet, we
-    ///     // need a better test that uses a lazily loaded database that already contains embeddings.
-    ///     db.index_embeddings(ploke_db::NodeType::Function, 384).await
-    ///         .expect("Error indexing embeddings");
-    ///     
-    ///     // Count initial relations (including indices)
-    ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
-    ///     let hnsw_indices: Vec<_> = initial_relations.rows
-    ///         .into_iter()
-    ///         .filter(|row| {
-    ///             if let cozo::DataValue::Str(name) = &row[0] {
-    ///                 name.ends_with(":hnsw_idx")
-    ///             } else {
-    ///                 false
-    ///             }
-    ///         })
-    ///         .collect();
-    ///     
-    ///     // Should have some HNSW indices after creating them
-    ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
-    ///     
-    ///     // Clear all HNSW indices
-    ///     db.clear_hnsw_idx().await.expect("Error clearing hnsw indicies from database");
-    ///     
-    ///     // Verify no HNSW indices remain
-    ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
-    ///     let remaining_hnsw: Vec<_> = remaining_relations.rows
-    ///         .into_iter()
-    ///         .filter(|row| {
-    ///             if let cozo::DataValue::Str(name) = &row[0] {
-    ///                 name.ends_with(":hnsw_idx")
-    ///             } else {
-    ///                 false
-    ///             }
-    ///         })
-    ///         .collect();
-    ///     
-    ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
+    /// use ploke_db::{create_index, Database, NodeType};
+    ///
+    /// let db = Database::init_with_schema().unwrap();
+    /// create_index(&db, NodeType::Function).unwrap();
+    /// assert!(
+    ///     db.relations_vec()
+    ///         .unwrap()
+    ///         .iter()
+    ///         .any(|name| name.ends_with(":hnsw_idx"))
+    /// );
+    ///
+    /// db.clear_hnsw_idx().await.unwrap();
+    ///
+    /// assert!(
+    ///     db.relations_vec()
+    ///         .unwrap()
+    ///         .iter()
+    ///         .all(|name| !name.ends_with(":hnsw_idx"))
+    /// );
     /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
     pub async fn clear_hnsw_idx(&self) -> Result<(), PlokeError> {
-        let rels = self
-            .db
-            .run_script(
-                "::relations",
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )
-            .map_err(DbError::from)?
-            .rows
+        let rels: Vec<String> = self
+            .relations_vec()?
             .into_iter()
-            .map(|r| r[0].to_string())
-            .filter(|n| n.ends_with(":hnsw_idx"));
+            .filter(|n| n.ends_with(HNSW_SUFFIX))
+            .collect();
+
+        tracing::trace!(
+            target: "ploke_db::clear_hnsw_idx",
+            count = rels.len(),
+            ?rels,
+            "dropping hnsw indices"
+        );
 
         for index in rels {
-            let mut script = String::from("::index drop ");
-            script.extend(index.chars().filter(|c| *c == '\"'));
-            self.db
-                .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
-                .map_err(DbError::from)?;
+            let drop_script = format!("::hnsw drop {}", index);
+            if let Err(err) = self.db.run_script(
+                &drop_script,
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            ) {
+                let db_err = DbError::from(err);
+                if !db_err.to_string().contains("not found") {
+                    return Err(PlokeError::from(db_err));
+                }
+            }
         }
         Ok(())
     }
