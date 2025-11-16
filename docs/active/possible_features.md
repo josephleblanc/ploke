@@ -2,7 +2,7 @@
 
 ## Simple
 Add a file-explorer side-panel. 
-- Selecting a file from teh side-panel and pressing a command key will:
+- Selecting a file from the side-panel and pressing a command key will:
   - a. Filter nodes in the file from being returned by the RAG
   - b. Filter returned RAG results to only come from the target file(s)
   - c. Halve the relevance score for the RAG
@@ -12,6 +12,15 @@ Add a file-explorer side-panel.
 Add a default file name for instructions for the LLM, similar to the AGENT.md for some editors.
 
 - Create a way to drop the current database, or switch to a different database/crate for analysis
+
+## Agent Tools
+
+- Create a tool that allows the agent to search the DB without exposing the cozo script.
+  - For example, a search based on the values for some of the common fields of pimary node types that could allow for a searches like:
+    - All nodes that have a cfg flag
+    - All nodes with async
+    - All nodes with/without doc comments
+    - and so on
 
 ## Possibly complex
 - Allow LLM to modify the AST for restructuring and reorganization.
