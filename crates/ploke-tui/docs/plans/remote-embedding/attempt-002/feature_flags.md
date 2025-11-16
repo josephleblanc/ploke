@@ -25,7 +25,7 @@ Purpose: codify the gating strategy for the multi-embedding rollout so every sli
 | --- | --- | --- |
 | `ploke-tui` | `embedding.multi_embedding=true` in config + `PLOKE_MULTI_EMBEDDING_DB=1` env | Allows `/embedding use` to surface new embedding sets. If unset, commands are hidden and handlers fall back to legacy embedding column. |
 | `ploke-embed` | `PLOKE_MULTI_EMBEDDING_RUNTIME=1` env | Indexer emits embedding-set metadata, but still respects kill switch. |
-| `xtask verify-fixtures` | `--multi-embedding` CLI flag (planned) | Forces fixture verification to assert presence of new relations; requires schema feature enabled. |
+| `xtask verify-fixtures` | `--multi-embedding` CLI flag | Forces fixture verification to assert presence of new relations; requires schema feature enabled. |
 
 ## Gating + evidence expectations
 

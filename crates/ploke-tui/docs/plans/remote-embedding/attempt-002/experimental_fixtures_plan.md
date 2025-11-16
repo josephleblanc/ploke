@@ -1,14 +1,16 @@
 # Experimental Scaffolding & Fixture Plan
 
-Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/ploke-db/src/multi_embedding_experiment.rs`) and our shared fixtures evolve into production-ready assets for attempt 002. We cannot touch production DB helpers until the experiment + fixtures cover every affected node type and `cargo xtask verify-fixtures` can validate the new relations.
+Purpose: ensure the experimental multi-embedding scaffolding (now tracked under `crates/ploke-db/src/multi_embedding/`, which initially re-exports `multi_embedding_experiment.rs` but will be split into smaller files) and our shared fixtures evolve into production-ready assets for attempt 002. We cannot touch production DB helpers until the experiment + fixtures cover every affected node type and `cargo xtask verify-fixtures` can validate the new relations.
 
 ## Current assets & gaps
 
 | Asset | Current state | Gap |
 | --- | --- | --- |
-| `crates/ploke-db/src/multi_embedding_experiment.rs` | Defines `function_multi_embedding` + `function_embedding_vectors`, Cozo helpers, unit test verifying metadata/vector parity and HNSW search. | Only functions covered; no schemas/tests for structs, enums, modules, impl blocks, etc. Needs generalization + shared helpers for other node types and embedding dims. |
+| `crates/ploke-db/src/multi_embedding/` module (`multi_embedding_experiment.rs` today) | Defines `function_multi_embedding` + `function_embedding_vectors`, Cozo helpers, unit test verifying metadata/vector parity and HNSW search. | Only functions covered; no schemas/tests for structs, enums, modules, impl blocks, etc. Needs generalization + shared helpers for other node types and embedding dims. |
 | `ploke_test_utils::setup_db_full_embeddings` (`crates/test-utils/src/lib.rs:180-191`) | Returns `TypedEmbedData` by reading `get_unembedded_node_data` (legacy column). | Needs to seed multi-embedding fixtures for all node types, expose embedding-set metadata, and assert new relations exist when `multi_embedding_schema` is ON. |
 | Fixture repo (`fixtures/fixture_nodes`, etc.) | Contains serialized primary node data with single `embedding` columns only. | Must be regenerated with multi-embedding relations + metadata tuples; `cargo xtask verify-fixtures` must gain a `--multi-embedding` mode that validates both legacy and new relations during transition. |
+
+> **Fixture naming convention:** Legacy backups remain at `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`, while multi-embedding backups carry the schema tag in the filename (`tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`). Use `cargo run -p ploke-test-utils --bin regenerate_fixture --features "multi_embedding_schema" -- --schema <legacy|multi>` to refresh the appropriate variant and regenerate the matching `.meta.json`.
 
 ## Plan of record
 
@@ -38,9 +40,9 @@ Purpose: ensure the experimental multi-embedding scaffolding (currently `crates/
 
 | Sub-step | Description | Exit signal | Expected build state |
 | --- | --- | --- | --- |
-| **B1 – metadata helpers** | Refactor `ploke-db::multi_embedding_experiment` to expose reusable specs + add `ploke-test-utils` helpers that seed metadata rows only (no vectors). Harden unit tests for adapter traits. | `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment` green; `ploke-test-utils` metadata helper compiles but vectors still TODO. | Unstable: `ploke-test-utils` tests may fail under `multi_embedding_schema`. |
+| **B1 – metadata helpers** | Refactor the `ploke-db::multi_embedding` module (`multi_embedding_experiment.rs` initially) to expose reusable specs + add `ploke-test-utils` helpers that seed metadata rows only (no vectors). Harden unit tests for adapter traits. | `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment` green; `ploke-test-utils` metadata helper compiles but vectors still TODO. | Unstable: `ploke-test-utils` tests may fail under `multi_embedding_schema`. |
 | **B2 – vector seeding + tests** | Extend helpers to write vectors per dimension, ensure `setup_db_full_embeddings` exposes seeded rows, and add integration tests (`seeds_multi_embedding_relations_for_fixture_nodes`). | `cargo test -p ploke-test-utils --features multi_embedding_schema` passes locally; document evidence path. | Stable under `multi_embedding_schema`; still need fixture regen + xtask work. |
-| **B3 – fixture regeneration & verify command** | Regenerate fixture backups (per docs), update metadata/README, and extend `cargo xtask verify-fixtures --multi-embedding` to assert the new relations. | `cargo xtask verify-fixtures --multi-embedding` green locally; new fixture hashes recorded under `target/test-output/embedding/fixtures/`. | Build should be stable with schema flag ON. |
+| **B3 – fixture regeneration & verify command** | Regenerate fixture backups (per docs) via `cargo run -p ploke-test-utils --bin regenerate_fixture --features "multi_embedding_schema"`, update metadata/README, and extend `cargo xtask verify-fixtures --multi-embedding` to assert the new relations. | `cargo xtask verify-fixtures --multi-embedding` green locally; new fixture hashes recorded under `target/test-output/embedding/fixtures/`. | Build should be stable with schema flag ON. |
 | **B4 – telemetry + documentation** | Capture Phase B telemetry artifact (`target/test-output/embedding/fixtures/<run>.json`) and summarize in governance docs + slice report before unlocking Slice 2. | Telemetry artifact referenced in `remote-embedding-slice1-report.md`; implementation log updated. | Stable (expected to match pre-refactor tests). |
 
 Agents should only attempt to run the broader fixture/test matrix after completing a sub-step that is marked “stable.” If a detour is required (e.g., unexpected fixture blast radius), add a note to the governance log with the new sub-step identifier (B1a, B2-detour, etc.) so reviewers can follow the progression.
@@ -52,7 +54,7 @@ Agents should only attempt to run the broader fixture/test matrix after completi
    - All `<node>_multi_embedding` relations plus the required `<node>_embedding_vectors_<dims>` relations.
    - Matching counts between metadata tuples and vector rows, broken down per dimension.
    - Expected provider/model/dimension tuples for canonical fixtures.
-2. When the flag is enabled, `verify-fixtures` must fail if any relation is missing, mis-specified, or if sample vectors are absent.
+2. When the flag is enabled (now available via `cargo xtask verify-fixtures --multi-embedding`), the command must fail if any relation is missing, mis-specified, or if sample vectors are absent.
 3. Pipe the verification summary (pass/fail counts, fixture hash, flag state) to `target/test-output/embedding/fixtures/verify-fixtures.json` for documentation per AGENTS guidelines.
 
 **Stop & Test:** After implementing the flag, run the command both with and without `--multi-embedding` to ensure failure modes are correct. Capture both outcomes in the report before enabling Slice 2 work.

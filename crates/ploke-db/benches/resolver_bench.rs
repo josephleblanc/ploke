@@ -1,14 +1,19 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ploke_db::{helpers::resolve_nodes_by_canon_in_file, Database};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use ploke_db::{Database, helpers::resolve_nodes_by_canon_in_file};
+use ploke_test_utils::{
+    LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH, workspace_root,
+};
 use std::path::{Path, PathBuf};
 
 fn bench_resolve_strict(c: &mut Criterion) {
     // Load backup DB if present; otherwise skip running the bench work
     let db = Database::init_with_schema().expect("init db");
-    let mut backup = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    backup.pop(); // crates/ploke-db -> crates
-    backup.pop(); // crates -> workspace root
-    backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+    let mut backup = workspace_root();
+    if cfg!(feature = "multi_embedding_experiment") {
+        backup.push(MULTI_EMBED_FIXTURE_BACKUP_REL_PATH);
+    } else {
+        backup.push(LEGACY_FIXTURE_BACKUP_REL_PATH);
+    }
     if backup.exists() {
         let prior = db.relations_vec().expect("relations_vec");
         db.import_from_backup(&backup, &prior)

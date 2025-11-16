@@ -20,6 +20,7 @@ tokio = { workspace = true }
 
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 log = { workspace = true }
 ploke-db = { path = "../ploke-db" }
@@ -29,6 +30,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
 chrono = "0.4"
+sha2 = "0.10"
+walkdir = "2.5"
 
 [dev-dependencies]
 

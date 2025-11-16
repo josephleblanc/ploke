@@ -15,7 +15,11 @@ use std::collections::BTreeMap;
 use cozo::MemStorage;
 #[cfg(feature = "multi_embedding_schema")]
 use cozo::{DataValue, NamedRows, ScriptMutability, UuidWrapper};
-pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+pub use ploke_common::{
+    fixtures_crates_dir, fixtures_dir, workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH,
+    LEGACY_FIXTURE_METADATA_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
+    MULTI_EMBED_FIXTURE_METADATA_REL_PATH, MULTI_EMBED_SCHEMA_TAG,
+};
 pub use ploke_core::NodeId;
 #[cfg(feature = "multi_embedding_schema")]
 use ploke_db::multi_embedding_experiment::{
@@ -208,7 +212,7 @@ pub fn setup_db_full_embeddings(
 }
 
 #[cfg(feature = "multi_embedding_schema")]
-fn seed_multi_embedding_schema(db: &ploke_db::Database) -> Result<(), ploke_error::Error> {
+pub fn seed_multi_embedding_schema(db: &ploke_db::Database) -> Result<(), ploke_error::Error> {
     for spec in experimental_node_relation_specs() {
         let node_ids = seed_metadata_rows(db, spec)?;
         seed_vector_rows(db, spec, &node_ids)?;

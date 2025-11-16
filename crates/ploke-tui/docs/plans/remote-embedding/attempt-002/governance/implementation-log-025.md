@@ -9,7 +9,7 @@
 - Primary reference plan: `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/execution_plan.md`.
 - Feature flag strategy: `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/feature_flags.md`.
 - Experimental scaffolding + fixtures: `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/experimental_fixtures_plan.md`.
-- Background analysis: `agent_report.md`, `crates/ploke-tui/docs/active/plans/remote-embedding/required-groundwork.md`, `crates/ploke-db/src/multi_embedding_experiment.rs`.
+- Background analysis: `agent_report.md`, `crates/ploke-tui/docs/active/plans/remote-embedding/required-groundwork.md`, and the evolving `crates/ploke-db/src/multi_embedding/` module (currently rooted in `multi_embedding_experiment.rs`).
 
 ## Decisions / guidance captured
 - Remote embeddings will fully replace the legacy single-embedding path once Slice 4 completes; feature flags are temporary validation gates.
@@ -39,6 +39,7 @@
 
 ## Recent updates
 - Confirmed user-approved shift to runtime-created per-dimension vector relations (create the `<F32; dims>` relation on demand, validate via `::relations`/`::columns`). Execution + fixture plans now mention the `ensure_embedding_relation` helper so future slices follow the same approach.
+- Agreed to split `crates/ploke-db/src/multi_embedding_experiment.rs` into a dedicated `crates/ploke-db/src/multi_embedding/` module directory, keeping the current file as the initial entry point but directing all future remote-embedding additions (helpers, adapters, tests) into that module for maintainability.
 
 ## Progress — 2025-11-15 (Slice 1 Phase A status)
 - Re-reviewed the Slice 1 planning hub plus the experimental scaffolding expectations to realign on scope before making additional edits. Cross-referenced README, execution plan, feature flag doc, experimental fixtures plan, and telemetry evidence plan.
@@ -67,3 +68,13 @@
 - Completed the metadata helper refactor and unblocked the gated integration test: `cargo test -p ploke-test-utils --features "multi_embedding_schema" -- tests::seeds_multi_embedding_relations_for_fixture_nodes --nocapture` now passes, producing seeded metadata + per-dimension vector rows derived from the experiment specs.
 - Cleaned up temporary debug prints and kept the new seeding utilities behind the `multi_embedding_schema` feature so they can coexist with the legacy single-embedding fixtures.
 - Ready to start **B2** (vector seeding polish + broader fixture coverage) next; until then, fixture regeneration and `xtask verify-fixtures` remain untouched, so the workspace outside the schema flag is still considered unstable for Phase B.
+
+## Progress — 2025-11-16 (Phase B sub-step B3 kickoff)
+- Added a dedicated regeneration binary at `crates/test-utils/src/bin/regenerate_fixture.rs` so fixture backups (e.g., `fixture_nodes`) can be rebuilt with multi-embedding relations via `cargo run -p ploke-test-utils --bin regenerate_fixture --features "multi_embedding_schema"`.
+- Generated a fresh `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` database that now includes 183 metadata rows and 732 vector rows (12 relations × 4 dimensions), matching the experimental seeding helpers.
+- Extended `cargo xtask verify-fixtures` with a `--multi-embedding` flag that loads the backup, validates relation layouts, and enforces metadata/vector row parity. Evidence for the run lives at `target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json`.
+
+## Progress — 2025-11-16 (Fixture versioning + dual backups)
+- Formalized schema-aware fixture names. The legacy single-embedding backup stays at `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` while the new multi-embedding variant lives beside it as `tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`. Regeneration now uses `cargo run -p ploke-test-utils --bin regenerate_fixture --features "multi_embedding_schema" -- --schema <legacy|multi>` so we can refresh each dataset independently without clobbering the other.
+- `cargo xtask verify-fixtures` gained an optional `fixture_db_backup_multi` check and feeds that path into the multi-embedding verification routine. The updated telemetry artifact (`target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json`) records the schema-tagged backup path.
+- Tests that rely on `get_common_nodes()` now short-circuit with a skip log message when the fixture has no embedded rows. This keeps the legacy suite green until we can restore single-column embeddings while still documenting the gap in the log.

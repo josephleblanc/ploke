@@ -423,7 +423,7 @@ impl Database {
         ];
         Ok(mock_nodes)
     }
-    pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+    pub fn load_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
         Ok(Self { db: new_db })

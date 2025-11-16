@@ -754,10 +754,9 @@ pub(crate) fn collect_rebuild_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_index_primary, DbError};
+    use crate::{DbError, create_index_primary, utils::test_utils::fixture_db_backup_path};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
-    use ploke_test_utils::workspace_root;
     use std::collections::HashMap;
 
     struct MockCozo {
@@ -790,9 +789,7 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
-
-            let mut target_file = workspace_root();
-            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let target_file = fixture_db_backup_path();
             let prior_rels_vec = db.relations_vec()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)

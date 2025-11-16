@@ -4,7 +4,7 @@ This document sequences the remote-embedding refactor into reviewable slices. It
 
 - `crates/ploke-tui/docs/active/plans/remote-embedding/required-groundwork.md`
 - `agent_report.md` (postmortem of attempt 001)
-- `crates/ploke-db/src/multi_embedding_experiment.rs`
+- `crates/ploke-db/src/multi_embedding/` (new module directory rooted in `multi_embedding_experiment.rs`; every new remote-embedding helper/test now lives as a dedicated file inside this folder so we stop growing the single monolithic source file)
 - `crates/ploke-tui/docs/archive/feature/agent-system/agentic_system_plan.md`
 
 Each slice below must link evidence (tests, artifacts, docs) back to this plan when it lands. The slices are phased only to ease validation—once Slice 4 finishes, the single-embedding code paths are removed and multi-embedding becomes the sole supported architecture (no long-term dual path).
@@ -20,7 +20,7 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 - **Tests & fixtures.**
   - Unit tests for schema modules proving the new relations create + insert data at least for functions; align with `multi_embedding_experiment.rs` expectations and the scaffolding plan in `experimental_fixtures_plan.md`.
   - Per-dimension vector relations must each expose a single `<F32; dims>` column. Tests should query `::relations`/`::columns` to confirm that only allowed relations exist and that each stores exactly one vector column plus provider/model metadata, even when the relation was created dynamically at runtime.
-  - Extend `cargo xtask verify-fixtures` to assert the new relations are present in fixture dumps (see `experimental_fixtures_plan.md` for required coverage).
+- Extend `cargo xtask verify-fixtures` to assert the new relations are present in fixture dumps (see `experimental_fixtures_plan.md` for required coverage). The command now understands both fixture families: the legacy backup (`tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`) and the schema-tagged multi-embedding backup (`tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`).
   - Evidence artifact: `target/test-output/embedding/slice1-schema.json` summarizing migration + fixture verification.
 - **Doc/report updates.** Annotate this plan and `required-groundwork.md` §1 with commit references; open an implementation log entry capturing design decisions.
 - **Telemetry artifacts.** Follow `telemetry_evidence_plan.md` for artifact layout (`slice1-schema.json`, fixture hashes) before claiming readiness.
@@ -28,7 +28,7 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 ## Phase 1.5 – Embedding DB adapter + API cleanup
 - **Goal.** Refine Phase 1 assets by consolidating experimental Cozo scripts behind a strongly typed adapter trait implemented on `Database`, improving maintainability before Slice 2 dual-write work begins.
 - **Touch points.**
-  - Add a `multi_embedding_experiment`-gated trait (e.g., `ExperimentalEmbeddingDatabaseExt`) within `crates/ploke-db/src/multi_embedding_experiment.rs` or nearby, implemented for `Database`, exposing helper methods such as `create_idx`, `search_embeddings_hnsw`, `vector_rows`, and `vector_metadata_rows`.
+  - Add a `multi_embedding_experiment`-gated trait (e.g., `ExperimentalEmbeddingDatabaseExt`) within the new `crates/ploke-db/src/multi_embedding/` module (initially re-exporting `multi_embedding_experiment.rs`), implemented for `Database`, exposing helper methods such as `create_idx`, `search_embeddings_hnsw`, `vector_rows`, and `vector_metadata_rows`.
   - Replace ad-hoc in-test query construction with calls to the adapter methods so Cozo snippets live in one place and every call site benefits from typed `DbError` propagation.
   - Extend `DbError` docs/tests if additional error variants are needed while keeping the existing feature flag coverage.
 - **Tests & evidence.**
@@ -46,7 +46,7 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
   - Test utilities/fixtures (e.g., `setup_db_full_embeddings`).
 - **Feature flags.** Introduce `#[cfg(feature = "multi_embedding_db")]` (depends on Slice 1 flag) that enables dual-write/dual-read. Add runtime config knob or env var so tests can enable it explicitly. Define exit criteria for removing legacy columns.
 - **Tests & evidence.**
-  - Repurpose/extend `multi_embedding_experiment.rs` into integration tests that validate metadata tuples align with vector rows across node types.
+  - Repurpose/extend the `multi_embedding` module (splitting code into focused files instead of a single `multi_embedding_experiment.rs` blob) into integration tests that validate metadata tuples align with vector rows across node types.
   - End-to-end DB tests verifying dual-write parity and HNSW search invariants for both 384 and 1536 dimensions.
   - Introduce a runtime registry (`EmbeddingDimensionRegistry` or similar) that maps a dimension value to its backing relation/table name and calls `ensure_embedding_relation` before writing. Add tests proving unknown dimensions trigger on-demand relation creation and that invalid names are rejected.
   - Artifact: `target/test-output/embedding/slice2-db.json` capturing pass/fail counts plus fixture hashes.

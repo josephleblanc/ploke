@@ -501,11 +501,10 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
 mod tests {
     use std::sync::Arc;
 
-    use crate::create_index_primary;
-    use crate::hnsw_all_types;
-    use crate::utils::test_utils::TEST_DB_NODES;
-    use crate::DbError;
-    use ploke_test_utils::workspace_root;
+    use crate::{
+        DbError, create_index_primary, hnsw_all_types,
+        utils::test_utils::{TEST_DB_NODES, fixture_db_backup_path},
+    };
     use tokio::sync::Mutex;
 
     use lazy_static::lazy_static;
@@ -518,8 +517,7 @@ mod tests {
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
 
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        let target_file = fixture_db_backup_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
         let prior_rels_vec = db.relations_vec()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
@@ -542,8 +540,7 @@ mod tests {
     async fn test_hnsw_init_from_backup_error() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
 
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        let target_file = fixture_db_backup_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
         let prior_rels_vec = db.relations_vec()?;
         db.import_from_backup(&target_file, &prior_rels_vec)
