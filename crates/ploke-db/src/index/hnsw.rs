@@ -502,8 +502,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        DbError, create_index_primary, hnsw_all_types,
-        utils::test_utils::{TEST_DB_NODES, fixture_db_backup_path},
+        create_index_primary, hnsw_all_types,
+        utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES},
+        DbError,
     };
     use tokio::sync::Mutex;
 

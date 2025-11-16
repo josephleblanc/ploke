@@ -123,10 +123,12 @@ mod tests {
 
         // Gather a small set of embedded nodes as our seed
         let qr = db.get_common_nodes().expect("get_common_nodes");
-        if qr.rows.is_empty() {
-            eprintln!("Skipping test_resolve_nodes_by_canon_in_file_via_paths_from_id (no embedded nodes in fixture).");
-            return;
-        }
+        assert!(
+            !qr.rows.is_empty(),
+            "fixture fixture_nodes produced zero embedded nodes; \
+             regenerate the legacy backup with embeddings before running \
+             test_resolve_nodes_by_canon_in_file_via_paths_from_id"
+        );
         let id_index: usize = get_pos(&qr.headers, "id").expect("id header");
         let name_index: usize = get_pos(&qr.headers, "name").expect("name header");
         // Limit to a handful for speed
@@ -242,10 +244,12 @@ mod tests {
 
         // Pick the first common node as a target
         let qr = db.get_common_nodes().expect("get_common_nodes");
-        if qr.rows.is_empty() {
-            eprintln!("Skipping test_relaxed_fallback_when_file_mismatch (no embedded nodes in fixture).");
-            return;
-        }
+        assert!(
+            !qr.rows.is_empty(),
+            "fixture fixture_nodes produced zero embedded nodes; \
+             regenerate the legacy backup with embeddings before running \
+             test_relaxed_fallback_when_file_mismatch"
+        );
         let id_index: usize = get_pos(&qr.headers, "id").expect("id header");
         let name_index: usize = get_pos(&qr.headers, "name").expect("name header");
         let row = qr.rows.into_iter().next().expect("at least one node");

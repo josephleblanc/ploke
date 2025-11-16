@@ -14,7 +14,9 @@ use chrono::Utc;
 use ploke_db::Database;
 #[cfg(feature = "multi_embedding_schema")]
 use ploke_test_utils::seed_multi_embedding_schema;
-use ploke_test_utils::{MULTI_EMBED_SCHEMA_TAG, fixtures_crates_dir, setup_db_full};
+use ploke_test_utils::{
+    fixtures_crates_dir, seed_default_legacy_embeddings, setup_db_full, MULTI_EMBED_SCHEMA_TAG,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
@@ -57,6 +59,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let database = Database::new(raw_db);
 
     cli.schema_variant.seed_if_needed(&database)?;
+    let legacy_seeded = seed_default_legacy_embeddings(&database)
+        .map_err(|err| -> Box<dyn Error> { Box::new(err) })?;
+    println!(
+        "Seeded {legacy_seeded} legacy embedding rows for `{}` backup.",
+        cli.schema_variant
+    );
 
     let base_name = database.get_crate_name_id(fixture)?;
     let backup_name = cli.schema_variant.attach_tag(&base_name);
@@ -155,7 +163,7 @@ impl SchemaVariant {
         matches!(self, Self::MultiEmbedding)
     }
 
-    fn seed_if_needed(self, database: &Database) -> Result<(), Box<dyn Error>> {
+    fn seed_if_needed(self, _database: &Database) -> Result<(), Box<dyn Error>> {
         if !self.requires_multi_seed() {
             return Ok(());
         }
@@ -163,7 +171,7 @@ impl SchemaVariant {
         #[cfg(feature = "multi_embedding_schema")]
         {
             println!("Seeding multi-embedding relations …");
-            seed_multi_embedding_schema(database)?;
+            seed_multi_embedding_schema(_database)?;
             Ok(())
         }
 

@@ -1,7 +1,7 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use ploke_db::{Database, helpers::resolve_nodes_by_canon_in_file};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use ploke_db::{helpers::resolve_nodes_by_canon_in_file, Database};
 use ploke_test_utils::{
-    LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH, workspace_root,
+    workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
 };
 use std::path::{Path, PathBuf};
 

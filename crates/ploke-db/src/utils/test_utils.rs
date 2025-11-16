@@ -7,9 +7,9 @@ use std::{
 use lazy_static::lazy_static;
 use ploke_error::Error;
 
-use crate::{Database, DbError, create_index_primary};
+use crate::{create_index_primary, Database, DbError};
 use ploke_test_utils::{
-    LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH, workspace_root,
+    workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
 };
 
 #[cfg(feature = "multi_embedding_experiment")]

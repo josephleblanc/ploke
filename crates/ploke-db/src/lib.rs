@@ -7,14 +7,13 @@ mod error;
 pub mod get_by_id;
 pub mod helpers;
 mod index;
+#[cfg(feature = "multi_embedding_experiment")]
+pub mod multi_embedding;
 pub mod observability;
 mod query;
 mod result;
 mod span;
 pub(crate) mod utils;
-
-#[cfg(feature = "multi_embedding_experiment")]
-pub mod multi_embedding_experiment;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;

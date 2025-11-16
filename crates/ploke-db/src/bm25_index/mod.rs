@@ -754,7 +754,7 @@ pub(crate) fn collect_rebuild_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DbError, create_index_primary, utils::test_utils::fixture_db_backup_path};
+    use crate::{create_index_primary, utils::test_utils::fixture_db_backup_path, DbError};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
     use std::collections::HashMap;

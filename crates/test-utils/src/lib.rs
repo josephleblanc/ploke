@@ -22,7 +22,7 @@ pub use ploke_common::{
 };
 pub use ploke_core::NodeId;
 #[cfg(feature = "multi_embedding_schema")]
-use ploke_db::multi_embedding_experiment::{
+use ploke_db::multi_embedding::{
     embedding_entry, experimental_node_relation_specs, vector_dimension_specs,
     ExperimentalEmbeddingDbExt, ExperimentalNodeRelationSpec, ExperimentalVectorRelation,
 };
@@ -34,7 +34,7 @@ use syn_parser::parser::nodes::TypeDefNode;
 use syn_parser::parser::{analyze_files_parallel, ParsedCodeGraph};
 // TODO: Change import path of `CodeGraph` and `NodeId`, probably better organized to use `ploke-core`
 use syn_parser::CodeGraph;
-#[cfg(feature = "multi_embedding_schema")]
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 // Should return result
@@ -209,6 +209,74 @@ pub fn setup_db_full_embeddings(
     let cursor = 0;
     // let embedding_data = db.get_nodes_for_embedding(100, None)?;
     db.get_unembedded_node_data(limit, cursor)
+}
+
+const LEGACY_EMBEDDING_TARGET_ROWS: usize = 32;
+const LEGACY_EMBEDDING_VECTOR_DIMS: usize = 384;
+const LEGACY_EMBEDDING_FETCH_FLOOR: usize = 16;
+
+pub fn seed_default_legacy_embeddings(
+    db: &ploke_db::Database,
+) -> Result<usize, ploke_error::Error> {
+    seed_legacy_embeddings(
+        db,
+        LEGACY_EMBEDDING_TARGET_ROWS,
+        LEGACY_EMBEDDING_VECTOR_DIMS,
+    )
+}
+
+pub fn seed_legacy_embeddings(
+    db: &ploke_db::Database,
+    desired_rows: usize,
+    dims: usize,
+) -> Result<usize, ploke_error::Error> {
+    if desired_rows == 0 || dims == 0 {
+        return Ok(0);
+    }
+    let limit = desired_rows.max(LEGACY_EMBEDDING_FETCH_FLOOR);
+    let typed_nodes = db.get_unembedded_node_data(limit, 0)?;
+    let mut updates = Vec::new();
+    let mut seeded = 0usize;
+    for typed in typed_nodes {
+        for entry in typed.v {
+            updates.push((entry.id, build_legacy_embedding_vector(dims, seeded)));
+            seeded += 1;
+            if seeded >= desired_rows {
+                break;
+            }
+        }
+        if seeded >= desired_rows {
+            break;
+        }
+    }
+    apply_legacy_embedding_updates(db, updates)?;
+    Ok(seeded)
+}
+
+fn build_legacy_embedding_vector(dims: usize, seed: usize) -> Vec<f32> {
+    let mut vector = Vec::with_capacity(dims);
+    for offset in 0..dims {
+        let value = (((seed + offset) % 97) as f32 + 1.0) / 97.0;
+        vector.push(value);
+    }
+    vector
+}
+
+fn apply_legacy_embedding_updates(
+    db: &ploke_db::Database,
+    updates: Vec<(Uuid, Vec<f32>)>,
+) -> Result<(), ploke_error::Error> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    let runtime = Runtime::new().map_err(|err| {
+        ploke_error::Error::TransformError(format!("failed to init tokio runtime: {err}"))
+    })?;
+    runtime.block_on(async {
+        db.update_embeddings_batch(updates)
+            .await
+            .map_err(ploke_error::Error::from)
+    })
 }
 
 #[cfg(feature = "multi_embedding_schema")]
