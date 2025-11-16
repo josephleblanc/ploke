@@ -25,6 +25,23 @@ This document mirrors the global `decisions_required.md` queue but focuses on th
 ## Resolved decisions
 *(Add entries here once the USER signs off and update the execution plan / slice reports accordingly.)*
 
+- **REM-EMB-001**
+
+USER: We will attempt to provide comprehensive test coverage between the end of
+phase 4 and determining whether or not to remove the kill switch. Then,
+dependent upon a review and analysis of test coverage, we will follow either 1
+or 3. Ideally, we have a high confidence in test coverage and can go with
+option 3 so the code remains clear and uncluttered moving forward, as this is
+the unambiguous desired design direction of the project.
+
+- **REM-EMB-002**
+
+USER: We will go with Option 3. Additionally, we should add a point to
+`ploke/docs/active/TECH_DEBT.md` that we should expose options once we develop
+a more detailed config that allows the user to select from among these options,
+and will implement automatic pruning at that time.
+
+
 ## Notes
 - The global queue at `crates/ploke-tui/docs/archive/feature/agent-system/decisions_required.md` now links to this file for remote-embedding specific topics.
 - When decisions are resolved here, mirror the outcome back to the global file for historical continuity.

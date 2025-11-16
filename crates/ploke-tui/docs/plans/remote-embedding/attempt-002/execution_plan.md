@@ -25,6 +25,19 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 - **Doc/report updates.** Annotate this plan and `required-groundwork.md` §1 with commit references; open an implementation log entry capturing design decisions.
 - **Telemetry artifacts.** Follow `telemetry_evidence_plan.md` for artifact layout (`slice1-schema.json`, fixture hashes) before claiming readiness.
 
+## Phase 1.5 – Embedding DB adapter + API cleanup
+- **Goal.** Refine Phase 1 assets by consolidating experimental Cozo scripts behind a strongly typed adapter trait implemented on `Database`, improving maintainability before Slice 2 dual-write work begins.
+- **Touch points.**
+  - Add a `multi_embedding_experiment`-gated trait (e.g., `ExperimentalEmbeddingDatabaseExt`) within `crates/ploke-db/src/multi_embedding_experiment.rs` or nearby, implemented for `Database`, exposing helper methods such as `create_idx`, `search_embeddings_hnsw`, `vector_rows`, and `vector_metadata_rows`.
+  - Replace ad-hoc in-test query construction with calls to the adapter methods so Cozo snippets live in one place and every call site benefits from typed `DbError` propagation.
+  - Extend `DbError` docs/tests if additional error variants are needed while keeping the existing feature flag coverage.
+- **Tests & evidence.**
+  - Add targeted unit/integration tests that cover happy-path + failure-path behavior for each adapter method (creation failures, missing relations, malformed query results) plus edge cases (e.g., querying nodes with no embeddings or multiple hits for HNSW).
+  - Update the experimental test module to call the adapter trait and ensure no remaining `should_panic` tests exist; failure cases should assert on the returned `DbError`.
+  - Record results under `target/test-output/embedding/slice1-schema.json` (or a follow-up artifact noted in the telemetry plan) to show the adapter coverage before unlocking Slice 2.
+- **Docs/report updates.** Note this sub-phase in the implementation log (`governance/implementation-log-025.md`) and annotate `telemetry_evidence_plan.md`/reports if additional artifacts are produced.
+- **Exit criteria.** Trait consumed across the experiment module, new tests green with feature flag enabled, and governance docs updated so Slice 2 can leverage the centralized adapter.
+
 ## Slice 2 – Database dual write/read helpers
 - **Goal.** Teach `ploke-db` to dual-write into the new embedding relations and dual-read when the flag is ON, while keeping legacy columns for compatibility.
 - **Touch points.**
@@ -66,6 +79,7 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
   - Regression tests proving `/embedding list|use|drop|prune` operate on the new relations only.
   - Artifact: `target/test-output/embedding/slice4-release.json` plus live artifacts per provider.
 - **Docs.** Update `required-groundwork.md`, this plan, and the agentic implementation log with completion evidence and follow-up tasks.
+  - When removing transitional feature flags, ensure `crates/ploke-db/src/error.rs` (which holds the `#[cfg(feature = "multi_embedding_experiment")]` error variants) is updated so the DbError enum no longer depends on the temporary cfg.
 - **Telemetry artifacts.** Generate slice 4 offline/live reports (including soak results) per `telemetry_evidence_plan.md`.
 
 ## Tracking & Reporting

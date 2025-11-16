@@ -2,6 +2,11 @@
 
 This is a list of known fixes that I will want to make but are not terribly urgent.
 
+## Organization
+
+ * [ ] Semantic Versioning: Start following semantic versioning
+ * [ ] Changelog: introduce a central changelog document
+
 ## Nodes
  * [ ] Change `VariantNode`'s field `discriminant` from `String` to a number.
     *  [ ] Change [node_definition](/crates/ingest/syn_parser/src/parser/nodes/enums.rs)

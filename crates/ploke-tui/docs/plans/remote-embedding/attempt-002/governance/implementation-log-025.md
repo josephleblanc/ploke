@@ -39,3 +39,19 @@
 
 ## Recent updates
 - Confirmed user-approved shift to runtime-created per-dimension vector relations (create the `<F32; dims>` relation on demand, validate via `::relations`/`::columns`). Execution + fixture plans now mention the `ensure_embedding_relation` helper so future slices follow the same approach.
+
+## Progress — 2025-11-15 (Slice 1 Phase A status)
+- Re-reviewed the Slice 1 planning hub plus the experimental scaffolding expectations to realign on scope before making additional edits. Cross-referenced README, execution plan, feature flag doc, experimental fixtures plan, and telemetry evidence plan.
+- Audited `crates/ploke-db/src/multi_embedding_experiment.rs` and `crates/ploke-db/src/error.rs` to capture the current runtime-per-dimension approach: each embedding vector relation is created dynamically through helpers that enforce `<F32; dims>` column widths, while `ExperimentalEmbeddingDbExt` centralizes metadata/vector queries and reports typed `DbError` variants for missing relations, layout mismatches, metadata parse errors, and unsupported dimensions.
+- Confirmed that tests iterate over every node type spec plus the new helper trait, aligning with Phase A requirements (schema validation + metadata/vector parity) and highlighting that all negative paths now rely on typed errors rather than generic panics.
+- Next coordination items: document results of the next targeted test run (`cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment`) with artifacts under `target/test-output/embedding/` and begin the Phase B fixture work called out in `experimental_fixtures_plan.md`.
+
+## Progress — 2025-11-15 (Phase 1.5 adapter refinement)
+- Added a new Phase 1.5 sub-section to the execution plan describing the Database adapter trait milestone, its gating, and evidence expectations so reviewers can track the interim refinement before Slice 2.
+- Implemented `ExperimentalEmbeddingDatabaseExt` on `Database` with strongly typed helpers (`create_idx`, `search_embeddings_hnsw`, `vector_rows`, `vector_metadata_rows`) that encapsulate the Cozo scripts previously duplicated across the experiment tests. All call sites in `multi_embedding_experiment.rs` now rely on these methods, ensuring errors surface as `DbError::ExperimentalScriptFailure` variants tied to the adapter methods rather than ad-hoc `unwrap`/panic flows.
+- Added helper utilities plus extensive adapter-focused tests covering happy paths, failure cases (missing relations, absent indexes), and edge scenarios (empty query results, multi-hit HNSW searches). Test command: `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment` (passed with existing observability warnings unrelated to this change). Evidence to be summarized under the Slice 1 artifact set when collected.
+
+## Progress — 2025-11-15 (Phase 1.5 ship readiness polish)
+- Layered the adapter traits so `ExperimentalEmbeddingDatabaseExt` now extends a public `ExperimentalEmbeddingDbExt`, and implemented the base trait for both `Db<MemStorage>` and `Database`. This keeps the API stable while still allowing alternate backends to plug in later.
+- Added `HnswDistance` to `create_idx` so we can switch between L2/Cosine/IP metrics per Cozo docs, cached the supported-dimension set via `lazy_static!`, and guarded vector relation creation to avoid redundant `:create` calls.
+- Expanded negative coverage with a metadata-parse failure test and ensured helper calls propagate `DbError::ExperimentalMetadataParse` instead of panicking. All adapter tests now pass via `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment`.

@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, HashSet};
 
-use cozo::{self, DataValue, Db, MemStorage, Num, ScriptMutability, UuidWrapper};
+use crate::database::Database;
+use crate::error::DbError;
+use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
+use lazy_static::lazy_static;
+use std::ops::Deref;
 use uuid::Uuid;
 
 const ID_KEYWORDS: [&str; 9] = [
@@ -144,6 +148,23 @@ struct VectorDimensionSpec {
     hnsw_search_ef: i64,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum HnswDistance {
+    L2,
+    Cosine,
+    Ip,
+}
+
+impl HnswDistance {
+    fn as_str(&self) -> &'static str {
+        match self {
+            HnswDistance::L2 => "L2",
+            HnswDistance::Cosine => "Cosine",
+            HnswDistance::Ip => "IP",
+        }
+    }
+}
+
 const VECTOR_DIMENSION_SPECS: [VectorDimensionSpec; 4] = [
     VectorDimensionSpec {
         dims: 384,
@@ -183,22 +204,357 @@ const VECTOR_DIMENSION_SPECS: [VectorDimensionSpec; 4] = [
     },
 ];
 
-fn supported_dimension_set() -> HashSet<i64> {
-    VECTOR_DIMENSION_SPECS
+lazy_static! {
+    static ref SUPPORTED_DIMENSION_SET: HashSet<i64> = VECTOR_DIMENSION_SPECS
         .iter()
         .map(|spec| spec.dims)
-        .collect()
+        .collect();
 }
 
-#[derive(Copy, Clone)]
+fn supported_dimension_set() -> &'static HashSet<i64> {
+    &SUPPORTED_DIMENSION_SET
+}
+
+pub trait ExperimentalEmbeddingDbExt {
+    fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError>;
+    fn assert_vector_column_layout(
+        &self,
+        relation_name: &str,
+        dims: i64,
+    ) -> Result<(), DbError>;
+    fn enumerate_metadata_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError>;
+    fn enumerate_vector_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError>;
+}
+
+impl ExperimentalEmbeddingDbExt for Db<MemStorage> {
+    fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError> {
+        let rows = self
+            .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "relations_lookup",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })?;
+        let found = rows.rows.iter().any(|row| {
+            row.iter().any(|value| {
+                value
+                    .get_str()
+                    .map(|name| name == relation_name)
+                    .unwrap_or(false)
+            })
+        });
+        if found {
+            Ok(())
+        } else {
+            Err(DbError::ExperimentalRelationMissing {
+                relation: relation_name.to_string(),
+            })
+        }
+    }
+
+    fn assert_vector_column_layout(
+        &self,
+        relation_name: &str,
+        dims: i64,
+    ) -> Result<(), DbError> {
+        let script = format!("::columns {}", relation_name);
+        let rows = self
+            .run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "columns_lookup",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })?;
+        let mut matches = 0;
+        for row in &rows.rows {
+            let column_name = row
+                .get(0)
+                .and_then(DataValue::get_str)
+                .map(|s| s == "vector")
+                .unwrap_or(false);
+            let column_type = row
+                .get(3)
+                .and_then(DataValue::get_str)
+                .map(|s| s == format!("<F32;{dims}>"))
+                .unwrap_or(false);
+            if column_name && column_type {
+                matches += 1;
+            }
+        }
+        if matches == 1 {
+            Ok(())
+        } else {
+            Err(DbError::ExperimentalVectorLayoutMismatch {
+                relation: relation_name.to_string(),
+                dims,
+            })
+        }
+    }
+
+    fn enumerate_metadata_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        let query = format!(
+            r#"
+?[embeddings] :=
+    *{rel}{{ embeddings @ 'NOW' }}
+"#,
+            rel = relation_name,
+        );
+        let rows = self
+            .run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "metadata_query",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })?;
+        let mut values = HashSet::new();
+        for row in &rows.rows {
+            for entry in parse_embedding_metadata(&row[0])? {
+                values.insert(entry);
+            }
+        }
+        Ok(values)
+    }
+
+    fn enumerate_vector_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        let query = format!(
+            r#"
+?[embedding_model, embedding_dims] :=
+    *{rel}{{ embedding_model, embedding_dims @ 'NOW' }}
+"#,
+            rel = relation_name,
+        );
+        let rows = self
+            .run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "vector_query",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })?;
+        let mut entries = HashSet::new();
+        for row in &rows.rows {
+            let model = row[0]
+                .get_str()
+                .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                    reason: format!(
+                        "embedding_model should be string for relation {relation_name}"
+                    ),
+                })?
+                .to_string();
+            let dims = match &row[1] {
+                DataValue::Num(Num::Int(val)) => *val,
+                other => {
+                    return Err(DbError::ExperimentalMetadataParse {
+                        reason: format!(
+                            "embedding_dims must be integer for relation {relation_name}, got {other:?}"
+                        ),
+                    })
+                }
+            };
+            entries.insert((model, dims));
+        }
+        Ok(entries)
+    }
+}
+
+impl ExperimentalEmbeddingDbExt for Database {
+    fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::ensure_relation_registered(
+            self.deref(),
+            relation_name,
+        )
+    }
+
+    fn assert_vector_column_layout(
+        &self,
+        relation_name: &str,
+        dims: i64,
+    ) -> Result<(), DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::assert_vector_column_layout(
+            self.deref(),
+            relation_name,
+            dims,
+        )
+    }
+
+    fn enumerate_metadata_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::enumerate_metadata_models(
+            self.deref(),
+            relation_name,
+        )
+    }
+
+    fn enumerate_vector_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::enumerate_vector_models(
+            self.deref(),
+            relation_name,
+        )
+    }
+}
+
+pub trait ExperimentalEmbeddingDatabaseExt: ExperimentalEmbeddingDbExt {
+    fn create_idx(
+        &self,
+        relation_name: &str,
+        dims: i64,
+        m: i64,
+        ef_construction: i64,
+        distance: HnswDistance,
+    ) -> Result<(), DbError>;
+    fn search_embeddings_hnsw(
+        &self,
+        relation_name: &str,
+        query_literal: &str,
+        k: i64,
+        ef: i64,
+    ) -> Result<NamedRows, DbError>;
+    fn vector_rows(&self, relation_name: &str, node_id: Uuid) -> Result<NamedRows, DbError>;
+    fn vector_metadata_rows(
+        &self,
+        relation_name: &str,
+        node_id: Uuid,
+    ) -> Result<NamedRows, DbError>;
+}
+
+impl ExperimentalEmbeddingDatabaseExt for Database {
+    fn create_idx(
+        &self,
+        relation_name: &str,
+        dims: i64,
+        m: i64,
+        ef_construction: i64,
+        distance: HnswDistance,
+    ) -> Result<(), DbError> {
+        let script = format!(
+            r#"
+::hnsw create {rel}:vector_idx {{
+    fields: [vector],
+    dim: {dims},
+    dtype: F32,
+    m: {m},
+    ef_construction: {ef_construction},
+    distance: {distance}
+}}
+"#,
+            rel = relation_name,
+            dims = dims,
+            m = m,
+            ef_construction = ef_construction,
+            distance = distance.as_str(),
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "create_idx",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn search_embeddings_hnsw(
+        &self,
+        relation_name: &str,
+        query_literal: &str,
+        k: i64,
+        ef: i64,
+    ) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[node_id, distance] :=
+    ~{rel}:vector_idx{{ node_id |
+        query: {query},
+        k: {k},
+        ef: {ef},
+        bind_distance: distance
+    }}
+"#,
+            rel = relation_name,
+            query = query_literal,
+            k = k,
+            ef = ef,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "search_embeddings_hnsw",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn vector_rows(&self, relation_name: &str, node_id: Uuid) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[embedding_model, provider, embedding_dims, vector] :=
+    *{rel}{{ node_id, embedding_model, provider, embedding_dims, vector @ 'NOW' }},
+    node_id = to_uuid("{node_id}")
+"#,
+            rel = relation_name,
+            node_id = node_id,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "vector_rows",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn vector_metadata_rows(
+        &self,
+        relation_name: &str,
+        node_id: Uuid,
+    ) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[embeddings] :=
+    *{rel}{{ id, embeddings @ 'NOW' }},
+    id = to_uuid("{node_id}")
+"#,
+            rel = relation_name,
+            node_id = node_id,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "vector_metadata_rows",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+}
+#[derive(Copy, Clone, Debug)]
 struct ExperimentalVectorRelation {
     dims: i64,
     relation_base: &'static str,
 }
 
 impl ExperimentalVectorRelation {
-    const fn new(dims: i64, relation_base: &'static str) -> Self {
-        Self { dims, relation_base }
+    fn try_new(dims: i64, relation_base: &'static str) -> Result<Self, DbError> {
+        if supported_dimension_set().contains(&dims) {
+            Ok(Self { dims, relation_base })
+        } else {
+            Err(DbError::UnsupportedEmbeddingDimension { dims })
+        }
+    }
+
+    fn new(dims: i64, relation_base: &'static str) -> Self {
+        Self::try_new(dims, relation_base).expect("dimension must be supported")
     }
 
     fn dims(&self) -> i64 {
@@ -419,7 +775,7 @@ fn insert_vector_row(
     relation: &ExperimentalVectorRelation,
     node_id: Uuid,
     dim_spec: &VectorDimensionSpec,
-) -> Result<(), cozo::Error> {
+) -> Result<(), DbError> {
     let identity = relation.script_identity();
     let literal = vector_literal(dim_spec.dims as usize, dim_spec.offset);
     let script = format!(
@@ -440,64 +796,49 @@ fn insert_vector_row(
         vector_literal = literal,
         identity = identity,
     );
-    db.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)?;
+    db.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+        .map_err(|err| DbError::ExperimentalScriptFailure {
+            action: "insert_vector_row",
+            relation: relation.relation_name(),
+            details: err.to_string(),
+        })?;
     Ok(())
 }
 
-fn ensure_relation_registered(db: &Db<MemStorage>, relation_name: &str) {
-    let rows = db
-        .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
-        .unwrap_or_else(|err| panic!("query ::relations failed for {relation_name}: {err}"));
-    let mut found = false;
-    for row in &rows.rows {
-        if row.iter().any(|value| {
-            value
-                .get_str()
-                .map(|name| name == relation_name)
-                .unwrap_or(false)
-        }) {
-            found = true;
-            break;
+fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String, i64)>, DbError> {
+    let entries = value.get_slice().ok_or_else(|| DbError::ExperimentalMetadataParse {
+        reason: "embeddings column should contain a list".into(),
+    })?;
+    let mut parsed = Vec::new();
+    for entry in entries {
+        let tuple = entry.get_slice().ok_or_else(|| DbError::ExperimentalMetadataParse {
+            reason: "embedding metadata tuple should be a list".into(),
+        })?;
+        if tuple.len() != 2 {
+            return Err(DbError::ExperimentalMetadataParse {
+                reason: "embedding metadata tuples must be (model, dims)".into(),
+            });
         }
+        let model = tuple[0].get_str().ok_or_else(|| DbError::ExperimentalMetadataParse {
+            reason: "tuple[0] should be embedding model string".into(),
+        })?;
+        let dims = match &tuple[1] {
+            DataValue::Num(Num::Int(val)) => *val,
+            other => {
+                return Err(DbError::ExperimentalMetadataParse {
+                    reason: format!("tuple[1] must be integer dimensions, got {other:?}"),
+                })
+            }
+        };
+        parsed.push((model.to_string(), dims));
     }
-    assert!(
-        found,
-        "expected relation {} to be registered",
-        relation_name
-    );
-}
-
-fn assert_vector_column_layout(db: &Db<MemStorage>, relation_name: &str, dims: i64) {
-    let script = format!("::columns {}", relation_name);
-    let rows = db
-        .run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
-        .unwrap_or_else(|err| panic!("query ::columns failed for {relation_name}: {err}"));
-    let mut matches = 0;
-    for row in &rows.rows {
-        let column_name = row
-            .get(0)
-            .and_then(DataValue::get_str)
-            .map(|s| s == "vector")
-            .unwrap_or(false);
-        let column_type = row
-            .get(3)
-            .and_then(DataValue::get_str)
-            .map(|s| s == format!("<F32;{dims}>"))
-            .unwrap_or(false);
-        if column_name && column_type {
-            matches += 1;
-        }
-    }
-    assert!(
-        matches == 1,
-        "expected vector column for {relation_name} with dims {dims}, rows: {:?}",
-        rows.rows
-    );
+    Ok(parsed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{ExperimentalEmbeddingDatabaseExt, ExperimentalEmbeddingDbExt};
 
     struct SampleNodeData {
         node_id: Uuid,
@@ -586,54 +927,294 @@ mod tests {
         },
     ];
 
-    #[test]
-    fn validates_multi_embedding_schema_for_all_nodes() {
-        for spec in EXPERIMENTAL_NODE_SPECS {
-            validate_schema_spec(spec);
-        }
-    }
-
-    fn validate_schema_spec(spec: &ExperimentalNodeSpec) {
+    fn seed_metadata_relation(
+        spec: &ExperimentalNodeSpec,
+    ) -> Result<(Database, SampleNodeData), DbError> {
         let db = init_db();
+        let relation_name = spec.metadata_schema.relation().to_string();
         db.run_script(
             &spec.metadata_schema.script_create(),
             BTreeMap::new(),
             ScriptMutability::Mutable,
         )
-        .unwrap_or_else(|err| panic!("create {} relation failed: {err}", spec.name));
+        .map_err(|err| DbError::ExperimentalScriptFailure {
+            action: "schema_create",
+            relation: relation_name,
+            details: err.to_string(),
+        })?;
 
         let sample = (spec.sample_builder)();
+        insert_metadata_sample(&db, spec, &sample)?;
+        Ok((db, sample))
+    }
+
+    fn insert_metadata_sample(
+        db: &Database,
+        spec: &ExperimentalNodeSpec,
+        sample: &SampleNodeData,
+    ) -> Result<(), DbError> {
         let insert_script = spec.metadata_schema.script_put(&sample.params);
         db.run_script(
             &insert_script,
             sample.params.clone(),
             ScriptMutability::Mutable,
         )
-        .unwrap_or_else(|err| panic!("insert {} row failed: {err}", spec.name));
+        .map_err(|err| DbError::ExperimentalScriptFailure {
+            action: "metadata_insert",
+            relation: spec.metadata_schema.relation().to_string(),
+            details: err.to_string(),
+        })
+        .map(|_| ())
+    }
 
-        let metadata_query = format!(
-            r#"
-?[embeddings] :=
-    *{rel}{{ id, embeddings @ 'NOW' }},
-    id = to_uuid("{node_id}")
-"#,
-            rel = spec.metadata_schema.relation(),
-            node_id = sample.node_id,
-        );
-        let metadata_rows = db
-            .run_script(
-                &metadata_query,
-                BTreeMap::new(),
-                ScriptMutability::Immutable,
+    fn default_spec() -> &'static ExperimentalNodeSpec {
+        &EXPERIMENTAL_NODE_SPECS[0]
+    }
+
+    fn seed_vector_relation_for_node(
+        db: &Database,
+        spec: &ExperimentalNodeSpec,
+        node_id: Uuid,
+        dim_spec: &VectorDimensionSpec,
+    ) -> Result<ExperimentalVectorRelation, DbError> {
+        let vector_relation =
+            ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+        let relation_name = vector_relation.relation_name();
+        match db.ensure_relation_registered(&relation_name) {
+            Ok(()) => {}
+            Err(DbError::ExperimentalRelationMissing { .. }) => {
+                let create_script = vector_relation.script_create();
+                db.run_script(&create_script, BTreeMap::new(), ScriptMutability::Mutable)
+                    .map_err(|err| DbError::ExperimentalScriptFailure {
+                        action: "vector_relation_create",
+                        relation: relation_name.clone(),
+                        details: err.to_string(),
+                    })?;
+            }
+            Err(other) => return Err(other),
+        }
+        insert_vector_row(db, &vector_relation, node_id, dim_spec)?;
+        Ok(vector_relation)
+    }
+
+    #[test]
+    fn validates_multi_embedding_schema_for_all_nodes() {
+        for spec in EXPERIMENTAL_NODE_SPECS {
+            validate_schema_spec(spec).expect("multi embedding schema validation");
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_embedding_dimension() {
+        let err = ExperimentalVectorRelation::try_new(999, "function_embedding_vectors")
+            .expect_err("unsupported dims should return error");
+        assert!(matches!(
+            err,
+            DbError::UnsupportedEmbeddingDimension { dims } if dims == 999
+        ));
+    }
+
+    #[test]
+    fn adapter_vector_metadata_rows_returns_row() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let rows = db
+            .vector_metadata_rows(spec.metadata_schema.relation(), sample.node_id)
+            .expect("metadata rows");
+        assert_eq!(rows.rows.len(), 1, "expected single metadata row");
+    }
+
+    #[test]
+    fn adapter_vector_metadata_rows_errors_when_relation_missing() {
+        let db = init_db();
+        let err = db
+            .vector_metadata_rows("unknown_relation", Uuid::new_v4())
+            .expect_err("missing metadata relation should error");
+        assert!(matches!(
+            err,
+            DbError::ExperimentalScriptFailure { action, .. } if action == "vector_metadata_rows"
+        ));
+    }
+
+    #[test]
+    fn adapter_vector_rows_returns_row() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        let rows = db
+            .vector_rows(&relation.relation_name(), sample.node_id)
+            .expect("vector rows");
+        assert_eq!(rows.rows.len(), 1, "expected vector row");
+    }
+
+    #[test]
+    fn adapter_vector_rows_errors_when_relation_missing() {
+        let db = init_db();
+        let err = db
+            .vector_rows("unknown_relation", Uuid::new_v4())
+            .expect_err("missing vector relation should error");
+        assert!(matches!(
+            err,
+            DbError::ExperimentalScriptFailure { action, .. } if action == "vector_rows"
+        ));
+    }
+
+    #[test]
+    fn adapter_create_idx_succeeds_for_existing_relation() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        db.create_idx(
+            &relation.relation_name(),
+            dim_spec.dims,
+            dim_spec.hnsw_m,
+            dim_spec.hnsw_ef_construction,
+            HnswDistance::L2,
+        )
+        .expect("create idx");
+    }
+
+    #[test]
+    fn adapter_create_idx_errors_when_relation_missing() {
+        let db = init_db();
+        let err = db
+            .create_idx("unknown_relation", 384, 16, 64, HnswDistance::L2)
+            .expect_err("missing relation should error");
+        assert!(matches!(
+            err,
+            DbError::ExperimentalScriptFailure { action, .. } if action == "create_idx"
+        ));
+    }
+
+    #[test]
+    fn adapter_search_embeddings_hnsw_returns_match() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        db.create_idx(
+            &relation.relation_name(),
+            dim_spec.dims,
+            dim_spec.hnsw_m,
+            dim_spec.hnsw_ef_construction,
+            HnswDistance::L2,
+        )
+        .expect("create idx");
+        let query_vec = vector_literal(dim_spec.dims as usize, dim_spec.offset);
+        let rows = db
+            .search_embeddings_hnsw(
+                &relation.relation_name(),
+                &query_vec,
+                1,
+                dim_spec.hnsw_search_ef,
             )
-            .unwrap_or_else(|err| panic!("query {} metadata failed: {err}", spec.name));
-        assert_eq!(
-            metadata_rows.rows.len(),
-            1,
-            "expected metadata row for {}",
-            spec.name
+            .expect("search rows");
+        assert_eq!(rows.rows.len(), 1, "expected single search result");
+    }
+
+    #[test]
+    fn adapter_search_embeddings_hnsw_errors_without_index() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        let query_vec = vector_literal(dim_spec.dims as usize, dim_spec.offset);
+        let err = db
+            .search_embeddings_hnsw(
+                &relation.relation_name(),
+                &query_vec,
+                1,
+                dim_spec.hnsw_search_ef,
+            )
+            .expect_err("missing index should error");
+        assert!(matches!(
+            err,
+            DbError::ExperimentalScriptFailure { action, .. } if action == "search_embeddings_hnsw"
+        ));
+    }
+
+    #[test]
+    fn adapter_vector_rows_returns_empty_for_unknown_node() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        let random_node = Uuid::new_v4();
+        let rows = db
+            .vector_rows(&relation.relation_name(), random_node)
+            .expect("vector rows");
+        assert!(
+            rows.rows.is_empty(),
+            "expected empty rows for unknown node id"
         );
-        let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0]);
+    }
+
+    #[test]
+    fn parse_embedding_metadata_errors_on_invalid_tuple() {
+        let bad_value = DataValue::List(vec![DataValue::List(vec![
+            DataValue::Str("test-model".into()),
+            DataValue::Str("not-an-int".into()),
+        ])]);
+        let err = parse_embedding_metadata(&bad_value)
+            .expect_err("invalid tuple should raise metadata parse error");
+        assert!(matches!(
+            err,
+            DbError::ExperimentalMetadataParse { reason } if reason.contains("tuple[1]")
+        ));
+    }
+
+    #[test]
+    fn adapter_search_embeddings_hnsw_returns_multiple_results_when_k_is_two() {
+        let spec = default_spec();
+        let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+        let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+        let relation =
+            seed_vector_relation_for_node(&db, spec, sample.node_id, dim_spec).expect("vector");
+        let second_sample = (spec.sample_builder)();
+        insert_metadata_sample(&db, spec, &second_sample).expect("insert second metadata");
+        insert_vector_row(&db, &relation, second_sample.node_id, dim_spec)
+            .expect("insert second vector");
+        db.create_idx(
+            &relation.relation_name(),
+            dim_spec.dims,
+            dim_spec.hnsw_m,
+            dim_spec.hnsw_ef_construction,
+            HnswDistance::L2,
+        )
+        .expect("create idx");
+        let query_vec = vector_literal(dim_spec.dims as usize, dim_spec.offset);
+        let rows = db
+            .search_embeddings_hnsw(
+                &relation.relation_name(),
+                &query_vec,
+                2,
+                dim_spec.hnsw_search_ef,
+            )
+            .expect("search rows");
+        assert!(
+            rows.rows.len() >= 2,
+            "expected at least two search results for k=2"
+        );
+    }
+
+    fn validate_schema_spec(spec: &ExperimentalNodeSpec) -> Result<(), DbError> {
+        let (db, sample) = seed_metadata_relation(spec)?;
+        let relation_name = spec.metadata_schema.relation().to_string();
+
+        let metadata_rows = db.vector_metadata_rows(&relation_name, sample.node_id)?;
+        if metadata_rows.rows.len() != 1 {
+            return Err(DbError::ExperimentalMetadataParse {
+                reason: format!("expected metadata row for {}", spec.name),
+            });
+        }
+        let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
         assert_eq!(
             metadata_entries.len(),
             VECTOR_DIMENSION_SPECS.len(),
@@ -643,54 +1224,57 @@ mod tests {
         );
         let metadata_set: HashSet<(String, i64)> =
             metadata_entries.into_iter().collect::<HashSet<_>>();
+        let enumerated_metadata = db
+            .enumerate_metadata_models(spec.metadata_schema.relation())
+            .expect("enumerate metadata");
+        assert_eq!(
+            metadata_set, enumerated_metadata,
+            "metadata enumeration should match parsed tuples for {}",
+            spec.name
+        );
 
         let mut vector_set = HashSet::new();
         let mut observed_dim_relations = HashSet::new();
 
         for dim_spec in VECTOR_DIMENSION_SPECS {
             let vector_relation =
-                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
-            let create_script = vector_relation.script_create();
-            db.run_script(&create_script, BTreeMap::new(), ScriptMutability::Mutable)
-                .unwrap_or_else(|err| panic!("create {} vectors failed: {err}", spec.name));
-            insert_vector_row(&db, &vector_relation, sample.node_id, &dim_spec)
-                .unwrap_or_else(|err| panic!("insert {} vectors failed: {err}", spec.name));
+                seed_vector_relation_for_node(&db, spec, sample.node_id, &dim_spec)?;
 
             let relation_name = vector_relation.relation_name();
-            ensure_relation_registered(&db, &relation_name);
-            assert_vector_column_layout(&db, &relation_name, dim_spec.dims);
+            db.ensure_relation_registered(&relation_name)
+                .expect("relation should exist");
+            db.assert_vector_column_layout(&relation_name, dim_spec.dims)
+                .expect("vector layout must match");
 
-            let vector_query = format!(
-                r#"
-?[embedding_model, provider, embedding_dims, vector] :=
-    *{rel}{{ node_id, embedding_model, provider, embedding_dims, vector @ 'NOW' }},
-    node_id = to_uuid("{node_id}")
-"#,
-                rel = relation_name,
-                node_id = sample.node_id,
-            );
-            let vector_rows = db
-                .run_script(&vector_query, BTreeMap::new(), ScriptMutability::Immutable)
-                .unwrap_or_else(|err| panic!("query {} vectors failed: {err}", spec.name));
-            assert_eq!(
-                vector_rows.rows.len(),
-                1,
-                "expected single vector row for {} dimension {}",
-                spec.name,
-                dim_spec.dims
-            );
+            let vector_rows = db.vector_rows(&relation_name, sample.node_id)?;
+            if vector_rows.rows.len() != 1 {
+                return Err(DbError::ExperimentalMetadataParse {
+                    reason: format!(
+                        "expected single vector row for {} dimension {}",
+                        spec.name, dim_spec.dims
+                    ),
+                });
+            }
             let row = &vector_rows.rows[0];
             let model = row[0]
                 .get_str()
-                .expect("embedding_model must be string")
+                .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                    reason: "embedding_model must be string".into(),
+                })?
                 .to_string();
             let provider = row[1]
                 .get_str()
-                .expect("provider must be string")
+                .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                    reason: "provider must be string".into(),
+                })?
                 .to_string();
             let dims_val = match &row[2] {
                 DataValue::Num(Num::Int(val)) => *val,
-                other => panic!("embedding_dims must be integer, got {other:?}"),
+                other => {
+                    return Err(DbError::ExperimentalMetadataParse {
+                        reason: format!("embedding_dims must be integer, got {other:?}"),
+                    })
+                }
             };
             assert_eq!(
                 dims_val, dim_spec.dims,
@@ -716,10 +1300,66 @@ mod tests {
             "metadata tuples must align with vector rows for {}",
             spec.name
         );
+        let mut enumerated_vectors = HashSet::new();
+        for dim_spec in VECTOR_DIMENSION_SPECS {
+            let relation =
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+            enumerated_vectors.extend(
+                db.enumerate_vector_models(&relation.relation_name())
+                    .expect("enumerate vectors"),
+            );
+        }
+        assert_eq!(
+            enumerated_vectors, metadata_set,
+            "vector enumeration should list the same models for {}",
+            spec.name
+        );
         assert_eq!(
             observed_dim_relations,
-            supported_dimension_set(),
+            supported_dimension_set().clone(),
             "must observe every supported dimension relation for {}",
+            spec.name
+        );
+
+        let second_sample = (spec.sample_builder)();
+        let second_node_id = second_sample.node_id;
+        let second_insert = spec.metadata_schema.script_put(&second_sample.params);
+        db.run_script(
+            &second_insert,
+            second_sample.params.clone(),
+            ScriptMutability::Mutable,
+        )
+        .map_err(|err| DbError::ExperimentalScriptFailure {
+            action: "metadata_insert",
+            relation: relation_name.clone(),
+            details: err.to_string(),
+        })?;
+        for dim_spec in VECTOR_DIMENSION_SPECS {
+            let vector_relation =
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+            insert_vector_row(&db, &vector_relation, second_sample.node_id, &dim_spec)?;
+        }
+
+        let dedup_metadata = db
+            .enumerate_metadata_models(spec.metadata_schema.relation())
+            .expect("dedup metadata");
+        assert_eq!(
+            dedup_metadata, metadata_set,
+            "metadata enumeration must dedupe across rows for {}",
+            spec.name
+        );
+        let mut dedup_vectors = HashSet::new();
+        for dim_spec in VECTOR_DIMENSION_SPECS {
+            let relation =
+                ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
+            dedup_vectors.extend(
+                db.enumerate_vector_models(&relation.relation_name())
+                    .expect("dedup vectors"),
+            );
+        }
+        assert_eq!(
+            dedup_vectors, metadata_set,
+            "vector enumeration must dedupe across rows for {}",
             spec.name
         );
 
@@ -727,65 +1367,50 @@ mod tests {
             let relation =
                 ExperimentalVectorRelation::new(dim_spec.dims, spec.vector_relation_base);
             let relation_name = relation.relation_name();
-            let create_idx = format!(
-                r#"
-::hnsw create {rel}:vector_idx {{
-    fields: [vector],
-    dim: {dims},
-    dtype: F32,
-    m: {m},
-    ef_construction: {ef_construction},
-    distance: L2
-}}
-"#,
-                rel = relation_name,
-                dims = dim_spec.dims,
-                m = dim_spec.hnsw_m,
-                ef_construction = dim_spec.hnsw_ef_construction,
-            );
-            db.run_script(&create_idx, BTreeMap::new(), ScriptMutability::Mutable)
-                .unwrap_or_else(|err| panic!("create {} index failed: {err}", spec.name));
+            db.create_idx(
+                &relation_name,
+                dim_spec.dims,
+                dim_spec.hnsw_m,
+                dim_spec.hnsw_ef_construction,
+                HnswDistance::L2,
+            )?;
 
             let query_vec = vector_literal(dim_spec.dims as usize, dim_spec.offset);
-            let search_script = format!(
-                r#"
-?[node_id, distance] :=
-    ~{rel}:vector_idx{{ node_id |
-        query: {query},
-        k: 1,
-        ef: {ef},
-        bind_distance: distance
-    }}
-"#,
-                rel = relation_name,
-                query = query_vec,
-                ef = dim_spec.hnsw_search_ef,
-            );
-            let search_rows = db
-                .run_script(&search_script, BTreeMap::new(), ScriptMutability::Immutable)
-                .unwrap_or_else(|err| panic!("search {} index failed: {err}", spec.name));
-            assert_eq!(
-                search_rows.rows.len(),
-                1,
-                "expected single HNSW match for {} ({})",
-                spec.name,
-                dim_spec.dims
-            );
+            let search_rows =
+                db.search_embeddings_hnsw(&relation_name, &query_vec, 1, dim_spec.hnsw_search_ef)?;
+            if search_rows.rows.len() != 1 {
+                return Err(DbError::ExperimentalMetadataParse {
+                    reason: format!(
+                        "expected single HNSW match for {} ({})",
+                        spec.name, dim_spec.dims
+                    ),
+                });
+            }
             match search_rows.rows[0][0] {
-                DataValue::Uuid(UuidWrapper(id)) => assert_eq!(
-                    id, sample.node_id,
-                    "HNSW should return node id for {} ({})",
-                    spec.name, dim_spec.dims
-                ),
-                _ => panic!("expected uuid result from HNSW query"),
+                DataValue::Uuid(UuidWrapper(id)) => {
+                    if id != sample.node_id && id != second_node_id {
+                        return Err(DbError::ExperimentalMetadataParse {
+                            reason: format!(
+                                "unexpected node id {id} returned for {} ({})",
+                                spec.name, dim_spec.dims
+                            ),
+                        });
+                    }
+                }
+                _ => {
+                    return Err(DbError::ExperimentalMetadataParse {
+                        reason: "expected uuid result from HNSW query".into(),
+                    })
+                }
             }
         }
+        Ok(())
     }
 
-    fn init_db() -> Db<MemStorage> {
+    fn init_db() -> Database {
         let db = Db::new(MemStorage::default()).expect("create db");
         db.initialize().expect("init db");
-        db
+        Database::new(db)
     }
 
     fn metadata_embeddings() -> DataValue {
@@ -1102,31 +1727,4 @@ mod tests {
         }
     }
 
-    fn parse_embedding_metadata(value: &DataValue) -> Vec<(String, i64)> {
-        let entries = value
-            .get_slice()
-            .expect("embeddings column should contain a list");
-        entries
-            .iter()
-            .map(|entry| {
-                let tuple = entry
-                    .get_slice()
-                    .expect("embedding metadata tuple should be a list");
-                assert_eq!(
-                    tuple.len(),
-                    2,
-                    "embedding metadata tuples must be (model, dims)"
-                );
-                let model = tuple[0]
-                    .get_str()
-                    .expect("tuple[0] should be embedding model string")
-                    .to_string();
-                let dims = match &tuple[1] {
-                    DataValue::Num(Num::Int(val)) => *val,
-                    other => panic!("tuple[1] must be integer dimensions, got {other:?}"),
-                };
-                (model, dims)
-            })
-            .collect()
-    }
 }

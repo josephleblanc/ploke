@@ -30,6 +30,30 @@ pub enum DbError {
 
     #[error("Error receiving message: {0}")]
     CrossBeamSend(String),
+
+    #[cfg(feature = "multi_embedding_experiment")]
+    #[error("Unsupported embedding dimension requested: {dims}")]
+    UnsupportedEmbeddingDimension { dims: i64 },
+
+    #[cfg(feature = "multi_embedding_experiment")]
+    #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
+    ExperimentalScriptFailure {
+        action: &'static str,
+        relation: String,
+        details: String,
+    },
+
+    #[cfg(feature = "multi_embedding_experiment")]
+    #[error("Experimental embedding relation {relation} not registered")]
+    ExperimentalRelationMissing { relation: String },
+
+    #[cfg(feature = "multi_embedding_experiment")]
+    #[error("Experimental embedding relation {relation} missing vector column for dims {dims}")]
+    ExperimentalVectorLayoutMismatch { relation: String, dims: i64 },
+
+    #[cfg(feature = "multi_embedding_experiment")]
+    #[error("Experimental embedding metadata parse error: {reason}")]
+    ExperimentalMetadataParse { reason: String },
 }
 
 #[derive(Error, Debug)]
