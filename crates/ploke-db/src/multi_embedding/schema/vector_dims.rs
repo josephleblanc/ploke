@@ -1,4 +1,6 @@
-use super::*;
+use std::collections::HashSet;
+
+use cozo::{DataValue, Num};
 use lazy_static::lazy_static;
 
 #[derive(Copy, Clone, Debug)]
@@ -53,11 +55,11 @@ lazy_static! {
         .collect();
 }
 
-fn supported_dimension_set() -> &'static HashSet<i64> {
+pub(crate) fn supported_dimension_set() -> &'static HashSet<i64> {
     &SUPPORTED_DIMENSION_SET
 }
 
-fn vector_literal(len: usize, offset: f32) -> String {
+pub(crate) fn vector_literal(len: usize, offset: f32) -> String {
     let values = (0..len)
         .map(|idx| format!("{:.6}", offset + (idx as f32 * 0.0001)))
         .collect::<Vec<_>>()

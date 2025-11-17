@@ -24,7 +24,7 @@ pub use ploke_core::NodeId;
 #[cfg(feature = "multi_embedding_schema")]
 use ploke_db::multi_embedding::{
     embedding_entry, experimental_node_relation_specs, vector_dimension_specs,
-    ExperimentalEmbeddingDbExt, ExperimentalNodeRelationSpec, ExperimentalVectorRelation,
+    ExperimentalNodeRelationSpec, ExperimentalVectorRelation,
 };
 #[cfg(feature = "multi_embedding_schema")]
 use ploke_db::DbError;
@@ -293,8 +293,10 @@ fn seed_metadata_rows(
     db: &ploke_db::Database,
     spec: &'static ExperimentalNodeRelationSpec,
 ) -> Result<Vec<Uuid>, ploke_error::Error> {
-    ensure_metadata_relation(db, spec)?;
-    let projection_fields = metadata_projection_fields(spec);
+    spec.metadata_schema
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+    let projection_fields = spec.metadata_projection_fields();
     if projection_fields.is_empty() {
         return Ok(Vec::new());
     }
@@ -350,7 +352,9 @@ fn seed_vector_rows(
     }
     for dim_spec in vector_dimension_specs() {
         let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
-        ensure_vector_relation(db, &relation)?;
+        relation
+            .ensure_registered(db)
+            .map_err(ploke_error::Error::from)?;
         for node_id in node_ids {
             relation
                 .insert_row(db, *node_id, dim_spec)
@@ -358,46 +362,6 @@ fn seed_vector_rows(
         }
     }
     Ok(())
-}
-
-#[cfg(feature = "multi_embedding_schema")]
-fn ensure_metadata_relation(
-    db: &ploke_db::Database,
-    spec: &ExperimentalNodeRelationSpec,
-) -> Result<(), ploke_error::Error> {
-    match db.ensure_relation_registered(spec.metadata_schema.relation()) {
-        Ok(()) => Ok(()),
-        Err(DbError::ExperimentalRelationMissing { .. }) => {
-            run_script(
-                db,
-                &spec.metadata_schema.script_create(),
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )?;
-            Ok(())
-        }
-        Err(err) => Err(ploke_error::Error::from(err)),
-    }
-}
-
-#[cfg(feature = "multi_embedding_schema")]
-fn ensure_vector_relation(
-    db: &ploke_db::Database,
-    relation: &ExperimentalVectorRelation,
-) -> Result<(), ploke_error::Error> {
-    match db.ensure_relation_registered(&relation.relation_name()) {
-        Ok(()) => Ok(()),
-        Err(DbError::ExperimentalRelationMissing { .. }) => {
-            run_script(
-                db,
-                &relation.script_create(),
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )?;
-            Ok(())
-        }
-        Err(err) => Err(ploke_error::Error::from(err)),
-    }
 }
 
 #[cfg(feature = "multi_embedding_schema")]

@@ -1,4 +1,14 @@
-use super::*;
+use std::collections::BTreeMap;
+use std::ops::Deref;
+
+use crate::database::Database;
+use crate::error::DbError;
+use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
+use crate::multi_embedding::schema::vector_dims::{
+    supported_dimension_set, vector_literal, VectorDimensionSpec,
+};
+use cozo::{Db, MemStorage, ScriptMutability};
+use uuid::Uuid;
 
 #[derive(Copy, Clone, Debug)]
 pub struct ExperimentalVectorRelation {
@@ -53,6 +63,25 @@ impl ExperimentalVectorRelation {
     ) -> Result<(), DbError> {
         insert_vector_row(db.deref(), self, node_id, dim_spec)
     }
+
+    pub fn ensure_registered(&self, db: &Database) -> Result<(), DbError> {
+        match db.ensure_relation_registered(&self.relation_name()) {
+            Ok(()) => Ok(()),
+            Err(DbError::ExperimentalRelationMissing { .. }) => db
+                .run_script(
+                    &self.script_create(),
+                    BTreeMap::new(),
+                    ScriptMutability::Mutable,
+                )
+                .map(|_| ())
+                .map_err(|err| DbError::ExperimentalScriptFailure {
+                    action: "vector_relation_create",
+                    relation: self.relation_name(),
+                    details: err.to_string(),
+                }),
+            Err(other) => Err(other),
+        }
+    }
 }
 
 fn insert_vector_row(
@@ -62,7 +91,7 @@ fn insert_vector_row(
     dim_spec: &VectorDimensionSpec,
 ) -> Result<(), DbError> {
     let identity = relation.script_identity();
-    let literal = vector_literal(dim_spec.dims as usize, dim_spec.offset);
+    let literal = vector_literal(dim_spec.dims() as usize, dim_spec.offset());
     let script = format!(
         r#"
 ?[node_id, embedding_model, provider, at, embedding_dims, vector] <- [[
@@ -75,9 +104,9 @@ fn insert_vector_row(
 ]] :put {identity}
 "#,
         node_id = node_id,
-        embedding_model = dim_spec.embedding_model,
-        provider = dim_spec.provider,
-        embedding_dims = dim_spec.dims,
+        embedding_model = dim_spec.embedding_model(),
+        provider = dim_spec.provider(),
+        embedding_dims = dim_spec.dims(),
         vector_literal = literal,
         identity = identity,
     );

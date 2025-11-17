@@ -1,13 +1,9 @@
-use super::*;
-
+use super::HnswDistance;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::database::Database;
 use crate::error::DbError;
-use crate::NodeType;
-use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
-use itertools::Itertools;
-use lazy_static::lazy_static;
+use cozo::{DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability};
 use std::ops::Deref;
 use uuid::Uuid;
 

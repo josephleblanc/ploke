@@ -1,20 +1,21 @@
 pub mod adapter;
 pub mod schema;
-pub mod seeding;
 pub mod vectors;
 
-use super::*;
+#[cfg(test)]
+mod seeding;
+#[cfg(test)]
+mod tests;
 
-use std::collections::{BTreeMap, HashSet};
-
-use crate::database::Database;
-use crate::error::DbError;
-use crate::NodeType;
-use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
-use itertools::Itertools;
-use lazy_static::lazy_static;
-use std::ops::Deref;
-use uuid::Uuid;
+pub use adapter::{ExperimentalEmbeddingDatabaseExt, ExperimentalEmbeddingDbExt};
+pub use schema::metadata::{CozoField, ExperimentalRelationSchema};
+pub use schema::node_specs::{
+    experimental_node_relation_specs, experimental_spec_for_node, ExperimentalNodeRelationSpec,
+};
+pub use schema::vector_dims::{
+    embedding_entry, vector_dimension_specs, VectorDimensionSpec, VECTOR_DIMENSION_SPECS,
+};
+pub use vectors::ExperimentalVectorRelation;
 
 #[derive(Copy, Clone, Debug)]
 pub enum HnswDistance {
@@ -24,7 +25,7 @@ pub enum HnswDistance {
 }
 
 impl HnswDistance {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             HnswDistance::L2 => "L2",
             HnswDistance::Cosine => "Cosine",
@@ -32,30 +33,3 @@ impl HnswDistance {
         }
     }
 }
-
-pub fn experimental_node_relation_specs() -> &'static [ExperimentalNodeRelationSpec] {
-    &EXPERIMENTAL_NODE_RELATION_SPECS
-}
-
-const ID_KEYWORDS: [&str; 9] = [
-    "id",
-    "function_id",
-    "owner_id",
-    "source_id",
-    "target_id",
-    "type_id",
-    "node_id",
-    "embedding_model",
-    "provider",
-];
-const ID_VAL_KEYWORDS: [&str; 9] = [
-    "id: Uuid",
-    "function_id: Uuid",
-    "owner_id: Uuid",
-    "source_id: Uuid",
-    "target_id: Uuid",
-    "type_id: Uuid",
-    "node_id: Uuid",
-    "embedding_model: String",
-    "provider: String",
-];

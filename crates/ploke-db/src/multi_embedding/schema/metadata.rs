@@ -1,4 +1,10 @@
-use super::*;
+use std::collections::BTreeMap;
+
+use crate::database::Database;
+use crate::error::DbError;
+use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
+use cozo::{DataValue, ScriptMutability};
+use itertools::Itertools;
 
 #[derive(Copy, Clone)]
 pub struct CozoField {
@@ -93,6 +99,25 @@ impl ExperimentalRelationSchema {
             "?[{lhs_keys}, at, {lhs_entries}] <- [[{rhs_keys}, 'ASSERT', {rhs_entries}]] :put {}",
             self.script_identity()
         )
+    }
+
+    pub fn ensure_registered(&self, db: &Database) -> Result<(), DbError> {
+        match db.ensure_relation_registered(self.relation()) {
+            Ok(()) => Ok(()),
+            Err(DbError::ExperimentalRelationMissing { .. }) => db
+                .run_script(
+                    &self.script_create(),
+                    BTreeMap::new(),
+                    ScriptMutability::Mutable,
+                )
+                .map(|_| ())
+                .map_err(|err| DbError::ExperimentalScriptFailure {
+                    action: "schema_create",
+                    relation: self.relation().to_string(),
+                    details: err.to_string(),
+                }),
+            Err(other) => Err(other),
+        }
     }
 }
 
@@ -283,3 +308,26 @@ define_relation_schema!(UNION_MULTI_EMBEDDING_SCHEMA {
     cfgs: "[String]?",
     embeddings: "[(String, Int)]"
 });
+
+const ID_KEYWORDS: [&str; 9] = [
+    "id",
+    "function_id",
+    "owner_id",
+    "source_id",
+    "target_id",
+    "type_id",
+    "node_id",
+    "embedding_model",
+    "provider",
+];
+const ID_VAL_KEYWORDS: [&str; 9] = [
+    "id: Uuid",
+    "function_id: Uuid",
+    "owner_id: Uuid",
+    "source_id: Uuid",
+    "target_id: Uuid",
+    "type_id: Uuid",
+    "node_id: Uuid",
+    "embedding_model: String",
+    "provider: String",
+];

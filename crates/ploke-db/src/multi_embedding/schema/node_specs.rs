@@ -1,4 +1,12 @@
-use super::*;
+use crate::NodeType;
+
+use super::metadata::{
+    ExperimentalRelationSchema, CONST_MULTI_EMBEDDING_SCHEMA, ENUM_MULTI_EMBEDDING_SCHEMA,
+    FUNCTION_MULTI_EMBEDDING_SCHEMA, IMPL_MULTI_EMBEDDING_SCHEMA, IMPORT_MULTI_EMBEDDING_SCHEMA,
+    MACRO_MULTI_EMBEDDING_SCHEMA, MODULE_MULTI_EMBEDDING_SCHEMA, STATIC_MULTI_EMBEDDING_SCHEMA,
+    STRUCT_MULTI_EMBEDDING_SCHEMA, TRAIT_MULTI_EMBEDDING_SCHEMA, TYPE_ALIAS_MULTI_EMBEDDING_SCHEMA,
+    UNION_MULTI_EMBEDDING_SCHEMA,
+};
 
 #[derive(Copy, Clone)]
 pub struct ExperimentalNodeRelationSpec {
@@ -12,6 +20,13 @@ impl ExperimentalNodeRelationSpec {
     pub fn relation_name(&self) -> &'static str {
         self.metadata_schema.relation()
     }
+
+    pub fn metadata_projection_fields(&self) -> Vec<&'static str> {
+        self.metadata_schema
+            .field_names()
+            .filter(|field| *field != "embeddings")
+            .collect()
+    }
 }
 
 pub fn experimental_spec_for_node(
@@ -22,11 +37,8 @@ pub fn experimental_spec_for_node(
         .find(|spec| spec.node_type == node_type)
 }
 
-fn metadata_projection_fields(spec: &ExperimentalNodeRelationSpec) -> Vec<&'static str> {
-    spec.metadata_schema
-        .field_names()
-        .filter(|field| *field != "embeddings")
-        .collect()
+pub fn experimental_node_relation_specs() -> &'static [ExperimentalNodeRelationSpec] {
+    &EXPERIMENTAL_NODE_RELATION_SPECS
 }
 
 pub const EXPERIMENTAL_NODE_RELATION_SPECS: [ExperimentalNodeRelationSpec; 12] = [
