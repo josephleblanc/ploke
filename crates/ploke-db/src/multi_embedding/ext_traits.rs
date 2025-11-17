@@ -1,3 +1,16 @@
+use super::*;
+
+use std::collections::{BTreeMap, HashSet};
+
+use crate::{database::Database, multi_embedding::parse_embedding_metadata};
+use crate::error::DbError;
+use crate::NodeType;
+use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
+use itertools::Itertools;
+use lazy_static::lazy_static;
+use std::ops::Deref;
+use uuid::Uuid;
+
 pub trait ExperimentalEmbeddingDbExt {
     fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError>;
     fn assert_vector_column_layout(&self, relation_name: &str, dims: i64) -> Result<(), DbError>;
@@ -140,5 +153,172 @@ impl ExperimentalEmbeddingDbExt for Db<MemStorage> {
             entries.insert((model, dims));
         }
         Ok(entries)
+    }
+}
+
+impl ExperimentalEmbeddingDbExt for Database {
+    fn ensure_relation_registered(&self, relation_name: &str) -> Result<(), DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::ensure_relation_registered(
+            self.deref(),
+            relation_name,
+        )
+    }
+
+    fn assert_vector_column_layout(&self, relation_name: &str, dims: i64) -> Result<(), DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::assert_vector_column_layout(
+            self.deref(),
+            relation_name,
+            dims,
+        )
+    }
+
+    fn enumerate_metadata_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::enumerate_metadata_models(
+            self.deref(),
+            relation_name,
+        )
+    }
+
+    fn enumerate_vector_models(
+        &self,
+        relation_name: &str,
+    ) -> Result<HashSet<(String, i64)>, DbError> {
+        <Db<MemStorage> as ExperimentalEmbeddingDbExt>::enumerate_vector_models(
+            self.deref(),
+            relation_name,
+        )
+    }
+}
+
+pub trait ExperimentalEmbeddingDatabaseExt: ExperimentalEmbeddingDbExt {
+    fn create_idx(
+        &self,
+        relation_name: &str,
+        dims: i64,
+        m: i64,
+        ef_construction: i64,
+        distance: HnswDistance,
+    ) -> Result<(), DbError>;
+    fn search_embeddings_hnsw(
+        &self,
+        relation_name: &str,
+        query_literal: &str,
+        k: i64,
+        ef: i64,
+    ) -> Result<NamedRows, DbError>;
+    fn vector_rows(&self, relation_name: &str, node_id: Uuid) -> Result<NamedRows, DbError>;
+    fn vector_metadata_rows(
+        &self,
+        relation_name: &str,
+        node_id: Uuid,
+    ) -> Result<NamedRows, DbError>;
+}
+
+impl ExperimentalEmbeddingDatabaseExt for Database {
+    fn create_idx(
+        &self,
+        relation_name: &str,
+        dims: i64,
+        m: i64,
+        ef_construction: i64,
+        distance: HnswDistance,
+    ) -> Result<(), DbError> {
+        let script = format!(
+            r#"
+::hnsw create {rel}:vector_idx {{
+    fields: [vector],
+    dim: {dims},
+    dtype: F32,
+    m: {m},
+    ef_construction: {ef_construction},
+    distance: {distance}
+}}
+"#,
+            rel = relation_name,
+            dims = dims,
+            m = m,
+            ef_construction = ef_construction,
+            distance = distance.as_str(),
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "create_idx",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn search_embeddings_hnsw(
+        &self,
+        relation_name: &str,
+        query_literal: &str,
+        k: i64,
+        ef: i64,
+    ) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[node_id, distance] :=
+    ~{rel}:vector_idx{{ node_id |
+        query: {query},
+        k: {k},
+        ef: {ef},
+        bind_distance: distance
+    }}
+"#,
+            rel = relation_name,
+            query = query_literal,
+            k = k,
+            ef = ef,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "search_embeddings_hnsw",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn vector_rows(&self, relation_name: &str, node_id: Uuid) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[embedding_model, provider, embedding_dims, vector] :=
+    *{rel}{{ node_id, embedding_model, provider, embedding_dims, vector @ 'NOW' }},
+    node_id = to_uuid("{node_id}")
+"#,
+            rel = relation_name,
+            node_id = node_id,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "vector_rows",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
+    }
+
+    fn vector_metadata_rows(
+        &self,
+        relation_name: &str,
+        node_id: Uuid,
+    ) -> Result<NamedRows, DbError> {
+        let script = format!(
+            r#"
+?[embeddings] :=
+    *{rel}{{ id, embeddings @ 'NOW' }},
+    id = to_uuid("{node_id}")
+"#,
+            rel = relation_name,
+            node_id = node_id,
+        );
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "vector_metadata_rows",
+                relation: relation_name.to_string(),
+                details: err.to_string(),
+            })
     }
 }
