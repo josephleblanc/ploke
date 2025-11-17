@@ -9,7 +9,7 @@ fn bench_resolve_strict(c: &mut Criterion) {
     // Load backup DB if present; otherwise skip running the bench work
     let db = Database::init_with_schema().expect("init db");
     let mut backup = workspace_root();
-    if cfg!(feature = "multi_embedding_experiment") {
+    if cfg!(feature = "multi_embedding_schema") {
         backup.push(MULTI_EMBED_FIXTURE_BACKUP_REL_PATH);
     } else {
         backup.push(LEGACY_FIXTURE_BACKUP_REL_PATH);

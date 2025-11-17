@@ -30,3 +30,8 @@ debug = []
 type_bearing_ids = []
 # get relations to have a mapping to higher level abstractions.
 level_up_relations = []
+multi_embedding_schema = []
+multi_embedding_db = ["multi_embedding_schema"]
+multi_embedding_runtime = ["multi_embedding_db"]
+multi_embedding_release = ["multi_embedding_runtime"]
+multi_embedding_kill_switch = []

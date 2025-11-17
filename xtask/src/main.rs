@@ -1,6 +1,8 @@
+use chrono::{SecondsFormat, Utc};
 use ploke_common::{
     LEGACY_FIXTURE_BACKUP_REL_PATH, LEGACY_FIXTURE_METADATA_REL_PATH,
     MULTI_EMBED_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_METADATA_REL_PATH,
+    MULTI_EMBED_SCHEMA_TAG,
 };
 use ploke_db::{
     Database, DbError,
@@ -9,7 +11,7 @@ use ploke_db::{
         vector_dimension_specs,
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     env,
@@ -96,6 +98,10 @@ const MULTI_FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
 
 const FIXTURE_CHECKS: &[FixtureCheck] = &[FIXTURE_DB_CHECK, PRICING_CHECK];
 
+const MULTI_FIXTURE_ARTIFACT_REL_PATH: &str =
+    "target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json";
+const SLICE1_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice1-schema.json";
+
 // TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures(args: Vec<String>) -> ExitCode {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -171,6 +177,9 @@ fn verify_fixtures(args: Vec<String>) -> ExitCode {
                         report.total_metadata_rows,
                         report.total_vector_rows
                     );
+                    if let Err(err) = persist_multi_embedding_evidence(&root, &report) {
+                        multi_errors.push(err);
+                    }
                 }
                 Err(mut errs) => multi_errors.append(&mut errs),
             }
@@ -350,6 +359,45 @@ struct MultiEmbeddingReport {
     total_vector_rows: usize,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct TestRun {
+    name: String,
+    command: String,
+    status: String,
+    pass_count: u32,
+    fail_count: u32,
+    ignored: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SliceEvidence {
+    slice: u8,
+    generated_at: String,
+    feature_flags: Vec<String>,
+    tests: Vec<TestRun>,
+    artifacts: Vec<String>,
+    live: bool,
+    tool_calls_observed: u32,
+    notes: String,
+}
+
+#[derive(Serialize)]
+struct MultiEmbeddingFixtureTelemetry {
+    slice: u8,
+    generated_at: String,
+    command: String,
+    feature_flags: Vec<String>,
+    tests: Vec<TestRun>,
+    artifacts: Vec<String>,
+    live: bool,
+    tool_calls_observed: u32,
+    notes: String,
+    metadata_relations: usize,
+    vector_relations: usize,
+    metadata_rows: usize,
+    vector_rows: usize,
+}
+
 fn verify_multi_embedding_fixture(
     root: &Path,
     rel_path: &str,
@@ -444,6 +492,145 @@ fn verify_multi_embedding_fixture(
     } else {
         Err(errors)
     }
+}
+
+fn persist_multi_embedding_evidence(
+    root: &Path,
+    report: &MultiEmbeddingReport,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let fixture_test = TestRun {
+        name: "Multi-embedding fixture verification".into(),
+        command: "cargo xtask verify-fixtures --multi-embedding".into(),
+        status: "pass".into(),
+        pass_count: 1,
+        fail_count: 0,
+        ignored: 0,
+    };
+    let feature_flags = default_feature_flags();
+    let fixture_artifact = MultiEmbeddingFixtureTelemetry {
+        slice: 1,
+        generated_at: now.clone(),
+        command: fixture_test.command.clone(),
+        feature_flags: feature_flags.clone(),
+        tests: vec![fixture_test.clone()],
+        artifacts: vec![MULTI_FIXTURE_ARTIFACT_REL_PATH.to_string()],
+        live: false,
+        tool_calls_observed: 0,
+        notes: format!(
+            "Verified {} metadata rows and {} vector rows across {} relations (schema tag {}).",
+            report.total_metadata_rows,
+            report.total_vector_rows,
+            report.metadata_relations + report.vector_relations,
+            MULTI_EMBED_SCHEMA_TAG
+        ),
+        metadata_relations: report.metadata_relations,
+        vector_relations: report.vector_relations,
+        metadata_rows: report.total_metadata_rows,
+        vector_rows: report.total_vector_rows,
+    };
+    write_pretty_json(root, MULTI_FIXTURE_ARTIFACT_REL_PATH, &fixture_artifact)?;
+    update_slice1_artifact(root, &now, fixture_test, feature_flags, report)
+}
+
+fn update_slice1_artifact(
+    root: &Path,
+    generated_at: &str,
+    verify_test: TestRun,
+    feature_flags: Vec<String>,
+    report: &MultiEmbeddingReport,
+) -> Result<(), String> {
+    let path = root.join(SLICE1_ARTIFACT_REL_PATH);
+    let mut evidence = if path.exists() {
+        let contents = fs::read_to_string(&path)
+            .map_err(|err| format!("Failed to read {}: {err}", display_relative(&path, root)))?;
+        serde_json::from_str::<SliceEvidence>(&contents)
+            .map_err(|err| format!("Failed to parse {}: {err}", display_relative(&path, root)))?
+    } else {
+        default_slice1_evidence(generated_at)
+    };
+    evidence.generated_at = generated_at.to_string();
+    merge_unique(&mut evidence.feature_flags, feature_flags);
+    merge_unique(
+        &mut evidence.artifacts,
+        vec![MULTI_FIXTURE_ARTIFACT_REL_PATH.to_string()],
+    );
+    upsert_test(&mut evidence.tests, verify_test);
+    let new_note = format!(
+        "Multi-embedding fixtures refreshed on {} ({} metadata rows / {} vector rows).",
+        generated_at, report.total_metadata_rows, report.total_vector_rows
+    );
+    evidence.notes = append_note(&evidence.notes, &new_note);
+    write_pretty_json(root, SLICE1_ARTIFACT_REL_PATH, &evidence)
+}
+
+fn default_slice1_evidence(generated_at: &str) -> SliceEvidence {
+    SliceEvidence {
+        slice: 1,
+        generated_at: generated_at.to_string(),
+        feature_flags: default_feature_flags(),
+        tests: Vec::new(),
+        artifacts: vec![MULTI_FIXTURE_ARTIFACT_REL_PATH.to_string()],
+        live: false,
+        tool_calls_observed: 0,
+        notes: String::new(),
+    }
+}
+
+fn default_feature_flags() -> Vec<String> {
+    vec![
+        "ploke-db:multi_embedding_schema".into(),
+        format!("fixtures:{}", MULTI_EMBED_SCHEMA_TAG),
+    ]
+}
+
+fn merge_unique(list: &mut Vec<String>, additions: Vec<String>) {
+    for value in additions {
+        if !list.iter().any(|existing| existing == &value) {
+            list.push(value);
+        }
+    }
+}
+
+fn upsert_test(tests: &mut Vec<TestRun>, new_test: TestRun) {
+    if let Some(existing) = tests
+        .iter_mut()
+        .find(|test| test.command == new_test.command)
+    {
+        *existing = new_test;
+    } else {
+        tests.push(new_test);
+    }
+}
+
+fn append_note(existing: &str, new_note: &str) -> String {
+    if existing.trim().is_empty() {
+        new_note.to_string()
+    } else if existing.contains(new_note) {
+        existing.to_string()
+    } else {
+        format!("{existing}\n{new_note}")
+    }
+}
+
+fn write_pretty_json<T: ?Sized + Serialize>(
+    root: &Path,
+    rel_path: &str,
+    value: &T,
+) -> Result<(), String> {
+    let path = root.join(rel_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Failed to create artifact directory {}: {err}",
+                display_relative(parent, root)
+            )
+        })?;
+    }
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|err| format!("Failed to serialize JSON: {err}"))?;
+    fs::write(&path, json)
+        .map_err(|err| format!("Failed to write {}: {err}", display_relative(&path, root)))
 }
 
 fn count_relation_rows(db: &Database, relation: &str, id_column: &str) -> Result<usize, DbError> {

@@ -7,7 +7,7 @@ mod error;
 pub mod get_by_id;
 pub mod helpers;
 mod index;
-#[cfg(feature = "multi_embedding_experiment")]
+#[cfg(feature = "multi_embedding_schema")]
 pub mod multi_embedding;
 pub mod observability;
 mod query;

@@ -12,6 +12,24 @@ Purpose: codify the gating strategy for the multi-embedding rollout so every sli
 | `multi_embedding_release` | Workspace-level meta feature | workspace `Cargo.toml` | OFF | Convenience umbrella enabling schema+db+runtime flags together for pre-release soak tests. | Release engineering | Enabled only after Slice 3 sign-off; removed after Slice 4 when defaults flip to ON. |
 | `multi_embedding_kill_switch` | Runtime config flag + environment variable | `ploke-tui`, `ploke-embed` | ON (kill switch engaged) | Allows disabling remote-embedding behavior at runtime even if compile-time features are ON (e.g., revert to legacy columns if needed). Implementation detail: when true, runtime always selects legacy embedding set and refuses to schedule multi-model jobs. | Runtime on-call | Removed once Slice 4 is stable for N releases; documented rollback procedure verifies kill switch works. |
 
+## Current implementation status (Nov 2025)
+
+- `ploke-db` now defines the full flag ladder (`multi_embedding_schema`, `multi_embedding_db`, `multi_embedding_runtime`, `multi_embedding_release`, `multi_embedding_kill_switch`). The legacy `multi_embedding_experiment` feature still exists but simply re-exports `multi_embedding_schema` so existing commands/tests keep working while downstream crates migrate.
+- `ploke-transform`, `ploke-embed`, `ploke-rag`, `ploke-tui`, and `ploke-test-utils` expose matching features that forward to their dependencies (e.g., enabling `ploke-tui/multi_embedding_runtime` automatically enables the schema+db flags in `ploke-transform`, `ploke-embed`, `ploke-db`, and `ploke-rag`).
+- Tooling (`xtask`) and telemetry artifacts now record the new feature names (see `target/test-output/embedding/slice1-schema.json` for the latest run).
+- Remaining action items:
+  1. Migrate code-level `#[cfg(feature = "multi_embedding_experiment")]` attributes in dependent crates to the new names (ploke-db has already switched; runtime crates will follow as features ship).
+  2. Start using the new flag names in all test commands (`cargo test -p ploke-db --features multi_embedding_schema`, etc.) so telemetry artifacts match reality.
+  3. Remove the `multi_embedding_experiment` alias once Slice 1 stabilizes under the new feature hierarchy.
+
+## Implementation rollout playbook
+
+1. **Workspace scaffolding.** Add `[features]` entries to the workspace `Cargo.toml` so `multi_embedding_schema`, `multi_embedding_db`, `multi_embedding_runtime`, `multi_embedding_release`, and `multi_embedding_kill_switch` can be toggled at the root. The workspace definitions simply propagate to the owning crates listed in the overview table (schema → db → runtime). Keep the existing `multi_embedding_experiment` cfgs temporarily aliased to `multi_embedding_schema` while the refactor lands so dependent crates continue compiling.
+2. **Database + ingest crates.** Update `crates/ploke-db/Cargo.toml` to expose `multi_embedding_schema` (replacing `multi_embedding_experiment`) and gate `crates/ingest/ploke-transform` schema modules behind the same feature. Dual-write helpers and adapters remain under a new `multi_embedding_db` flag that `ploke-transform` re-exports when dual-write support is required.
+3. **Runtime crates.** Once Slice 2 is ready, introduce `multi_embedding_runtime` in `ploke-embed`, `ploke-tui`, and `ploke-rag`. This feature implies the db flag and will be the gate for `/embedding use`, TEST_APP harness flows, and the kill-switch plumbing. Runtime crates should also respect a config/env toggle named in this doc.
+4. **Release bundling.** Define the `multi_embedding_release` meta feature alongside `multi_embedding_kill_switch` so release builds (`cargo build -F multi_embedding_release`) automatically flip schema/db/runtime ON and wire the kill switch for soak testing.
+5. **CI + tooling updates.** Update `xtask`, fixture generators, and CI workflows to use the new feature names (`multi_embedding_schema`, etc.) instead of the `multi_embedding_experiment` placeholder. Track every change by referencing this playbook plus the owning files (e.g., `crates/ploke-db/Cargo.toml:features`, `crates/test-utils/Cargo.toml:features`) in implementation log updates.
+
 ## Dependency rules
 
 1. `multi_embedding_runtime` requires `multi_embedding_db`, which in turn requires `multi_embedding_schema`. Cargo features should enforce this via `features = ["multi_embedding_db"]` style constraints.

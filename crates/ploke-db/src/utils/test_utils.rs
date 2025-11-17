@@ -12,9 +12,9 @@ use ploke_test_utils::{
     workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
 };
 
-#[cfg(feature = "multi_embedding_experiment")]
+#[cfg(feature = "multi_embedding_schema")]
 const FIXTURE_DB_RELPATH: &str = MULTI_EMBED_FIXTURE_BACKUP_REL_PATH;
-#[cfg(not(feature = "multi_embedding_experiment"))]
+#[cfg(not(feature = "multi_embedding_schema"))]
 const FIXTURE_DB_RELPATH: &str = LEGACY_FIXTURE_BACKUP_REL_PATH;
 
 pub(crate) fn fixture_db_backup_rel_path() -> &'static str {

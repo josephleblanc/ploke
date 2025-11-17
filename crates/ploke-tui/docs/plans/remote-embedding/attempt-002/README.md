@@ -10,6 +10,7 @@ This directory is the single entrypoint for all planning, governance, and eviden
 | `feature_flags.md` | Defines temporary cfg/features, dependencies, runtime knobs, and end-state expectations (full migration). |
 | `experimental_fixtures_plan.md` | Describes how to extend the Cozo experiment, regenerate fixtures, and gate Slice 1 with stop-and-test checkpoints. |
 | `telemetry_evidence_plan.md` | Specifies artifact formats, tests, and live gate requirements per slice. |
+| `contributor_onboarding.md` | Quick-reference onboarding guide listing the exact files, commands, and evidence to review before editing code. |
 
 ## Governance & history
 

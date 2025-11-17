@@ -107,6 +107,26 @@ live_api_tests = []
 test_harness = []
 json_visitor = []
 xxx = []
+multi_embedding_schema = [
+    "ploke-transform/multi_embedding_schema",
+    "ploke-embed/multi_embedding_schema",
+    "ploke-db/multi_embedding_schema",
+    "ploke-rag/multi_embedding_schema",
+]
+multi_embedding_db = [
+    "multi_embedding_schema",
+    "ploke-transform/multi_embedding_db",
+    "ploke-embed/multi_embedding_db",
+    "ploke-db/multi_embedding_db",
+    "ploke-rag/multi_embedding_db",
+]
+multi_embedding_runtime = [
+    "multi_embedding_db",
+    "ploke-embed/multi_embedding_runtime",
+    "ploke-rag/multi_embedding_runtime",
+]
+multi_embedding_release = ["multi_embedding_runtime"]
+multi_embedding_kill_switch = []
 
 [[bench]]
 name = "ui_measure"

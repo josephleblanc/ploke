@@ -48,3 +48,18 @@ futures = "0.3"
 default = ["debug"]
 debug = []
 update_embeds = []
+multi_embedding_schema = [
+    "ploke-db/multi_embedding_schema",
+    "ploke-transform/multi_embedding_schema",
+]
+multi_embedding_db = [
+    "multi_embedding_schema",
+    "ploke-db/multi_embedding_db",
+    "ploke-transform/multi_embedding_db",
+]
+multi_embedding_runtime = [
+    "multi_embedding_db",
+    "ploke-db/multi_embedding_runtime",
+]
+multi_embedding_release = ["multi_embedding_runtime"]
+multi_embedding_kill_switch = []

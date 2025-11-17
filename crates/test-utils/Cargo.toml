@@ -38,5 +38,7 @@ walkdir = "2.5"
 [features]
 default = ["test_setup"]
 test_setup = []
-multi_embedding_schema = ["ploke-db/multi_embedding_experiment"]
+multi_embedding_schema = ["ploke-db/multi_embedding_schema"]
+multi_embedding_db = ["multi_embedding_schema", "ploke-db/multi_embedding_db"]
+multi_embedding_runtime = ["multi_embedding_db", "ploke-db/multi_embedding_runtime"]
 # Feature flag for the UUID refactor in test-utils (REMOVED)

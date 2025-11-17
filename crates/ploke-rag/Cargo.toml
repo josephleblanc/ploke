@@ -24,3 +24,20 @@ tracing-subscriber = { workspace = true }
 ploke-test-utils = { path = "../test-utils" }
 lazy_static = "1.5.0"
 criterion = { version = "0.7", features = ["async_tokio"] }
+
+[features]
+multi_embedding_schema = [
+    "ploke-db/multi_embedding_schema",
+    "ploke-embed/multi_embedding_schema",
+]
+multi_embedding_db = [
+    "multi_embedding_schema",
+    "ploke-db/multi_embedding_db",
+    "ploke-embed/multi_embedding_db",
+]
+multi_embedding_runtime = [
+    "multi_embedding_db",
+    "ploke-embed/multi_embedding_runtime",
+]
+multi_embedding_release = ["multi_embedding_runtime"]
+multi_embedding_kill_switch = []
