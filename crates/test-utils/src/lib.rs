@@ -401,14 +401,6 @@ fn ensure_vector_relation(
 }
 
 #[cfg(feature = "multi_embedding_schema")]
-fn metadata_projection_fields(spec: &ExperimentalNodeRelationSpec) -> Vec<&'static str> {
-    spec.metadata_schema
-        .field_names()
-        .filter(|field| *field != "embeddings")
-        .collect()
-}
-
-#[cfg(feature = "multi_embedding_schema")]
 fn run_script(
     db: &ploke_db::Database,
     script: &str,

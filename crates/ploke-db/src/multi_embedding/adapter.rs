@@ -2,7 +2,7 @@ use super::*;
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::{database::Database, multi_embedding::parse_embedding_metadata};
+use crate::database::Database;
 use crate::error::DbError;
 use crate::NodeType;
 use cozo::{self, DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability, UuidWrapper};
@@ -215,6 +215,42 @@ pub trait ExperimentalEmbeddingDatabaseExt: ExperimentalEmbeddingDbExt {
         relation_name: &str,
         node_id: Uuid,
     ) -> Result<NamedRows, DbError>;
+}
+
+pub(super) fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String, i64)>, DbError> {
+    let entries = value
+        .get_slice()
+        .ok_or_else(|| DbError::ExperimentalMetadataParse {
+            reason: "embeddings column should contain a list".into(),
+        })?;
+    let mut parsed = Vec::new();
+    for entry in entries {
+        let tuple = entry
+            .get_slice()
+            .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                reason: "embedding metadata tuple should be a list".into(),
+            })?;
+        if tuple.len() != 2 {
+            return Err(DbError::ExperimentalMetadataParse {
+                reason: "embedding metadata tuples must be (model, dims)".into(),
+            });
+        }
+        let model = tuple[0]
+            .get_str()
+            .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                reason: "tuple[0] should be embedding model string".into(),
+            })?;
+        let dims = match &tuple[1] {
+            DataValue::Num(Num::Int(val)) => *val,
+            other => {
+                return Err(DbError::ExperimentalMetadataParse {
+                    reason: format!("tuple[1] must be integer dimensions, got {other:?}"),
+                })
+            }
+        };
+        parsed.push((model.to_string(), dims));
+    }
+    Ok(parsed)
 }
 
 impl ExperimentalEmbeddingDatabaseExt for Database {

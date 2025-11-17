@@ -1,3 +1,101 @@
+use super::*;
+
+#[derive(Copy, Clone)]
+pub struct CozoField {
+    st: &'static str,
+    dv: &'static str,
+}
+
+impl CozoField {
+    const fn new(st: &'static str, dv: &'static str) -> Self {
+        Self { st, dv }
+    }
+
+    fn st(&self) -> &str {
+        self.st
+    }
+
+    fn dv(&self) -> &str {
+        self.dv
+    }
+}
+
+pub struct ExperimentalRelationSchema {
+    relation: &'static str,
+    fields: &'static [CozoField],
+}
+
+impl ExperimentalRelationSchema {
+    pub fn relation(&self) -> &'static str {
+        self.relation
+    }
+
+    pub fn field_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.fields.iter().map(CozoField::st)
+    }
+
+    fn script_identity(&self) -> String {
+        let fields = self.fields.iter().map(CozoField::st).collect::<Vec<_>>();
+        let keys = fields
+            .iter()
+            .copied()
+            .filter(|f| ID_KEYWORDS.contains(f))
+            .join(", ");
+        let vals = fields
+            .iter()
+            .copied()
+            .filter(|f| !ID_KEYWORDS.contains(f))
+            .join(", ");
+        format!("{} {{ {keys}, at => {vals} }}", self.relation)
+    }
+
+    pub fn script_create(&self) -> String {
+        let fields = self
+            .fields
+            .iter()
+            .map(|field| format!("{}: {}", field.st(), field.dv()))
+            .collect::<Vec<_>>();
+        let keys = fields
+            .iter()
+            .filter(|f| ID_VAL_KEYWORDS.contains(&f.as_str()))
+            .join(", ");
+        let vals = fields
+            .iter()
+            .filter(|f| !ID_VAL_KEYWORDS.contains(&f.as_str()))
+            .join(", ");
+        format!(
+            ":create {} {{ {}, at: Validity => {} }}",
+            self.relation, keys, vals
+        )
+    }
+
+    pub fn script_put(&self, params: &BTreeMap<String, DataValue>) -> String {
+        let lhs_keys = params
+            .keys()
+            .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+            .join(", ");
+        let lhs_entries = params
+            .keys()
+            .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+            .join(", ");
+        let rhs_keys = params
+            .keys()
+            .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+            .map(|k| format!("${}", k))
+            .join(", ");
+        let rhs_entries = params
+            .keys()
+            .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+            .map(|k| format!("${}", k))
+            .join(", ");
+
+        format!(
+            "?[{lhs_keys}, at, {lhs_entries}] <- [[{rhs_keys}, 'ASSERT', {rhs_entries}]] :put {}",
+            self.script_identity()
+        )
+    }
+}
+
 macro_rules! define_relation_schema {
     ($const_name:ident {
         $relation:literal,
