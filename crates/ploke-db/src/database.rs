@@ -1,8 +1,22 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::node_specs::{
+    experimental_spec_for_node, ExperimentalNodeRelationSpec,
+};
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::vector_dims::{
+    embedding_entry, vector_dimension_specs, VectorDimensionSpec,
+};
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::vectors::ExperimentalVectorRelation;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
@@ -20,6 +34,51 @@ pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
+    #[cfg(feature = "multi_embedding_db")]
+    feature_gates: MultiEmbeddingRuntimeConfig,
+}
+
+#[cfg(feature = "multi_embedding_db")]
+pub const MULTI_EMBEDDING_DB_ENV: &str = "PLOKE_MULTI_EMBEDDING_DB";
+
+#[cfg(feature = "multi_embedding_db")]
+#[derive(Debug, Clone)]
+pub struct MultiEmbeddingRuntimeConfig {
+    multi_embedding_db: bool,
+}
+
+#[cfg(feature = "multi_embedding_db")]
+impl MultiEmbeddingRuntimeConfig {
+    /// Creates a config initialized from the `PLOKE_MULTI_EMBEDDING_DB` env var.
+    pub fn from_env() -> Self {
+        Self {
+            multi_embedding_db: env_flag_enabled(MULTI_EMBEDDING_DB_ENV),
+        }
+    }
+
+    /// Enables multi-embedding DB support in the returned config.
+    pub fn enable_multi_embedding_db(mut self) -> Self {
+        self.multi_embedding_db = true;
+        self
+    }
+
+    /// Disables multi-embedding DB support in the returned config.
+    pub fn disable_multi_embedding_db(mut self) -> Self {
+        self.multi_embedding_db = false;
+        self
+    }
+
+    /// Returns whether dual-write helpers should run.
+    pub fn multi_embedding_db_enabled(&self) -> bool {
+        self.multi_embedding_db
+    }
+}
+
+#[cfg(feature = "multi_embedding_db")]
+impl Default for MultiEmbeddingRuntimeConfig {
+    fn default() -> Self {
+        Self::from_env()
+    }
 }
 
 #[derive(Deserialize)]
@@ -44,6 +103,17 @@ impl ImmutQuery for Database {
     fn raw_query(&self, query: &str) -> Result<NamedRows, DbError> {
         self.run_script(query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
             .map_err(DbError::from)
+    }
+}
+
+#[cfg(feature = "multi_embedding_db")]
+fn env_flag_enabled(key: &str) -> bool {
+    match std::env::var(key) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on" | "yes"
+        ),
+        Err(_) => false,
     }
 }
 
@@ -125,12 +195,33 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
-        Self { db }
+        Self {
+            db,
+            #[cfg(feature = "multi_embedding_db")]
+            feature_gates: MultiEmbeddingRuntimeConfig::default(),
+        }
     }
+
+    #[cfg(feature = "multi_embedding_db")]
+    pub fn with_multi_embedding_config(
+        db: Db<MemStorage>,
+        config: MultiEmbeddingRuntimeConfig,
+    ) -> Self {
+        Self {
+            db,
+            feature_gates: config,
+        }
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    pub fn multi_embedding_db_enabled(&self) -> bool {
+        self.feature_gates.multi_embedding_db_enabled()
+    }
+
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self { db })
+        Ok(Self::new(db))
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -140,7 +231,7 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        Ok(Self { db })
+        Ok(Self::new(db))
     }
 
     /// Gets all the file data in the same namespace as the crate name given as argument.
@@ -426,7 +517,7 @@ impl Database {
     pub fn load_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        Ok(Self { db: new_db })
+        Ok(Self::new(new_db))
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, PlokeError> {
@@ -534,7 +625,7 @@ impl Database {
 
     pub async fn update_embeddings_batch(
         &self,
-        updates: Vec<(uuid::Uuid, Vec<f32>)>,
+        updates: Vec<(Uuid, Vec<f32>)>,
     ) -> Result<(), DbError> {
         if updates.is_empty() {
             return Ok(());
@@ -547,13 +638,13 @@ impl Database {
 
         // Convert updates to DataValue format - as a list of [id, embedding] pairs
         let updates_data: Vec<DataValue> = updates
-            .into_iter()
+            .iter()
             .map(|(id, embedding)| {
-                let id_val = DataValue::Uuid(UuidWrapper(id));
+                let id_val = DataValue::Uuid(UuidWrapper(*id));
                 let embedding_val = DataValue::List(
                     embedding
-                        .into_iter()
-                        .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
+                        .iter()
+                        .map(|f| DataValue::Num(cozo::Num::Float(*f as f64)))
                         .collect(),
                 );
                 // Each update is a list containing [id, embedding]
@@ -563,6 +654,11 @@ impl Database {
 
         let mut params = BTreeMap::new();
         params.insert("updates".to_string(), DataValue::List(updates_data));
+
+        #[cfg(feature = "multi_embedding_db")]
+        if self.multi_embedding_db_enabled() {
+            self.write_multi_embedding_relations(&updates, &params)?;
+        }
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
@@ -1205,12 +1301,194 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 }
 
+#[cfg(feature = "multi_embedding_db")]
+struct MultiEmbeddingRow {
+    node_id: Uuid,
+    params: BTreeMap<String, DataValue>,
+}
+
+#[cfg(feature = "multi_embedding_db")]
+impl Database {
+    /// Dual-writes metadata and vector relations for the provided update batch.
+    fn write_multi_embedding_relations(
+        &self,
+        updates: &[(Uuid, Vec<f32>)],
+        params: &BTreeMap<String, DataValue>,
+    ) -> Result<(), DbError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let plan = self.build_vector_plan(updates)?;
+        for node_type in NodeType::primary_nodes() {
+            let Some(spec) = experimental_spec_for_node(node_type) else {
+                continue;
+            };
+            let metadata_rows = self.fetch_metadata_rows_for_updates(spec, params)?;
+            if metadata_rows.is_empty() {
+                continue;
+            }
+            spec.metadata_schema.ensure_registered(self)?;
+            for row in metadata_rows {
+                let &(index, dim_spec) =
+                    plan.get(&row.node_id)
+                        .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                            reason: format!("missing vector payload for {}", row.node_id),
+                        })?;
+                let embeddings_value = self.compose_embedding_value(
+                    spec.metadata_schema.relation(),
+                    row.node_id,
+                    dim_spec,
+                )?;
+                let mut metadata_params = row.params.clone();
+                metadata_params.insert("embeddings".into(), embeddings_value);
+                let insert_script = spec.metadata_schema.script_put(&metadata_params);
+                self.run_script(
+                    &insert_script,
+                    metadata_params.clone(),
+                    cozo::ScriptMutability::Mutable,
+                )
+                .map_err(|err| DbError::ExperimentalScriptFailure {
+                    action: "metadata_insert",
+                    relation: spec.metadata_schema.relation().to_string(),
+                    details: err.to_string(),
+                })?;
+                let relation =
+                    ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+                relation.ensure_registered(self)?;
+                relation.upsert_vector_values(self, row.node_id, dim_spec, &updates[index].1)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Builds an index -> dimension spec lookup for the in-flight updates.
+    fn build_vector_plan(
+        &self,
+        updates: &[(Uuid, Vec<f32>)],
+    ) -> Result<HashMap<Uuid, (usize, &'static VectorDimensionSpec)>, DbError> {
+        let mut plan = HashMap::new();
+        for (idx, (node_id, vector)) in updates.iter().enumerate() {
+            let spec = dimension_spec_for_length(vector.len())?;
+            plan.insert(*node_id, (idx, spec));
+        }
+        Ok(plan)
+    }
+
+    /// Retrieves the metadata projection rows for nodes touched by the batch.
+    fn fetch_metadata_rows_for_updates(
+        &self,
+        spec: &ExperimentalNodeRelationSpec,
+        params: &BTreeMap<String, DataValue>,
+    ) -> Result<Vec<MultiEmbeddingRow>, DbError> {
+        let projection_fields = spec.metadata_projection_fields();
+        if projection_fields.is_empty() {
+            return Ok(Vec::new());
+        }
+        let columns = projection_fields.join(", ");
+        let script = format!(
+            r#"
+{{
+    ?[new_id, new_embedding] <- $updates
+    :replace _multi_embedding_new {{ new_id, new_embedding }}
+}}
+{{
+    ?[{columns}] :=
+    *_multi_embedding_new {{ new_id: id }},
+    *{relation} {{ {columns} @ 'NOW' }}
+}}
+"#,
+            columns = columns,
+            relation = spec.node_type.relation_str(),
+        );
+        let rows = self
+            .run_script(&script, params.clone(), cozo::ScriptMutability::Immutable)
+            .map_err(|err| DbError::ExperimentalScriptFailure {
+                action: "metadata_projection",
+                relation: spec.node_type.relation_str().to_string(),
+                details: err.to_string(),
+            })?;
+        Self::rows_to_metadata(rows)
+    }
+
+    /// Builds the updated `embeddings` column for the given node.
+    fn compose_embedding_value(
+        &self,
+        relation_name: &str,
+        node_id: Uuid,
+        dim_spec: &VectorDimensionSpec,
+    ) -> Result<DataValue, DbError> {
+        let rows = self.vector_metadata_rows(relation_name, node_id)?;
+        let mut tuples: Vec<(String, i64)> = if let Some(row) = rows.rows.first() {
+            if let Some(value) = row.first() {
+                parse_embedding_metadata(value)?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        if !tuples
+            .iter()
+            .any(|(model, dims)| model == dim_spec.embedding_model() && *dims == dim_spec.dims())
+        {
+            tuples.push((dim_spec.embedding_model().to_string(), dim_spec.dims()));
+        }
+        let entries = tuples
+            .into_iter()
+            .map(|(model, dims)| embedding_entry(&model, dims))
+            .collect();
+        Ok(DataValue::List(entries))
+    }
+
+    fn rows_to_metadata(rows: NamedRows) -> Result<Vec<MultiEmbeddingRow>, DbError> {
+        let NamedRows { headers, rows, .. } = rows;
+        let mut mapped = Vec::new();
+        for row in rows {
+            let mut params = BTreeMap::new();
+            for (idx, header) in headers.iter().enumerate() {
+                if let Some(value) = row.get(idx) {
+                    params.insert(header.clone(), value.clone());
+                }
+            }
+            let id_value = params
+                .get("id")
+                .ok_or_else(|| DbError::ExperimentalMetadataParse {
+                    reason: "metadata row missing id".into(),
+                })?;
+            let node_id = to_uuid(id_value)?;
+            mapped.push(MultiEmbeddingRow { node_id, params });
+        }
+        Ok(mapped)
+    }
+}
+
+#[cfg(feature = "multi_embedding_db")]
+/// Returns the registered dimension spec for the provided vector length.
+fn dimension_spec_for_length(len: usize) -> Result<&'static VectorDimensionSpec, DbError> {
+    vector_dimension_specs()
+        .iter()
+        .find(|spec| spec.dims() as usize == len)
+        .ok_or(DbError::UnsupportedEmbeddingDimension { dims: len as i64 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bm25_index::DocData;
     use crate::Database;
     use crate::DbError;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::MultiEmbeddingRuntimeConfig;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::adapter::{
+        parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
+    };
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::vectors::ExperimentalVectorRelation;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
     use tracing::Level;
@@ -1230,6 +1508,56 @@ mod tests {
         let db = setup_db();
         db.update_embeddings_batch(vec![]).await?;
         // Should not panic/error with empty input
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn update_embeddings_dual_writes_metadata_and_vectors() -> Result<(), PlokeError> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let batches = db.get_unembedded_node_data(16, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(DbError::NotFound)?;
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("dimension spec");
+        let vector = vec![0.5; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector.clone())]).await?;
+
+        let spec = experimental_spec_for_node(node_type).expect("node spec");
+        let metadata_rows = db.vector_metadata_rows(spec.metadata_schema.relation(), node.id)?;
+        assert_eq!(
+            metadata_rows.rows.len(),
+            1,
+            "expected metadata row for {}",
+            spec.metadata_schema.relation()
+        );
+        let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
+        assert!(
+            metadata_entries.into_iter().any(|(model, dims)| {
+                model == dim_spec.embedding_model() && dims == dim_spec.dims()
+            }),
+            "expected metadata tuple for model {}",
+            dim_spec.embedding_model()
+        );
+
+        let relation =
+            ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        relation.ensure_registered(&db)?;
+        let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
+        assert_eq!(
+            vector_rows.rows.len(),
+            1,
+            "expected vector row for {}",
+            relation.relation_name()
+        );
+
         Ok(())
     }
 

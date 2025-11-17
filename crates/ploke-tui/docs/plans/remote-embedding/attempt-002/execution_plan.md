@@ -18,10 +18,9 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 ## Slice 1 – Schema module + ingest wiring
 - **Goal.** Introduce the new embedding relations alongside the existing schema so we can populate multi-embedding data without touching runtime consumers yet.
 - **Touch points.**
-  - Add `embedding_vectors.rs` (or revive `embeddings.rs`) under `crates/ingest/ploke-transform/src/schema/` with strongly typed structs mirroring the experiment module.
-  - Update `schema/mod.rs`, `transform/functions.rs`, and any generators/macros that emit primary node structs so they can emit metadata tuples required by the new relation.
-  - Add a migration script (Cozo or xtask subcommand) that creates `embedding_nodes`+`embedding_vectors` per references in the groundwork doc §1.
-  - Vector relations move to a per-dimension layout (`embedding_vectors_<dims>`) so each Cozo relation owns a fixed-width `<F32; N>` column. Provide a runtime `ensure_embedding_relation(provider, model, dims)` helper that emits the `:create` script on demand (so new providers/dimensions can be introduced without a recompile) and a verifier that enforces the naming convention via `::relations`.
+  - **Decision – runtime-owned embeddings.** We are no longer mirroring the legacy ingest flow inside `ploke-transform`; embedding metadata/vectors live exclusively in `ploke-db` and are created at runtime via `ensure_embedding_relation(provider, model, dims)`. Slice 1 contributors must document this decision in their implementation log entries before touching code.
+  - Update `schema/mod.rs`, `transform/functions.rs`, and any generators/macros only as needed to expose identifiers that runtime tooling requires (no new embedding structs are added under `ploke-transform`).
+  - Ensure the runtime migration script (Cozo or `xtask` helper) creates `embedding_nodes` + per-dimension `embedding_vectors_<dims>` relations per groundwork doc §1. These relations are created lazily when `ploke-db` detects a new provider/model/dimension; tests must prove `ensure_embedding_relation` enforces the naming convention via `::relations`.
 - **Feature flags / build gating.** Add `multi_embedding_schema` cfg gate that limits use of the new schema wiring to tests + ingest; default OFF for prod so existing runtime ignores new relations until Slice 2.
 - **Tests & fixtures.**
   - Unit tests for schema modules proving the new relations create + insert data at least for functions; align with `multi_embedding_experiment.rs` expectations and the scaffolding plan in `experimental_fixtures_plan.md`.

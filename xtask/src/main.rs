@@ -5,11 +5,11 @@ use ploke_common::{
     MULTI_EMBED_SCHEMA_TAG,
 };
 use ploke_db::{
-    multi_embedding::{
-        experimental_node_relation_specs, vector_dimension_specs, ExperimentalEmbeddingDbExt,
-        ExperimentalVectorRelation,
-    },
     Database, DbError,
+    multi_embedding::{
+        ExperimentalEmbeddingDbExt, ExperimentalVectorRelation, experimental_node_relation_specs,
+        vector_dimension_specs,
+    },
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -124,8 +124,7 @@ const PRICING_CHECK: FixtureCheck = FixtureCheck {
     id: "pricing_json",
     rel_path: "crates/ploke-tui/data/models/all_pricing_parsed.json",
     description: "Pricing metadata consumed by llm::request::pricing tests.",
-    remediation:
-        "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
+    remediation: "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
     integrity: None,
     auto_regen: None,
 };

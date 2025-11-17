@@ -38,7 +38,14 @@ walkdir = "2.5"
 [features]
 default = ["test_setup"]
 test_setup = []
+# Enables ingest/test scaffolding for multi-embedding schema migrations.
 multi_embedding_schema = ["ploke-db/multi_embedding_schema"]
+# Adds database helpers + dual-write coverage on top of schema scaffolding.
 multi_embedding_db = ["multi_embedding_schema", "ploke-db/multi_embedding_db"]
+# Pulls in runtime wiring so test harnesses can exercise writer/reader flows.
 multi_embedding_runtime = ["multi_embedding_db", "ploke-db/multi_embedding_runtime"]
+# Bundles schema/db/runtime for release-style soak tests.
+multi_embedding_release = ["multi_embedding_runtime", "ploke-db/multi_embedding_release"]
+# Ensures kill-switch paths continue compiling even when runtime flags are on.
+multi_embedding_kill_switch = ["ploke-db/multi_embedding_kill_switch"]
 # Feature flag for the UUID refactor in test-utils (REMOVED)

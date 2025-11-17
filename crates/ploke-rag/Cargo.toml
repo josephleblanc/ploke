@@ -26,18 +26,23 @@ lazy_static = "1.5.0"
 criterion = { version = "0.7", features = ["async_tokio"] }
 
 [features]
+# Exposes schema-only scaffolding so RAG helpers can read/write metadata.
 multi_embedding_schema = [
     "ploke-db/multi_embedding_schema",
     "ploke-embed/multi_embedding_schema",
 ]
+# Enables dual-write helpers for RAG pipelines.
 multi_embedding_db = [
     "multi_embedding_schema",
     "ploke-db/multi_embedding_db",
     "ploke-embed/multi_embedding_db",
 ]
+# Turns on runtime/indexer behaviors (tool routing, job orchestration).
 multi_embedding_runtime = [
     "multi_embedding_db",
     "ploke-embed/multi_embedding_runtime",
 ]
+# Bundles the previous tiers for release validation.
 multi_embedding_release = ["multi_embedding_runtime"]
+# Keeps kill-switch wiring available for UI/runtime gating.
 multi_embedding_kill_switch = []

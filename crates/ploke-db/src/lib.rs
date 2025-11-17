@@ -16,6 +16,8 @@ mod span;
 pub(crate) mod utils;
 
 pub use database::{to_usize, Database, TypedEmbedData};
+#[cfg(feature = "multi_embedding_db")]
+pub use database::{MultiEmbeddingRuntimeConfig, MULTI_EMBEDDING_DB_ENV};
 pub use error::DbError;
 pub use index::hnsw::{
     create_index, create_index_primary, create_index_warn, hnsw_all_types, hnsw_of_type,

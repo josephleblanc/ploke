@@ -24,11 +24,25 @@ Purpose: codify the gating strategy for the multi-embedding rollout so every sli
 
 ## Implementation rollout playbook
 
-1. **Workspace scaffolding.** Add `[features]` entries to the workspace `Cargo.toml` so `multi_embedding_schema`, `multi_embedding_db`, `multi_embedding_runtime`, `multi_embedding_release`, and `multi_embedding_kill_switch` can be toggled at the root. The workspace definitions simply propagate to the owning crates listed in the overview table (schema → db → runtime). Keep the existing `multi_embedding_experiment` cfgs temporarily aliased to `multi_embedding_schema` while the refactor lands so dependent crates continue compiling.
+1. **Workspace scaffolding.** Cargo does not allow defining `[features]` inside the virtual workspace manifest, so root-level toggles are not currently possible. Instead, keep the ladder synchronized by mirroring the names in every crate (`ploke-transform`, `ploke-db`, `ploke-embed`, `ploke-rag`, `ploke-tui`, `ploke-test-utils`) and enable flags per crate (or via `cargo test -p <crate> --features …`). Keep the existing `multi_embedding_experiment` cfgs temporarily aliased to `multi_embedding_schema` while the refactor lands so dependent crates continue compiling.
 2. **Database + ingest crates.** Update `crates/ploke-db/Cargo.toml` to expose `multi_embedding_schema` (replacing `multi_embedding_experiment`) and gate `crates/ingest/ploke-transform` schema modules behind the same feature. Dual-write helpers and adapters remain under a new `multi_embedding_db` flag that `ploke-transform` re-exports when dual-write support is required.
 3. **Runtime crates.** Once Slice 2 is ready, introduce `multi_embedding_runtime` in `ploke-embed`, `ploke-tui`, and `ploke-rag`. This feature implies the db flag and will be the gate for `/embedding use`, TEST_APP harness flows, and the kill-switch plumbing. Runtime crates should also respect a config/env toggle named in this doc.
 4. **Release bundling.** Define the `multi_embedding_release` meta feature alongside `multi_embedding_kill_switch` so release builds (`cargo build -F multi_embedding_release`) automatically flip schema/db/runtime ON and wire the kill switch for soak testing.
 5. **CI + tooling updates.** Update `xtask`, fixture generators, and CI workflows to use the new feature names (`multi_embedding_schema`, etc.) instead of the `multi_embedding_experiment` placeholder. Track every change by referencing this playbook plus the owning files (e.g., `crates/ploke-db/Cargo.toml:features`, `crates/test-utils/Cargo.toml:features`) in implementation log updates.
+
+## Validation matrix (run every time)
+
+Every change touching multi-embedding code must execute the test suites under each flag tier—even when we expect failures or build breaks—and record the outcome in the slice’s telemetry artifacts. Minimum required commands:
+
+| Flag tier | Commands | Notes |
+| --- | --- | --- |
+| `multi_embedding_schema` | `cargo test -p ploke-db --features multi_embedding_schema`<br>`cargo test -p ploke-test-utils --features multi_embedding_schema`<br>`cargo xtask verify-fixtures --multi-embedding` | Captures schema + fixture readiness. Store pass/fail counts (and compile errors, if any) in `slice1-schema.json`. If a command runs but executes zero tests, record `note: "no tests under this flag yet"`. |
+| `multi_embedding_db` | `cargo test -p ploke-db --features multi_embedding_db`<br>`cargo test -p ploke-test-utils --features multi_embedding_db` | Proves dual-write helpers compile before runtime wiring. Log failures verbatim in the artifact `tests` array. |
+| `multi_embedding_runtime` | `cargo test -p ploke-db --features multi_embedding_runtime` (propagates to deps)<br>`cargo test -p ploke-test-utils --features multi_embedding_runtime` (until runtime crates adopt this flag) | Required even while runtime crates are still under construction so reviewers can see the current compiler/test status for the combined stack. Add a `note` when a flag compiles but gives zero tests. |
+| `multi_embedding_release` | `cargo test -p <affected crate> --features multi_embedding_release` or `cargo test -F multi_embedding_release` (workspace) | Meta feature should be exercised at least once per PR touching release wiring. Document missing features/compilation failures (or use `outcome: not_applicable` with `note: "feature not defined"`) so we know what remains. |
+| `multi_embedding_kill_switch` | `cargo test -p ploke-db --features multi_embedding_kill_switch` plus runtime crates once the switch is wired | Ensures the kill switch codepaths continue to compile even when telemetry toggles are ON by default. |
+
+If any command fails or a crate lacks the requested feature, capture that in the telemetry artifact instead of skipping the row. This guarantees future agents can see the latest status per tier without re-running every command immediately.
 
 ## Dependency rules
 

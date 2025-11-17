@@ -213,7 +213,7 @@ pub trait ExperimentalEmbeddingDatabaseExt: ExperimentalEmbeddingDbExt {
     ) -> Result<NamedRows, DbError>;
 }
 
-pub(super) fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String, i64)>, DbError> {
+pub(crate) fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String, i64)>, DbError> {
     let entries = value
         .get_slice()
         .ok_or_else(|| DbError::ExperimentalMetadataParse {

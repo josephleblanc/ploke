@@ -1,6 +1,6 @@
 # Remote Embedding Attempt 002 — Contributor Onboarding
 
-Purpose: compress the discovery work required to orient yourself on the remote-embedding refactor. Follow the quick reference table to understand why each file matters, then use the checklist to walk through the exact steps (including commands) to confirm the current state before editing code.
+Purpose: compress the discovery work required to orient yourself on the remote-embedding refactor. Follow the quick reference table to understand why each file matters, then use the checklist to walk through the exact steps (including commands) to confirm the current state **before editing code**—do not start implementation until the planning docs referenced below have been read in full and logged in the implementation log.
 
 ## Quick reference map
 
@@ -23,8 +23,10 @@ Purpose: compress the discovery work required to orient yourself on the remote-e
 ## Step-by-step onboarding checklist
 
 1. **Establish the planning context**
-   - Read `attempt-002/README.md` to understand the hub and governance expectations (`README.md:1-43`).
-   - Skim `execution_plan.md:1-88`, focusing on Slice 1 prerequisites (schema, migrations, fixtures) and the later slices to see how work stages.
+ - Read `attempt-002/README.md` to understand the hub and governance expectations (`README.md:1-43`).
+  - Skim `execution_plan.md:1-88`, focusing on Slice 1 prerequisites (schema, migrations, fixtures) and the later slices to see how work stages.
+
+> **Runtime-owned embeddings decision.** Slice 1 intentionally defers embedding metadata/relations to runtime (`ploke-db`) instead of extending `ploke-transform` to mirror the legacy ingest flow. Contributors must log any work that touches embedding schemas and confirm that runtime helpers (`ensure_embedding_relation`) remain the sole creators of `embedding_nodes` + per-dimension vector relations.
 
 2. **Verify gating expectations**
    - Read `feature_flags.md:7-55` to see the intended `multi_embedding_*` features (schema, db, runtime, release, kill switch).
