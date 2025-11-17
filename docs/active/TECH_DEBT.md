@@ -10,6 +10,9 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## Search
  * [ ] set up bm25 as the default for search, then use vector embedding if possible, but keep bm25 as fallback.
 
+## Gotchas
+ * [ ] Check what happens while using Ploke and then changing the terminal's color profile. There was some weird color stuff regarding background color with Codex when I did this by changing the color in alacritty mid-session, and ideally Ploke handles weird situations like this cleanly (its just the extra mile that really makes the program feel awesome).
+
 ## Nodes
  * [ ] Change `VariantNode`'s field `discriminant` from `String` to a number.
     *  [ ] Change [node_definition](/crates/ingest/syn_parser/src/parser/nodes/enums.rs)

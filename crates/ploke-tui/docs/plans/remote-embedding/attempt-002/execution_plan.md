@@ -9,6 +9,12 @@ This document sequences the remote-embedding refactor into reviewable slices. It
 
 Each slice below must link evidence (tests, artifacts, docs) back to this plan when it lands. The slices are phased only to ease validation—once Slice 4 finishes, the single-embedding code paths are removed and multi-embedding becomes the sole supported architecture (no long-term dual path).
 
+## Structural guidance
+
+- Mirror the legacy architecture while the dual path exists. Schema structs/migrations continue to live in `crates/ingest/ploke-transform`, whereas `ploke-db` owns adapters, dual-write helpers, and query/search code. Fixtures and tests should stay co-located with their legacy counterparts.
+- New functionality without a legacy analogue (per-dimension vector relations, runtime `ensure_embedding_relation` creation helpers, provider/model registry, kill switch) must be isolated behind clear modules/traits so they can integrate cleanly without ballooning into another monolith.
+- Before the cleanup phase (Slice 4) begins, perform a dedicated assessment of test coverage for the multi-embedding feature. Summarize which unit/integration/live tests cover schema, dual-write, runtime, and tooling paths, and record the findings in a short doc linked from this plan so we can improve on the legacy coverage if gaps remain.
+
 ## Slice 1 – Schema module + ingest wiring
 - **Goal.** Introduce the new embedding relations alongside the existing schema so we can populate multi-embedding data without touching runtime consumers yet.
 - **Touch points.**

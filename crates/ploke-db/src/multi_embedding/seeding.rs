@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::database::Database;
 use crate::error::DbError;
+use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 use crate::multi_embedding::schema::node_specs::{
     ExperimentalNodeRelationSpec, EXPERIMENTAL_NODE_RELATION_SPECS,
 };

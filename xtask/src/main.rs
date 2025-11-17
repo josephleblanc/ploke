@@ -5,11 +5,11 @@ use ploke_common::{
     MULTI_EMBED_SCHEMA_TAG,
 };
 use ploke_db::{
-    Database, DbError,
     multi_embedding::{
-        ExperimentalEmbeddingDbExt, ExperimentalVectorRelation, experimental_node_relation_specs,
-        vector_dimension_specs,
+        experimental_node_relation_specs, vector_dimension_specs, ExperimentalEmbeddingDbExt,
+        ExperimentalVectorRelation,
     },
+    Database, DbError,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,7 +18,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command, ExitCode},
 };
 use walkdir::WalkDir;
 
@@ -56,6 +56,7 @@ struct FixtureCheck {
     description: &'static str,
     remediation: &'static str,
     integrity: Option<FixtureIntegrity>,
+    auto_regen: Option<&'static FixtureRegen>,
 }
 
 #[derive(Clone, Copy)]
@@ -63,10 +64,50 @@ struct FixtureIntegrity {
     metadata_rel_path: &'static str,
 }
 
+struct FixtureRegen {
+    program: &'static str,
+    args: &'static [&'static str],
+    description: &'static str,
+}
+
 #[derive(Default)]
 struct VerifyOptions {
     multi_embedding: bool,
 }
+
+const LEGACY_FIXTURE_REGEN: FixtureRegen = FixtureRegen {
+    program: "cargo",
+    args: &[
+        "run",
+        "-p",
+        "ploke-test-utils",
+        "--bin",
+        "regenerate_fixture",
+        "--features",
+        "test_setup",
+        "--",
+        "--schema",
+        "legacy",
+    ],
+    description: "Regenerating legacy fixture backup",
+};
+
+const MULTI_FIXTURE_REGEN: FixtureRegen = FixtureRegen {
+    program: "cargo",
+    args: &[
+        "run",
+        "-p",
+        "ploke-test-utils",
+        "--bin",
+        "regenerate_fixture",
+        "--features",
+        "test_setup multi_embedding_schema",
+        "--",
+        "--schema",
+        "multi",
+    ],
+    description: "Regenerating multi-embedding fixture backup",
+};
 
 const FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
     id: "fixture_db_backup",
@@ -76,14 +117,17 @@ const FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
     integrity: Some(FixtureIntegrity {
         metadata_rel_path: LEGACY_FIXTURE_METADATA_REL_PATH,
     }),
+    auto_regen: Some(&LEGACY_FIXTURE_REGEN),
 };
 
 const PRICING_CHECK: FixtureCheck = FixtureCheck {
     id: "pricing_json",
     rel_path: "crates/ploke-tui/data/models/all_pricing_parsed.json",
     description: "Pricing metadata consumed by llm::request::pricing tests.",
-    remediation: "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
+    remediation:
+        "Run `./scripts/openrouter_pricing_sync.py` to fetch the latest OpenRouter pricing payload.",
     integrity: None,
+    auto_regen: None,
 };
 
 const MULTI_FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
@@ -94,6 +138,7 @@ const MULTI_FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
     integrity: Some(FixtureIntegrity {
         metadata_rel_path: MULTI_EMBED_FIXTURE_METADATA_REL_PATH,
     }),
+    auto_regen: Some(&MULTI_FIXTURE_REGEN),
 };
 
 const FIXTURE_CHECKS: &[FixtureCheck] = &[FIXTURE_DB_CHECK, PRICING_CHECK];
@@ -127,31 +172,46 @@ fn verify_fixtures(args: Vec<String>) -> ExitCode {
     }
 
     for check in checks {
-        let full_path = root.join(check.rel_path);
-        if !full_path.exists() {
-            println!(
-                "✘ {:<18} {} (missing)",
-                check.id,
-                display_relative(&full_path, &root)
-            );
-            missing.push((check, full_path));
-            continue;
-        }
-
-        if let Some(integrity) = &check.integrity {
-            match verify_integrity(&root, integrity) {
-                Ok(_) => println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root)),
-                Err(err) => {
-                    println!(
-                        "✘ {:<18} {} (drift)",
-                        check.id,
-                        display_relative(&full_path, &root)
-                    );
-                    drift.push((check, err));
+        let mut regen_attempted = false;
+        'check: loop {
+            let full_path = root.join(check.rel_path);
+            if !full_path.exists() {
+                println!(
+                    "✘ {:<18} {} (missing)",
+                    check.id,
+                    display_relative(&full_path, &root)
+                );
+                if attempt_auto_regen(check, &root, &mut regen_attempted, "missing fixture") {
+                    continue 'check;
                 }
+                missing.push((check, full_path));
+                break;
             }
-        } else {
-            println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
+
+            if let Some(integrity) = &check.integrity {
+                match verify_integrity(&root, integrity) {
+                    Ok(_) => {
+                        println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
+                        break;
+                    }
+                    Err(err) => {
+                        println!(
+                            "✘ {:<18} {} (drift)",
+                            check.id,
+                            display_relative(&full_path, &root)
+                        );
+                        if attempt_auto_regen(check, &root, &mut regen_attempted, "drift detected")
+                        {
+                            continue 'check;
+                        }
+                        drift.push((check, err));
+                        break;
+                    }
+                }
+            } else {
+                println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
+                break;
+            }
         }
     }
 
@@ -222,6 +282,49 @@ fn verify_fixtures(args: Vec<String>) -> ExitCode {
         }
     }
     ExitCode::FAILURE
+}
+
+fn attempt_auto_regen(
+    check: &FixtureCheck,
+    root: &Path,
+    regen_attempted: &mut bool,
+    reason: &str,
+) -> bool {
+    if *regen_attempted {
+        return false;
+    }
+    let regen = match check.auto_regen {
+        Some(regen) => regen,
+        None => return false,
+    };
+    println!("↺ {:<18} {} ({})", check.id, regen.description, reason);
+    match run_regen_command(root, regen) {
+        Ok(()) => {
+            *regen_attempted = true;
+            true
+        }
+        Err(err) => {
+            *regen_attempted = true;
+            eprintln!(
+                "Auto-regeneration for {} failed: {}.\nManual fix: {}",
+                check.id, err, check.remediation
+            );
+            false
+        }
+    }
+}
+
+fn run_regen_command(root: &Path, regen: &FixtureRegen) -> Result<(), String> {
+    let mut cmd = Command::new(regen.program);
+    cmd.args(regen.args).current_dir(root);
+    let status = cmd
+        .status()
+        .map_err(|err| format!("failed to spawn {}: {}", regen.program, err))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} exited with status {}", regen.program, status))
+    }
 }
 
 #[derive(Deserialize)]

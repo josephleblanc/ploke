@@ -22,6 +22,8 @@ pub use ploke_common::{
 };
 pub use ploke_core::NodeId;
 #[cfg(feature = "multi_embedding_schema")]
+use ploke_db::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
+#[cfg(feature = "multi_embedding_schema")]
 use ploke_db::multi_embedding::{
     embedding_entry, experimental_node_relation_specs, vector_dimension_specs,
     ExperimentalNodeRelationSpec, ExperimentalVectorRelation,

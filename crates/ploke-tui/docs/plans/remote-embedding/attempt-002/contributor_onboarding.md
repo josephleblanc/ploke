@@ -49,11 +49,12 @@ Purpose: compress the discovery work required to orient yourself on the remote-e
 6. **Map test utilities and fixtures**
    - `crates/test-utils/src/lib.rs:197-360` shows how `setup_db_full_embeddings` conditionally seeds multi-embedding metadata/vector rows when the `multi_embedding_schema` feature is enabled. This is the entry point used by integration tests and fixture regeneration commands.
    - Use `rg -n "multi_embedding_schema" crates/test-utils/src/lib.rs` to quickly jump between helper definitions if you need to extend seeding logic.
+   - Keep the implementation layout aligned with the legacy system: schema structs/migrations belong in `ploke-transform`, and `ploke-db` owns adapters/search helpers. When adding new files, mirror the existing folder structure so dual-write parity work and eventual cleanup remain straightforward.
 
 7. **Confirm fixture verification tooling**
    - `xtask/src/main.rs:90-214` explains how `cargo xtask verify-fixtures --multi-embedding` validates both legacy and schema-tagged backups, printing row counts for metadata/vector relations.
    - `xtask/src/main.rs:346-447` iterates every node spec and dimension, asserting relation existence and matching row counts. Update this if schemas or dimensions change.
-   - Run `cargo xtask verify-fixtures --multi-embedding` before touching fixtures; store the JSON output under `target/test-output/embedding/fixtures/`.
+   - Run `cargo xtask verify-fixtures --multi-embedding` before touching fixtures; store the JSON output under `target/test-output/embedding/fixtures/`. The command now auto-regenerates missing legacy/multi backups by invoking `cargo run -p ploke-test-utils --bin regenerate_fixture` with the required features, so new machines pick up the correct Cozo databases without manual seeding (watch the console output in case regeneration fails and manual intervention is required).
 
 8. **Check current evidence**
    - Inspect `target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json` (latest run: `2025-11-17T12:38:09Z`) to know the current metadata/vector counts (183/732). Link this artifact in new implementation log entries alongside `slice1-schema.json`.
