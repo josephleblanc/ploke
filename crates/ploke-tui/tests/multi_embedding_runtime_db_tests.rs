@@ -31,7 +31,8 @@ async fn load_db_with_multi_embedding_fixture() -> Result<(), ploke_error::Error
     
     // Import the backup
     let prior_rels_vec = db.relations_vec()?;
-    db.import_from_backup(&backup_path, &prior_rels_vec)?;
+    db.import_from_backup(&backup_path, &prior_rels_vec)
+        .map_err(|err| ploke_error::Error::TransformError(err.to_string()))?;
     
     // Create indexes (including multi-embedding indexes if needed)
     create_index_primary(&db)?;
@@ -65,12 +66,16 @@ async fn scan_for_change_with_multi_embedding_relations() -> Result<(), ploke_er
     }
     
     let prior_rels_vec = db.relations_vec()?;
-    db.import_from_backup(&backup_path, &prior_rels_vec)?;
+    db.import_from_backup(&backup_path, &prior_rels_vec)
+        .map_err(|err| ploke_error::Error::TransformError(err.to_string()))?;
     create_index_primary(&db)?;
     
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor()?);
+    let embedder = Arc::new(
+        cfg.load_embedding_processor()
+            .map_err(|err| ploke_error::Error::TransformError(err.to_string()))?,
+    );
     
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
@@ -92,7 +97,7 @@ async fn scan_for_change_with_multi_embedding_relations() -> Result<(), ploke_er
     
     // Set a crate focus so scan_for_change can run
     // This is a minimal test - we're just verifying it doesn't panic with multi-embedding relations present
-    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
     
     // scan_for_change requires crate_focus to be set, so we'll skip the actual scan
     // but verify the database state is valid

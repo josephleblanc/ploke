@@ -147,6 +147,7 @@ const MULTI_FIXTURE_ARTIFACT_REL_PATH: &str =
     "target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json";
 const SLICE1_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice1-schema.json";
 const SLICE2_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice2-db.json";
+const SLICE3_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice3-runtime.json";
 
 // TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures(args: Vec<String>) -> ExitCode {
@@ -818,15 +819,22 @@ fn collect_embedding_evidence(args: Vec<String>) -> ExitCode {
     }
 
     let slice = slice.unwrap_or(2);
-    if slice != 2 {
-        eprintln!(
-            "Only Slice 2 evidence collection is currently implemented (requested slice {slice})."
-        );
-        return ExitCode::FAILURE;
-    }
 
+    match slice {
+        2 => collect_slice2_evidence(&root),
+        3 => collect_slice3_evidence(&root),
+        other => {
+            eprintln!(
+                "Only Slice 2 and Slice 3 evidence collection are currently implemented (requested slice {other})."
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn collect_slice2_evidence(root: &Path) -> ExitCode {
     println!(
-        "Collecting Slice {slice} embedding evidence under {}",
+        "Collecting Slice 2 embedding evidence under {}",
         root.display()
     );
 
@@ -890,7 +898,7 @@ fn collect_embedding_evidence(args: Vec<String>) -> ExitCode {
     ];
 
     for (tier, name, args) in commands {
-        let (test_run, validation) = run_validation_command(&root, tier, name, args);
+        let (test_run, validation) = run_validation_command(root, tier, name, args);
         if test_run.status != "pass" {
             any_failed = true;
         }
@@ -919,8 +927,75 @@ fn collect_embedding_evidence(args: Vec<String>) -> ExitCode {
         flag_validation,
     };
 
-    if let Err(err) = write_pretty_json(&root, SLICE2_ARTIFACT_REL_PATH, &evidence) {
+    if let Err(err) = write_pretty_json(root, SLICE2_ARTIFACT_REL_PATH, &evidence) {
         eprintln!("Failed to write Slice 2 evidence: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    if any_failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn collect_slice3_evidence(root: &Path) -> ExitCode {
+    println!(
+        "Collecting Slice 3 embedding runtime evidence under {}",
+        root.display()
+    );
+
+    let mut tests: Vec<TestRun> = Vec::new();
+    let mut flag_validation: Vec<FlagValidationEntry> = Vec::new();
+    let mut any_failed = false;
+
+    // For Slice 3 we currently focus on runtime/indexer tiers. As additional
+    // indexer + TEST_APP harness tests come online they should be added here.
+    let commands: &[(&str, &str, &[&str])] = &[
+        (
+            "multi_embedding_runtime",
+            "ploke-tui runtime tier (multi_embedding_runtime_db_tests)",
+            &[
+                "test",
+                "-p",
+                "ploke-tui",
+                "--features",
+                "multi_embedding_runtime",
+                "--test",
+                "multi_embedding_runtime_db_tests",
+            ],
+        ),
+    ];
+
+    for (tier, name, args) in commands {
+        let (test_run, validation) = run_validation_command(root, tier, name, args);
+        if test_run.status != "pass" {
+            any_failed = true;
+        }
+        println!("[{}] {} -> {}", tier, test_run.command, test_run.status);
+        tests.push(test_run);
+        flag_validation.push(validation);
+    }
+
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let feature_flags = vec!["ploke-tui:multi_embedding_runtime".into()];
+    let notes =
+        "Slice 3 runtime evidence (offline) collected from ploke-tui multi_embedding_runtime tests."
+            .into();
+    let evidence = SliceEvidence {
+        slice: 3,
+        generated_at: now,
+        feature_flags,
+        tests,
+        artifacts: vec![SLICE3_ARTIFACT_REL_PATH.to_string()],
+        live: false,
+        tool_calls_observed: 0,
+        notes,
+        flag_validation,
+    };
+
+    if let Err(err) = write_pretty_json(root, SLICE3_ARTIFACT_REL_PATH, &evidence) {
+        eprintln!("Failed to write Slice 3 evidence: {err}");
         return ExitCode::FAILURE;
     }
 

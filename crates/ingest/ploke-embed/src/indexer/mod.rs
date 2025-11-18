@@ -6,7 +6,7 @@ use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
-use ploke_core::EmbeddingData;
+use ploke_core::{EmbeddingData, EmbeddingDType, EmbeddingEncoding, EmbeddingShape};
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
@@ -95,6 +95,19 @@ impl EmbeddingProcessor {
             EmbeddingSource::Cozo(backend) => backend.dimensions,
         }
     }
+
+    /// Returns the current embedding shape used by this processor.
+    ///
+    /// Today all supported backends emit `<F32; dims>` vectors; this method
+    /// makes that assumption explicit so future work can thread a strongly
+    /// typed `EmbeddingShape` through the runtime and DB layers.
+    pub fn shape(&self) -> EmbeddingShape {
+        EmbeddingShape::new(
+            self.dimensions() as u32,
+            EmbeddingDType::F32,
+            EmbeddingEncoding::RawVector,
+        )
+    }
 }
 
 // Cozo placeholder backend
@@ -162,6 +175,12 @@ pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
     pub embedding_processor: Arc<EmbeddingProcessor>,
+    /// Shape for all embedding vectors produced by this indexer.
+    ///
+    /// This is derived from the `EmbeddingProcessor` at construction time and
+    /// used to enforce that every batch we write is homogeneous with respect
+    /// to dimension and encoding, matching the multi-embedding DB helpers.
+    pub embedding_shape: EmbeddingShape,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
@@ -177,10 +196,12 @@ impl IndexerTask {
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
+        let embedding_shape = embedding_processor.shape();
         Self {
             db,
             io,
             embedding_processor,
+            embedding_shape,
             cancellation_token,
             batch_size,
             bm25_tx: None,
@@ -735,7 +756,7 @@ impl IndexerTask {
             embeddings.first().map(|v| v.len())
         );
 
-        let dims = self.embedding_processor.dimensions();
+        let dims = self.embedding_shape.dimension as usize;
         for embedding in &embeddings {
             if embedding.len() != dims {
                 return Err(EmbedError::DimensionMismatch {

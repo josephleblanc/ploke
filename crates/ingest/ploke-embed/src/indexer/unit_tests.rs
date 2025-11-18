@@ -244,7 +244,7 @@ async fn setup_local_model_config(
 async fn setup_local_model_embedding_processor() -> Result<EmbeddingProcessor, ploke_error::Error> {
     let model = setup_local_model_config("fixture_nodes").await?;
     let source = EmbeddingSource::Local(model);
-    Ok(EmbeddingProcessor { source })
+    Ok(EmbeddingProcessor::new(source))
 }
 
 #[tokio::test]
@@ -256,6 +256,83 @@ async fn test_local_model_config() -> Result<(), ploke_error::Error> {
 #[tokio::test]
 async fn test_local_model_embedding_processor() -> Result<(), ploke_error::Error> {
     setup_local_model_embedding_processor().await?;
+    Ok(())
+}
+
+/// End-to-end sanity check that the indexer writes embeddings through the
+/// multi-embedding-aware database helpers when the runtime flag is enabled.
+///
+/// This test exercises the following path:
+/// - Fixture-backed Cozo database loaded via `setup_db_full("fixture_nodes")`
+/// - `Database::with_multi_embedding_config` with `multi_embedding_db` enabled
+/// - `IndexerTask::next_batch` + `process_batch` to generate embeddings
+/// - `Database::update_embeddings_batch` to persist vectors
+/// - `Database::count_pending_embeddings` to verify that pending counts drop
+///
+/// The multi-embedding wiring (metadata/vector relations) is validated in
+/// `ploke-db` tests; here we just prove that the indexer is using the same
+/// dual-write path under the `multi_embedding_runtime` feature.
+#[cfg(feature = "multi_embedding_runtime")]
+#[tokio::test]
+async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
+) -> Result<(), ploke_error::Error> {
+    use ploke_db::MultiEmbeddingRuntimeConfig;
+
+    tracing::info!("Starting indexer_writes_embeddings_with_multi_embedding_db_enabled");
+
+    // Build a fixture-backed database and enable the multi-embedding DB gate.
+    let raw_db = setup_db_full("fixture_nodes")?;
+    let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+    let db = Arc::new(ploke_db::Database::with_multi_embedding_config(raw_db, config));
+
+    let pending_before = db
+        .count_pending_embeddings()
+        .map_err(ploke_error::Error::from)?;
+    assert!(
+        pending_before > 0,
+        "fixture should report pending embeddings before indexing"
+    );
+
+    let io = IoManagerHandle::new();
+
+    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+    let source = EmbeddingSource::Local(model);
+    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+
+    let (cancellation_token, _cancel_handle) = CancellationToken::new();
+    let batch_size = 8;
+
+    let indexer = IndexerTask::new(
+        Arc::clone(&db),
+        io,
+        Arc::clone(&embedding_processor),
+        cancellation_token,
+        batch_size,
+    );
+
+    // Fetch a single batch and process it through the indexer.
+    let num_not_proc = db
+        .count_unembedded_nonfiles()
+        .map_err(ploke_error::Error::from)?;
+    let maybe_batch = indexer
+        .next_batch(num_not_proc)
+        .await
+        .map_err(|e| ploke_error::Error::from(e))?;
+    let batch = maybe_batch.expect("expected at least one batch of nodes to embed");
+
+    indexer
+        .process_batch(batch, |_current, _total| {})
+        .await
+        .map_err(ploke_error::Error::from)?;
+
+    let pending_after = db
+        .count_pending_embeddings()
+        .map_err(ploke_error::Error::from)?;
+    assert!(
+        pending_after < pending_before,
+        "pending embeddings should decrease after indexer writes embeddings; before={pending_before}, after={pending_after}"
+    );
+
     Ok(())
 }
 
@@ -282,7 +359,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_processor = EmbeddingProcessor::new(source);
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -550,7 +627,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_processor = EmbeddingProcessor::new(source);
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;

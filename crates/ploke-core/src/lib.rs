@@ -20,6 +20,12 @@ pub use io_types::{
     ChangedFileData, CreateFileData, CreateFileResult, EmbeddingData, FileData, OnExists,
     WriteResult, WriteSnippetData,
 };
+pub mod embedding_types;
+pub use embedding_types::{
+    EmbeddingDType, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape,
+};
+pub mod embedding_set;
+pub use embedding_set::EmbeddingSetId;
 mod arc_str;
 pub mod rag_types;
 pub use arc_str::ArcStr;
