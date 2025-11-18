@@ -421,6 +421,52 @@ mod tests {
     }
 
     #[cfg(feature = "multi_embedding_schema")]
+    #[test]
+    fn setup_db_full_embeddings_returns_embedding_batches() -> Result<(), ploke_error::Error> {
+        let batches = setup_db_full_embeddings("fixture_nodes")?;
+        assert!(
+            !batches.is_empty(),
+            "expected TypedEmbedData batches from setup_db_full_embeddings"
+        );
+        assert!(
+            batches.iter().any(|typed| !typed.v.is_empty()),
+            "expected at least one batch with embedding entries"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[test]
+    fn dual_write_reduces_pending_embeddings_with_fixtures() -> Result<(), ploke_error::Error> {
+        use ploke_db::MultiEmbeddingRuntimeConfig;
+
+        let raw_db = setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let database = ploke_db::Database::with_multi_embedding_config(raw_db, config);
+
+        let pending_before = database
+            .count_pending_embeddings()
+            .map_err(ploke_error::Error::from)?;
+        assert!(
+            pending_before > 0,
+            "fixture should report pending embeddings before dual-write"
+        );
+
+        let seeded = seed_default_legacy_embeddings(&database)?;
+        assert!(seeded > 0, "expected some legacy embeddings to be seeded");
+
+        let pending_after = database
+            .count_pending_embeddings()
+            .map_err(ploke_error::Error::from)?;
+        assert!(
+            pending_after < pending_before,
+            "pending embeddings should decrease after dual-write; before={pending_before}, after={pending_after}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_schema")]
     fn relation_has_rows(
         db: &ploke_db::Database,
         relation_name: &str,

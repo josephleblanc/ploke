@@ -1,5 +1,22 @@
 # Possible features
 
+## Simple + needed and/or parity
+
+- Add a policy for handling things like executing commands in the command line.
+  - Add a general purpose "cowboy mode"
+  - Add a simplistic permissions model, where you are allowing the AI to have access to some given initial command (identified as the first word in the string that is returned to be piped to the console)
+
+## Finished (needs demo/postings/blogs)
+- semantic edits
+- bm25 edits
+- (in progress) picking a model for the backend
+  - need to add a way to configure local embedding models beyond just using sentence-transformers.
+
+## Highly visible
+- UX improvements/customization
+- maybe keyword search in UI
+- make semantic search more visible (e.g. show the x first results or something, expose a kind of "user view" that gives the user an idea of what they AI is doing, kind of like what serena does)
+
 ## Simple
 Add a file-explorer side-panel. 
 - Selecting a file from the side-panel and pressing a command key will:

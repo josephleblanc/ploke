@@ -26,6 +26,7 @@ fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("verify-fixtures") => verify_fixtures(args.collect()),
+        Some("embedding:collect-evidence") => collect_embedding_evidence(args.collect()),
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -46,7 +47,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures    Ensure required local test assets are staged [--multi-embedding]\n  help               Show this message"
+         Commands:\n  verify-fixtures           Ensure required local test assets are staged [--multi-embedding]\n  embedding:collect-evidence  Collect embedding slice evidence [--slice 2]\n  help                      Show this message"
     );
 }
 
@@ -145,6 +146,7 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[FIXTURE_DB_CHECK, PRICING_CHECK];
 const MULTI_FIXTURE_ARTIFACT_REL_PATH: &str =
     "target/test-output/embedding/fixtures/multi_embedding_fixture_verification.json";
 const SLICE1_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice1-schema.json";
+const SLICE2_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice2-db.json";
 
 // TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures(args: Vec<String>) -> ExitCode {
@@ -471,6 +473,15 @@ struct TestRun {
     ignored: u32,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct FlagValidationEntry {
+    tier: String,
+    command: String,
+    outcome: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct SliceEvidence {
     slice: u8,
@@ -481,6 +492,8 @@ struct SliceEvidence {
     live: bool,
     tool_calls_observed: u32,
     notes: String,
+    #[serde(default)]
+    flag_validation: Vec<FlagValidationEntry>,
 }
 
 #[derive(Serialize)]
@@ -676,6 +689,7 @@ fn default_slice1_evidence(generated_at: &str) -> SliceEvidence {
         live: false,
         tool_calls_observed: 0,
         notes: String::new(),
+        flag_validation: Vec::new(),
     }
 }
 
@@ -774,4 +788,210 @@ fn display_relative(path: &Path, root: &Path) -> String {
         Ok(rel) => rel.display().to_string(),
         Err(_) => path.display().to_string(),
     }
+}
+
+fn collect_embedding_evidence(args: Vec<String>) -> ExitCode {
+    let root = workspace_root();
+    let mut slice: Option<u8> = None;
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--slice" {
+            if let Some(value) = iter.next() {
+                match value.parse::<u8>() {
+                    Ok(n) => slice = Some(n),
+                    Err(_) => {
+                        eprintln!("Invalid value for --slice: {value}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                eprintln!("Missing value for --slice");
+                return ExitCode::FAILURE;
+            }
+        } else if arg == "--help" || arg == "-h" {
+            println!("cargo xtask embedding:collect-evidence --slice 2");
+            return ExitCode::SUCCESS;
+        } else {
+            eprintln!("Unknown embedding:collect-evidence flag '{arg}'. Use --help for usage.");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let slice = slice.unwrap_or(2);
+    if slice != 2 {
+        eprintln!(
+            "Only Slice 2 evidence collection is currently implemented (requested slice {slice})."
+        );
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "Collecting Slice {slice} embedding evidence under {}",
+        root.display()
+    );
+
+    let mut tests: Vec<TestRun> = Vec::new();
+    let mut flag_validation: Vec<FlagValidationEntry> = Vec::new();
+    let mut any_failed = false;
+
+    // Validation Matrix commands for Slice 2 (schema/db/runtime tiers).
+    let commands: &[(&str, &str, &[&str])] = &[
+        (
+            "multi_embedding_schema",
+            "ploke-db schema tier",
+            &[
+                "test",
+                "-p",
+                "ploke-db",
+                "--features",
+                "multi_embedding_schema",
+            ],
+        ),
+        (
+            "multi_embedding_schema",
+            "ploke-test-utils schema tier",
+            &[
+                "test",
+                "-p",
+                "ploke-test-utils",
+                "--features",
+                "multi_embedding_schema",
+            ],
+        ),
+        (
+            "multi_embedding_db",
+            "ploke-db dual-write tier",
+            &["test", "-p", "ploke-db", "--features", "multi_embedding_db"],
+        ),
+        (
+            "multi_embedding_db",
+            "ploke-test-utils dual-write tier",
+            &[
+                "test",
+                "-p",
+                "ploke-test-utils",
+                "--features",
+                "multi_embedding_db",
+            ],
+        ),
+        (
+            "multi_embedding_runtime",
+            "ploke-tui runtime tier (load_db_crate_focus)",
+            &[
+                "test",
+                "-p",
+                "ploke-tui",
+                "--features",
+                "multi_embedding_runtime",
+                "--test",
+                "load_db_crate_focus",
+            ],
+        ),
+    ];
+
+    for (tier, name, args) in commands {
+        let (test_run, validation) = run_validation_command(&root, tier, name, args);
+        if test_run.status != "pass" {
+            any_failed = true;
+        }
+        println!("[{}] {} -> {}", tier, test_run.command, test_run.status);
+        tests.push(test_run);
+        flag_validation.push(validation);
+    }
+
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let feature_flags = vec![
+        "ploke-db:multi_embedding_schema".into(),
+        "ploke-db:multi_embedding_db".into(),
+        "ploke-tui:multi_embedding_runtime".into(),
+    ];
+    let notes = "Slice 2 dual-write + HNSW helpers validated via ploke-db and ploke-test-utils tests; ploke-tui runtime tier currently compiles but has limited executed coverage."
+        .into();
+    let evidence = SliceEvidence {
+        slice: 2,
+        generated_at: now,
+        feature_flags,
+        tests,
+        artifacts: vec![SLICE2_ARTIFACT_REL_PATH.to_string()],
+        live: false,
+        tool_calls_observed: 0,
+        notes,
+        flag_validation,
+    };
+
+    if let Err(err) = write_pretty_json(&root, SLICE2_ARTIFACT_REL_PATH, &evidence) {
+        eprintln!("Failed to write Slice 2 evidence: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    if any_failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_validation_command(
+    root: &Path,
+    tier: &str,
+    name: &str,
+    cargo_args: &[&str],
+) -> (TestRun, FlagValidationEntry) {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(root).args(cargo_args);
+    let output = cmd.output();
+
+    let (status, status_str, outcome_str, note) = match output {
+        Ok(out) => {
+            let success = out.status.success();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+
+            // Detect whether any tests actually ran by summing the counts from
+            // lines like "running N tests". This avoids treating crates with a mix
+            // of real tests and empty doc-tests as "zero tests executed".
+            let ran_any_tests = stdout
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("running "))
+                .filter_map(|rest| rest.split_whitespace().next())
+                .filter_map(|num| num.parse::<u32>().ok())
+                .any(|n| n > 0);
+
+            let mut note = None;
+            if success && !ran_any_tests {
+                note = Some("compiled but ran zero tests under this flag".into());
+            }
+
+            let status_str = if success { "pass" } else { "fail" };
+            let outcome_str = status_str;
+            (
+                success,
+                status_str.to_string(),
+                outcome_str.to_string(),
+                note,
+            )
+        }
+        Err(err) => {
+            eprintln!("Failed to run command for tier {tier} ({name}): {err}");
+            (false, "compile_error".into(), "compile_error".into(), None)
+        }
+    };
+
+    let command_str = format!("cargo {}", cargo_args.join(" "));
+    let test_run = TestRun {
+        name: name.to_string(),
+        command: command_str.clone(),
+        status: status_str,
+        pass_count: if status { 1 } else { 0 },
+        fail_count: if status { 0 } else { 1 },
+        ignored: 0,
+    };
+
+    let validation = FlagValidationEntry {
+        tier: tier.to_string(),
+        command: command_str,
+        outcome: outcome_str,
+        note,
+    };
+
+    (test_run, validation)
 }

@@ -228,6 +228,28 @@ fn adapter_search_embeddings_hnsw_returns_multiple_results_when_k_is_two() {
     );
 }
 
+#[test]
+fn upsert_vector_values_errors_on_length_mismatch() {
+    let spec = default_spec();
+    let (db, sample) = seed_metadata_relation(spec).expect("seed metadata");
+    let dim_spec = &VECTOR_DIMENSION_SPECS[0];
+    let relation =
+        ExperimentalVectorRelation::new(dim_spec.dims(), spec.base.vector_relation_base);
+    relation
+        .ensure_registered(&db)
+        .expect("vector relation should be registered");
+
+    let too_short = vec![0.0_f32; (dim_spec.dims() as usize).saturating_sub(1)];
+    let err = relation
+        .upsert_vector_values(&db, sample.node_id, dim_spec, &too_short)
+        .expect_err("length mismatch should return error");
+    assert!(matches!(
+        err,
+        DbError::ExperimentalVectorLengthMismatch { expected, actual }
+            if expected == dim_spec.dims() as usize && actual == too_short.len()
+    ));
+}
+
 fn validate_schema_spec(spec: &ExperimentalNodeSpec) -> Result<(), DbError> {
     let (db, sample) = seed_metadata_relation(spec)?;
     let relation_name = spec.base.metadata_schema.relation().to_string();

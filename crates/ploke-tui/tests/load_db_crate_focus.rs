@@ -6,8 +6,7 @@ use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
 
-#[tokio::test]
-async fn crate_focus_assigns_absolute_root_from_db() {
+async fn crate_focus_assigns_absolute_root_from_db_impl() {
     // Build minimal app state
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
@@ -65,4 +64,16 @@ async fn crate_focus_assigns_absolute_root_from_db() {
         .await
         .expect("crate_focus set by test");
     assert_eq!(got, abs_root);
+}
+
+#[tokio::test]
+async fn crate_focus_assigns_absolute_root_from_db() {
+    crate_focus_assigns_absolute_root_from_db_impl().await;
+}
+
+#[cfg(feature = "multi_embedding_runtime")]
+#[tokio::test]
+async fn crate_focus_assigns_absolute_root_under_multi_embedding_runtime() {
+    // Ensure the same DB-backed crate_focus path works when multi-embedding runtime flags are enabled.
+    crate_focus_assigns_absolute_root_from_db_impl().await;
 }

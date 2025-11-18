@@ -10,14 +10,17 @@ use crate::multi_embedding::schema::vector_dims::{
 use cozo::{Db, MemStorage, ScriptMutability};
 use uuid::Uuid;
 
+// AI: the lifetimes being used below for ExperimentalVectorRelation are incorrect. Can you show me
+// how to set up the following correctly? We can't use a 'static str due to compile-time
+// constraints. AI?
 #[derive(Copy, Clone, Debug)]
-pub struct ExperimentalVectorRelation {
+pub struct ExperimentalVectorRelation<'a> {
     dims: i64,
-    relation_base: &'static str,
+    relation_base: &'a str,
 }
 
-impl ExperimentalVectorRelation {
-    pub fn try_new(dims: i64, relation_base: &'static str) -> Result<Self, DbError> {
+impl ExperimentalVectorRelation<'a> {
+    pub fn try_new(dims: i64, relation_base: &'a str) -> Result<Self, DbError> {
         if supported_dimension_set().contains(&dims) {
             Ok(Self {
                 dims,
@@ -28,7 +31,7 @@ impl ExperimentalVectorRelation {
         }
     }
 
-    pub fn new(dims: i64, relation_base: &'static str) -> Self {
+    pub fn new(dims: i64, relation_base: &str) -> Self {
         Self::try_new(dims, relation_base).expect("dimension must be supported")
     }
 
