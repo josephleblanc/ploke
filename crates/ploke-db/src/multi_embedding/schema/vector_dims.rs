@@ -59,6 +59,12 @@ pub(crate) fn supported_dimension_set() -> &'static HashSet<i64> {
     &SUPPORTED_DIMENSION_SET
 }
 
+pub fn dimension_spec_for_length(len: usize) -> Option<&'static VectorDimensionSpec> {
+    vector_dimension_specs()
+        .iter()
+        .find(|spec| spec.dims as usize == len)
+}
+
 pub(crate) fn vector_literal(len: usize, offset: f32) -> String {
     let values = (0..len)
         .map(|idx| format!("{:.6}", offset + (idx as f32 * 0.0001)))

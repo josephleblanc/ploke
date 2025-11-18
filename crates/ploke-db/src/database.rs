@@ -1,24 +1,24 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{ops::Deref, path::Path};
 
+use crate::NodeType;
+use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 #[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
+use crate::multi_embedding::adapter::{ExperimentalEmbeddingDatabaseExt, parse_embedding_metadata};
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::node_specs::{
-    experimental_spec_for_node, ExperimentalNodeRelationSpec,
+    ExperimentalNodeRelationSpec, experimental_spec_for_node,
 };
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::vector_dims::{
-    embedding_entry, vector_dimension_specs, VectorDimensionSpec,
+    VectorDimensionSpec, dimension_spec_for_length, embedding_entry, vector_dimension_specs,
 };
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-use crate::NodeType;
-use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
@@ -910,8 +910,7 @@ impl Database {
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
         let rel_name = node_type.relation_str();
-        let base_script =
-            Self::build_unembedded_batch_script(rel_name, "is_null(embedding)", "");
+        let base_script = Self::build_unembedded_batch_script(rel_name, "is_null(embedding)", "");
 
         // Create parameters map
         let mut params = BTreeMap::new();
@@ -1086,7 +1085,10 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         let count_less_flat = query_result.rows.len();
         if let Some(lfr) = less_flat_row {
-            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+            tracing::info!(
+                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}",
+                rel_name
+            );
         }
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
         v.truncate(limit.min(count_less_flat));
@@ -1186,7 +1188,10 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         let less_flat_row = query_result.rows.first();
         let count_less_flat = query_result.rows.len();
         if let Some(lfr) = less_flat_row {
-            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+            tracing::info!(
+                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}",
+                rel_name
+            );
         }
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
         v.truncate(limit.min(count_less_flat));
@@ -1308,7 +1313,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     /// This method inserts or updates BM25 document metadata for multiple documents in a single
     /// database transaction. Each document is identified by its UUID and contains metadata needed
     /// for BM25 scoring including a tracking hash, tokenizer version, and token length.
-pub fn upsert_bm25_doc_meta_batch(
+    pub fn upsert_bm25_doc_meta_batch(
         &self,
         docs: impl IntoIterator<Item = (Uuid, DocMeta)>,
     ) -> Result<(), DbError> {
@@ -1452,7 +1457,11 @@ impl Database {
     ) -> Result<HashMap<Uuid, (usize, &'static VectorDimensionSpec)>, DbError> {
         let mut plan = HashMap::new();
         for (idx, (node_id, vector)) in updates.iter().enumerate() {
-            let spec = dimension_spec_for_length(vector.len())?;
+            let spec = dimension_spec_for_length(vector.len()).ok_or(
+                DbError::UnsupportedEmbeddingDimension {
+                    dims: vector.len() as i64,
+                },
+            )?;
             plan.insert(*node_id, (idx, spec));
         }
         Ok(plan)
@@ -1570,26 +1579,17 @@ impl Database {
     }
 }
 
-#[cfg(feature = "multi_embedding_db")]
-/// Returns the registered dimension spec for the provided vector length.
-fn dimension_spec_for_length(len: usize) -> Result<&'static VectorDimensionSpec, DbError> {
-    vector_dimension_specs()
-        .iter()
-        .find(|spec| spec.dims() as usize == len)
-        .ok_or(DbError::UnsupportedEmbeddingDimension { dims: len as i64 })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bm25_index::DocData;
     use crate::Database;
     use crate::DbError;
     #[cfg(feature = "multi_embedding_db")]
     use crate::MultiEmbeddingRuntimeConfig;
+    use crate::bm25_index::DocData;
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::adapter::{
-        parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
+        ExperimentalEmbeddingDatabaseExt, parse_embedding_metadata,
     };
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
@@ -1632,11 +1632,10 @@ mod tests {
             .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
             .ok_or(DbError::NotFound)?;
 
-        let dim_spec = vector_dimension_specs()
-            .first()
-            .expect("dimension spec");
+        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
         let vector = vec![0.5; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(node.id, vector.clone())]).await?;
+        db.update_embeddings_batch(vec![(node.id, vector.clone())])
+            .await?;
 
         let spec = experimental_spec_for_node(node_type).expect("node spec");
         let metadata_rows = db.vector_metadata_rows(spec.metadata_schema.relation(), node.id)?;
@@ -1655,8 +1654,7 @@ mod tests {
             dim_spec.embedding_model()
         );
 
-        let relation =
-            ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
         relation.ensure_registered(&db)?;
         let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
         assert_eq!(
@@ -1708,7 +1706,6 @@ mod tests {
 
         Ok(())
     }
-
 
     #[tokio::test]
     async fn test_get_file_data() -> Result<(), PlokeError> {

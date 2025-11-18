@@ -119,3 +119,23 @@
   - `cargo test -p ploke-db --features multi_embedding_db get_unembedded_respects_runtime_embeddings`
   - `cargo test -p ploke-db test_count_nodes_for_embedding`
 - Next follow-ups: extend the same runtime-aware filtering to the HNSW helpers and upstream callers before wiring Slice 2 into the runtime crates. Update telemetry artifacts (`slice2-db.json`) once the remainder of the helper refactors land so the Validation Matrix proof covers the new behavior.
+
+## Progress — 2025-11-18 (Slice 2 HNSW helper propagation — plan)
+- Goal: convert the legacy `hnsw_of_type`/`create_index*` helpers to operate on runtime-owned metadata + per-dimension vector relations so the Slice 2 dual-write stack can exercise HNSW parity without relying on the single-column `embedding` field.
+- Work items:
+  1. Teach `hnsw_of_type` to enumerate every registered vector relation for the requested node kind, ensure the relations/indexes exist via the adapter trait, and fan out the HNSW queries per dimension while keeping legacy behavior intact when the runtime flag is disabled.
+  2. Extend `create_index`/`create_index_warn` to seed the per-dimension indexes so runtime restores and CLI commands no longer assume a single `:hnsw_idx` per relation.
+  3. Add a runtime-gated regression test that seeds embeddings through `update_embeddings_batch` and confirms `hnsw_of_type` can surface the new runtime vectors.
+  4. Re-run targeted `ploke-db` tests (`multi_embedding_hnsw_index_and_search`) plus a `ploke-tui` test command with `multi_embedding_runtime` enabled to catch unexpected downstream fallout.
+- Evidence to capture after the work: updated implementation log entry (this file), test command list + pass/fail counts, and a note about any zero-test runs so we can plug the gaps in the telemetry plan.
+
+## Progress — 2025-11-18 (Slice 2 HNSW helper propagation — results)
+- `hnsw_of_type` now routes through the runtime adapter when `multi_embedding_db` is enabled: it ensures each per-dimension relation exists via `ExperimentalVectorRelation`, verifies indexes with the `create_idx` helper, and runs the Cozo HNSW query over the vector relations before joining names from the base node relation. Legacy mode continues using the single-column `embedding` path.
+- `create_index`, `create_index_warn`, and the runtime index creation helper (`create_multi_embedding_indexes_for_type`) now build the `:vector_idx` structures for every supported dimension so restore/CLI flows prepare both the legacy and runtime indexes in one call.
+- Added `index::hnsw::tests::multi_embedding_hnsw_index_and_search` to seed embeddings through `Database::update_embeddings_batch`, build the new indexes, and assert that `hnsw_of_type` returns the runtime vector. This provides a concrete Slice 2 regression guard.
+- Tests executed:
+  - `cargo test -p ploke-db --features multi_embedding_db multi_embedding_hnsw_index_and_search`
+  - `cargo test -p ploke-tui --features multi_embedding_runtime app_state::database::tests::load_db` *(no tests matched; command kept to document the gap and confirm the crate builds under the runtime flag)*
+- Follow-ups:
+  - `slice2-db.json` still needs to capture the updated Validation Matrix once we propagate these helpers into the telemetry tooling.
+  - `ploke-tui` lacks runnable tests under `multi_embedding_runtime`; future work should restore coverage so live-gate evidence can exercise the runtime crates.

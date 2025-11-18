@@ -85,7 +85,7 @@ impl ExperimentalVectorRelation {
             });
         }
         let identity = self.script_identity();
-        let vector_literal = literal_from_vector(vector);
+        let vector_literal = literal_from_values(vector);
         let script = format!(
             r#"
 ?[node_id, embedding_model, provider, at, embedding_dims, vector] <- [[
@@ -168,7 +168,7 @@ fn insert_vector_row(
     Ok(())
 }
 
-fn literal_from_vector(vector: &[f32]) -> String {
+pub fn literal_from_values(vector: &[f32]) -> String {
     let values = vector
         .iter()
         .map(|value| format!("{:.10}", value))

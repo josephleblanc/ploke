@@ -1,11 +1,23 @@
+use crate::database::{HNSW_SUFFIX, to_uuid};
 use crate::{Database, DbError, NodeType, QueryResult, TypedEmbedData};
 use std::collections::BTreeMap;
 
-use cozo::{DataValue, Num, ScriptMutability};
+use cozo::{DataValue, NamedRows, Num, ScriptMutability};
 use itertools::Itertools;
 use tracing::instrument;
 
-use crate::database::HNSW_SUFFIX;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::HnswDistance;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::adapter::ExperimentalEmbeddingDatabaseExt;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::vectors::ExperimentalVectorRelation;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -39,14 +51,14 @@ pub fn run_script_warn(
     match db.run_script(script, rel_params, mutability) {
         Ok(r) => Ok(r),
         Err(e) => {
-            if e.to_string()
-                .contains("Index hnsw_idx not found on relation const")
-            {
+            let db_err = DbError::from(e);
+            let message = db_err.to_string();
+            if message.contains("Index") && message.contains("not found") {
                 Err(ploke_error::Error::Warning(
-                    ploke_error::WarningError::PlokeDb(e.to_string()),
+                    ploke_error::WarningError::PlokeDb(message),
                 ))
             } else {
-                Err(DbError::Cozo(e.to_string()).into())
+                Err(ploke_error::Error::from(db_err))
             }
         }
     }
@@ -58,6 +70,10 @@ pub fn hnsw_of_type(
     k: usize,
     ef: usize,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
+    #[cfg(feature = "multi_embedding_db")]
+    if db.multi_embedding_db_enabled() {
+        return multi_embedding_hnsw_of_type(db, ty, k, ef);
+    }
     let mut params = std::collections::BTreeMap::new();
     let rel = ty.relation_str();
     params.insert("k".to_string(), DataValue::from(k as i64));
@@ -103,20 +119,7 @@ pub fn hnsw_of_type(
         }
     }?;
 
-    let mut results = Vec::new();
-    for row in result.rows {
-        tracing::trace!("{:?}", row);
-        let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::trace!("{:?}", id);
-            id
-        } else {
-            uuid::Uuid::max()
-        };
-        let content = row[1].get_str().unwrap().to_string();
-        results.push((id, content, row[2].to_owned()));
-    }
-
-    Ok(results)
+    Ok(named_rows_to_embeddings(result))
 }
 
 #[instrument(skip_all, fields(query_result))]
@@ -406,7 +409,103 @@ pub fn search_similar_test(
     Ok(results)
 }
 
+fn named_rows_to_embeddings(rows: NamedRows) -> Vec<Embedding> {
+    rows.rows
+        .into_iter()
+        .filter_map(|row| {
+            let id = to_uuid(&row[0]).ok()?;
+            let name = row[1].get_str().unwrap_or_default().to_string();
+            Some((id, name, row[2].clone()))
+        })
+        .collect()
+}
+
+#[cfg(feature = "multi_embedding_db")]
+fn multi_embedding_hnsw_of_type(
+    db: &Database,
+    ty: NodeType,
+    k: usize,
+    ef: usize,
+) -> Result<Vec<Embedding>, ploke_error::Error> {
+    let Some(spec) = experimental_spec_for_node(ty) else {
+        return Ok(Vec::new());
+    };
+    spec.metadata_schema
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+    let mut aggregated = Vec::new();
+    for dim_spec in vector_dimension_specs() {
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        relation
+            .ensure_registered(db)
+            .map_err(ploke_error::Error::from)?;
+        let script = format!(
+            r#"
+?[node_id, name, distance] :=
+    *{vector_rel}{{ node_id, vector: v @ 'NOW' }},
+    ~{vector_rel}:vector_idx{{ node_id |
+        query: v,
+        k: {k},
+        ef: {ef},
+        bind_distance: distance
+    }},
+    *{node_rel}{{ id: node_id, name @ 'NOW' }}
+"#,
+            vector_rel = relation.relation_name(),
+            node_rel = ty.relation_str(),
+            k = k,
+            ef = ef,
+        );
+        match db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable) {
+            Ok(rows) => aggregated.extend(named_rows_to_embeddings(rows)),
+            Err(err) => {
+                let db_err = DbError::from(err);
+                let message = db_err.to_string();
+                if message.contains("Index") && message.contains("not found") {
+                    continue;
+                } else {
+                    return Err(ploke_error::Error::from(db_err));
+                }
+            }
+        }
+    }
+    Ok(aggregated)
+}
+
+#[cfg(feature = "multi_embedding_db")]
+fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Result<(), DbError> {
+    if !db.multi_embedding_db_enabled() {
+        return Ok(());
+    }
+    let Some(spec) = experimental_spec_for_node(ty) else {
+        return Ok(());
+    };
+    spec.metadata_schema.ensure_registered(db)?;
+    for dim_spec in vector_dimension_specs() {
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        relation.ensure_registered(db)?;
+        if let Err(err) = db.create_idx(
+            &relation.relation_name(),
+            dim_spec.dims(),
+            dim_spec.hnsw_m(),
+            dim_spec.hnsw_ef_construction(),
+            HnswDistance::L2,
+        ) {
+            let msg = err.to_string();
+            if msg.contains("already exists") {
+                continue;
+            } else {
+                return Err(err);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
+    #[cfg(feature = "multi_embedding_db")]
+    create_multi_embedding_indexes_for_type(db, ty)?;
+
     // Create documents table
     // Create HNSW index on embeddings
     let script = [
@@ -442,6 +541,9 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
 }
 
 pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
+    #[cfg(feature = "multi_embedding_db")]
+    create_multi_embedding_indexes_for_type(db, ty).map_err(ploke_error::Error::from)?;
+
     // Create documents table
     // Create HNSW index on embeddings
     let script = [
@@ -502,9 +604,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        create_index_primary, hnsw_all_types,
-        utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES},
-        DbError,
+        DbError, NodeType, create_index, create_index_primary, hnsw_all_types, hnsw_of_type,
+        utils::test_utils::{TEST_DB_NODES, fixture_db_backup_path},
     };
     use tokio::sync::Mutex;
 
@@ -513,6 +614,10 @@ mod tests {
     use tokio_test::assert_err;
 
     use crate::Database;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::MultiEmbeddingRuntimeConfig;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
 
     #[tokio::test]
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {
@@ -559,6 +664,34 @@ mod tests {
         let expect_err = ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(err_msg));
         let actual_err = e.clone().expect_err("expect error");
         assert!(matches!(actual_err, ploke_error::Error::Warning(_)));
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn multi_embedding_hnsw_index_and_search() -> Result<(), ploke_error::Error> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(DbError::NotFound)?;
+        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+        let vector = vec![0.5; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
+        create_index(&db, node_type).map_err(ploke_error::Error::from)?;
+        let hits = hnsw_of_type(
+            &db,
+            node_type,
+            1,
+            dim_spec.hnsw_search_ef() as usize,
+        )?;
+        assert!(
+            hits.iter().any(|(id, _, _)| *id == node.id),
+            "expected HNSW search to yield runtime embedding rows for seeded node"
+        );
         Ok(())
     }
 }
