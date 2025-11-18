@@ -1,24 +1,24 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{ops::Deref, path::Path};
 
-use crate::NodeType;
-use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 #[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::adapter::{ExperimentalEmbeddingDatabaseExt, parse_embedding_metadata};
+use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::node_specs::{
-    ExperimentalNodeRelationSpec, experimental_spec_for_node,
+    experimental_spec_for_node, ExperimentalNodeRelationSpec,
 };
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::vector_dims::{
-    VectorDimensionSpec, dimension_spec_for_length, embedding_entry, vector_dimension_specs,
+    dimension_spec_for_length, embedding_entry, vector_dimension_specs, VectorDimensionSpec,
 };
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
+use crate::NodeType;
+use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
@@ -29,6 +29,11 @@ use tracing::instrument;
 use uuid::Uuid;
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
+
+/// Legacy single-column embedding width used by the primary node relations.
+/// This must stay in sync with the schema definition in `ploke-transform` and
+/// the HNSW helpers that index the `embedding` field.
+const LEGACY_EMBEDDING_DIMS: usize = 384;
 
 /// Main database connection and query interface
 #[derive(Debug)]
@@ -636,9 +641,13 @@ impl Database {
             Self::validate_embedding_vec(embedding)?;
         }
 
-        // Convert updates to DataValue format - as a list of [id, embedding] pairs
-        let updates_data: Vec<DataValue> = updates
+        // Convert updates to DataValue format for the legacy single-column embedding.
+        // The legacy column is fixed-width (384 dims today), so we only project updates
+        // whose vector length matches the legacy width. All updates (including other
+        // dimensions) are still routed to the multi-embedding relations when enabled.
+        let legacy_updates_data: Vec<DataValue> = updates
             .iter()
+            .filter(|(_, embedding)| embedding.len() == LEGACY_EMBEDDING_DIMS)
             .map(|(id, embedding)| {
                 let id_val = DataValue::Uuid(UuidWrapper(*id));
                 let embedding_val = DataValue::List(
@@ -647,17 +656,35 @@ impl Database {
                         .map(|f| DataValue::Num(cozo::Num::Float(*f as f64)))
                         .collect(),
                 );
-                // Each update is a list containing [id, embedding]
                 DataValue::List(vec![id_val, embedding_val])
             })
             .collect();
 
-        let mut params = BTreeMap::new();
-        params.insert("updates".to_string(), DataValue::List(updates_data));
+        let mut legacy_params = BTreeMap::new();
+        legacy_params.insert("updates".to_string(), DataValue::List(legacy_updates_data));
 
+        // When multi-embedding DB support is enabled, dual-write into the runtime-owned
+        // metadata/vector relations using the full update set (all supported dimensions).
         #[cfg(feature = "multi_embedding_db")]
         if self.multi_embedding_db_enabled() {
-            self.write_multi_embedding_relations(&updates, &params)?;
+            // For multi-embedding relations we accept all supported dimensions; the
+            // adapter will reject unsupported lengths via `dimension_spec_for_length`.
+            let multi_updates_data: Vec<DataValue> = updates
+                .iter()
+                .map(|(id, embedding)| {
+                    let id_val = DataValue::Uuid(UuidWrapper(*id));
+                    let embedding_val = DataValue::List(
+                        embedding
+                            .iter()
+                            .map(|f| DataValue::Num(cozo::Num::Float(*f as f64)))
+                            .collect(),
+                    );
+                    DataValue::List(vec![id_val, embedding_val])
+                })
+                .collect();
+            let mut multi_params = BTreeMap::new();
+            multi_params.insert("updates".to_string(), DataValue::List(multi_updates_data));
+            self.write_multi_embedding_relations(&updates, &multi_params)?;
         }
 
         for node_type in NodeType::primary_nodes() {
@@ -711,7 +738,11 @@ impl Database {
             script2.push_str("\n}");
 
             let result = self
-                .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
+                .run_script(
+                    &script2,
+                    legacy_params.clone(),
+                    cozo::ScriptMutability::Mutable,
+                )
                 .map_err(|e| {
                     let error_json = cozo::format_error_as_json(e, None);
                     let error_str = serde_json::to_string_pretty(&error_json).unwrap();
@@ -1582,14 +1613,10 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Database;
-    use crate::DbError;
-    #[cfg(feature = "multi_embedding_db")]
-    use crate::MultiEmbeddingRuntimeConfig;
     use crate::bm25_index::DocData;
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::adapter::{
-        ExperimentalEmbeddingDatabaseExt, parse_embedding_metadata,
+        parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
     };
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
@@ -1597,6 +1624,10 @@ mod tests {
     use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::vectors::ExperimentalVectorRelation;
+    use crate::Database;
+    use crate::DbError;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::MultiEmbeddingRuntimeConfig;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
     use tracing::Level;
@@ -1703,6 +1734,132 @@ mod tests {
             pending_before - 1,
             "pending count should decrease once runtime relation owns the embedding"
         );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn count_pending_embeddings_parity_legacy_vs_multi() -> Result<(), PlokeError> {
+        // Test legacy behavior (flag disabled)
+        let legacy_raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let legacy_db = Database::new(legacy_raw_db);
+        let legacy_count = legacy_db.count_pending_embeddings()?;
+        assert!(legacy_count > 0, "fixture should have pending embeddings");
+
+        // Test multi-embedding behavior (flag enabled) - use separate fixture load
+        let multi_raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let multi_db = Database::with_multi_embedding_config(multi_raw_db, config);
+        let multi_count = multi_db.count_pending_embeddings()?;
+
+        // Initially, counts should match (no runtime embeddings yet)
+        assert_eq!(
+            legacy_count, multi_count,
+            "pending counts should match when no runtime embeddings exist; legacy={legacy_count}, multi={multi_count}"
+        );
+
+        // After seeding some embeddings, multi-embedding count should decrease
+        let batches = multi_db.get_unembedded_node_data(5, 0)?;
+        let nodes_to_embed: Vec<_> = batches
+            .into_iter()
+            .flat_map(|typed| typed.v.into_iter().take(3))
+            .collect();
+
+        if !nodes_to_embed.is_empty() {
+            let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+            let updates: Vec<_> = nodes_to_embed
+                .iter()
+                .map(|node| (node.id, vec![0.5; dim_spec.dims() as usize]))
+                .collect();
+            multi_db.update_embeddings_batch(updates).await?;
+
+            let multi_count_after = multi_db.count_pending_embeddings()?;
+            assert!(
+                multi_count_after < multi_count,
+                "multi-embedding count should decrease after embedding; before={multi_count}, after={multi_count_after}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn update_embeddings_supports_multiple_dims_and_node_types() -> Result<(), PlokeError> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let batches = db.get_unembedded_node_data(32, 0)?;
+        let mut selections = Vec::new();
+        for typed in batches {
+            for entry in typed.v {
+                selections.push((typed.ty, entry));
+                if selections.len() >= 2 {
+                    break;
+                }
+            }
+            if selections.len() >= 2 {
+                break;
+            }
+        }
+
+        assert!(
+            !selections.is_empty(),
+            "fixture should have at least one unembedded node"
+        );
+
+        let dim_specs: Vec<_> = vector_dimension_specs().iter().take(2).collect();
+        assert!(
+            !dim_specs.is_empty(),
+            "expected at least one vector dimension spec"
+        );
+
+        // Pair nodes with dimensions, cycling dimensions if fewer than nodes.
+        let mut updates = Vec::new();
+        for (idx, (_node_type, entry)) in selections.iter().enumerate() {
+            let dim_spec = dim_specs[idx % dim_specs.len()];
+            let vector = vec![0.5; dim_spec.dims() as usize];
+            updates.push((entry.id, vector));
+        }
+
+        db.update_embeddings_batch(updates).await?;
+
+        // Verify metadata + vector rows for each updated node.
+        for (idx, (node_type, entry)) in selections.iter().enumerate() {
+            let dim_spec = dim_specs[idx % dim_specs.len()];
+            let spec = experimental_spec_for_node(*node_type).expect("node spec for updated type");
+
+            let metadata_rows =
+                db.vector_metadata_rows(spec.metadata_schema.relation(), entry.id)?;
+            assert!(
+                !metadata_rows.rows.is_empty(),
+                "expected metadata rows for {}",
+                spec.metadata_schema.relation()
+            );
+
+            let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
+            assert!(
+                metadata_entries
+                    .into_iter()
+                    .any(|(model, dims)| model == dim_spec.embedding_model()
+                        && dims == dim_spec.dims()),
+                "expected metadata tuple for model {} dims {}",
+                dim_spec.embedding_model(),
+                dim_spec.dims()
+            );
+
+            let relation =
+                ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+            relation.ensure_registered(&db)?;
+            let vector_rows = db.vector_rows(&relation.relation_name(), entry.id)?;
+            assert!(
+                !vector_rows.rows.is_empty(),
+                "expected vector row for {}",
+                relation.relation_name()
+            );
+        }
 
         Ok(())
     }

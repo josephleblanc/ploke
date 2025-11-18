@@ -54,22 +54,22 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 - **Tests & evidence.**
   - Repurpose/extend the `multi_embedding` module (splitting code into focused files instead of a single `multi_embedding_experiment.rs` blob) into integration tests that validate metadata tuples align with vector rows across node types.
   - End-to-end DB tests verifying dual-write parity and HNSW search invariants for supported dimensions (e.g., 384 and 1536) using the `ExperimentalEmbeddingDatabaseExt` adapter plus `HnswDistance`.
-  - Runtime-aware helper tests under `multi_embedding_db` (e.g., `update_embeddings_dual_writes_metadata_and_vectors`, `get_unembedded_respects_runtime_embeddings`, `multi_embedding_hnsw_index_and_search`) proving that dual-write paths populate both metadata and vector relations and that pending counts and HNSW queries respect runtime-owned embeddings.
-  - Validation Matrix coverage for three tiers:
-    - **Schema tier (`multi_embedding_schema`)**: at least one executing test in both `ploke-db` and `ploke-test-utils` that exercises the experimental schema and fixture wiring.
-    - **DB tier (`multi_embedding_db`)**: tests in `ploke-db` and `ploke-test-utils` that cover dual-write helpers and pending-count logic while keeping legacy behavior intact when the flag is OFF.
-    - **Runtime tier (`multi_embedding_runtime`)**: at least one `ploke-tui` test that exercises a DB-backed flow under the runtime flag (e.g., crate-focus/load-db paths) with the database crate compiled under runtime flags.
+  - ✅ Runtime-aware helper tests under `multi_embedding_db` (e.g., `update_embeddings_dual_writes_metadata_and_vectors`, `get_unembedded_respects_runtime_embeddings`, `multi_embedding_hnsw_index_and_search`, `count_pending_embeddings_parity_legacy_vs_multi`) proving that dual-write paths populate both metadata and vector relations and that pending counts and HNSW queries respect runtime-owned embeddings.
+  - ✅ Validation Matrix coverage for three tiers:
+    - **Schema tier (`multi_embedding_schema`)**: ✅ Tests in both `ploke-db` and `ploke-test-utils` (`seed_multi_embedding_schema_creates_all_node_type_relations`, `seeds_multi_embedding_relations_for_fixture_nodes`, `setup_db_full_embeddings_returns_embedding_batches`) exercise the experimental schema and fixture wiring.
+    - **DB tier (`multi_embedding_db`)**: ✅ Tests in `ploke-db` (`count_pending_embeddings_parity_legacy_vs_multi`) and `ploke-test-utils` (`dual_write_reduces_pending_embeddings_with_fixtures`, `get_unembedded_respects_runtime_embeddings_in_test_utils`) cover dual-write helpers and pending-count logic while keeping legacy behavior intact when the flag is OFF.
+    - **Runtime tier (`multi_embedding_runtime`)**: ✅ `ploke-tui` tests driven by the Validation Matrix command `cargo test -p ploke-tui --features multi_embedding_runtime --test load_db_crate_focus`, plus additional runtime coverage from `multi_embedding_runtime_db_tests.rs` (`load_db_with_multi_embedding_fixture`, `scan_for_change_with_multi_embedding_relations`), exercise DB-backed flows under the runtime flag with multi-embedding fixtures.
   - Artifact: `target/test-output/embedding/slice2-db.json` capturing Validation Matrix commands, pass/fail counts, and a summary of dual-write/HNSW coverage.
 - **Docs.** Update this execution plan + `required-groundwork.md` with concrete helper names; add a decisions entry if schema naming conflicts arise.
 - **Telemetry artifacts.** Produce `slice2-db.json` (and optional live artifacts) per `telemetry_evidence_plan.md`, preferably via `cargo xtask embedding:collect-evidence --slice 2`.
 
 ## Slice 3 – Indexer + runtime writers
-- **Goal.** Update `ploke-embed` indexer, embedding processor, and ingest pipeline to write/read through the new DB helpers behind the established flag.
+- **Goal.** Update `ploke-embed` indexer, embedding processor, and ingest pipeline to write/read through the multi-embedding DB helpers behind the established flags, while keeping legacy single-embedding behavior intact when runtime flags are disabled.
 - **Touch points.**
   - `crates/ingest/ploke-embed/src/indexer/mod.rs`, provider implementations, and `EmbeddingProcessor` to emit `EmbeddingShape` + embedding-set IDs per batch, then dispatch vectors to the per-dimension relation reported by the registry (creating it first if missing).
   - `ploke-rag` consumers and TUI handlers that fetch embeddings (`app_state/handlers/embedding.rs`) so they request a specific embedding set.
   - Runtime configuration for `/embedding use` commands (as described in required-groundwork §3).
-- **Feature flags.** Use `multi_embedding_runtime` (depends on db flag). Must ensure live API tests remain behind `cfg(feature = "live_api_tests")`.
+- **Feature flags.** Use `multi_embedding_runtime` (implies `multi_embedding_db` and `multi_embedding_schema`). Live API tests must remain behind `cfg(feature = "live_api_tests")` even when runtime flags are on.
 - **Tests & evidence.**
   - Unit tests on indexer tasks verifying provenance, dimension enforcement, and telemetry spans.
   - Offline integration test invoking TEST_APP harness with `multi_embedding_runtime` enabled and verifying both local + remote providers populate separate sets.

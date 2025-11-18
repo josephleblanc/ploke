@@ -19,7 +19,7 @@ pub struct ExperimentalVectorRelation<'a> {
     relation_base: &'a str,
 }
 
-impl ExperimentalVectorRelation<'a> {
+impl<'a> ExperimentalVectorRelation<'a> {
     pub fn try_new(dims: i64, relation_base: &'a str) -> Result<Self, DbError> {
         if supported_dimension_set().contains(&dims) {
             Ok(Self {
@@ -31,7 +31,7 @@ impl ExperimentalVectorRelation<'a> {
         }
     }
 
-    pub fn new(dims: i64, relation_base: &str) -> Self {
+    pub fn new(dims: i64, relation_base: &'a str) -> Self {
         Self::try_new(dims, relation_base).expect("dimension must be supported")
     }
 

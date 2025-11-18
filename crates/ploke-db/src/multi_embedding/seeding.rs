@@ -84,12 +84,12 @@ pub(crate) fn seed_metadata_relation(
     Ok((db, sample))
 }
 
-pub(crate) fn seed_vector_relation_for_node(
-    db: &Database,
-    spec: &ExperimentalNodeSpec,
+pub(crate) fn seed_vector_relation_for_node<'a>(
+    db: &'a Database,
+    spec: &'a ExperimentalNodeSpec,
     node_id: Uuid,
-    dim_spec: &VectorDimensionSpec,
-) -> Result<ExperimentalVectorRelation, DbError> {
+    dim_spec: &'a VectorDimensionSpec,
+) -> Result<ExperimentalVectorRelation<'a>, DbError> {
     let vector_relation =
         ExperimentalVectorRelation::new(dim_spec.dims(), spec.base.vector_relation_base);
     vector_relation.ensure_registered(db)?;

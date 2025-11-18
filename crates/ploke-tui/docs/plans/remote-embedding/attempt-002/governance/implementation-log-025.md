@@ -169,3 +169,13 @@
   - `ploke-db/Cargo.toml` exposes the full `multi_embedding_*` ladder and keeps `multi_embedding_experiment` aliased to `multi_embedding_schema` as described in `feature_flags.md`.
   - `ploke-tui/Cargo.toml` and `ploke-test-utils/Cargo.toml` mirror the same ladder and forward their flags to downstream crates in line with the rollout playbook.
   - Remaining discrepancies are behavioral rather than definitional: runtime crates still lack executing tests under `multi_embedding_runtime`, and `slice2-db.json` has not yet been wired into the telemetry tooling.
+
+## Progress — 2025-11-XX (Slice 1 Phase B completion + Slice 2 coverage strengthening)
+- **Slice 1 Phase B status confirmed**: All sub-steps (B1–B5) are complete per `experimental_fixtures_plan.md`. Phase B5 test review audit shows all helper tests restored to strict behavior (see `governance/test_changes_review.md`). Updated `remote-embedding-slice1-report.md` with Phase B checklist.
+- **Slice 2 test coverage expansion**:
+  - Added `ploke-test-utils` tests under `multi_embedding_schema` (`seed_multi_embedding_schema_creates_all_node_type_relations`) and `multi_embedding_db` (`dual_write_reduces_pending_embeddings_with_fixtures`, `get_unembedded_respects_runtime_embeddings_in_test_utils`) to exercise `setup_db_full_embeddings` and seeding helpers, ensuring validation matrix tiers no longer report "zero tests executed".
+  - Strengthened `ploke-db` dual-write, pending-count, and HNSW helper tests under `multi_embedding_db` (`count_pending_embeddings_parity_legacy_vs_multi`) to prove parity with legacy behavior and respect for runtime-owned metadata.
+  - Introduced `multi_embedding_runtime`-gated tests in `ploke-tui` (`multi_embedding_runtime_db_tests.rs`: `load_db_with_multi_embedding_fixture`, `scan_for_change_with_multi_embedding_relations`) around `load_db`/backup/`scan_for_change` flows using multi-embedding fixtures.
+- **Telemetry refresh**: Regenerated `slice2-db.json` via `cargo xtask embedding:collect-evidence --slice 2` (all validation matrix tiers now pass). Updated `remote-embedding-slice2-report.md` with new evidence and coverage notes.
+- **Documentation updates**: Updated `execution_plan.md` and `telemetry_evidence_plan.md` with brief notes on new tests and remaining gaps for Slice 3. All validation matrix tiers now show executing tests with no "zero tests" notes.
+- **Bug fixes**: Fixed lifetime parameter issues in `vectors.rs` (`impl<'a> ExperimentalVectorRelation<'a>`) and `seeding.rs` (`seed_vector_relation_for_node<'a>`) that were causing compilation failures.

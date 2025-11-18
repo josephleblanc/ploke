@@ -694,4 +694,30 @@ mod tests {
         );
         Ok(())
     }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn multi_embedding_hnsw_returns_empty_without_vectors() -> Result<(), ploke_error::Error>
+    {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        // Ensure multi-embedding indexes exist but do not seed any runtime vectors.
+        create_index_primary(&db).map_err(ploke_error::Error::from)?;
+
+        let ty = NodeType::primary_nodes()
+            .get(0)
+            .copied()
+            .expect("at least one primary node type");
+        let k = 5;
+        let ef = 16;
+        let hits = hnsw_of_type(&db, ty, k, ef)?;
+        assert!(
+            hits.is_empty(),
+            "expected no HNSW hits when no runtime vectors have been written"
+        );
+
+        Ok(())
+    }
 }

@@ -29,8 +29,8 @@ Purpose: define the evidence requirements (tests, artifacts, tracing) for each s
 - **Evidence**: link to implementation log entry, attach references in `remote-embedding-slice1-report.md`.
 
 ### Slice 2 – Database dual-write/read
-- **Offline tests**: `cargo test -p ploke-db --features "multi_embedding_db"` for affected modules, integration tests verifying HNSW search parity using synthetic vectors.
-- **Validation matrix**: rerun the full matrix so schema/db/runtime/release tiers capture the state of dual-write changes; attach the results to `slice2-db.json`. Treat `slice2-db.json` as the canonical Slice 2 artifact describing which commands ran under each tier and whether they executed meaningful tests versus compile-only runs.
+- **Offline tests**: ✅ `cargo test -p ploke-db --features "multi_embedding_db"` for affected modules, integration tests verifying HNSW search parity using synthetic vectors. ✅ `cargo test -p ploke-test-utils --features "multi_embedding_db"` for dual-write and pending-count behavior. ✅ `cargo test -p ploke-tui --features "multi_embedding_runtime" --test multi_embedding_runtime_db_tests` for backup/restore flows.
+- **Validation matrix**: ✅ Rerun the full matrix so schema/db/runtime/release tiers capture the state of dual-write changes; results attached to `slice2-db.json`. All tiers now show passing tests (no "zero tests executed" notes). Treat `slice2-db.json` as the canonical Slice 2 artifact describing which commands ran under each tier and whether they executed meaningful tests versus compile-only runs.
 - **Artifacts**:
   - `slice2-db.json` capturing dual-write parity metrics (rows written to legacy vs new relations, mismatch count).
   - Query dumps showing `embedding_nodes` counts per node type.

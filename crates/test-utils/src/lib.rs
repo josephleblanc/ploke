@@ -435,6 +435,28 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "multi_embedding_schema")]
+    #[test]
+    fn seed_multi_embedding_schema_creates_all_node_type_relations(
+    ) -> Result<(), ploke_error::Error> {
+        use ploke_db::multi_embedding::experimental_node_relation_specs;
+
+        let raw_db = setup_db_full("fixture_nodes")?;
+        let database = ploke_db::Database::new(raw_db);
+        seed_multi_embedding_schema(&database)?;
+
+        for spec in experimental_node_relation_specs() {
+            let metadata_rel = spec.metadata_schema.relation();
+            assert!(
+                relation_has_rows(&database, metadata_rel, "id")?,
+                "expected metadata rows for {}",
+                spec.name
+            );
+        }
+
+        Ok(())
+    }
+
     #[cfg(feature = "multi_embedding_db")]
     #[test]
     fn dual_write_reduces_pending_embeddings_with_fixtures() -> Result<(), ploke_error::Error> {
@@ -461,6 +483,64 @@ mod tests {
         assert!(
             pending_after < pending_before,
             "pending embeddings should decrease after dual-write; before={pending_before}, after={pending_after}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn get_unembedded_respects_runtime_embeddings_in_test_utils(
+    ) -> Result<(), ploke_error::Error> {
+        use ploke_db::multi_embedding::{experimental_spec_for_node, vector_dimension_specs};
+        use ploke_db::MultiEmbeddingRuntimeConfig;
+
+        let raw_db = setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let database = ploke_db::Database::with_multi_embedding_config(raw_db, config);
+
+        // Get initial unembedded nodes
+        let batches_before = database.get_unembedded_node_data(50, 0)?;
+        let total_before: usize = batches_before.iter().map(|typed| typed.v.len()).sum();
+        assert!(total_before > 0, "fixture should have unembedded nodes");
+
+        // Pick a node to embed
+        let (node_type, node) = batches_before
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(ploke_error::Error::from(ploke_db::DbError::NotFound))?;
+
+        // Get pending count before embedding
+        let pending_before = database
+            .count_pending_embeddings()
+            .map_err(ploke_error::Error::from)?;
+
+        // Embed the node
+        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+        let vector = vec![0.5; dim_spec.dims() as usize];
+        database
+            .update_embeddings_batch(vec![(node.id, vector)])
+            .await
+            .map_err(ploke_error::Error::from)?;
+
+        // Verify the node no longer appears in unembedded list
+        let batches_after = database.get_unembedded_node_data(50, 0)?;
+        let still_unembedded = batches_after
+            .into_iter()
+            .flat_map(|typed| typed.v.into_iter())
+            .any(|entry| entry.id == node.id);
+        assert!(
+            !still_unembedded,
+            "node with runtime embedding should not appear in unembedded list"
+        );
+
+        // Verify pending count decreased
+        let pending_after = database
+            .count_pending_embeddings()
+            .map_err(ploke_error::Error::from)?;
+        assert!(
+            pending_after < pending_before,
+            "pending count should decrease after embedding; before={pending_before}, after={pending_after}"
         );
 
         Ok(())
