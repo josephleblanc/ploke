@@ -48,6 +48,7 @@ Each slice below must link evidence (tests, artifacts, docs) back to this plan w
 - **Touch points.**
   - `crates/ploke-db/src/database.rs` helpers: `update_embeddings_batch`, `get_unembedded_node_data`, `count_pending_embeddings`, `get_nodes_ordered`, etc.
   - `crates/ploke-db/src/index/hnsw.rs` filters + builders so HNSW queries receive an embedding-set identifier and select the correct per-dimension relation.
+  - `crates/ploke-tui/src/app_state/database.rs` (`save_db`, `load_db`, `scan_for_change`) and downstream callers in `dispatcher.rs`: Cozo’s `import_from_backup` requires the relation set to already match the backup, so the TUI has to seed/expect the new metadata/vector relations when restoring databases and include them when taking backups. HNSW indexes cannot be partially restored; `load_db` must continue to re-run `create_index_primary` (and any new embedding-set indexes) after import, and `scan_for_change` must keep nulling legacy embeddings without attempting to rewrite the runtime-owned relations.
   - Test utilities/fixtures (e.g., `setup_db_full_embeddings`).
 - **Feature flags.** Introduce `#[cfg(feature = "multi_embedding_db")]` (depends on Slice 1 flag) that enables dual-write/dual-read. Add runtime config knob or env var so tests can enable it explicitly. Define exit criteria for removing legacy columns.
 - **Tests & evidence.**

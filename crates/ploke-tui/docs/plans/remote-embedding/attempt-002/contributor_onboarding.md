@@ -69,4 +69,8 @@ Purpose: compress the discovery work required to orient yourself on the remote-e
     - `cargo test -p ploke-db multi_embedding_experiment --features multi_embedding_experiment`: run the experimental suite described in Phase A.
     - `cargo xtask verify-fixtures --multi-embedding`: verify fixture backups and regenerate `target/test-output/embedding/fixtures/*.json`.
 
+11. **Review database backup/load + drift detection constraints**
+    - `crates/ploke-tui/src/app_state/database.rs:29-260` (`save_db`/`load_db`) and `:318-520` (`scan_for_change`) orchestrate Cozo backups plus the code-vs-database drift scanner. When `load_db` calls `Database::import_from_backup`, Cozo expects every relation referenced by the backup to already exist (or not exist) as declared; new multi-embedding metadata/vector relations therefore must be created via `ensure_embedding_relation` before attempting a restore, and the relation list passed to `import_from_backup` has to include them so the call doesn’t error. HNSW indexes are not persisted in backups and must be recreated (`create_index_primary`, `hnsw_all_types`) immediately after the restore before any scan.
+    - Document any required changes to these flows inside the implementation log plus the execution plan when dual-write support propagates into the TUI: saving must capture the new relations, loading must gracefully handle databases that predate them, and `scan_for_change` should continue to null legacy embeddings without touching the runtime-owned relations.
+
 Following these steps ensures every contributor touches the same plans, governance notes, and evidence before making changes, eliminating the “hunt through the repo” burden encountered during this onboarding pass.
