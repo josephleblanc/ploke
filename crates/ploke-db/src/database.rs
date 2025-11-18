@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
@@ -909,36 +909,9 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
-        let mut base_script = String::new();
-        // TODO: Add pre-registered fixed rules to the system.
-        let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
-
-    ancestor[desc, asc] := parent_of[desc, asc]
-    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
-    needs_embedding[id, name, hash, span] := *"#;
-        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
-
-    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
-
-    batch[id, name, file_path, file_hash, hash, span, namespace] := 
-        needs_embedding[id, name, hash, span],
-        ancestor[id, mod_id],
-        is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
-
-    ?[id, name, file_path, file_hash, hash, span, namespace] := 
-        batch[id, name, file_path, file_hash, hash, span, namespace]
-        :sort id
-        :limit $limit
-     "#;
         let rel_name = node_type.relation_str();
-
-        base_script.push_str(base_script_start);
-        base_script.push_str(rel_name);
-        base_script.push_str(base_script_end);
+        let base_script =
+            Self::build_unembedded_batch_script(rel_name, "is_null(embedding)", "");
 
         // Create parameters map
         let mut params = BTreeMap::new();
@@ -956,9 +929,49 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        #[cfg(feature = "multi_embedding_db")]
+        if self.multi_embedding_db_enabled() {
+            if let Some(spec) = experimental_spec_for_node(node_type) {
+                spec.metadata_schema.ensure_registered(self)?;
+                let runtime_ids = self.runtime_embedded_ids(spec)?;
+                v.retain(|entry| !runtime_ids.contains(&entry.id));
+            }
+        }
         v.truncate(limit.min(count_less_flat));
         let ty_embed = TypedEmbedData { v, ty: node_type };
         Ok(ty_embed)
+    }
+
+    fn build_unembedded_batch_script(
+        rel_name: &str,
+        needs_condition: &str,
+        extra_defs: &str,
+    ) -> String {
+        format!(
+            r#"
+{ancestor_rules}
+{extra_defs}
+    needs_embedding[id, name, hash, span] := *{rel_name}{{ id, name, tracking_hash: hash, span, embedding }}, {needs_condition}
+
+    is_root_module[id] := *module{{id}}, *file_mod {{owner_id: id}}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{{id: mod_id, tracking_hash: file_hash}},
+        *file_mod {{ owner_id: mod_id, file_path, namespace }},
+
+    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace]
+        :sort id
+        :limit $limit
+     "#,
+            ancestor_rules = Self::ANCESTOR_RULES,
+            rel_name = rel_name,
+            needs_condition = needs_condition,
+            extra_defs = extra_defs,
+        )
     }
 
     pub fn get_embed_rel(
@@ -1199,6 +1212,11 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        if self.multi_embedding_db_enabled() {
+            return self.count_pending_embeddings_multi();
+        }
+
         let lhs = r#"?[count(id)] := 
         "#;
         let mut query: String = String::new();
@@ -1221,6 +1239,36 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         tracing::info!("result of query:\n{:?}", result);
 
         Self::into_usize(result)
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    fn count_pending_embeddings_multi(&self) -> Result<usize, DbError> {
+        let mut total = 0usize;
+        for node_type in NodeType::primary_nodes() {
+            let Some(spec) = experimental_spec_for_node(node_type) else {
+                continue;
+            };
+            spec.metadata_schema.ensure_registered(self)?;
+            let base = self.count_relation_rows(node_type.relation_str())?;
+            let runtime = self.count_relation_rows(spec.metadata_schema.relation())?;
+            total += base.saturating_sub(runtime);
+        }
+        Ok(total)
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    fn count_relation_rows(&self, relation: &str) -> Result<usize, DbError> {
+        let script = format!(
+            r#"
+?[count(id)] := *{relation} {{ id @ 'NOW' }}
+"#,
+            relation = relation
+        );
+        let rows = self
+            .db
+            .run_script_read_only(&script, Default::default())
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Self::into_usize(rows)
     }
 
     pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
@@ -1260,7 +1308,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     /// This method inserts or updates BM25 document metadata for multiple documents in a single
     /// database transaction. Each document is identified by its UUID and contains metadata needed
     /// for BM25 scoring including a tracking hash, tokenizer version, and token length.
-    pub fn upsert_bm25_doc_meta_batch(
+pub fn upsert_bm25_doc_meta_batch(
         &self,
         docs: impl IntoIterator<Item = (Uuid, DocMeta)>,
     ) -> Result<(), DbError> {
@@ -1298,6 +1346,42 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "multi_embedding_db"))]
+impl Database {
+    /// Test-only helper that clears the legacy embedding column for a given node so runtime-owned
+    /// metadata relations become the sole source of truth.
+    fn clear_legacy_embedding(&self, node_type: NodeType, node_id: Uuid) -> Result<(), DbError> {
+        let rel_name = node_type.relation_str();
+        let rel_identity = node_type.identity();
+        let key_vals_string = node_type
+            .keys()
+            .chain(node_type.vals().filter(|v| *v != "embedding"))
+            .join(", ");
+        let script = format!(
+            r#"
+{{
+    ?[new_id, new_embedding] <- [[to_uuid("{node_id}"), null]]
+    :replace _legacy_embedding {{ new_id, new_embedding }}
+}}
+{{
+    ?[at, embedding, {key_vals}] :=
+        *_legacy_embedding {{ new_id: id, new_embedding: embedding }},
+        at = 'ASSERT',
+        *{rel_name} {{ {key_vals} @ 'NOW' }}
+    :put {rel_identity}
+}}
+"#,
+            node_id = node_id,
+            key_vals = key_vals_string,
+            rel_name = rel_name,
+            rel_identity = rel_identity,
+        );
+        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|err| DbError::Cozo(format!("{err} | script: {script}")))
     }
 }
 
@@ -1460,6 +1544,30 @@ impl Database {
         }
         Ok(mapped)
     }
+
+    #[cfg(feature = "multi_embedding_db")]
+    fn runtime_embedded_ids(
+        &self,
+        spec: &ExperimentalNodeRelationSpec,
+    ) -> Result<HashSet<Uuid>, DbError> {
+        let script = format!(
+            r#"
+?[id] := *{metadata_rel} {{ id @ 'NOW' }}
+"#,
+            metadata_rel = spec.metadata_schema.relation(),
+        );
+        let rows = self
+            .db
+            .run_script_read_only(&script, Default::default())
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let mut ids = HashSet::new();
+        for row in rows.rows {
+            if let Some(value) = row.first() {
+                ids.insert(to_uuid(value)?);
+            }
+        }
+        Ok(ids)
+    }
 }
 
 #[cfg(feature = "multi_embedding_db")]
@@ -1560,6 +1668,47 @@ mod tests {
 
         Ok(())
     }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn get_unembedded_respects_runtime_embeddings() -> Result<(), PlokeError> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let pending_before = db.count_pending_embeddings()?;
+        assert!(pending_before > 0, "fixture should have pending nodes");
+
+        let batches = db.get_unembedded_node_data(16, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(DbError::NotFound)?;
+        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+        let vector = vec![0.5; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
+        db.clear_legacy_embedding(node_type, node.id)?;
+
+        let refreshed = db.get_unembedded_node_data(16, 0)?;
+        let remains = refreshed
+            .into_iter()
+            .flat_map(|typed| typed.v.into_iter())
+            .any(|entry| entry.id == node.id);
+        assert!(
+            !remains,
+            "nodes with runtime embeddings should not be returned for re-embedding"
+        );
+
+        let pending_after = db.count_pending_embeddings()?;
+        assert_eq!(
+            pending_after,
+            pending_before - 1,
+            "pending count should decrease once runtime relation owns the embedding"
+        );
+
+        Ok(())
+    }
+
 
     #[tokio::test]
     async fn test_get_file_data() -> Result<(), PlokeError> {
