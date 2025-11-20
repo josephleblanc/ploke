@@ -29,7 +29,7 @@ Purpose: define the evidence requirements (tests, artifacts, tracing) for each s
 - **Evidence**: link to implementation log entry, attach references in `remote-embedding-slice1-report.md`.
 
 ### Slice 2 – Database dual-write/read
-- **Offline tests**: ✅ `cargo test -p ploke-db --features "multi_embedding_db"` for affected modules, integration tests verifying HNSW search parity using synthetic vectors. ✅ `cargo test -p ploke-test-utils --features "multi_embedding_db"` for dual-write and pending-count behavior. ✅ `cargo test -p ploke-tui --features "multi_embedding_runtime" --test multi_embedding_runtime_db_tests` for backup/restore flows.
+- **Offline tests**: ✅ `cargo test -p ploke-db --features "multi_embedding_db"` for affected modules, integration tests verifying HNSW search parity using synthetic vectors. ✅ `cargo test -p ploke-test-utils --features "multi_embedding_db"` for dual-write and pending-count behavior. ✅ `cargo test -p ploke-tui --features "multi_embedding_runtime" --test multi_embedding_runtime_db_tests` for backup/restore flows. RAG-level tests in `crates/ploke-rag/src/core/unit_tests.rs` (`search_for_set_returns_results_for_seeded_set`, `search_for_set_falls_back_when_multi_embedding_disabled`) may start as `#[ignore]`; when Slice 2 DB evidence is green and HNSW index reuse is stable for fixtures, un-ignore them and include their outcomes in the telemetry.
 - **Validation matrix**: ✅ Rerun the full matrix so schema/db/runtime/release tiers capture the state of dual-write changes; results attached to `slice2-db.json`. All tiers now show passing tests (no "zero tests executed" notes). Treat `slice2-db.json` as the canonical Slice 2 artifact describing which commands ran under each tier and whether they executed meaningful tests versus compile-only runs.
 - **Artifacts**:
   - `slice2-db.json` capturing dual-write parity metrics (rows written to legacy vs new relations, mismatch count).
@@ -38,7 +38,7 @@ Purpose: define the evidence requirements (tests, artifacts, tracing) for each s
 - **Telemetry**: add `tracing` spans around dual-write code paths to log provider/model/dimension; include span samples in artifact attachments.
 
 ### Slice 3 – Runtime/indexer
-- **Offline tests**: TEST_APP harness run with `multi_embedding_runtime` enabled, unit tests for indexer tasks, CLI smoke tests for `/embedding use`.
+- **Offline tests**: TEST_APP harness run with `multi_embedding_runtime` enabled, unit tests for indexer tasks, CLI smoke tests for `/embedding use`. When the runtime/indexer pipeline writes real multi-embedding embeddings for the canonical RAG symbols (e.g., `use_all_const_static`, `TOP_LEVEL_BOOL`, `TOP_LEVEL_COUNTER`), un-ignore the `multi_embedding_search_returns_hits_for_canonical_symbols` test in `crates/ploke-rag/src/core/unit_tests.rs` and treat it as part of the runtime parity gate.
 - **Validation matrix**: include all tiers, plus runtime crate commands, in both offline and live artifacts so reviewers know how each combination behaved.
 - **Live tests**: required when claiming readiness. Must run with `cfg(feature = "live_api_tests")` to exercise real provider calls (OpenRouter/local). Artifact `slice3-runtime-live-<timestamp>.json` must include:
   - Provider call metadata (model, dimensions, latency, HTTP status) without secrets.
@@ -77,3 +77,4 @@ Purpose: define the evidence requirements (tests, artifacts, tracing) for each s
 - A slice is “ready” only when its report + artifacts exist and link back to this plan.
 - Live gate (Slice 3+4) cannot be marked pass without tool_call evidence and live artifact files.
 - If any stop-and-test checkpoint fails, record the failure + remediation in the next implementation log update.
+- **Legacy parity requirement.** In addition to slice-specific artifacts, readiness for a slice that touches embeddings or fixtures includes demonstrating that pre-existing “legacy path” tests (e.g., dense/hybrid RAG searches over the legacy `embedding` column, legacy HNSW helpers, TUI backup/restore flows) still pass unmodified. If any such test needs to be relaxed, skipped, or structurally changed, that change must be explicitly called out in the slice’s report as a regression or intentional retirement, with a corresponding parity or replacement test captured in this plan.

@@ -30,6 +30,10 @@ Add a default file name for instructions for the LLM, similar to the AGENT.md fo
 
 - Create a way to drop the current database, or switch to a different database/crate for analysis
 
+## Experimental/needs testing
+
+- Add a vector search check on the AI's suggested code edits to see if there is code that is very similar to the AI's suggestion, then prompt the AI to ask if the search results should be used instead of its suggested code.
+
 ## Agent Tools
 
 - Create a tool that allows the agent to search the DB without exposing the cozo script.

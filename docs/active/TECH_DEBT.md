@@ -66,6 +66,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
 
 ## Tests
 - [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`
+- [ ] Legacy fixture regeneration: add an automated path to rebuild the legacy `fixture_nodes` backup by running the same indexer + embedder pipeline used by the TUI (`/start index` + `/save db`), and update `cargo xtask verify-fixtures` / `regenerate_fixture` to use that path instead of synthetic legacy seeding so dense search and RAG tests exercise realistic embeddings.
 
 ## async
 - [ ] Look for opportunities to let things run in the background without `.await`, and then `join` them together. 

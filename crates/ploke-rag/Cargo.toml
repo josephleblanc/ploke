@@ -21,9 +21,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-ploke-test-utils = { path = "../test-utils" }
+ploke-test-utils = { path = "../test-utils", features = ["multi_embedding_schema"] }
 lazy_static = "1.5.0"
 criterion = { version = "0.7", features = ["async_tokio"] }
+cozo = { workspace = true }
 
 [features]
 # Exposes schema-only scaffolding so RAG helpers can read/write metadata.

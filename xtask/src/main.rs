@@ -118,7 +118,11 @@ const FIXTURE_DB_CHECK: FixtureCheck = FixtureCheck {
     integrity: Some(FixtureIntegrity {
         metadata_rel_path: LEGACY_FIXTURE_METADATA_REL_PATH,
     }),
-    auto_regen: Some(&LEGACY_FIXTURE_REGEN),
+    // NOTE: The legacy backup is treated as a golden artifact built via the canonical
+    // TUI indexing + `/save db` flow. We intentionally do NOT auto-regenerate it here
+    // so tests depending on real embedding semantics (e.g. ploke-rag dense search)
+    // continue to use the vetted backup instead of a synthetic seed.
+    auto_regen: None,
 };
 
 const PRICING_CHECK: FixtureCheck = FixtureCheck {

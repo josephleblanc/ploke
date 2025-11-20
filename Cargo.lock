@@ -3720,6 +3720,7 @@ dependencies = [
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [
+ "cozo",
  "criterion",
  "itertools 0.14.0",
  "lazy_static",
