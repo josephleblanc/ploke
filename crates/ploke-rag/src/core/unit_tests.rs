@@ -589,7 +589,9 @@ mod tests {
         // DB with multi-embedding fixtures and runtime config enabled
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
         let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Arc::new(ploke_db::Database::with_multi_embedding_config(raw_db, config));
+        let db = Arc::new(ploke_db::Database::with_multi_embedding_config(
+            raw_db, config,
+        ));
 
         // Pick a pending node and dimension spec so we can seed a runtime embedding
         // that lives in the same vector space as our query.
@@ -655,8 +657,8 @@ mod tests {
     #[cfg(feature = "multi_embedding_db")]
     #[tokio::test]
     async fn search_for_set_falls_back_when_multi_embedding_disabled() -> Result<(), Error> {
-        use ploke_core::{EmbeddingSetId, EmbeddingShape};
         use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug};
+        use ploke_core::{EmbeddingSetId, EmbeddingShape};
         use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
         use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
 
