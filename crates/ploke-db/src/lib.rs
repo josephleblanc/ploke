@@ -15,7 +15,7 @@ mod result;
 mod span;
 pub(crate) mod utils;
 
-pub use database::{to_usize, Database, TypedEmbedData};
+pub use database::{to_usize, Database, EmbeddingInsert, TypedEmbedData};
 #[cfg(feature = "multi_embedding_db")]
 pub use database::{MultiEmbeddingRuntimeConfig, MULTI_EMBEDDING_DB_ENV};
 pub use error::DbError;
@@ -23,6 +23,8 @@ pub use index::hnsw::{
     create_index, create_index_primary, create_index_warn, hnsw_all_types, hnsw_of_type,
     replace_index_warn, search_similar, search_similar_args, EmbedDataVerbose, SimilarArgs,
 };
+#[cfg(feature = "multi_embedding_db")]
+pub use index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
 pub use observability::{
     CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,
     Validity,

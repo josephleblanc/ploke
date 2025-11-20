@@ -6,6 +6,12 @@ use std::{
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
+#[cfg(feature = "multi_embedding_db")]
+use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+#[cfg(feature = "multi_embedding_db")]
+use ploke_db::{SimilarArgsForSet, search_similar_args_for_set};
+#[cfg(feature = "multi_embedding_db")]
+use crate::user_config::EmbeddingConfig;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
@@ -671,6 +677,64 @@ pub(super) async fn batch_prompt_search(
 
     let mut results = Vec::new();
 
+    #[cfg(feature = "multi_embedding_db")]
+    fn embedding_set_for_runtime(
+        cfg: &crate::app_state::core::RuntimeConfig,
+        shape: EmbeddingShape,
+    ) -> EmbeddingSetId {
+        match &cfg.embedding {
+            EmbeddingConfig {
+                local: Some(local_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("local-transformers".to_string()),
+                EmbeddingModelId(local_cfg.model_id.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                hugging_face: Some(hf_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("huggingface".to_string()),
+                EmbeddingModelId(hf_cfg.model.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                openai: Some(openai_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("openai".to_string()),
+                EmbeddingModelId(openai_cfg.model.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                cozo: Some(_cozo_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("cozo".to_string()),
+                EmbeddingModelId("cozo".to_string()),
+                shape,
+            ),
+            _ => EmbeddingSetId::new(
+                EmbeddingProviderSlug("local-transformers".to_string()),
+                EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+                shape,
+            ),
+        }
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    let maybe_embedding_set: Option<EmbeddingSetId> = if state.db.multi_embedding_db_enabled() {
+        let runtime_cfg = {
+            let guard = state.config.read().await;
+            guard.clone()
+        };
+        let shape = state.embedder.shape();
+        Some(embedding_set_for_runtime(&runtime_cfg, shape))
+    } else {
+        None
+    };
+
     for (prompt_idx, prompt_item) in prompt_data.into_iter().enumerate() {
         let query_params: QueryParams = (&prompt_item).into();
         let PromptData {
@@ -691,16 +755,45 @@ pub(super) async fn batch_prompt_search(
             for ty in NodeType::primary_nodes() {
                 let ef_range = 1..=101;
 
-                let args = SimilarArgs {
-                    db: &state.db,
-                    vector_query: &embedding,
-                    k,
-                    ef,
-                    ty,
-                    max_hits,
-                    radius,
+                #[cfg(feature = "multi_embedding_db")]
+                let EmbedDataVerbose { typed_data, dist } = if let Some(set_id) = &maybe_embedding_set {
+                    let args = SimilarArgsForSet {
+                        db: &state.db,
+                        vector_query: &embedding,
+                        k,
+                        ef,
+                        ty,
+                        max_hits,
+                        radius,
+                        set_id,
+                    };
+                    search_similar_args_for_set(args)?
+                } else {
+                    let args = SimilarArgs {
+                        db: &state.db,
+                        vector_query: &embedding,
+                        k,
+                        ef,
+                        ty,
+                        max_hits,
+                        radius,
+                    };
+                    search_similar_args(args)?
                 };
-                let EmbedDataVerbose { typed_data, dist } = search_similar_args(args)?;
+
+                #[cfg(not(feature = "multi_embedding_db"))]
+                let EmbedDataVerbose { typed_data, dist } = {
+                    let args = SimilarArgs {
+                        db: &state.db,
+                        vector_query: &embedding,
+                        k,
+                        ef,
+                        ty,
+                        max_hits,
+                        radius,
+                    };
+                    search_similar_args(args)?
+                };
                 let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
                 let file_paths = typed_data
                     .v
@@ -768,10 +861,10 @@ pub struct BatchResult {
 #[cfg(test)]
 mod test {
 
-    use std::{ops::Index, path::PathBuf};
+    use std::{ops::Index, path::PathBuf, sync::Once};
 
     use cozo::DataValue;
-    use ploke_db::{Database, QueryResult};
+    use ploke_db::{create_index_primary, Database, QueryResult};
     use ploke_embed::local::EmbeddingConfig;
     use ploke_rag::RagService;
     use syn_parser::parser::nodes::ToCozoUuid;
@@ -791,7 +884,15 @@ mod test {
     use color_eyre::Result;
     use futures::{FutureExt, StreamExt};
     use ploke_test_utils::{init_test_tracing, setup_db_full, setup_db_full_crate, workspace_root};
-    use thiserror::Error;
+    use crate::test_utils::new_test_harness::TEST_DB_NODES;
+    use ploke_error::Error;
+
+    static TEST_TRACING: Once = Once::new();
+    fn init_tracing_once() {
+        TEST_TRACING.call_once(|| {
+            ploke_test_utils::init_test_tracing(tracing::Level::ERROR);
+        });
+    }
 
     #[tokio::test]
     async fn test_update_embed() -> color_eyre::Result<()> {
@@ -858,6 +959,8 @@ mod test {
 
         let processor = config.load_embedding_processor()?;
         let proc_arc = Arc::new(processor);
+        let embedding_shape = proc_arc.shape();
+        let embedding_set = config.embedding_set_id(embedding_shape);
 
         // TODO:
         // 1 Implement the cancellation token propagation in IndexerTask
@@ -866,6 +969,7 @@ mod test {
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&proc_arc), // Use configured processor
+            embedding_set,
             CancellationToken::new().0,
             8,
         );
@@ -1344,6 +1448,195 @@ mod test {
             .join("\n");
         trace!("writing changed file:\n{}", &changed);
         std::fs::write(&target_file, changed)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_for_set_returns_results_for_seeded_set() -> Result<(), Error> {
+        use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+        use ploke_db::multi_embedding::schema::vector_dims::vector_dimension_specs;
+        use ploke_db::MultiEmbeddingRuntimeConfig;
+        use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+        use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+
+        init_tracing_once();
+
+        // DB with multi-embedding fixtures and runtime config enabled
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Arc::new(ploke_db::Database::with_multi_embedding_config(raw_db, config));
+
+        // Pick a pending node and seed a runtime embedding for the first dimension spec.
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .expect("at least one pending node");
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("at least one vector dimension spec");
+        let vector = vec![0.5_f32; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector.clone())]).await?;
+
+        // Ensure HNSW indexes exist for this type (including multi-embedding indexes).
+        create_index_primary(&db)?;
+
+        // Embedding processor: use the default local embedder (384 dims) so the query
+        // embedding shape matches the first dimension spec.
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // Build an EmbeddingSetId that matches the seeded dimension spec.
+        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug(dim_spec.provider().to_string()),
+            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            shape,
+        );
+
+        // Use a generic query; we only assert that the seeded node appears somewhere.
+        let hits: Vec<(Uuid, f32)> = rag.search_for_set("generic query", 10, &set_id).await?;
+        assert!(
+            hits.iter().any(|(id, _)| *id == node.id),
+            "expected set-aware dense search to return the seeded node"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_for_set_falls_back_when_multi_embedding_disabled() -> Result<(), Error> {
+        use ploke_core::{EmbeddingSetId, EmbeddingShape};
+        use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug};
+        use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+        use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+
+        init_tracing_once();
+
+        // Legacy-style DB without multi_embedding_db enabled.
+        let db = Arc::new(ploke_db::Database::init_with_schema()?);
+
+        // Use the existing dense search test fixture DB for embeddings.
+        let db_nodes = TEST_DB_NODES
+            .as_ref()
+            .expect("TEST_DB_NODES must initialize")
+            .clone();
+
+        // Swap in the pre-populated DB handle so we have real embeddings/HNSW state.
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db_nodes.clone(), embedding_processor)?;
+
+        // Build a dummy EmbeddingSetId; because multi_embedding_db is disabled on the
+        // Database, search_for_set should transparently fall back to legacy search.
+        let shape = EmbeddingShape::f32_raw(384);
+        let dummy_set = EmbeddingSetId::new(
+            EmbeddingProviderSlug("local-transformers".to_string()),
+            EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+            shape,
+        );
+
+        let search_term = "use_all_const_static";
+        let hits: Vec<(Uuid, f32)> = rag.search_for_set(search_term, 15, &dummy_set).await?;
+        assert!(
+            !hits.is_empty(),
+            "expected search_for_set to fall back and return results when multi_embedding_db is disabled"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(all(feature = "multi_embedding_db", feature = "test_setup"))]
+    #[tokio::test]
+    async fn batch_prompt_search_uses_set_aware_search_when_enabled(
+    ) -> color_eyre::Result<()> {
+        use crate::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
+        use crate::chat_history::ChatHistory;
+        use crate::user_config::UserConfig;
+        use ploke_core::EmbeddingData;
+        use ploke_db::{Database, MultiEmbeddingRuntimeConfig};
+        use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+        use ploke_embed::local::{EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder};
+        use ploke_io::IoManagerHandle;
+        use ploke_rag::TokenBudget;
+        use ploke_test_utils::workspace_root;
+        use std::fs;
+        use tempfile::NamedTempFile;
+        use tracing::Level;
+
+        ploke_test_utils::init_test_tracing(Level::ERROR);
+
+        // Multi-embedding DB from shared fixture.
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        // Embedding processor configured like the runtime.
+        let user_cfg = UserConfig::default();
+        let runtime_cfg: crate::app_state::core::RuntimeConfig = user_cfg.clone().into();
+        let local_cfg = LocalEmbeddingConfig::default();
+        let model = LocalEmbedder::new(local_cfg)?;
+        let source = EmbeddingSource::Local(model);
+        let embedder = Arc::new(EmbeddingProcessor::new(source));
+
+        let io_handle = IoManagerHandle::new();
+
+        let state = Arc::new(AppState {
+            chat: ChatState::new(ChatHistory::new()),
+            config: ConfigState::new(runtime_cfg.clone()),
+            system: SystemState::default(),
+            indexing_state: tokio::sync::RwLock::new(None),
+            indexer_task: None,
+            indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+            db: Arc::new(db),
+            embedder: embedder.clone(),
+            io_handle: io_handle.clone(),
+            proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            rag: None,
+            budget: TokenBudget::default(),
+        });
+
+        // Prompt file targeting a known symbol in the fixture crate.
+        let mut tmp = NamedTempFile::new()?;
+        let prompts = serde_json::json!([{
+            "prompt": "use_all_const_static",
+            "k": 8,
+            "ef": 16,
+            "max_hits": 8,
+            "radius": 10.0
+        }]);
+        fs::write(tmp.path(), serde_json::to_string(&prompts)?)?;
+
+        let out_file = tmp.path().with_extension("out.json");
+        let batches = batch_prompt_search(
+            &state,
+            tmp.path().to_string_lossy().into_owned(),
+            out_file.to_string_lossy().into_owned(),
+            Some(8),
+            None,
+        )
+        .await?;
+
+        assert!(
+            !batches.is_empty(),
+            "expected batch_prompt_search to return at least one batch"
+        );
+        assert!(
+            batches
+                .iter()
+                .flat_map(|b| &b.snippet_info)
+                .any(|info| info.name.contains("use_all_const_static")),
+            "expected at least one snippet mentioning the search term"
+        );
+
         Ok(())
     }
 }

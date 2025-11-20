@@ -21,7 +21,7 @@ use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, FileData, TrackingHash};
+use ploke_core::{EmbeddingData, EmbeddingSetId, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
@@ -167,6 +167,19 @@ impl Deref for TypedEmbedData {
     fn deref(&self) -> &Self::Target {
         &self.v
     }
+}
+
+/// Strongly-typed embedding update payload used by runtime/indexer callers.
+///
+/// This struct threads the embedding set identity (provider/model/shape) into
+/// the database layer so we can validate that vectors are consistent with the
+/// configured embedding set before delegating to the legacy/multi-embedding
+/// helpers.
+#[derive(Debug, Clone)]
+pub struct EmbeddingInsert {
+    pub node_id: Uuid,
+    pub set_id: EmbeddingSetId,
+    pub vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -762,6 +775,53 @@ impl Database {
         Ok(())
     }
 
+    /// Updates embeddings for a specific embedding set.
+    ///
+    /// This helper is intended for runtime/indexer callers that already know
+    /// which embedding set produced a given batch (provider, model, shape).
+    /// It validates that each vector length matches the set's declared
+    /// dimension and then delegates to `update_embeddings_batch` so existing
+    /// legacy + multi-embedding behavior (dual-write when enabled) remains
+    /// the single implementation.
+    pub async fn update_embeddings_batch_for_set(
+        &self,
+        inserts: Vec<EmbeddingInsert>,
+    ) -> Result<(), DbError> {
+        if inserts.is_empty() {
+            return Ok(());
+        }
+
+        let mut updates = Vec::with_capacity(inserts.len());
+        for EmbeddingInsert {
+            node_id,
+            set_id,
+            vector,
+        } in inserts
+        {
+            let expected = set_id.dimension() as usize;
+            if vector.len() != expected {
+                #[cfg(feature = "multi_embedding_schema")]
+                {
+                    return Err(DbError::ExperimentalVectorLengthMismatch {
+                        expected,
+                        actual: vector.len(),
+                    });
+                }
+                #[cfg(not(feature = "multi_embedding_schema"))]
+                {
+                    return Err(DbError::QueryExecution(format!(
+                        "EmbeddingSetId dimension {} does not match vector length {}",
+                        expected,
+                        vector.len()
+                    )));
+                }
+            }
+            updates.push((node_id, vector));
+        }
+
+        self.update_embeddings_batch(updates).await
+    }
+
     /// Validate that an embedding vector is non-empty
     fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
         if embedding.is_empty() {
@@ -771,6 +831,45 @@ impl Database {
         } else {
             Ok(())
         }
+    }
+
+    /// Resolves the multi-embedding dimension spec for a given embedding set.
+    ///
+    /// This helper bridges the `EmbeddingSetId` type used by runtime/indexer
+    /// code with the static `VectorDimensionSpec` table that drives
+    /// multi-embedding relations and HNSW parameters. It enforces that:
+    ///
+    /// - the set's declared dimension is one of the supported lengths; and
+    /// - the provider/model strings match the spec for that dimension.
+    ///
+    /// Callers can use the returned spec to select the correct
+    /// per-dimension vector relation and HNSW parameters when performing
+    /// reads/searches for a specific embedding set.
+    #[cfg(feature = "multi_embedding_db")]
+    pub fn vector_spec_for_set(
+        &self,
+        set_id: &EmbeddingSetId,
+    ) -> Result<VectorDimensionSpec, DbError> {
+        let dim = set_id.dimension() as usize;
+        let spec = dimension_spec_for_length(dim)
+            .ok_or(DbError::UnsupportedEmbeddingDimension { dims: dim as i64 })?;
+
+        // Best-effort sanity check that the runtime set identity matches the
+        // static spec table (provider/model). This keeps subtle mismatches
+        // from quietly routing queries to the wrong relation.
+        let provider = &set_id.provider.0;
+        let model = &set_id.model.0;
+        if provider != spec.provider() || model != spec.embedding_model() {
+            return Err(DbError::QueryExecution(format!(
+                "EmbeddingSetId provider/model ({provider}, {model}) does not match \
+                 vector dimension spec ({spec_provider}, {spec_model}) for dims {dims}",
+                spec_provider = spec.provider(),
+                spec_model = spec.embedding_model(),
+                dims = spec.dims()
+            )));
+        }
+
+        Ok(*spec)
     }
 
     /// Fetches all primary nodes that do not yet have an embedding.

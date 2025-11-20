@@ -3,6 +3,7 @@
 //! Focuses on persistence, embedding/editing, and re-exports for router defaults.
 
 use lazy_static::lazy_static;
+use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
     indexer::{CozoBackend, EmbeddingProcessor, EmbeddingSource},
@@ -127,6 +128,54 @@ impl UserConfig {
             }
         };
         Ok(processor)
+    }
+
+    /// Derive a strongly-typed `EmbeddingSetId` for the current embedding backend.
+    ///
+    /// This couples the configured provider/model with the runtime-discovered
+    /// embedding shape so callers (e.g., the indexer) can work with a single
+    /// identifier that matches the multi-embedding DB helpers.
+    pub fn embedding_set_id(&self, shape: EmbeddingShape) -> EmbeddingSetId {
+        match &self.embedding {
+            EmbeddingConfig {
+                local: Some(local_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("local-transformers".to_string()),
+                EmbeddingModelId(local_cfg.model_id.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                hugging_face: Some(hf_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("huggingface".to_string()),
+                EmbeddingModelId(hf_cfg.model.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                openai: Some(openai_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("openai".to_string()),
+                EmbeddingModelId(openai_cfg.model.clone()),
+                shape,
+            ),
+            EmbeddingConfig {
+                cozo: Some(_cozo_cfg),
+                ..
+            } => EmbeddingSetId::new(
+                EmbeddingProviderSlug("cozo".to_string()),
+                EmbeddingModelId("cozo".to_string()),
+                shape,
+            ),
+            // Fallback to the default local model configuration.
+            _ => EmbeddingSetId::new(
+                EmbeddingProviderSlug("local-transformers".to_string()),
+                EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+                shape,
+            ),
+        }
     }
 
     /// Save the configuration to the specified path.

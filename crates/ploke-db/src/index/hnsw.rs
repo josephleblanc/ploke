@@ -1,4 +1,4 @@
-use crate::database::{HNSW_SUFFIX, to_uuid};
+use crate::database::{to_uuid, HNSW_SUFFIX};
 use crate::{Database, DbError, NodeType, QueryResult, TypedEmbedData};
 use std::collections::BTreeMap;
 
@@ -6,8 +6,6 @@ use cozo::{DataValue, NamedRows, Num, ScriptMutability};
 use itertools::Itertools;
 use tracing::instrument;
 
-#[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::HnswDistance;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::adapter::ExperimentalEmbeddingDatabaseExt;
 #[cfg(feature = "multi_embedding_db")]
@@ -18,6 +16,10 @@ use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
 use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::HnswDistance;
+#[cfg(feature = "multi_embedding_db")]
+use ploke_core::EmbeddingSetId;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -227,6 +229,23 @@ pub struct SimilarArgs<'a> {
     pub radius: f64,
 }
 
+/// Arguments for set-aware semantic search using multi-embedding relations.
+///
+/// This mirrors `SimilarArgs` but adds an `EmbeddingSetId` so callers can
+/// direct HNSW search to the correct per-dimension vector relation when
+/// `multi_embedding_db` is enabled.
+#[cfg(feature = "multi_embedding_db")]
+pub struct SimilarArgsForSet<'a> {
+    pub db: &'a Database,
+    pub vector_query: &'a Vec<f32>,
+    pub k: usize,
+    pub ef: usize,
+    pub ty: NodeType,
+    pub max_hits: usize,
+    pub radius: f64,
+    pub set_id: &'a EmbeddingSetId,
+}
+
 #[instrument(skip_all, fields(query_result))]
 pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_error::Error> {
     let SimilarArgs {
@@ -337,6 +356,169 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
             .iter()
             .enumerate()
             .find(|(idx, s)| *s == "distance")
+            .map(|(idx, _)| idx)
+            .expect("Must return `distance` in database return values");
+        let dist_floats = query_result
+            .rows
+            .iter()
+            .filter_map(|r| r[dist_idx].get_float());
+        dist_vec.extend(dist_floats);
+    }
+    let v = QueryResult::from(query_result).to_embedding_nodes()?;
+    let ty_embed = TypedEmbedData { v, ty };
+    let verbose_embed = EmbedDataVerbose {
+        typed_data: ty_embed,
+        dist: dist_vec,
+    };
+    Ok(verbose_embed)
+}
+
+/// Multi-embedding aware variant of `search_similar_args`.
+///
+/// When `multi_embedding_db` is enabled, callers that know the active
+/// `EmbeddingSetId` should prefer this helper so that HNSW search is
+/// constrained to the per-dimension vector relation associated with the
+/// set. The result layout (headers/rows) matches `search_similar_args`
+/// so it can be fed into `QueryResult::to_embedding_nodes` unchanged.
+#[cfg(feature = "multi_embedding_db")]
+#[instrument(skip_all, fields(query_result))]
+pub fn search_similar_args_for_set(
+    args: SimilarArgsForSet,
+) -> Result<EmbedDataVerbose, ploke_error::Error> {
+    let SimilarArgsForSet {
+        db,
+        vector_query,
+        k,
+        ef,
+        ty,
+        max_hits,
+        radius,
+        set_id,
+    } = args;
+
+    if !db.multi_embedding_db_enabled() {
+        return Err(ploke_error::Error::from(DbError::QueryExecution(
+            "search_similar_args_for_set requires multi_embedding_db to be enabled".into(),
+        )));
+    }
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("k".to_string(), DataValue::from(k as i64));
+    params.insert("ef".to_string(), DataValue::from(ef as i64));
+    params.insert("limit".to_string(), DataValue::from(max_hits as i64));
+    params.insert("radius".to_string(), DataValue::from(radius));
+    params.insert(
+        "vector_query".to_string(),
+        DataValue::List(
+            vector_query
+                .iter()
+                .map(|fl| {
+                    if (*fl as f64).is_subnormal() {
+                        0.0
+                    } else {
+                        *fl as f64
+                    }
+                })
+                .map(|fl| DataValue::Num(Num::Float(fl)))
+                .collect_vec(),
+        ),
+    );
+    let rel = ty.relation_str();
+
+    // Resolve the node + vector specs for this set so we can target the
+    // correct per-dimension relation and reuse the same batch/file-path
+    // shaping as the legacy search.
+    let Some(spec) = experimental_spec_for_node(ty) else {
+        return Ok(EmbedDataVerbose {
+            typed_data: TypedEmbedData { v: Vec::new(), ty },
+            dist: Vec::new(),
+        });
+    };
+    spec.metadata_schema
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+    let dim_spec = db
+        .vector_spec_for_set(set_id)
+        .map_err(ploke_error::Error::from)?;
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+    relation
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+    let vector_rel = relation.relation_name();
+
+    let mut script = String::new();
+    let base_script_start = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+    has_embedding[id, name, hash, span] := *"#;
+    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
+
+    is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+        has_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{id: mod_id, tracking_hash: file_hash @ 'NOW'},
+        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW'},
+
+    ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace],
+     "#;
+
+    // HNSW over the per-dimension vector relation backing this embedding set.
+    let hnsw_script = format!(
+        r#"
+                *{vector_rel}{{ node_id, vector: v @ 'NOW' }},
+                ~{vector_rel}:vector_idx{{ node_id |
+                    query: vec($vector_query), 
+                    k: $k, 
+                    ef: $ef,
+                    bind_distance: distance,
+                    radius: $radius
+                }},
+                *{rel}{{ id: node_id, name @ 'NOW' }},
+                :order distance
+            "#,
+        vector_rel = vector_rel,
+        rel = rel,
+    );
+    let limit_param = ":limit $limit";
+
+    script.push_str(base_script_start);
+    script.push_str(rel);
+    script.push_str(base_script_end);
+    script.push_str(&hnsw_script);
+    script.push_str(limit_param);
+
+    tracing::trace!("script for set-aware similarity search is: {}", script);
+    let query_result = db
+        .run_script(&script, params, cozo::ScriptMutability::Immutable)
+        .inspect_err(|e| tracing::error!("{e}"))
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+    let less_flat_row = query_result.rows.first();
+    let count_less_flat = query_result.rows.len();
+    if let Some(lfr) = less_flat_row {
+        tracing::trace!(
+            "\n{:=^80}\n== less_flat (set-aware): {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
+            rel
+        );
+    }
+    let mut dist_vec = Vec::new();
+    if !query_result.rows.is_empty() {
+        tracing::trace!(
+            "query_result.headers (set-aware): {:?}",
+            query_result.headers
+        );
+        let dist_idx = query_result
+            .headers
+            .iter()
+            .enumerate()
+            .find(|(_, s)| *s == "distance")
             .map(|(idx, _)| idx)
             .expect("Must return `distance` in database return values");
         let dist_floats = query_result
@@ -472,6 +654,72 @@ fn multi_embedding_hnsw_of_type(
     Ok(aggregated)
 }
 
+/// Runs HNSW search for a specific embedding set.
+///
+/// This helper narrows the multi-embedding search to the per-dimension
+/// relation associated with `set_id`, using the dimension spec table to
+/// locate the correct relation name and HNSW parameters. Callers that have
+/// an `EmbeddingSetId` (e.g., runtime search flows) should prefer this
+/// helper over the dimension-agnostic `hnsw_of_type` when the set identity
+/// matters.
+#[cfg(feature = "multi_embedding_db")]
+pub fn multi_embedding_hnsw_for_set(
+    db: &Database,
+    ty: NodeType,
+    set_id: &EmbeddingSetId,
+    k: usize,
+    ef: usize,
+) -> Result<Vec<Embedding>, ploke_error::Error> {
+    let Some(spec) = experimental_spec_for_node(ty) else {
+        return Ok(Vec::new());
+    };
+
+    spec.metadata_schema
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+
+    // Resolve the dimension spec for this set (provider/model/dims) and
+    // use it to select the correct per-dimension relation.
+    let dim_spec = db
+        .vector_spec_for_set(set_id)
+        .map_err(ploke_error::Error::from)?;
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+    relation
+        .ensure_registered(db)
+        .map_err(ploke_error::Error::from)?;
+
+    let script = format!(
+        r#"
+?[node_id, name, distance] :=
+    *{vector_rel}{{ node_id, vector: v @ 'NOW' }},
+    ~{vector_rel}:vector_idx{{ node_id |
+        query: v,
+        k: {k},
+        ef: {ef},
+        bind_distance: distance
+    }},
+    *{node_rel}{{ id: node_id, name @ 'NOW' }}
+"#,
+        vector_rel = relation.relation_name(),
+        node_rel = ty.relation_str(),
+        k = k,
+        ef = ef,
+    );
+
+    match db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable) {
+        Ok(rows) => Ok(named_rows_to_embeddings(rows)),
+        Err(err) => {
+            let db_err = DbError::from(err);
+            let message = db_err.to_string();
+            if message.contains("Index") && message.contains("not found") {
+                Ok(Vec::new())
+            } else {
+                Err(ploke_error::Error::from(db_err))
+            }
+        }
+    }
+}
+
 #[cfg(feature = "multi_embedding_db")]
 fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Result<(), DbError> {
     if !db.multi_embedding_db_enabled() {
@@ -604,8 +852,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        DbError, NodeType, create_index, create_index_primary, hnsw_all_types, hnsw_of_type,
-        utils::test_utils::{TEST_DB_NODES, fixture_db_backup_path},
+        create_index, create_index_primary, hnsw_all_types, hnsw_of_type,
+        utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES},
+        DbError, NodeType,
     };
     use tokio::sync::Mutex;
 
@@ -613,11 +862,15 @@ mod tests {
     use ploke_error::Error;
     use tokio_test::assert_err;
 
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::index::hnsw::multi_embedding_hnsw_for_set;
+    #[cfg(feature = "multi_embedding_db")]
+    use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
     use crate::Database;
     #[cfg(feature = "multi_embedding_db")]
     use crate::MultiEmbeddingRuntimeConfig;
     #[cfg(feature = "multi_embedding_db")]
-    use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
+    use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 
     #[tokio::test]
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {
@@ -682,12 +935,7 @@ mod tests {
         let vector = vec![0.5; dim_spec.dims() as usize];
         db.update_embeddings_batch(vec![(node.id, vector)]).await?;
         create_index(&db, node_type).map_err(ploke_error::Error::from)?;
-        let hits = hnsw_of_type(
-            &db,
-            node_type,
-            1,
-            dim_spec.hnsw_search_ef() as usize,
-        )?;
+        let hits = hnsw_of_type(&db, node_type, 1, dim_spec.hnsw_search_ef() as usize)?;
         assert!(
             hits.iter().any(|(id, _, _)| *id == node.id),
             "expected HNSW search to yield runtime embedding rows for seeded node"
@@ -716,6 +964,212 @@ mod tests {
         assert!(
             hits.is_empty(),
             "expected no HNSW hits when no runtime vectors have been written"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn vector_spec_for_set_rejects_mismatched_provider_model(
+    ) -> Result<(), ploke_error::Error> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("at least one vector dimension spec");
+        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug("wrong-provider".to_string()),
+            EmbeddingModelId("wrong-model".to_string()),
+            shape,
+        );
+
+        let err = db
+            .vector_spec_for_set(&set_id)
+            .expect_err("expected provider/model mismatch to error");
+        match err {
+            DbError::QueryExecution(msg) => {
+                assert!(
+                    msg.contains("does not match"),
+                    "expected detailed mismatch message, got: {msg}"
+                );
+            }
+            other => panic!("expected QueryExecution error, got {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn vector_spec_for_set_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let shape = EmbeddingShape::f32_raw(999);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug("local-transformers".to_string()),
+            EmbeddingModelId("dummy-model".to_string()),
+            shape,
+        );
+
+        let err = db
+            .vector_spec_for_set(&set_id)
+            .expect_err("expected unsupported dimension to error");
+        match err {
+            DbError::UnsupportedEmbeddingDimension { dims } => {
+                assert_eq!(dims, 999);
+            }
+            other => panic!("expected UnsupportedEmbeddingDimension error, got {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn multi_embedding_hnsw_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        // Seed a single runtime embedding for a pending node.
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(DbError::NotFound)?;
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("at least one vector dimension spec");
+        let vector = vec![0.5_f32; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
+
+        // Ensure multi-embedding indexes exist for this type.
+        create_index(&db, node_type).map_err(ploke_error::Error::from)?;
+
+        // Build an EmbeddingSetId that matches the seeded dimension spec.
+        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug(dim_spec.provider().to_string()),
+            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            shape,
+        );
+
+        let hits = multi_embedding_hnsw_for_set(
+            &db,
+            node_type,
+            &set_id,
+            1,
+            dim_spec.hnsw_search_ef() as usize,
+        )?;
+
+        assert!(
+            hits.iter().any(|(id, _, _)| *id == node.id),
+            "expected HNSW search for set to yield runtime embedding rows for seeded node"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_similar_args_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
+        use crate::index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
+
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        // Seed a single runtime embedding for a pending node.
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let (node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .ok_or(DbError::NotFound)?;
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("at least one vector dimension spec");
+        let vector = vec![0.5_f32; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(node.id, vector.clone())])
+            .await?;
+
+        // Ensure multi-embedding indexes exist for this type.
+        create_index(&db, node_type).map_err(ploke_error::Error::from)?;
+
+        // Build an EmbeddingSetId that matches the seeded dimension spec.
+        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug(dim_spec.provider().to_string()),
+            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            shape,
+        );
+
+        let args = SimilarArgsForSet {
+            db: &db,
+            vector_query: &vector,
+            k: 1,
+            ef: dim_spec.hnsw_search_ef() as usize,
+            ty: node_type,
+            max_hits: 1,
+            radius: 10.0,
+            set_id: &set_id,
+        };
+
+        let result = search_similar_args_for_set(args)?;
+        assert!(
+            result.typed_data.v.iter().any(|entry| entry.id == node.id),
+            "expected set-aware semantic search to yield seeded node"
+        );
+        assert!(
+            !result.dist.is_empty(),
+            "expected at least one distance value from set-aware search"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_similar_args_for_set_errors_when_feature_disabled(
+    ) -> Result<(), ploke_error::Error> {
+        use crate::index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
+
+        // Database without multi_embedding_db enabled.
+        let db = Database::init_with_schema()?;
+
+        let vector = vec![0.0_f32; 4];
+        let shape = EmbeddingShape::f32_raw(4);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug("local-transformers".to_string()),
+            EmbeddingModelId("dummy-model".to_string()),
+            shape,
+        );
+
+        let args = SimilarArgsForSet {
+            db: &db,
+            vector_query: &vector,
+            k: 1,
+            ef: 8,
+            ty: NodeType::Function,
+            max_hits: 1,
+            radius: 10.0,
+            set_id: &set_id,
+        };
+
+        let err = search_similar_args_for_set(args).expect_err(
+            "expected search_similar_args_for_set to error when multi_embedding_db is disabled",
+        );
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("requires multi_embedding_db"),
+            "expected clear error about missing multi_embedding_db, got: {msg}"
         );
 
         Ok(())

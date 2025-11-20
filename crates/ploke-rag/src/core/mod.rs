@@ -542,6 +542,215 @@ impl RagService {
         Ok(all_results)
     }
 
+    /// Perform a dense search for a specific embedding set using the HNSW index.
+    ///
+    /// This is a multi-embedding aware variant of [`RagService::search`]; callers
+    /// that know the active [`EmbeddingSetId`] should prefer this helper so that
+    /// dense search is constrained to the per-dimension vector relation backing
+    /// the set. Falls back to the legacy search semantics when
+    /// `multi_embedding_db` is disabled on the database.
+    #[cfg(feature = "multi_embedding_db")]
+    #[instrument(skip(self, query, set_id), fields(query_len = %query.len(), top_k = top_k))]
+    pub async fn search_for_set(
+        &self,
+        query: &str,
+        top_k: usize,
+        set_id: &EmbeddingSetId,
+    ) -> Result<Vec<(Uuid, f32)>, ploke_error::Error> {
+        // Generate embedding for the query
+        let embeddings = self
+            .dense_embedder
+            .generate_embeddings(vec![query.to_string()])
+            .await?;
+
+        let query_embedding = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
+
+        // Collect results from all node types; pre-allocate to avoid reallocations
+        let mut all_results: Vec<(Uuid, f32)> =
+            Vec::with_capacity(NodeType::primary_nodes().len() * top_k);
+
+        for node_type in NodeType::primary_nodes() {
+            let params = self.cfg.params_for(node_type);
+            let max_hits = if params.max_hits == 0 {
+                top_k
+            } else {
+                params.max_hits
+            };
+
+            // If the DB is not multi-embedding aware, fall back to legacy search.
+            if !self.db.multi_embedding_db_enabled() {
+                let args = SimilarArgs {
+                    db: &self.db,
+                    vector_query: &query_embedding,
+                    k: top_k,
+                    ef: params.ef,
+                    ty: node_type,
+                    max_hits,
+                    radius: params.radius,
+                };
+                let result = search_similar_args(args)?;
+                all_results.extend(
+                    result
+                        .typed_data
+                        .v
+                        .into_iter()
+                        .zip(result.dist.into_iter())
+                        .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32)),
+                );
+                continue;
+            }
+
+            let args = SimilarArgsForSet {
+                db: &self.db,
+                vector_query: &query_embedding,
+                k: top_k,
+                ef: params.ef,
+                ty: node_type,
+                max_hits,
+                radius: params.radius,
+                set_id,
+            };
+
+            let result = search_similar_args_for_set(args)?;
+
+            all_results.extend(
+                result
+                    .typed_data
+                    .v
+                    .into_iter()
+                    .zip(result.dist.into_iter())
+                    .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32)),
+            );
+        }
+
+        // Sort by score (highest first) and take top_k
+        all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(top_k);
+
+        Ok(all_results)
+    }
+
+    /// High-level API: retrieve and assemble a context for a specific embedding set.
+    ///
+    /// This is a multi-embedding aware variant of [`RagService::get_context`]. When
+    /// `multi_embedding_db` is enabled and the database has runtime multi-embedding
+    /// configured, callers that know the active [`EmbeddingSetId`] should prefer
+    /// this helper so that dense search is constrained to the per-dimension vector
+    /// relation backing the set. When the database is not multi-embedding aware,
+    /// this method transparently falls back to the legacy dense search semantics.
+    #[cfg(feature = "multi_embedding_db")]
+    #[instrument(
+        skip(self, query, budget, strategy, set_id),
+        fields(query_len = %query.len(), top_k = top_k)
+    )]
+    pub async fn get_context_for_set(
+        &self,
+        query: &str,
+        top_k: usize,
+        budget: &TokenBudget,
+        strategy: &RetrievalStrategy,
+        set_id: &EmbeddingSetId,
+    ) -> Result<AssembledContext, RagError> {
+        // 1) Retrieve hits according to strategy, using set-aware dense search when needed.
+        let hits: Vec<(Uuid, f32)> = match strategy {
+            RetrievalStrategy::Dense => self
+                .search_for_set(query, top_k, set_id)
+                .await
+                .map_err(|e| RagError::Embed(format!("dense search_for_set failed: {:?}", e)))?,
+            RetrievalStrategy::Sparse { strict } => {
+                let use_strict = strict.unwrap_or(self.cfg.strict_bm25_by_default);
+                if use_strict {
+                    self.search_bm25_strict(query, top_k).await?
+                } else {
+                    self.search_bm25(query, top_k).await?
+                }
+            }
+            RetrievalStrategy::Hybrid { rrf, mmr } => {
+                // Kick off both searches concurrently: BM25 + set-aware dense.
+                let bm25_fut = self.search_bm25(query, top_k);
+                let dense_fut = self.search_for_set(query, top_k, set_id);
+                let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
+
+                let bm25_list = bm25_res?;
+                let dense_list = dense_res.map_err(|e| {
+                    RagError::Embed(format!("dense search_for_set failed: {:?}", e))
+                })?;
+
+                let mut fused: Vec<(Uuid, f32)> = rrf_fuse(&bm25_list, &dense_list, rrf);
+                fused.truncate(top_k);
+
+                if let Some(mcfg) = mmr {
+                    // Optional diversity re-ranking based on embeddings; default to no-embeddings map.
+                    let embed_map: HashMap<Uuid, Vec<f32>> = HashMap::new();
+                    mmr_select(&fused, top_k, &embed_map, mcfg)
+                } else {
+                    fused
+                }
+            }
+        };
+
+        // 2) Optional reranker: requires IoManager to fetch texts
+        let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
+            let io = self
+                .io
+                .as_ref()
+                .ok_or_else(|| {
+                    RagError::Search("IoManagerHandle not configured for reranking".to_string())
+                })?
+                .clone();
+
+            // Fetch texts for candidates
+            let ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
+            let nodes = self
+                .db
+                .get_nodes_ordered(ids.clone())
+                .map_err(|e| RagError::Embed(e.to_string()))?;
+            let texts = io.get_snippets_batch(nodes).await.map_err(|e| {
+                RagError::Search(format!("get_snippets_batch failed for rerank: {:?}", e))
+            })?;
+            let mut cand: Vec<(Uuid, String)> = Vec::new();
+            for (i, res) in texts.into_iter().enumerate() {
+                if let Some(id) = ids.get(i) {
+                    match res {
+                        Ok(s) => cand.push((*id, s)),
+                        Err(e) => {
+                            if self.cfg.assembly_policy.strict_io {
+                                return Err(RagError::Search(format!(
+                                    "IO error during rerank snippet fetch: {:?}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            rr.rerank(query, cand).await?
+        } else {
+            hits
+        };
+
+        // 3) Assemble context
+        let io = self
+            .io
+            .as_ref()
+            .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
+            .clone();
+
+        assemble_context(
+            query,
+            &final_hits,
+            budget,
+            &self.cfg.assembly_policy,
+            &*self.cfg.token_counter,
+            &self.db,
+            &io,
+        )
+        .await
+    }
+
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
     /// Uses configured defaults (policy, tokenizer, strict bm25) unless overridden by the strategy.
     #[instrument(skip(self, query, budget, strategy), fields(query_len = %query.len(), top_k = top_k))]

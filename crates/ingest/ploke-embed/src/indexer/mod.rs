@@ -6,7 +6,10 @@ use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
-use ploke_core::{EmbeddingData, EmbeddingDType, EmbeddingEncoding, EmbeddingShape};
+use ploke_core::{
+    EmbeddingData, EmbeddingDType, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug,
+    EmbeddingSetId, EmbeddingShape,
+};
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
@@ -181,6 +184,11 @@ pub struct IndexerTask {
     /// used to enforce that every batch we write is homogeneous with respect
     /// to dimension and encoding, matching the multi-embedding DB helpers.
     pub embedding_shape: EmbeddingShape,
+    /// Strongly-typed identifier for the embedding set this indexer writes to.
+    ///
+    /// This couples the runtime indexer configuration (provider/model) with the
+    /// multi-embedding DB helpers that operate on per-set relations.
+    pub embedding_set: EmbeddingSetId,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
@@ -193,15 +201,25 @@ impl IndexerTask {
         db: Arc<Database>,
         io: IoManagerHandle,
         embedding_processor: Arc<EmbeddingProcessor>,
+        embedding_set: EmbeddingSetId,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
         let embedding_shape = embedding_processor.shape();
+
+        // Sanity check: the configured set dimension must match the processor.
+        debug_assert_eq!(
+            embedding_shape.dimension,
+            embedding_set.dimension(),
+            "EmbeddingSetId dimension must match EmbeddingProcessor shape"
+        );
+
         Self {
             db,
             io,
             embedding_processor,
             embedding_shape,
+            embedding_set,
             cancellation_token,
             batch_size,
             bm25_tx: None,
@@ -770,11 +788,15 @@ impl IndexerTask {
             .into_iter()
             .zip(embeddings)
             .zip(valid_nodes.into_iter())
-            .map(|((embs, embedding), ty)| (embs.id, embedding))
+            .map(|((embs, embedding), _ty)| ploke_db::EmbeddingInsert {
+                node_id: embs.id,
+                set_id: self.embedding_set.clone(),
+                vector: embedding,
+            })
             .collect();
 
-        tracing::info!("Updating database... ");
-        self.db.update_embeddings_batch(updates).await?;
+        tracing::info!("Updating database for embedding set {:?}...", self.embedding_set);
+        self.db.update_embeddings_batch_for_set(updates).await?;
         tracing::info!("Finished processing batch");
         Ok(())
     }

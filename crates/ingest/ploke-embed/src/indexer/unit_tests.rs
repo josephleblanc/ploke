@@ -18,6 +18,7 @@ use ploke_db::{
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
+use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_test_utils::{setup_db_full, setup_db_full_crate};
 use tokio::{
     sync::{
@@ -295,9 +296,16 @@ async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
 
     let io = IoManagerHandle::new();
 
-    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+    let embed_cfg = EmbeddingConfig::default();
+    let model = LocalEmbedder::new(embed_cfg.clone())?;
     let source = EmbeddingSource::Local(model);
     let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+    let embedding_shape = embedding_processor.shape();
+    let embedding_set = EmbeddingSetId::new(
+        EmbeddingProviderSlug("local-transformers".to_string()),
+        EmbeddingModelId(embed_cfg.model_id.clone()),
+        embedding_shape,
+    );
 
     let (cancellation_token, _cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -306,6 +314,7 @@ async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
         Arc::clone(&db),
         io,
         Arc::clone(&embedding_processor),
+        embedding_set,
         cancellation_token,
         batch_size,
     );
@@ -357,9 +366,10 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
     let total_count = db.count_unembedded_nonfiles()?;
     let io = IoManagerHandle::new();
 
-    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+    let embed_cfg = EmbeddingConfig::default();
+    let model = LocalEmbedder::new(embed_cfg.clone())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor::new(source);
+    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -370,10 +380,18 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
 
+    let embedding_shape = embedding_processor.shape();
+    let embedding_set = EmbeddingSetId::new(
+        EmbeddingProviderSlug("local-transformers".to_string()),
+        EmbeddingModelId(embed_cfg.model_id.clone()),
+        embedding_shape,
+    );
+
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_processor),
+        embedding_set,
         cancellation_token,
         batch_size,
     )
@@ -625,9 +643,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     let total_count = db.count_unembedded_nonfiles()?;
     let io = IoManagerHandle::new();
 
-    let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+    let embed_cfg = EmbeddingConfig::default();
+    let model = LocalEmbedder::new(embed_cfg.clone())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor::new(source);
+    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -637,10 +656,19 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     let counter = callback_manager.clone_counter();
 
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
+
+    let embedding_shape = embedding_processor.shape();
+    let embedding_set = EmbeddingSetId::new(
+        EmbeddingProviderSlug("local-transformers".to_string()),
+        EmbeddingModelId(embed_cfg.model_id.clone()),
+        embedding_shape,
+    );
+
     let mut idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_processor),
+        embedding_set,
         cancellation_token,
         batch_size,
     )

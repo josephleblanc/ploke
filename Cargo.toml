@@ -58,7 +58,7 @@ ron = "0.11"
 # Concurrency and parallelism
 rayon = "1.10.0"
 flume = "0.11.1"
-tokio = { version = "1.44.1", features = ["full"] }
+tokio = { version = "1.47.0", features = ["full"] }
 dashmap = "6.1.0"
 crossbeam-channel = "0.5.15"
 

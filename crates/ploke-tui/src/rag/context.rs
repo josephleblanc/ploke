@@ -1,8 +1,8 @@
 use crate::{
     chat_history::{ContextStatus, TurnsToLive},
     llm::{
+        manager::{events::ChatEvt, Role},
         LlmEvent,
-        manager::{Role, events::ChatEvt},
     },
 };
 use std::{
@@ -15,15 +15,19 @@ use ploke_core::{
     ArcStr,
     rag_types::{AssembledContext, ContextPart},
 };
+#[cfg(feature = "multi_embedding_db")]
+use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+#[cfg(feature = "multi_embedding_db")]
+use crate::user_config::EmbeddingConfig;
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
 use crate::{
-    RETRIEVAL_STRATEGY, TOP_K,
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
     llm::manager::RequestMessage,
+    RETRIEVAL_STRATEGY, TOP_K,
 };
 
 use super::*;
@@ -85,7 +89,74 @@ pub async fn process_with_rag(
         let budget = &state.budget;
         let top_k = TOP_K;
         let retrieval_strategy = RETRIEVAL_STRATEGY.deref();
-        match rag.get_context(&user_msg, top_k, budget, retrieval_strategy).await {
+
+        #[cfg(feature = "multi_embedding_db")]
+        fn embedding_set_for_runtime(
+            cfg: &crate::app_state::core::RuntimeConfig,
+            shape: EmbeddingShape,
+        ) -> EmbeddingSetId {
+            match &cfg.embedding {
+                EmbeddingConfig {
+                    local: Some(local_cfg),
+                    ..
+                } => EmbeddingSetId::new(
+                    EmbeddingProviderSlug("local-transformers".to_string()),
+                    EmbeddingModelId(local_cfg.model_id.clone()),
+                    shape,
+                ),
+                EmbeddingConfig {
+                    hugging_face: Some(hf_cfg),
+                    ..
+                } => EmbeddingSetId::new(
+                    EmbeddingProviderSlug("huggingface".to_string()),
+                    EmbeddingModelId(hf_cfg.model.clone()),
+                    shape,
+                ),
+                EmbeddingConfig {
+                    openai: Some(openai_cfg),
+                    ..
+                } => EmbeddingSetId::new(
+                    EmbeddingProviderSlug("openai".to_string()),
+                    EmbeddingModelId(openai_cfg.model.clone()),
+                    shape,
+                ),
+                EmbeddingConfig {
+                    cozo: Some(_cozo_cfg),
+                    ..
+                } => EmbeddingSetId::new(
+                    EmbeddingProviderSlug("cozo".to_string()),
+                    EmbeddingModelId("cozo".to_string()),
+                    shape,
+                ),
+                _ => EmbeddingSetId::new(
+                    EmbeddingProviderSlug("local-transformers".to_string()),
+                    EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+                    shape,
+                ),
+            }
+        }
+
+        #[cfg(feature = "multi_embedding_db")]
+        let ctx_result = if state.db.multi_embedding_db_enabled() {
+            let runtime_cfg = {
+                let guard = state.config.read().await;
+                guard.clone()
+            };
+            let shape = state.embedder.shape();
+            let set_id = embedding_set_for_runtime(&runtime_cfg, shape);
+            rag.get_context_for_set(&user_msg, top_k, budget, retrieval_strategy, &set_id)
+                .await
+        } else {
+            rag.get_context(&user_msg, top_k, budget, retrieval_strategy)
+                .await
+        };
+
+        #[cfg(not(feature = "multi_embedding_db"))]
+        let ctx_result = rag
+            .get_context(&user_msg, top_k, budget, retrieval_strategy)
+            .await;
+
+        match ctx_result {
             Ok(rag_ctx) => {
                 let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
                 event_bus.send(AppEvent::Llm(augmented_prompt));

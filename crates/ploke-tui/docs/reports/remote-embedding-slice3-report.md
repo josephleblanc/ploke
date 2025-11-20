@@ -37,3 +37,5 @@
 3. **Live telemetry**: No live (`cfg(feature = "live_api_tests")`) runs have been recorded yet for Slice 3. When added, they should produce `slice3-runtime-live-<timestamp>.json` artifacts with provider metadata, tool-call traces, and kill-switch status as described in `telemetry_evidence_plan.md`.
 
 
+
+

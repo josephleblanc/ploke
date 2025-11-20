@@ -574,4 +574,193 @@ mod tests {
         fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_for_set_returns_results_for_seeded_set() -> Result<(), Error> {
+        use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+        use ploke_db::multi_embedding::schema::vector_dims::vector_dimension_specs;
+        use ploke_db::{EmbeddingInsert, MultiEmbeddingRuntimeConfig};
+        use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+        use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+
+        init_tracing_once();
+
+        // DB with multi-embedding fixtures and runtime config enabled
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Arc::new(ploke_db::Database::with_multi_embedding_config(raw_db, config));
+
+        // Pick a pending node and dimension spec so we can seed a runtime embedding
+        // that lives in the same vector space as our query.
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let (_node_type, node) = batches
+            .into_iter()
+            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
+            .expect("at least one pending node");
+
+        let dim_spec = vector_dimension_specs()
+            .first()
+            .expect("at least one vector dimension spec");
+
+        // Embedding processor: use the default local embedder (384 dims) so both the
+        // stored vector and query vector come from the same model/shape.
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+
+        let rag = RagService::new(db.clone(), embedding_processor.clone())?;
+
+        // Build an EmbeddingSetId that matches the seeded dimension spec and the
+        // embedder we are using for this test.
+        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
+        let set_id = EmbeddingSetId::new(
+            EmbeddingProviderSlug(dim_spec.provider().to_string()),
+            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            shape,
+        );
+
+        // Generate an embedding for a concrete query string and persist it for the
+        // selected node using the set-aware helper.
+        let query = "set_aware_roundtrip_query";
+        let vectors = embedding_processor
+            .generate_embeddings(vec![query.to_string()])
+            .await?;
+        let vector = vectors
+            .into_iter()
+            .next()
+            .expect("expected one embedding from generate_embeddings");
+
+        db.update_embeddings_batch_for_set(vec![EmbeddingInsert {
+            node_id: node.id,
+            set_id: set_id.clone(),
+            vector: vector.clone(),
+        }])
+        .await?;
+
+        // Ensure HNSW indexes exist for this type (including multi-embedding indexes).
+        create_index_primary(&db)?;
+
+        // Use the same query text and embedding set when performing dense search; the
+        // seeded node should appear among the top results.
+        let hits: Vec<(Uuid, f32)> = rag.search_for_set(query, 10, &set_id).await?;
+        assert!(
+            hits.iter().any(|(id, _)| *id == node.id),
+            "expected set-aware dense search to return the seeded node for matching embedding/query"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[tokio::test]
+    async fn search_for_set_falls_back_when_multi_embedding_disabled() -> Result<(), Error> {
+        use ploke_core::{EmbeddingSetId, EmbeddingShape};
+        use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug};
+        use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+        use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+
+        init_tracing_once();
+
+        // Legacy-style DB without multi_embedding_db enabled.
+        let db = Arc::new(ploke_db::Database::init_with_schema()?);
+
+        // Use the existing dense search test fixture DB for embeddings.
+        let db_nodes = TEST_DB_NODES
+            .as_ref()
+            .expect("TEST_DB_NODES must initialize")
+            .clone();
+
+        // Swap in the pre-populated DB handle so we have real embeddings/HNSW state.
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db_nodes.clone(), embedding_processor)?;
+
+        // Build a dummy EmbeddingSetId; because multi_embedding_db is disabled on the
+        // Database, search_for_set should transparently fall back to legacy search.
+        let shape = EmbeddingShape::f32_raw(384);
+        let dummy_set = EmbeddingSetId::new(
+            EmbeddingProviderSlug("local-transformers".to_string()),
+            EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+            shape,
+        );
+
+        let search_term = "use_all_const_static";
+        let hits: Vec<(Uuid, f32)> = rag.search_for_set(search_term, 15, &dummy_set).await?;
+        assert!(
+            !hits.is_empty(),
+            "expected search_for_set to fall back and return results when multi_embedding_db is disabled"
+        );
+
+        Ok(())
+    }
+
+    /// Shape test: dense search should only be expected to return results for
+    /// symbols that actually have non-null legacy embeddings in the fixture
+    /// database. This avoids over-constraining tests on specific symbols.
+    #[tokio::test]
+    async fn rag_dense_search_matches_embed_presence() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.")
+            .clone();
+
+        // Symbols exercised by existing RAG tests along with their relations.
+        let symbols = &[
+            ("use_all_const_static", "function"),
+            ("TOP_LEVEL_BOOL", "const"),
+            ("TOP_LEVEL_COUNTER", "static"),
+        ];
+
+        // Check which symbols actually have non-null legacy embeddings.
+        let mut embedded_symbols = Vec::new();
+        for (name, relation) in symbols {
+            let script = format!(
+                r#"
+?[name, has_embedding] :=
+    *{rel}{{ name, embedding @ 'NOW' }},
+    name = {name_lit},
+    has_embedding = !is_null(embedding)
+"#,
+                rel = relation,
+                name_lit = format!("{name:?}"),
+            );
+            let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
+            let has_embedding = rows
+                .rows
+                .first()
+                .and_then(|row| row.get(1))
+                .and_then(|v| v.get_bool())
+                .unwrap_or(false);
+            if has_embedding {
+                embedded_symbols.push(*name);
+            }
+        }
+
+        assert!(
+            !embedded_symbols.is_empty(),
+            "expected at least one test symbol to have a non-null legacy embedding"
+        );
+
+        // Build a dense embedder + RAG service for the fallback path.
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // For every symbol with an embedding present, dense search should
+        // produce at least one hit.
+        for symbol in embedded_symbols {
+            let hits: Vec<(Uuid, f32)> = rag.search(symbol, 10).await?;
+            assert!(
+                !hits.is_empty(),
+                "expected dense search to return hits for symbol '{symbol}' with non-null embedding"
+            );
+        }
+
+        Ok(())
+    }
 }

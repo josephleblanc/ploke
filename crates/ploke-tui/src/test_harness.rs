@@ -58,6 +58,8 @@ lazy_static! {
             .load_embedding_processor()
             .expect("load embedding processor");
         let proc_arc = Arc::new(processor);
+        let embedding_shape = proc_arc.shape();
+        let embedding_set = config.embedding_set_id(embedding_shape);
 
         // BM25 service (used by indexer/RAG)
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
@@ -68,6 +70,7 @@ lazy_static! {
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&proc_arc),
+            embedding_set,
             CancellationToken::new().0,
             8,
         )

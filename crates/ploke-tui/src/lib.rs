@@ -170,6 +170,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let processor = config.load_embedding_processor()?;
     let proc_arc = Arc::new(processor);
+    let embedding_shape = proc_arc.shape();
+    let embedding_set = config.embedding_set_id(embedding_shape);
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)?;
 
     // TODO:
@@ -179,6 +181,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         db_handle.clone(),
         io_handle.clone(),
         Arc::clone(&proc_arc), // Use configured processor
+        embedding_set,
         CancellationToken::new().0,
         8,
     )
