@@ -750,6 +750,23 @@ fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Resul
     Ok(())
 }
 
+// Previously we thought we would need to re-create this index after reloading the database from
+// the backup. However, it seems that this is not the case, and we can create the hnsw index or
+// re-create when needed, but we run into an error if we try to just create the index after
+// reloading the database.
+// TODO: Add a test to show the correct way to re-index the database, which will involve removing
+// the current hnsw index before adding the replacement. If we try to just create the same hnsw
+// index again after it is already present in the database, we get a panic-level runtime error.
+// Instead, we want to either:
+// 1. check if the hnsw index is present before we try to create it again, and then let the create
+//    command be idempotent on attempting the second time with either
+//      - an emitted warning if we have an Ext trait for the error type that can be emit an event
+//      that will be correctly handled in the ultimate caller in `ploke-tui`
+//      - return with an error that is specifically handled by the caller, which would allow the
+//      caller to be idempotent or panic as the caller determines.
+// 2. (probably should be another command for our database API) check if the hnsw index currently
+//    exists for the named database, and then if it does exist, remove the current hnsw index and
+//    replace it with the new hnsw index with the same name.
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     #[cfg(feature = "multi_embedding_db")]
     create_multi_embedding_indexes_for_type(db, ty)?;

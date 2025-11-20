@@ -41,9 +41,12 @@ mod tests {
             // tests rely on `TEST_DB_MULTI` instead so we can keep expectations separated.
             target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
 
-            let db = Database::load_backup(&target_file)
-                .map_err(ploke_error::Error::from)?;
-            create_index_primary(&db)?;
+            let db = Database::load_backup(&target_file)?;
+            // NOTE: The below was previously used incorrectly to re-seed the database with the
+            // primary index after the database was reloaded, but the hnsw indices already exist in
+            // the backed up database. We should not use the below approach.
+            // create_index_primary(&db)?;
+            // tracing::info!("TEST_DB_NODES: finished create_index_primary");
             Ok(Arc::new(db))
         };
     }

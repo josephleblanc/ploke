@@ -1,8 +1,39 @@
+Checking id=4a8dde76-5fa0-5016-8649-530629193a16 name=DisplayableContainer
+  canon=crate::type_alias::DisplayableContainer
+  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/type_alias.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 0 rows
+  relation=type_alias returned 1 row(s); contains id match = true
+Checking id=50c30abe-c823-501c-9afd-9cfd3497eebb name=structs
+  canon=crate::structs
+  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/lib.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 1 row(s); contains id match = true
 Checking id=ce480861-c663-5031-ba12-699edb6b610d name=TOP_LEVEL_BOOL
   canon=crate::const_static::TOP_LEVEL_BOOL
   file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/const_static.rs
   relation=function returned 0 rows
   relation=const returned 1 row(s); contains id match = true
+Checking id=2bfb30b6-2784-509c-b203-3443a312bd27 name=SuperTrait
+  canon=crate::traits::SuperTrait
+  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/traits.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 0 rows
+  relation=trait returned 1 row(s); contains id match = true
 Checking id=b48b91cc-0ca7-509e-a652-faaf729eb2fd name=exported_macro
   canon=crate::macros::exported_macro
   file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/macros.rs
@@ -10,6 +41,24 @@ Checking id=b48b91cc-0ca7-509e-a652-faaf729eb2fd name=exported_macro
   relation=const returned 0 rows
   relation=enum returned 0 rows
   relation=macro returned 1 row(s); contains id match = true
+Checking id=7bea86cb-a096-50e7-8b0e-0dae196af401 name=SubItem
+  canon=crate::imports::sub_imports::SubItem
+  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/imports.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 0 rows
+  relation=static returned 0 rows
+  relation=struct returned 1 row(s); contains id match = true
+Checking id=31288b18-80a0-5143-a5f5-ec4317f15c01 name=sub_imports
+  canon=crate::imports::sub_imports
+  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/imports.rs
+  relation=function returned 0 rows
+  relation=const returned 0 rows
+  relation=enum returned 0 rows
+  relation=macro returned 0 rows
+  relation=module returned 1 row(s); contains id match = true
 Checking id=9dd661a3-967d-514b-8fd1-c039b55b8b7c name=attributed_macro
   canon=crate::macros::attributed_macro
   file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/macros.rs
@@ -17,32 +66,3 @@ Checking id=9dd661a3-967d-514b-8fd1-c039b55b8b7c name=attributed_macro
   relation=const returned 0 rows
   relation=enum returned 0 rows
   relation=macro returned 1 row(s); contains id match = true
-Checking id=e78126df-8cdd-51b3-9f38-6aafad925130 name=EnumWithAttributesAndDiscriminants
-  canon=crate::enums::EnumWithAttributesAndDiscriminants
-  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs
-  relation=function returned 0 rows
-  relation=const returned 0 rows
-  relation=enum returned 1 row(s); contains id match = true
-Checking id=5710b359-bfc2-5203-907b-256cd00f9fc9 name=use_all_const_static
-  canon=crate::const_static::use_all_const_static
-  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/const_static.rs
-  relation=function returned 1 row(s); contains id match = true
-Checking id=eeaae853-b09f-5225-9826-a6f35cf710f7 name=JustConstGeneric
-  canon=crate::enums::JustConstGeneric
-  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs
-  relation=function returned 0 rows
-  relation=const returned 0 rows
-  relation=enum returned 1 row(s); contains id match = true
-Checking id=cdaf5986-c6cb-536c-aaa4-03ccf5e0fa86 name=local_macro
-  canon=crate::macros::local_macro
-  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/macros.rs
-  relation=function returned 0 rows
-  relation=const returned 0 rows
-  relation=enum returned 0 rows
-  relation=macro returned 1 row(s); contains id match = true
-Checking id=849058ce-4a09-5480-b537-cd2d75d0785a name=EnumWithData
-  canon=crate::enums::EnumWithData
-  file=/home/brasides/code/ploke/tests/fixture_crates/fixture_nodes/src/enums.rs
-  relation=function returned 0 rows
-  relation=const returned 0 rows
-  relation=enum returned 1 row(s); contains id match = true

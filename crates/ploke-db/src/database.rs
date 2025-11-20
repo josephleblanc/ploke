@@ -1741,6 +1741,57 @@ mod tests {
         Database::new(db)
     }
 
+    #[test]
+    fn load_backup_restores_legacy_fixture_backup() -> Result<(), PlokeError> {
+        // The legacy single-embedding backup is used throughout the codebase as a
+        // canonical test fixture (e.g. RAG tests, HNSW tests). This test ensures
+        // that `Database::load_backup` can successfully restore that Cozo backup
+        // into a fresh in-memory database and that the resulting database has
+        // user relations populated.
+        let mut path = ploke_test_utils::workspace_root();
+        path.push(ploke_test_utils::LEGACY_FIXTURE_BACKUP_REL_PATH);
+        assert!(
+            path.exists(),
+            "expected legacy backup fixture to exist at {:?}",
+            path
+        );
+
+        let db = Database::load_backup(&path)?;
+        let relations = db.relations_vec()?;
+        assert!(
+            !relations.is_empty(),
+            "restored database should contain at least one relation"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_backup_empty_backup_yields_only_system_relations() -> Result<(), PlokeError> {
+        // Create a temporary empty file and treat it as a backup. Cozo currently
+        // accepts an empty backup stream when restoring into a fresh database;
+        // in that case we expect the resulting database to contain only system
+        // relations (all names contain ":") and no user-defined tables.
+        let mut path = std::env::temp_dir();
+        path.push("ploke_empty_backup_for_tests.cozo");
+
+        // Ensure the file exists and is empty.
+        std::fs::write(&path, &[] as &[u8]).expect("failed to create empty backup file");
+
+        let db = Database::load_backup(&path)?;
+
+        // Best-effort cleanup; ignore errors if the file is already gone.
+        let _ = std::fs::remove_file(&path);
+
+        let relations = db.relations_vec()?;
+        assert!(
+            relations.iter().all(|name| name.contains(':')),
+            "database restored from an empty backup should only contain system relations; got {relations:?}"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn update_embeddings_batch_empty() -> Result<(), DbError> {
         let db = setup_db();

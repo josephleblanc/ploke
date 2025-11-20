@@ -2,6 +2,12 @@
 
 This is a list of known fixes that I will want to make but are not terribly urgent.
 
+## Internal API
+
+* [ ] `ploke-db` API for hnsw handling could be expanded to more accurately
+reflect the way cozoscript works.
+  - `create_index`
+
 ## Organization
 
  * [ ] Semantic Versioning: Start following semantic versioning
