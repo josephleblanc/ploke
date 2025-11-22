@@ -363,6 +363,10 @@ impl LocalEmbedder {
         self.dimensions
     }
 
+    pub fn model_id(&self) -> &str {
+        &self.config.model_id
+    }
+
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         // TODO: NOW
         if texts.is_empty() {

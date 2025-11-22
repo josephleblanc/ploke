@@ -959,8 +959,6 @@ mod test {
 
         let processor = config.load_embedding_processor()?;
         let proc_arc = Arc::new(processor);
-        let embedding_shape = proc_arc.shape();
-        let embedding_set = config.embedding_set_id(embedding_shape);
 
         // TODO:
         // 1 Implement the cancellation token propagation in IndexerTask
@@ -969,7 +967,6 @@ mod test {
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&proc_arc), // Use configured processor
-            embedding_set,
             CancellationToken::new().0,
             8,
         );

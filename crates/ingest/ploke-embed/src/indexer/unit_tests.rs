@@ -300,13 +300,6 @@ async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
     let model = LocalEmbedder::new(embed_cfg.clone())?;
     let source = EmbeddingSource::Local(model);
     let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-    let embedding_shape = embedding_processor.shape();
-    let embedding_set = EmbeddingSetId::new(
-        EmbeddingProviderSlug("local-transformers".to_string()),
-        EmbeddingModelId(embed_cfg.model_id.clone()),
-        embedding_shape,
-    );
-
     let (cancellation_token, _cancel_handle) = CancellationToken::new();
     let batch_size = 8;
 
@@ -314,7 +307,6 @@ async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
         Arc::clone(&db),
         io,
         Arc::clone(&embedding_processor),
-        embedding_set,
         cancellation_token,
         batch_size,
     );
@@ -380,18 +372,10 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
 
-    let embedding_shape = embedding_processor.shape();
-    let embedding_set = EmbeddingSetId::new(
-        EmbeddingProviderSlug("local-transformers".to_string()),
-        EmbeddingModelId(embed_cfg.model_id.clone()),
-        embedding_shape,
-    );
-
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
         Arc::clone(&embedding_processor),
-        embedding_set,
         cancellation_token,
         batch_size,
     )
@@ -657,18 +641,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
 
-    let embedding_shape = embedding_processor.shape();
-    let embedding_set = EmbeddingSetId::new(
-        EmbeddingProviderSlug("local-transformers".to_string()),
-        EmbeddingModelId(embed_cfg.model_id.clone()),
-        embedding_shape,
-    );
-
     let mut idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
         Arc::clone(&embedding_processor),
-        embedding_set,
         cancellation_token,
         batch_size,
     )

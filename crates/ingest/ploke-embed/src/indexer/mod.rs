@@ -39,6 +39,28 @@ pub enum EmbeddingSource {
     Cozo(CozoBackend),
 }
 
+impl EmbeddingSource {
+    pub fn provider(&self) -> EmbeddingProviderSlug {
+        let slug = match self {
+            EmbeddingSource::Local(_) => "local-transformers",
+            EmbeddingSource::HuggingFace(_) => "huggingface",
+            EmbeddingSource::OpenAI(_) => "openai",
+            EmbeddingSource::Cozo(_) => "cozo-mock",
+        };
+        EmbeddingProviderSlug(slug.to_string())
+    }
+
+    pub fn model(&self) -> EmbeddingModelId {
+        let model_id = match self {
+            EmbeddingSource::Local(b) => b.model_id().to_string(),
+            EmbeddingSource::HuggingFace(b) => b.model.clone(),
+            EmbeddingSource::OpenAI(b) => b.model.clone(),
+            EmbeddingSource::Cozo(_) => "mock-model".to_string(),
+        };
+        EmbeddingModelId(model_id)
+    }
+}
+
 fn count_tyemb(tyemb_vec: &[TypedEmbedData]) -> usize {
     tyemb_vec.iter().fold(0, |acc, i| acc + i.v.len())
 }
@@ -110,6 +132,18 @@ impl EmbeddingProcessor {
             EmbeddingDType::F32,
             EmbeddingEncoding::RawVector,
         )
+    }
+
+    pub fn provider(&self) -> EmbeddingProviderSlug {
+        self.source.provider()
+    }
+
+    pub fn model(&self) -> EmbeddingModelId {
+        self.source.model()
+    }
+
+    pub fn embedding_set(&self) -> EmbeddingSetId {
+        EmbeddingSetId::new(self.provider(), self.model(), self.shape())
     }
 }
 
@@ -201,11 +235,11 @@ impl IndexerTask {
         db: Arc<Database>,
         io: IoManagerHandle,
         embedding_processor: Arc<EmbeddingProcessor>,
-        embedding_set: EmbeddingSetId,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
         let embedding_shape = embedding_processor.shape();
+        let embedding_set = embedding_processor.embedding_set();
 
         // Sanity check: the configured set dimension must match the processor.
         debug_assert_eq!(

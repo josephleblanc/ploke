@@ -80,15 +80,12 @@ impl AppHarness {
             .load_embedding_processor()
             .expect("load embedding processor");
         let proc_arc = Arc::new(processor);
-        let embedding_shape = proc_arc.shape();
-        let embedding_set = config.embedding_set_id(embedding_shape);
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
             .expect("start bm25 service");
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&proc_arc),
-            embedding_set,
             CancellationToken::new().0,
             8,
         )
