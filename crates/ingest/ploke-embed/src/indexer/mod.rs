@@ -37,17 +37,49 @@ pub enum EmbeddingSource {
     HuggingFace(HuggingFaceBackend),
     OpenAI(OpenAIBackend),
     Cozo(CozoBackend),
+    #[cfg(test)]
+    Test(TestEmbeddingBackend),
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub struct TestEmbeddingBackend {
+    pub set_id: EmbeddingSetId,
+    pub mock_vector_value: f32,
+    // Add any other mock behavior needed
+}
+
+#[cfg(test)]
+impl TestEmbeddingBackend {
+    pub fn new(set_id: EmbeddingSetId, mock_vector_value: f32) -> Self {
+        Self {
+            set_id,
+            mock_vector_value,
+        }
+    }
+    pub async fn generate_embeddings(
+        &self,
+        snippets: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let dims = self.set_id.dimension() as usize;
+        Ok(snippets
+            .into_iter()
+            .map(|_| vec![self.mock_vector_value; dims])
+            .collect())
+    }
 }
 
 impl EmbeddingSource {
     pub fn provider(&self) -> EmbeddingProviderSlug {
         let slug = match self {
-            EmbeddingSource::Local(_) => "local-transformers",
-            EmbeddingSource::HuggingFace(_) => "huggingface",
-            EmbeddingSource::OpenAI(_) => "openai",
-            EmbeddingSource::Cozo(_) => "cozo-mock",
+            EmbeddingSource::Local(_) => "local-transformers".to_string(),
+            EmbeddingSource::HuggingFace(_) => "huggingface".to_string(),
+            EmbeddingSource::OpenAI(_) => "openai".to_string(),
+            EmbeddingSource::Cozo(_) => "cozo-mock".to_string(),
+            #[cfg(test)]
+            EmbeddingSource::Test(b) => b.set_id.provider.0.clone(),
         };
-        EmbeddingProviderSlug(slug.to_string())
+        EmbeddingProviderSlug(slug)
     }
 
     pub fn model(&self) -> EmbeddingModelId {
@@ -56,6 +88,8 @@ impl EmbeddingSource {
             EmbeddingSource::HuggingFace(b) => b.model.clone(),
             EmbeddingSource::OpenAI(b) => b.model.clone(),
             EmbeddingSource::Cozo(_) => "mock-model".to_string(),
+            #[cfg(test)]
+            EmbeddingSource::Test(b) => b.set_id.model.0.clone(),
         };
         EmbeddingModelId(model_id)
     }
@@ -78,6 +112,13 @@ impl EmbeddingProcessor {
                 endpoint: "mock://cozo".to_string(),
                 dimensions: 384,
             }),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_test(set_id: EmbeddingSetId, mock_vector_value: f32) -> Self {
+        Self {
+            source: EmbeddingSource::Test(TestEmbeddingBackend::new(set_id, mock_vector_value)),
         }
     }
 
@@ -109,6 +150,8 @@ impl EmbeddingProcessor {
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
             EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
             EmbeddingSource::Cozo(backend) => backend.compute_batch(snippets).await,
+            #[cfg(test)]
+            EmbeddingSource::Test(backend) => backend.generate_embeddings(snippets).await,
         }
     }
 
@@ -118,6 +161,8 @@ impl EmbeddingProcessor {
             EmbeddingSource::HuggingFace(backend) => backend.dimensions,
             EmbeddingSource::OpenAI(backend) => backend.dimensions,
             EmbeddingSource::Cozo(backend) => backend.dimensions,
+            #[cfg(test)]
+            EmbeddingSource::Test(b) => b.set_id.dimension() as usize,
         }
     }
 

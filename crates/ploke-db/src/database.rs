@@ -1587,13 +1587,17 @@ impl Database {
     ) -> Result<HashMap<Uuid, (usize, &'static VectorDimensionSpec)>, DbError> {
         let mut plan = HashMap::new();
         for (idx, (node_id, vector)) in updates.iter().enumerate() {
-            let spec = dimension_spec_for_length(vector.len()).ok_or(
+            tracing::debug!("build_vector_plan: processing node_id={:?}, vector_len={}", node_id, vector.len());
+            let spec = dimension_spec_for_length(vector.len()).ok_or_else(|| {
+                tracing::error!("build_vector_plan: UnsupportedEmbeddingDimension for dims={}", vector.len());
                 DbError::UnsupportedEmbeddingDimension {
                     dims: vector.len() as i64,
-                },
-            )?;
+                }
+            })?;
+            tracing::debug!("build_vector_plan: found spec={:?}", spec);
             plan.insert(*node_id, (idx, spec));
         }
+        tracing::debug!("build_vector_plan: plan created with {} entries.", plan.len());
         Ok(plan)
     }
 
