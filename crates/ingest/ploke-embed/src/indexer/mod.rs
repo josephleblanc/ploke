@@ -95,7 +95,17 @@ impl EmbeddingSource {
     }
 }
 
-// AI: Implement From<EmbeddingSource> for EmbeddingProviderSlug and EmbeddingModelId AI!
+impl From<&EmbeddingSource> for EmbeddingProviderSlug {
+    fn from(source: &EmbeddingSource) -> Self {
+        source.provider()
+    }
+}
+
+impl From<&EmbeddingSource> for EmbeddingModelId {
+    fn from(source: &EmbeddingSource) -> Self {
+        source.model()
+    }
+}
 
 fn count_tyemb(tyemb_vec: &[TypedEmbedData]) -> usize {
     tyemb_vec.iter().fold(0, |acc, i| acc + i.v.len())
