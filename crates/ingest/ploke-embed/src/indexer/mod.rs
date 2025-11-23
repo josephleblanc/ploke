@@ -94,6 +94,8 @@ impl EmbeddingSource {
         EmbeddingModelId(model_id)
     }
 }
+// AI: I want the logic for the conversion to be moved into the `From` implementation for
+// EmbeddingProviderSlug and EmbeddingModelId AI!
 
 impl From<&EmbeddingSource> for EmbeddingProviderSlug {
     fn from(source: &EmbeddingSource) -> Self {
