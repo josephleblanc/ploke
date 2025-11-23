@@ -395,7 +395,7 @@ pub fn search_similar_args_for_set(
         max_hits,
         radius,
         set_id,
-        vector_embedding_model
+        vector_embedding_model,
     } = args;
 
     if !db.multi_embedding_db_enabled() {
@@ -436,8 +436,7 @@ pub fn search_similar_args_for_set(
             dist: Vec::new(),
         });
     };
-    spec
-        .ensure_registered(db)
+    spec.ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
     let dim_spec = db
         .vector_spec_for_set(set_id)
@@ -617,12 +616,12 @@ fn multi_embedding_hnsw_of_type(
     let Some(spec) = experimental_spec_for_node(ty) else {
         return Ok(Vec::new());
     };
-    spec
-        .ensure_registered(db)
+    spec.ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
     let mut aggregated = Vec::new();
     for dim_spec in vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model.clone());
+        let relation =
+            ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model.clone());
         relation
             .ensure_registered(db)
             .map_err(ploke_error::Error::from)?;
@@ -674,12 +673,15 @@ pub fn multi_embedding_hnsw_for_set(
     set_id: &EmbeddingSetId,
     k: usize,
     ef: usize,
+    vector_embedding_model: EmbeddingModel
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
+    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
     let Some(spec) = experimental_spec_for_node(ty) else {
         return Ok(Vec::new());
     };
 
-    spec.metadata_schema
+    spec
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
 
@@ -688,7 +690,7 @@ pub fn multi_embedding_hnsw_for_set(
     let dim_spec = db
         .vector_spec_for_set(set_id)
         .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model);
     relation
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
@@ -726,16 +728,19 @@ pub fn multi_embedding_hnsw_for_set(
 }
 
 #[cfg(feature = "multi_embedding")]
-fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Result<(), DbError> {
+fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType, vector_embedding_model: EmbeddingModel) -> Result<(), DbError> {
+    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
     if !db.multi_embedding_db_enabled() {
         return Ok(());
     }
     let Some(spec) = experimental_spec_for_node(ty) else {
         return Ok(());
     };
-    spec.metadata_schema.ensure_registered(db)?;
+    spec.ensure_registered(db)?;
     for dim_spec in vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+        let relation =
+            ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model.clone());
         relation.ensure_registered(db)?;
         if let Err(err) = db.create_idx(
             &relation.relation_name(),
@@ -772,9 +777,12 @@ fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Resul
 // 2. (probably should be another command for our database API) check if the hnsw index currently
 //    exists for the named database, and then if it does exist, remove the current hnsw index and
 //    replace it with the new hnsw index with the same name.
-pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
+pub fn create_index(db: &Database, ty: NodeType,
     #[cfg(feature = "multi_embedding")]
-    create_multi_embedding_indexes_for_type(db, ty)?;
+    vector_embedding_model: EmbeddingModel
+) -> Result<(), DbError> {
+    #[cfg(feature = "multi_embedding")]
+    create_multi_embedding_indexes_for_type(db, ty, vector_embedding_model)?;
 
     // Create documents table
     // Create HNSW index on embeddings
@@ -803,16 +811,25 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     Ok(())
 }
 
-pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
+pub fn create_index_primary(db: &Database,
+        #[cfg(feature = "multi_embedding")]
+vector_embedding_model: EmbeddingModel
+) -> Result<(), DbError> {
     for ty in NodeType::primary_nodes() {
+        #[cfg(not( feature = "multi_embedding" ))]
         create_index(db, ty)?;
+        #[cfg(feature = "multi_embedding")]
+        create_index(db, ty, vector_embedding_model.clone())?;
     }
     Ok(())
 }
 
-pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
+pub fn create_index_warn(db: &Database, ty: NodeType,
+        #[cfg(feature = "multi_embedding")]
+vector_embedding_model: EmbeddingModel
+) -> Result<(), ploke_error::Error> {
     #[cfg(feature = "multi_embedding")]
-    create_multi_embedding_indexes_for_type(db, ty).map_err(ploke_error::Error::from)?;
+    create_multi_embedding_indexes_for_type(db, ty, vector_embedding_model).map_err(ploke_error::Error::from)?;
 
     // Create documents table
     // Create HNSW index on embeddings
@@ -905,6 +922,9 @@ mod tests {
             .map_err(DbError::from)
             .map_err(ploke_error::Error::from)?;
 
+    #[cfg(feature = "multi_embedding")]
+        super::create_index_primary(&db)?;
+    #[cfg(not( feature = "multi_embedding") )]
         super::create_index_primary(&db)?;
 
         let k = 20;
