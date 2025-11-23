@@ -71,8 +71,10 @@ pub fn hnsw_of_type(
     ty: NodeType,
     k: usize,
     ef: usize,
-    #[cfg(feature = "multi_embedding")] emb_model: EmbeddingModelId,
+    emb_model: EmbeddingModelId,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
+    #[cfg(not(feature = "multi_embedding"))]
+    let _ = emb_model;
     #[cfg(feature = "multi_embedding")]
     if db.multi_embedding_db_enabled() {
         return multi_embedding_hnsw_of_type(db, ty, k, ef, emb_model);

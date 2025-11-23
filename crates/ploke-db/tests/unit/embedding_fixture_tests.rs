@@ -1,5 +1,11 @@
 use ploke_db::ext::embed_utils::{DbEmbedUtils, HasNullEmbeds};
-use ploke_db::{hnsw_of_type, Database, DbError, NodeType};
+use ploke_db::{
+    hnsw_of_type,
+    multi_embedding::schema::vector_dims::sample_vector_dimension_specs,
+    Database,
+    DbError,
+    NodeType,
+};
 use ploke_error::Error as PlokeError;
 use ploke_test_utils::{
     workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
@@ -51,9 +57,14 @@ fn legacy_hnsw_returns_any_consts_in_fixture() -> Result<(), PlokeError> {
         .map_err(DbError::from)
         .map_err(PlokeError::from)?;
 
-    ploke_db::create_index_primary(&db).map_err(PlokeError::from)?;
+    let model = sample_vector_dimension_specs()
+        .first()
+        .expect("vector spec")
+        .embedding_model()
+        .clone();
+    ploke_db::create_index_primary(&db, model.clone()).map_err(PlokeError::from)?;
 
-    let hits = hnsw_of_type(&db, NodeType::Const, 10, 40)?;
+    let hits = hnsw_of_type(&db, NodeType::Const, 10, 40, model)?;
     assert!(
         !hits.is_empty(),
         "expected HNSW search over consts to return at least one hit"
@@ -64,7 +75,7 @@ fn legacy_hnsw_returns_any_consts_in_fixture() -> Result<(), PlokeError> {
 
 /// Explicitly documents which combinations of schema features and fixture
 /// backups are expected to succeed when importing Cozo backups.
-#[cfg(not(feature = "multi_embedding_schema"))]
+#[cfg(not(feature = "multi_embedding"))]
 #[test]
 fn backup_import_compat_legacy_schema() -> Result<(), PlokeError> {
     let mut legacy_path = workspace_root();

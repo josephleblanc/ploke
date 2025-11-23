@@ -43,24 +43,13 @@ impl DbEmbedUtils for Database {
 /// Constructs the CozoScript query to check for a null embedding on a named item.
 fn build_null_embed_script(name: &str, node_ty: NodeType) -> String {
     let ty = node_ty.relation_str();
-    todo!("Need to update the CozoScript used here, or decide on alternative if this method does not fit into the new single-write approach to vectors");
-    if cfg!(feature = "multi_embedding") {
-        format!(
-            "?[name, is_null_embedding] :=
-            *{ty}{{name, embedding @ 'NOW' }},
-            name = \"{name}\",
-            is_null_embedding = is_null(embedding)
-            "
-        )
-    } else {
-        format!(
-            "?[name, is_null_embedding] :=
-            *{ty}{{name, embedding @ 'NOW' }},
-            name = \"{name}\",
-            is_null_embedding = is_null(embedding)
-            "
-        )
-    }
+    format!(
+        "?[name, is_null_embedding] :=
+        *{ty}{{name, embedding @ 'NOW' }},
+        name = \"{name}\",
+        is_null_embedding = is_null(embedding)
+        "
+    )
 }
 
 /// An extension trait for [`QueryResult`] that provides helper methods for

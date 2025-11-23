@@ -795,21 +795,10 @@ impl Database {
         {
             let expected = set_id.dimension() as usize;
             if vector.len() != expected {
-                #[cfg(feature = "multi_embedding")]
-                {
-                    return Err(DbError::ExperimentalVectorLengthMismatch {
-                        expected,
-                        actual: vector.len(),
-                    });
-                }
-                #[cfg(not(feature = "multi_embedding_schema"))]
-                {
-                    return Err(DbError::QueryExecution(format!(
-                        "EmbeddingSetId dimension {} does not match vector length {}",
-                        expected,
-                        vector.len()
-                    )));
-                }
+                return Err(DbError::ExperimentalVectorLengthMismatch {
+                    expected,
+                    actual: vector.len(),
+                });
             }
             updates.push((node_id, vector));
         }

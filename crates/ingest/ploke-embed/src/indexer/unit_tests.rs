@@ -16,6 +16,7 @@ use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_db::{
     bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
     hnsw_all_types, CallbackManager, Database, DbError, NodeType,
+    multi_embedding::schema::vector_dims::sample_vector_dimension_specs,
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
@@ -869,25 +870,20 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     {
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
+    let vector_model = sample_vector_dimension_specs()
+        .first()
+        .expect("vector spec")
+        .embedding_model()
+        .clone();
     for ty in NodeType::primary_nodes() {
-        let db_ret = if cfg!(feature = "multi_embedding") {
-            todo!("determine how to identify + create embedding here for multi_embedding feature")
-        } else {
-            ploke_db::create_index_warn(&db, ty)
-        };
+        let db_ret = ploke_db::create_index_warn(&db, ty, vector_model.clone());
         tracing::info!("db_ret = {:?}", db_ret);
     }
 
     let mut no_error = true;
     for ty in NodeType::primary_nodes() {
-        let indexing_function = |t: NodeType| {
-            // let emb_model =
-            // ploke_db::hnsw_of_type(&db, t, ef, k, emb_model)
-            #[cfg(feature = "multi_embedding")]
-            todo!();
-            #[cfg(not(feature = "multi_embedding"))]
-            ploke_db::hnsw_of_type(&db, t, ef, k)
-        };
+        let indexing_function =
+            |t: NodeType| ploke_db::hnsw_of_type(&db, t, ef, k, vector_model.clone());
         match indexing_function(ty) {
             Ok(indexed_count) => {
                 tracing::info!("db_ret = {:?}", indexed_count);
@@ -912,7 +908,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
         tracing::warn!("CallbackManager not closed?");
     }
-    match hnsw_all_types(&db, k, ef) {
+    match hnsw_all_types(&db, k, ef, vector_model.clone()) {
         Ok(indexed_count) => {
             tracing::info!("db_ret = {:?}", indexed_count);
         }

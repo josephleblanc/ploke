@@ -55,7 +55,6 @@ pub enum DbError {
     #[error("Experimental embedding metadata parse error: {reason}")]
     ExperimentalMetadataParse { reason: String },
 
-    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding vector length mismatch: expected {expected}, got {actual}")]
     ExperimentalVectorLengthMismatch { expected: usize, actual: usize },
 }

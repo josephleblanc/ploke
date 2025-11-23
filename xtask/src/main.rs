@@ -6,10 +6,6 @@ use ploke_common::{
 };
 use ploke_db::{
     Database, DbError,
-    multi_embedding::{
-        ExperimentalEmbeddingDbExt, ExperimentalVectorRelation,
-        vector_dimension_specs,
-    },
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
