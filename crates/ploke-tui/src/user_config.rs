@@ -141,38 +141,38 @@ impl UserConfig {
                 local: Some(local_cfg),
                 ..
             } => EmbeddingSetId::new(
-                EmbeddingProviderSlug("local-transformers".to_string()),
-                EmbeddingModelId(local_cfg.model_id.clone()),
+                EmbeddingProviderSlug::new_from_str("local-transformers"),
+                EmbeddingModelId::new_from_str(local_cfg.model_id.clone()),
                 shape,
             ),
             EmbeddingConfig {
                 hugging_face: Some(hf_cfg),
                 ..
             } => EmbeddingSetId::new(
-                EmbeddingProviderSlug("huggingface".to_string()),
-                EmbeddingModelId(hf_cfg.model.clone()),
+                EmbeddingProviderSlug::new_from_str("huggingface"),
+                EmbeddingModelId::new_from_str(hf_cfg.model.clone()),
                 shape,
             ),
             EmbeddingConfig {
                 openai: Some(openai_cfg),
                 ..
             } => EmbeddingSetId::new(
-                EmbeddingProviderSlug("openai".to_string()),
-                EmbeddingModelId(openai_cfg.model.clone()),
+                EmbeddingProviderSlug::new_from_str("openai"),
+                EmbeddingModelId::new_from_str(openai_cfg.model.clone()),
                 shape,
             ),
             EmbeddingConfig {
                 cozo: Some(_cozo_cfg),
                 ..
             } => EmbeddingSetId::new(
-                EmbeddingProviderSlug("cozo".to_string()),
-                EmbeddingModelId("cozo".to_string()),
+                EmbeddingProviderSlug::new_from_str("cozo"),
+                EmbeddingModelId::new_from_str("cozo"),
                 shape,
             ),
             // Fallback to the default local model configuration.
             _ => EmbeddingSetId::new(
-                EmbeddingProviderSlug("local-transformers".to_string()),
-                EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+                EmbeddingProviderSlug::new_from_str("local-transformers"),
+                EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
                 shape,
             ),
         }

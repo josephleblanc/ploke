@@ -5,7 +5,7 @@ pub mod vectors;
 pub use adapter::{ExperimentalEmbeddingDatabaseExt, ExperimentalEmbeddingDbExt};
 pub use schema::metadata::{CozoField, ExperimentalRelationSchema};
 pub use schema::vector_dims::{
-    embedding_entry, vector_dimension_specs, VectorDimensionSpec, VECTOR_DIMENSION_SPECS,
+    embedding_entry, sample_vector_dimension_specs, VectorDimensionSpec, VECTOR_DIMENSION_SPECS,
 };
 pub use vectors::ExperimentalVectorRelation;
 

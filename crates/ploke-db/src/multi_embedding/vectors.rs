@@ -4,11 +4,9 @@ use std::ops::Deref;
 use crate::database::Database;
 use crate::error::DbError;
 use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
-use crate::multi_embedding::schema::vector_dims::{
-    vector_literal, VectorDimensionSpec,
-};
+use crate::multi_embedding::schema::vector_dims::{vector_literal, VectorDimensionSpec};
 use cozo::{Db, MemStorage, ScriptMutability};
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, EmbeddingModelId};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug)]
@@ -23,12 +21,15 @@ impl AsRef<str> for EmbeddingModel {
 #[derive(Clone, Debug)]
 pub struct ExperimentalVectorRelation {
     dims: i64,
-    embedding_model: EmbeddingModel,
+    embedding_model: EmbeddingModelId,
 }
 
 impl ExperimentalVectorRelation {
-    pub fn new(dims: i64, embedding_model: EmbeddingModel) -> Self {
-        Self { dims, embedding_model }
+    pub fn new(dims: i64, embedding_model: EmbeddingModelId) -> Self {
+        Self {
+            dims,
+            embedding_model,
+        }
     }
 
     pub fn dims(&self) -> i64 {

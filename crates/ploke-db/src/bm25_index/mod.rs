@@ -754,8 +754,12 @@ pub(crate) fn collect_rebuild_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_index_primary, utils::test_utils::fixture_db_backup_path, DbError};
+    use crate::{
+        create_index_primary, multi_embedding::ExperimentalEmbeddingDbExt,
+        utils::test_utils::fixture_db_backup_path, DbError,
+    };
     use lazy_static::lazy_static;
+    use ploke_core::EmbeddingModelId;
     use ploke_error::Error as PlokeError;
     use std::collections::HashMap;
 
@@ -794,7 +798,12 @@ mod tests {
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)
                 .map_err(ploke_error::Error::from)?;
+
+            let test_embedding_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+            #[cfg(not( feature = "multi_embedding" ))]
             create_index_primary(&db)?;
+            #[cfg(feature = "multi_embedding")]
+            create_index_primary(&db, test_embedding_model)?;
             Ok(Arc::new( db ))
         };
     }

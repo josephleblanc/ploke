@@ -34,6 +34,12 @@ impl Borrow<str> for ArcStr {
     }
 }
 
+impl std::fmt::Display for ArcStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 // Conversions
 impl From<Arc<str>> for ArcStr {
     fn from(a: Arc<str>) -> Self {

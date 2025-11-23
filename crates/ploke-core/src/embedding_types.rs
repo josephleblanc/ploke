@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArcStr;
 
-/// Strongly-typed identifier for an embedding model.
+/// Typed wrapper for an embedding model.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingModelId(ArcStr);
 
@@ -24,7 +24,7 @@ impl std::fmt::Display for EmbeddingModelId {
     }
 }
 
-/// Strongly-typed identifier for an embedding provider (e.g., "openai", "local-transformers").
+/// Typed wrapper for an embedding provider (e.g., "openai", "local-transformers").
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingProviderSlug(ArcStr);
 
@@ -40,22 +40,9 @@ impl EmbeddingProviderSlug {
     }
 }
 
-impl std::fmt::Display for EmbeddingModelId {
+impl std::fmt::Display for EmbeddingProviderSlug {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_embedding_model_id_display() {
-        let model_id = EmbeddingModelId::new_from_str("text-embedding-3-small");
-        let display = format!("{}", model_id);
-        // Should not have quotes around the text
-        assert_eq!(display, "text-embedding-3-small");
     }
 }
 
@@ -112,5 +99,28 @@ impl EmbeddingShape {
             dtype: EmbeddingDType::F32,
             encoding: EmbeddingEncoding::RawVector,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embedding_model_id_display() {
+        let model_id = EmbeddingModelId::new_from_str("text-embedding-3-small");
+        let display = format!("{}", model_id);
+        // Should not have quotes around the text
+        assert_ne!(display, r#""text-embedding-3-small""#);
+        assert_eq!(display, "text-embedding-3-small");
+    }
+
+    #[test]
+    fn test_embedding_provider_display() {
+        let provider = EmbeddingProviderSlug::new_from_str("openai");
+        let display = format!("{}", provider);
+        // Should not have quotes around the text
+        assert_ne!(display, r#""openai""#);
+        assert_eq!(display, "openai");
     }
 }

@@ -12,13 +12,13 @@ use std::{
 
 use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
+use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_db::{
     bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
     hnsw_all_types, CallbackManager, Database, DbError, NodeType,
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
-use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_test_utils::{setup_db_full, setup_db_full_crate};
 use tokio::{
     sync::{
@@ -287,7 +287,9 @@ async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
     // Build a fixture-backed database and enable the multi-embedding DB gate.
     let raw_db = setup_db_full("fixture_nodes")?;
     let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-    let db = Arc::new(ploke_db::Database::with_multi_embedding_config(raw_db, config));
+    let db = Arc::new(ploke_db::Database::with_multi_embedding_config(
+        raw_db, config,
+    ));
 
     let pending_before = db
         .count_pending_embeddings()
@@ -560,9 +562,9 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 #[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn indexer_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
+    use cozo::Db;
     use ploke_core::{EmbeddingData, EmbeddingShape};
     use ploke_db::{Database, MultiEmbeddingRuntimeConfig, TypedEmbedData};
-    use cozo::Db;
     use uuid::Uuid;
 
     // 1. Initialize a DB with multi-embedding features enabled.
@@ -575,8 +577,8 @@ async fn indexer_rejects_unsupported_dimension() -> Result<(), ploke_error::Erro
     // 2. Create an EmbeddingSetId with an *unsupported* dimension.
     let unsupported_dims = 512; // This is not in VECTOR_DIMENSION_SPECS
     let unsupported_set_id = EmbeddingSetId::new(
-        EmbeddingProviderSlug("test-provider".to_string()),
-        EmbeddingModelId("unsupported-model".to_string()),
+        EmbeddingProviderSlug::new_from_str("test-provider"),
+        EmbeddingModelId::new_from_str("unsupported-model"),
         EmbeddingShape::f32_raw(unsupported_dims as u32),
     );
 
@@ -624,12 +626,14 @@ async fn indexer_rejects_unsupported_dimension() -> Result<(), ploke_error::Erro
         EmbedError::Database(ploke_db::DbError::UnsupportedEmbeddingDimension { dims }) => {
             assert_eq!(dims, unsupported_dims as i64);
         }
-        _ => panic!("Expected UnsupportedEmbeddingDimension error, but got {:?}", error),
+        _ => panic!(
+            "Expected UnsupportedEmbeddingDimension error, but got {:?}",
+            error
+        ),
     }
 
     Ok(())
 }
-
 
 fn log_row(r: Vec<DataValue>) {
     for (i, row) in r.iter().enumerate() {
@@ -866,13 +870,25 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
     for ty in NodeType::primary_nodes() {
-        let db_ret = ploke_db::create_index_warn(&db, ty);
+        let db_ret = if cfg!(feature = "multi_embedding") {
+            todo!("determine how to identify + create embedding here for multi_embedding feature")
+        } else {
+            ploke_db::create_index_warn(&db, ty)
+        };
         tracing::info!("db_ret = {:?}", db_ret);
     }
 
     let mut no_error = true;
     for ty in NodeType::primary_nodes() {
-        match ploke_db::hnsw_of_type(&db, ty, ef, k) {
+        let indexing_function = |t: NodeType| {
+            // let emb_model =
+            // ploke_db::hnsw_of_type(&db, t, ef, k, emb_model)
+            #[cfg(feature = "multi_embedding")]
+            todo!();
+            #[cfg(not(feature = "multi_embedding"))]
+            ploke_db::hnsw_of_type(&db, t, ef, k)
+        };
+        match indexing_function(ty) {
             Ok(indexed_count) => {
                 tracing::info!("db_ret = {:?}", indexed_count);
             }

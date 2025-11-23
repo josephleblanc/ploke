@@ -10,6 +10,8 @@ use ploke_core::{
     EmbeddingDType, EmbeddingData, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug,
     EmbeddingSetId, EmbeddingShape,
 };
+#[cfg(feature = "multi_embedding")]
+use ploke_db::multi_embedding::VectorDimensionSpec;
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
@@ -81,29 +83,29 @@ impl EmbeddingSource {
 
 impl From<&EmbeddingSource> for EmbeddingProviderSlug {
     fn from(source: &EmbeddingSource) -> Self {
-        let slug = match source {
-            EmbeddingSource::Local(_) => "local-transformers".to_string(),
-            EmbeddingSource::HuggingFace(_) => "huggingface".to_string(),
-            EmbeddingSource::OpenAI(_) => "openai".to_string(),
-            EmbeddingSource::Cozo(_) => "cozo-mock".to_string(),
+        let conv = EmbeddingProviderSlug::new_from_str;
+        match source {
+            EmbeddingSource::Local(_) => conv("local-transformers"),
+            EmbeddingSource::HuggingFace(_) => conv("huggingface"),
+            EmbeddingSource::OpenAI(_) => conv("openai"),
+            EmbeddingSource::Cozo(_) => conv("cozo-mock"),
             #[cfg(test)]
-            EmbeddingSource::Test(b) => b.set_id.provider.0.clone(),
-        };
-        EmbeddingProviderSlug(slug)
+            EmbeddingSource::Test(b) => b.set_id.provider.clone(),
+        }
     }
 }
 
 impl From<&EmbeddingSource> for EmbeddingModelId {
     fn from(source: &EmbeddingSource) -> Self {
         let model_id = match source {
-            EmbeddingSource::Local(b) => b.model_id().to_string(),
-            EmbeddingSource::HuggingFace(b) => b.model.clone(),
-            EmbeddingSource::OpenAI(b) => b.model.clone(),
-            EmbeddingSource::Cozo(_) => "mock-model".to_string(),
+            EmbeddingSource::Local(b) => &b.model_id(),
+            EmbeddingSource::HuggingFace(b) => b.model.as_str(),
+            EmbeddingSource::OpenAI(b) => &b.model,
+            EmbeddingSource::Cozo(_) => "mock-model",
             #[cfg(test)]
-            EmbeddingSource::Test(b) => b.set_id.model.0.clone(),
+            EmbeddingSource::Test(b) => &b.set_id.model.as_ref(),
         };
-        EmbeddingModelId(model_id)
+        EmbeddingModelId::new_from_str(model_id)
     }
 }
 
@@ -354,6 +356,7 @@ impl IndexerTask {
         >,
         counter: Arc<AtomicUsize>,
         shutdown: crossbeam_channel::Sender<()>,
+        #[cfg(feature = "multi_embedding")] vector_embedding_spec: VectorDimensionSpec,
     ) -> Result<(), ploke_error::Error> {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
@@ -515,8 +518,16 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
+        #[cfg(feature = "multi_embedding")]
+        let emb_model = vector_embedding_spec;
         for ty in NodeType::primary_nodes() {
-            let db_ret = ploke_db::create_index_warn(&db_clone, ty);
+            if cfg!(feature = "multi_embedding") {
+                #[cfg(feature = "multi_embedding")]
+                let db_ret = ploke_db::create_index_warn(&db_clone, ty, emb_model);
+            } else {
+                #[cfg(note(feature = "multi_embedding"))]
+                let db_ret = ploke_db::create_index_warn(&db_clone, ty);
+            }
             tracing::info!("db_ret = {:?}", db_ret);
         }
         tracing::info!("Ending index_workspace: {workspace_dir}");

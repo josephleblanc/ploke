@@ -646,8 +646,8 @@ mod tests {
         // embedder we are using for this test.
         let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
         let set_id = EmbeddingSetId::new(
-            EmbeddingProviderSlug(dim_spec.provider().to_string()),
-            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            EmbeddingProviderSlug::new_from_str(dim_spec.provider().to_string()),
+            EmbeddingModelId::new_from_str(dim_spec.embedding_model().to_string()),
             shape,
         );
 
@@ -721,8 +721,8 @@ mod tests {
         // Database, search_for_set should transparently fall back to legacy search.
         let shape = EmbeddingShape::f32_raw(384);
         let dummy_set = EmbeddingSetId::new(
-            EmbeddingProviderSlug("local-transformers".to_string()),
-            EmbeddingModelId("sentence-transformers/all-MiniLM-L6-v2".to_string()),
+            EmbeddingProviderSlug::new_from_str("local-transformers"),
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
             shape,
         );
 
@@ -769,8 +769,8 @@ mod tests {
 
         let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
         let set_id = EmbeddingSetId::new(
-            EmbeddingProviderSlug(dim_spec.provider().to_string()),
-            EmbeddingModelId(dim_spec.embedding_model().to_string()),
+            EmbeddingProviderSlug::new_from_str(dim_spec.provider().to_string()),
+            EmbeddingModelId::new_from_str(dim_spec.embedding_model().to_string()),
             shape,
         );
 

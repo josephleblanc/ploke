@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
@@ -9,7 +9,7 @@ use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbe
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::vector_dims::{
-    dimension_spec_for_length, embedding_entry, vector_dimension_specs, VectorDimensionSpec,
+    dimension_spec_for_length, embedding_entry, sample_vector_dimension_specs, VectorDimensionSpec,
 };
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
@@ -676,24 +676,23 @@ impl Database {
         // metadata/vector relations using the full update set (all supported dimensions).
         #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
-            // For multi-embedding relations we accept all supported dimensions; the
-            // adapter will reject unsupported lengths via `dimension_spec_for_length`.
-            let multi_updates_data: Vec<DataValue> = updates
-                .iter()
-                .map(|(id, embedding)| {
-                    let id_val = DataValue::Uuid(UuidWrapper(*id));
-                    let embedding_val = DataValue::List(
-                        embedding
-                            .iter()
-                            .map(|f| DataValue::Num(cozo::Num::Float(*f as f64)))
-                            .collect(),
-                    );
-                    DataValue::List(vec![id_val, embedding_val])
-                })
-                .collect();
-            let mut multi_params = BTreeMap::new();
-            multi_params.insert("updates".to_string(), DataValue::List(multi_updates_data));
-            self.write_multi_embedding_relations(&updates, &multi_params)?;
+            if let Some((_, first_vector)) = updates.first() {
+                let expected = first_vector.len();
+                let spec = dimension_spec_for_length(expected).ok_or(
+                    DbError::UnsupportedEmbeddingDimension {
+                        dims: expected as i64,
+                    },
+                )?;
+                for (_, vector) in &updates {
+                    if vector.len() != expected {
+                        return Err(DbError::ExperimentalVectorLengthMismatch {
+                            expected,
+                            actual: vector.len(),
+                        });
+                    }
+                }
+                self.write_multi_embedding_relations(&updates, spec)?;
+            }
         }
 
         for node_type in NodeType::primary_nodes() {
@@ -853,8 +852,8 @@ impl Database {
         // Best-effort sanity check that the runtime set identity matches the
         // static spec table (provider/model). This keeps subtle mismatches
         // from quietly routing queries to the wrong relation.
-        let provider = &set_id.provider.0;
-        let model = &set_id.model.0;
+        let provider = &set_id.provider;
+        let model = &set_id.model;
         if provider != spec.provider() || model != spec.embedding_model() {
             return Err(DbError::QueryExecution(format!(
                 "EmbeddingSetId provider/model ({provider}, {model}) does not match \
@@ -865,7 +864,7 @@ impl Database {
             )));
         }
 
-        Ok(*spec)
+        Ok(spec.clone())
     }
 
     /// Fetches all primary nodes that do not yet have an embedding.
@@ -1054,12 +1053,16 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+
         #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
+            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
             if let Some(spec) = experimental_spec_for_node(node_type) {
-                spec.metadata_schema.ensure_registered(self)?;
-                let runtime_ids = self.runtime_embedded_ids(spec)?;
-                v.retain(|entry| !runtime_ids.contains(&entry.id));
+                spec.ensure_registered(self)?;
+                // TODO: Replace the following code with new single-write approach
+                // let runtime_ids = self.runtime_embedded_ids(spec)?;
+                // v.retain(|entry| !runtime_ids.contains(&entry.id));
             }
         }
         v.truncate(limit.min(count_less_flat));
@@ -1376,12 +1379,14 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     fn count_pending_embeddings_multi(&self) -> Result<usize, DbError> {
         let mut total = 0usize;
         for node_type in NodeType::primary_nodes() {
+            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
             let Some(spec) = experimental_spec_for_node(node_type) else {
                 continue;
             };
-            spec.metadata_schema.ensure_registered(self)?;
+            spec.ensure_registered(self)?;
             let base = self.count_relation_rows(node_type.relation_str())?;
-            let runtime = self.count_relation_rows(spec.metadata_schema.relation())?;
+            let runtime = self.count_relation_rows(spec.relation())?;
             total += base.saturating_sub(runtime);
         }
         Ok(total)
@@ -1481,195 +1486,39 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 }
 
 #[cfg(feature = "multi_embedding")]
-struct MultiEmbeddingRow {
-    node_id: Uuid,
-    params: BTreeMap<String, DataValue>,
-}
-
-#[cfg(feature = "multi_embedding")]
 impl Database {
-    /// Dual-writes metadata and vector relations for the provided update batch.
+    /// Writes vector relations for the provided update batch using a single
+    /// dimension spec. All vectors in the batch must match the spec's dims.
     fn write_multi_embedding_relations(
         &self,
         updates: &[(Uuid, Vec<f32>)],
-        params: &BTreeMap<String, DataValue>,
+        spec: &VectorDimensionSpec,
     ) -> Result<(), DbError> {
+        use crate::multi_embedding::ExperimentalEmbeddingDbExt as _;
+
         if updates.is_empty() {
             return Ok(());
         }
-        let plan = self.build_vector_plan(updates)?;
-        for node_type in NodeType::primary_nodes() {
-            let Some(spec) = experimental_spec_for_node(node_type) else {
-                continue;
-            };
-            let metadata_rows = self.fetch_metadata_rows_for_updates(spec, params)?;
-            if metadata_rows.is_empty() {
-                continue;
-            }
-            spec.metadata_schema.ensure_registered(self)?;
-            for row in metadata_rows {
-                let &(index, dim_spec) =
-                    plan.get(&row.node_id)
-                        .ok_or_else(|| DbError::ExperimentalMetadataParse {
-                            reason: format!("missing vector payload for {}", row.node_id),
-                        })?;
-                let embeddings_value = self.compose_embedding_value(
-                    spec.metadata_schema.relation(),
-                    row.node_id,
-                    dim_spec,
-                )?;
-                let mut metadata_params = row.params.clone();
-                metadata_params.insert("embeddings".into(), embeddings_value);
-                let insert_script = spec.metadata_schema.script_put(&metadata_params);
-                self.run_script(
-                    &insert_script,
-                    metadata_params.clone(),
-                    cozo::ScriptMutability::Mutable,
-                )
-                .map_err(|err| DbError::ExperimentalScriptFailure {
-                    action: "metadata_insert",
-                    relation: spec.metadata_schema.relation().to_string(),
-                    details: err.to_string(),
-                })?;
-                let relation =
-                    ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
-                relation.ensure_registered(self)?;
-                relation.upsert_vector_values(self, row.node_id, dim_spec, &updates[index].1)?;
+
+        let expected = spec.dims() as usize;
+        for (_, vector) in updates {
+            if vector.len() != expected {
+                return Err(DbError::ExperimentalVectorLengthMismatch {
+                    expected,
+                    actual: vector.len(),
+                });
             }
         }
+
+        let relation = ExperimentalVectorRelation::new(spec.dims(), spec.embedding_model().clone());
+        relation.ensure_registered(self)?;
+        self.assert_vector_column_layout(&relation.relation_name(), spec.dims())?;
+
+        for (node_id, vector) in updates {
+            relation.upsert_vector_values(self, *node_id, spec, vector)?;
+        }
+
         Ok(())
-    }
-
-    /// Builds an index -> dimension spec lookup for the in-flight updates.
-    fn build_vector_plan(
-        &self,
-        updates: &[(Uuid, Vec<f32>)],
-    ) -> Result<HashMap<Uuid, (usize, &'static VectorDimensionSpec)>, DbError> {
-        let mut plan = HashMap::new();
-        for (idx, (node_id, vector)) in updates.iter().enumerate() {
-            tracing::debug!("build_vector_plan: processing node_id={:?}, vector_len={}", node_id, vector.len());
-            let spec = dimension_spec_for_length(vector.len()).ok_or_else(|| {
-                tracing::error!("build_vector_plan: UnsupportedEmbeddingDimension for dims={}", vector.len());
-                DbError::UnsupportedEmbeddingDimension {
-                    dims: vector.len() as i64,
-                }
-            })?;
-            tracing::debug!("build_vector_plan: found spec={:?}", spec);
-            plan.insert(*node_id, (idx, spec));
-        }
-        tracing::debug!("build_vector_plan: plan created with {} entries.", plan.len());
-        Ok(plan)
-    }
-
-    /// Retrieves the metadata projection rows for nodes touched by the batch.
-    fn fetch_metadata_rows_for_updates(
-        &self,
-        spec: &ExperimentalNodeRelationSpec,
-        params: &BTreeMap<String, DataValue>,
-    ) -> Result<Vec<MultiEmbeddingRow>, DbError> {
-        let projection_fields = spec.metadata_projection_fields();
-        if projection_fields.is_empty() {
-            return Ok(Vec::new());
-        }
-        let columns = projection_fields.join(", ");
-        let script = format!(
-            r#"
-{{
-    ?[new_id, new_embedding] <- $updates
-    :replace _multi_embedding_new {{ new_id, new_embedding }}
-}}
-{{
-    ?[{columns}] :=
-    *_multi_embedding_new {{ new_id: id }},
-    *{relation} {{ {columns} @ 'NOW' }}
-}}
-"#,
-            columns = columns,
-            relation = spec.node_type.relation_str(),
-        );
-        let rows = self
-            .run_script(&script, params.clone(), cozo::ScriptMutability::Immutable)
-            .map_err(|err| DbError::ExperimentalScriptFailure {
-                action: "metadata_projection",
-                relation: spec.node_type.relation_str().to_string(),
-                details: err.to_string(),
-            })?;
-        Self::rows_to_metadata(rows)
-    }
-
-    /// Builds the updated `embeddings` column for the given node.
-    fn compose_embedding_value(
-        &self,
-        relation_name: &str,
-        node_id: Uuid,
-        dim_spec: &VectorDimensionSpec,
-    ) -> Result<DataValue, DbError> {
-        let rows = self.vector_metadata_rows(relation_name, node_id)?;
-        let mut tuples: Vec<(String, i64)> = if let Some(row) = rows.rows.first() {
-            if let Some(value) = row.first() {
-                parse_embedding_metadata(value)?
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-        if !tuples
-            .iter()
-            .any(|(model, dims)| model == dim_spec.embedding_model() && *dims == dim_spec.dims())
-        {
-            tuples.push((dim_spec.embedding_model().to_string(), dim_spec.dims()));
-        }
-        let entries = tuples
-            .into_iter()
-            .map(|(model, dims)| embedding_entry(&model, dims))
-            .collect();
-        Ok(DataValue::List(entries))
-    }
-
-    fn rows_to_metadata(rows: NamedRows) -> Result<Vec<MultiEmbeddingRow>, DbError> {
-        let NamedRows { headers, rows, .. } = rows;
-        let mut mapped = Vec::new();
-        for row in rows {
-            let mut params = BTreeMap::new();
-            for (idx, header) in headers.iter().enumerate() {
-                if let Some(value) = row.get(idx) {
-                    params.insert(header.clone(), value.clone());
-                }
-            }
-            let id_value = params
-                .get("id")
-                .ok_or_else(|| DbError::ExperimentalMetadataParse {
-                    reason: "metadata row missing id".into(),
-                })?;
-            let node_id = to_uuid(id_value)?;
-            mapped.push(MultiEmbeddingRow { node_id, params });
-        }
-        Ok(mapped)
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    fn runtime_embedded_ids(
-        &self,
-        spec: &ExperimentalNodeRelationSpec,
-    ) -> Result<HashSet<Uuid>, DbError> {
-        let script = format!(
-            r#"
-?[id] := *{metadata_rel} {{ id @ 'NOW' }}
-"#,
-            metadata_rel = spec.metadata_schema.relation(),
-        );
-        let rows = self
-            .db
-            .run_script_read_only(&script, Default::default())
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        let mut ids = HashSet::new();
-        for row in rows.rows {
-            if let Some(value) = row.first() {
-                ids.insert(to_uuid(value)?);
-            }
-        }
-        Ok(ids)
     }
 }
 
@@ -1682,7 +1531,7 @@ mod tests {
         parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
     };
     #[cfg(feature = "multi_embedding")]
-    use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
+    use crate::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
     #[cfg(feature = "multi_embedding")]
     use crate::multi_embedding::vectors::ExperimentalVectorRelation;
     use crate::Database;
@@ -1765,9 +1614,15 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn update_embeddings_dual_writes_metadata_and_vectors() -> Result<(), PlokeError> {
+        use ploke_core::EmbeddingModelId;
+
+        use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
         let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
         let db = Database::with_multi_embedding_config(raw_db, config);
+        let test_embedding_model =
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
 
         let batches = db.get_unembedded_node_data(16, 0)?;
         let (node_type, node) = batches
@@ -1775,29 +1630,31 @@ mod tests {
             .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
             .ok_or(DbError::NotFound)?;
 
-        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+        let dim_spec = sample_vector_dimension_specs()
+            .first()
+            .expect("dimension spec");
         let vector = vec![0.5; dim_spec.dims() as usize];
         db.update_embeddings_batch(vec![(node.id, vector.clone())])
             .await?;
 
         let spec = experimental_spec_for_node(node_type).expect("node spec");
-        let metadata_rows = db.vector_metadata_rows(spec.metadata_schema.relation(), node.id)?;
+        let metadata_rows = db.vector_metadata_rows(spec.relation(), node.id)?;
         assert_eq!(
             metadata_rows.rows.len(),
             1,
             "expected metadata row for {}",
-            spec.metadata_schema.relation()
+            spec.relation()
         );
         let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
         assert!(
             metadata_entries.into_iter().any(|(model, dims)| {
-                model == dim_spec.embedding_model() && dims == dim_spec.dims()
+                &model == dim_spec.embedding_model().as_ref() && dims == dim_spec.dims()
             }),
             "expected metadata tuple for model {}",
             dim_spec.embedding_model()
         );
 
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), test_embedding_model);
         relation.ensure_registered(&db)?;
         let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
         assert_eq!(
@@ -1813,41 +1670,7 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn get_unembedded_respects_runtime_embeddings() -> Result<(), PlokeError> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        let pending_before = db.count_pending_embeddings()?;
-        assert!(pending_before > 0, "fixture should have pending nodes");
-
-        let batches = db.get_unembedded_node_data(16, 0)?;
-        let (node_type, node) = batches
-            .into_iter()
-            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
-            .ok_or(DbError::NotFound)?;
-        let dim_spec = vector_dimension_specs().first().expect("dimension spec");
-        let vector = vec![0.5; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
-        db.clear_legacy_embedding(node_type, node.id)?;
-
-        let refreshed = db.get_unembedded_node_data(16, 0)?;
-        let remains = refreshed
-            .into_iter()
-            .flat_map(|typed| typed.v.into_iter())
-            .any(|entry| entry.id == node.id);
-        assert!(
-            !remains,
-            "nodes with runtime embeddings should not be returned for re-embedding"
-        );
-
-        let pending_after = db.count_pending_embeddings()?;
-        assert_eq!(
-            pending_after,
-            pending_before - 1,
-            "pending count should decrease once runtime relation owns the embedding"
-        );
-
-        Ok(())
+        todo!()
     }
 
     #[cfg(feature = "multi_embedding")]
@@ -1879,7 +1702,9 @@ mod tests {
             .collect();
 
         if !nodes_to_embed.is_empty() {
-            let dim_spec = vector_dimension_specs().first().expect("dimension spec");
+            let dim_spec = sample_vector_dimension_specs()
+                .first()
+                .expect("dimension spec");
             let updates: Vec<_> = nodes_to_embed
                 .iter()
                 .map(|node| (node.id, vec![0.5; dim_spec.dims() as usize]))
@@ -1899,9 +1724,13 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn update_embeddings_supports_multiple_dims_and_node_types() -> Result<(), PlokeError> {
+        use ploke_core::EmbeddingModelId;
+
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
         let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
         let db = Database::with_multi_embedding_config(raw_db, config);
+        let test_embedding_model =
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
 
         let batches = db.get_unembedded_node_data(32, 0)?;
         let mut selections = Vec::new();
@@ -1922,7 +1751,7 @@ mod tests {
             "fixture should have at least one unembedded node"
         );
 
-        let dim_specs: Vec<_> = vector_dimension_specs().iter().take(2).collect();
+        let dim_specs: Vec<_> = sample_vector_dimension_specs().iter().take(2).collect();
         assert!(
             !dim_specs.is_empty(),
             "expected at least one vector dimension spec"
@@ -1940,30 +1769,30 @@ mod tests {
 
         // Verify metadata + vector rows for each updated node.
         for (idx, (node_type, entry)) in selections.iter().enumerate() {
+            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
             let dim_spec = dim_specs[idx % dim_specs.len()];
             let spec = experimental_spec_for_node(*node_type).expect("node spec for updated type");
 
-            let metadata_rows =
-                db.vector_metadata_rows(spec.metadata_schema.relation(), entry.id)?;
+            let metadata_rows = db.vector_metadata_rows(spec.relation(), entry.id)?;
             assert!(
                 !metadata_rows.rows.is_empty(),
                 "expected metadata rows for {}",
-                spec.metadata_schema.relation()
+                spec.relation()
             );
 
             let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
             assert!(
-                metadata_entries
-                    .into_iter()
-                    .any(|(model, dims)| model == dim_spec.embedding_model()
-                        && dims == dim_spec.dims()),
+                metadata_entries.into_iter().any(|(model, dims)| &model
+                    == dim_spec.embedding_model().as_ref()
+                    && dims == dim_spec.dims()),
                 "expected metadata tuple for model {} dims {}",
                 dim_spec.embedding_model(),
                 dim_spec.dims()
             );
 
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+                ExperimentalVectorRelation::new(dim_spec.dims(), test_embedding_model.clone());
             relation.ensure_registered(&db)?;
             let vector_rows = db.vector_rows(&relation.relation_name(), entry.id)?;
             assert!(
