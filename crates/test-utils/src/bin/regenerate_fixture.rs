@@ -12,10 +12,9 @@ use std::{
 
 use chrono::Utc;
 use ploke_db::Database;
+use ploke_test_utils::{ setup_db_full, fixtures_crates_dir };
 #[cfg(feature = "multi_embedding_schema")]
-use ploke_test_utils::seed_multi_embedding_schema;
-use ploke_test_utils::{
-    fixtures_crates_dir, seed_default_legacy_embeddings, setup_db_full, MULTI_EMBED_SCHEMA_TAG,
+use ploke_test_utils::{ MULTI_EMBED_SCHEMA_TAG,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -58,16 +57,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let raw_db = setup_db_full(fixture)?;
     let database = Database::new(raw_db);
 
-    cli.schema_variant.seed_if_needed(&database)?;
-    let legacy_seeded = seed_default_legacy_embeddings(&database)
-        .map_err(|err| -> Box<dyn Error> { Box::new(err) })?;
-    println!(
-        "Seeded {legacy_seeded} legacy embedding rows for `{}` backup.",
-        cli.schema_variant
-    );
-
     let base_name = database.get_crate_name_id(fixture)?;
-    let backup_name = cli.schema_variant.attach_tag(&base_name);
+    let backup_name = format!("{}-{}", cli.schema_variant, &base_name);
     fs::create_dir_all(&output_root)?;
     let output_path = output_root.join(&backup_name);
     if output_path.exists() {
@@ -112,7 +103,7 @@ impl CliArgs {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--schema" => {
-                    let value = args.next().ok_or_else(|| "Expected value after --schema")?;
+                    let value = args.next().ok_or("Expected value after --schema")?;
                     schema_variant = SchemaVariant::from_str(&value)?;
                 }
                 "--legacy" => schema_variant = SchemaVariant::Legacy,
@@ -159,44 +150,6 @@ impl SchemaVariant {
         }
     }
 
-    fn requires_multi_seed(self) -> bool {
-        matches!(self, Self::MultiEmbedding)
-    }
-
-    fn seed_if_needed(self, _database: &Database) -> Result<(), Box<dyn Error>> {
-        if !self.requires_multi_seed() {
-            return Ok(());
-        }
-
-        #[cfg(feature = "multi_embedding_schema")]
-        {
-            println!("Seeding multi-embedding relations …");
-            seed_multi_embedding_schema(_database)?;
-            Ok(())
-        }
-
-        #[cfg(not(feature = "multi_embedding_schema"))]
-        {
-            Err(
-                "Multi-embedding schema variant requires `--features multi_embedding_schema`"
-                    .into(),
-            )
-        }
-    }
-
-    fn attach_tag(self, base: &str) -> String {
-        match self {
-            SchemaVariant::Legacy => base.to_string(),
-            SchemaVariant::MultiEmbedding => {
-                if let Some((prefix, id)) = base.rsplit_once('_') {
-                    format!("{prefix}_{tag}_{id}", tag = MULTI_EMBED_SCHEMA_TAG)
-                } else {
-                    format!("{base}_{tag}", tag = MULTI_EMBED_SCHEMA_TAG)
-                }
-            }
-        }
-    }
-
     fn metadata_notes(self) -> &'static str {
         match self {
             SchemaVariant::Legacy => {
@@ -213,7 +166,7 @@ impl fmt::Display for SchemaVariant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SchemaVariant::Legacy => write!(f, "legacy"),
-            SchemaVariant::MultiEmbedding => write!(f, "{MULTI_EMBED_SCHEMA_TAG}"),
+            SchemaVariant::MultiEmbedding => write!(f, "newer"),
         }
     }
 }
@@ -264,7 +217,7 @@ fn compute_directory_hash(dir: &Path) -> Result<String, Box<dyn Error>> {
     for rel in files {
         let rel_str = rel.to_string_lossy();
         hasher.update(rel_str.as_bytes());
-        hasher.update(&[0]);
+        hasher.update([0]);
 
         let full_path = dir.join(&rel);
         let mut file = fs::File::open(&full_path)?;
@@ -277,7 +230,7 @@ fn compute_directory_hash(dir: &Path) -> Result<String, Box<dyn Error>> {
             }
             hasher.update(&buffer[..read]);
         }
-        hasher.update(&[0xFF]);
+        hasher.update([0xFF]);
     }
 
     Ok(format!("{:x}", hasher.finalize()))

@@ -250,10 +250,6 @@ pub(crate) fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String,
 }
 
 impl ExperimentalEmbeddingDatabaseExt for Database {
-    /// Creates the hnsw index for a given vector embedding.
-    /// The vector embedding needs to be specified in two ways:
-    /// 1. Setting the correct vector length of the vector used in the embeddings.
-    /// 2. using a naming convention that includes
     fn create_idx(
         &self,
         relation_name: &str,

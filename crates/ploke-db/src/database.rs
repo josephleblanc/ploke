@@ -8,10 +8,6 @@ use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbe
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::schema::node_specs::{
-    experimental_spec_for_node, ExperimentalNodeRelationSpec,
-};
-#[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::vector_dims::{
     dimension_spec_for_length, embedding_entry, vector_dimension_specs, VectorDimensionSpec,
 };
@@ -1572,7 +1568,7 @@ impl Database {
                     details: err.to_string(),
                 })?;
                 let relation =
-                    ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+                    ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
                 relation.ensure_registered(self)?;
                 relation.upsert_vector_values(self, row.node_id, dim_spec, &updates[index].1)?;
             }
@@ -1722,8 +1718,6 @@ mod tests {
         parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
     };
     #[cfg(feature = "multi_embedding_db")]
-    use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
-    #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
     #[cfg(feature = "multi_embedding_db")]
     use crate::multi_embedding::vectors::ExperimentalVectorRelation;
@@ -1839,7 +1833,7 @@ mod tests {
             dim_spec.embedding_model()
         );
 
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
         relation.ensure_registered(&db)?;
         let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
         assert_eq!(
@@ -2005,7 +1999,7 @@ mod tests {
             );
 
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+                ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
             relation.ensure_registered(&db)?;
             let vector_rows = db.vector_rows(&relation.relation_name(), entry.id)?;
             assert!(

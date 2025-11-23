@@ -5,34 +5,30 @@ use crate::database::Database;
 use crate::error::DbError;
 use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
 use crate::multi_embedding::schema::vector_dims::{
-    supported_dimension_set, vector_literal, VectorDimensionSpec,
+    vector_literal, VectorDimensionSpec,
 };
 use cozo::{Db, MemStorage, ScriptMutability};
+use ploke_core::ArcStr;
 use uuid::Uuid;
 
-// AI: the lifetimes being used below for ExperimentalVectorRelation are incorrect. Can you show me
-// how to set up the following correctly? We can't use a 'static str due to compile-time
-// constraints. AI?
-#[derive(Copy, Clone, Debug)]
-pub struct ExperimentalVectorRelation<'a> {
-    dims: i64,
-    relation_base: &'a str,
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug)]
+pub struct EmbeddingModel(ArcStr);
+
+impl AsRef<str> for EmbeddingModel {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
 }
 
-impl<'a> ExperimentalVectorRelation<'a> {
-    pub fn try_new(dims: i64, relation_base: &'a str) -> Result<Self, DbError> {
-        if supported_dimension_set().contains(&dims) {
-            Ok(Self {
-                dims,
-                relation_base,
-            })
-        } else {
-            Err(DbError::UnsupportedEmbeddingDimension { dims })
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct ExperimentalVectorRelation {
+    dims: i64,
+    embedding_model: EmbeddingModel,
+}
 
-    pub fn new(dims: i64, relation_base: &'a str) -> Self {
-        Self::try_new(dims, relation_base).expect("dimension must be supported")
+impl ExperimentalVectorRelation {
+    pub fn new(dims: i64, embedding_model: EmbeddingModel) -> Self {
+        Self { dims, embedding_model }
     }
 
     pub fn dims(&self) -> i64 {
@@ -40,7 +36,7 @@ impl<'a> ExperimentalVectorRelation<'a> {
     }
 
     pub fn relation_name(&self) -> String {
-        format!("{}_{}", self.relation_base, self.dims)
+        format!("{}_{}", self.embedding_model.as_ref(), self.dims)
     }
 
     pub fn script_identity(&self) -> String {

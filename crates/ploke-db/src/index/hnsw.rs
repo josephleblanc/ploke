@@ -11,8 +11,6 @@ use crate::multi_embedding::adapter::ExperimentalEmbeddingDatabaseExt;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::schema::node_specs::experimental_spec_for_node;
-#[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
 #[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
@@ -440,7 +438,7 @@ pub fn search_similar_args_for_set(
     let dim_spec = db
         .vector_spec_for_set(set_id)
         .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
     relation
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
@@ -617,7 +615,7 @@ fn multi_embedding_hnsw_of_type(
         .map_err(ploke_error::Error::from)?;
     let mut aggregated = Vec::new();
     for dim_spec in vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
         relation
             .ensure_registered(db)
             .map_err(ploke_error::Error::from)?;
@@ -683,7 +681,7 @@ pub fn multi_embedding_hnsw_for_set(
     let dim_spec = db
         .vector_spec_for_set(set_id)
         .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
     relation
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
@@ -730,7 +728,7 @@ fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Resul
     };
     spec.metadata_schema.ensure_registered(db)?;
     for dim_spec in vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
         relation.ensure_registered(db)?;
         if let Err(err) = db.create_idx(
             &relation.relation_name(),

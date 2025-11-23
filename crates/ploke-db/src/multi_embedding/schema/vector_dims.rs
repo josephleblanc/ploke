@@ -48,17 +48,6 @@ pub fn vector_dimension_specs() -> &'static [VectorDimensionSpec] {
     &VECTOR_DIMENSION_SPECS
 }
 
-lazy_static! {
-    static ref SUPPORTED_DIMENSION_SET: HashSet<i64> = VECTOR_DIMENSION_SPECS
-        .iter()
-        .map(|spec| spec.dims)
-        .collect();
-}
-
-pub(crate) fn supported_dimension_set() -> &'static HashSet<i64> {
-    &SUPPORTED_DIMENSION_SET
-}
-
 pub fn dimension_spec_for_length(len: usize) -> Option<&'static VectorDimensionSpec> {
     vector_dimension_specs()
         .iter()
