@@ -7,7 +7,7 @@ use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
 use ploke_core::{
-    EmbeddingData, EmbeddingDType, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug,
+    EmbeddingDType, EmbeddingData, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug,
     EmbeddingSetId, EmbeddingShape,
 };
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
@@ -94,6 +94,8 @@ impl EmbeddingSource {
         EmbeddingModelId(model_id)
     }
 }
+
+// AI: Implement From<EmbeddingSource> for EmbeddingProviderSlug and EmbeddingModelId AI!
 
 fn count_tyemb(tyemb_vec: &[TypedEmbedData]) -> usize {
     tyemb_vec.iter().fold(0, |acc, i| acc + i.v.len())
@@ -874,7 +876,10 @@ impl IndexerTask {
             })
             .collect();
 
-        tracing::info!("Updating database for embedding set {:?}...", self.embedding_set);
+        tracing::info!(
+            "Updating database for embedding set {:?}...",
+            self.embedding_set
+        );
         self.db.update_embeddings_batch_for_set(updates).await?;
         tracing::info!("Finished processing batch");
         Ok(())
