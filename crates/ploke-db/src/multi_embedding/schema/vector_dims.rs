@@ -24,7 +24,70 @@ pub struct VectorDimBuilder {
     hnsw_ef_construction: Option<i64>,
     hnsw_search_ef: Option<i64>,
 }
-// Add builder methods AI!
+
+impl VectorDimBuilder {
+    pub fn new() -> Self {
+        Self {
+            dims: None,
+            provider: None,
+            embedding_model: None,
+            offset: None,
+            hnsw_m: None,
+            hnsw_ef_construction: None,
+            hnsw_search_ef: None,
+        }
+    }
+
+    pub fn dims(mut self, dims: i64) -> Self {
+        self.dims = Some(dims);
+        self
+    }
+
+    pub fn provider(mut self, provider: Option<EmbeddingProviderSlug>) -> Self {
+        self.provider = Some(provider);
+        self
+    }
+
+    pub fn embedding_model(mut self, embedding_model: EmbeddingModelId) -> Self {
+        self.embedding_model = Some(embedding_model);
+        self
+    }
+
+    pub fn offset(mut self, offset: f32) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn hnsw_m(mut self, hnsw_m: i64) -> Self {
+        self.hnsw_m = Some(hnsw_m);
+        self
+    }
+
+    pub fn hnsw_ef_construction(mut self, hnsw_ef_construction: i64) -> Self {
+        self.hnsw_ef_construction = Some(hnsw_ef_construction);
+        self
+    }
+
+    pub fn hnsw_search_ef(mut self, hnsw_search_ef: i64) -> Self {
+        self.hnsw_search_ef = Some(hnsw_search_ef);
+        self
+    }
+
+    pub fn build(self) -> Result<VectorDimensionSpec, &'static str> {
+        Ok(VectorDimensionSpec {
+            dims: self.dims.ok_or("dims is required")?,
+            provider: self
+                .provider
+                .flatten()
+                .ok_or("provider is required")?,
+            embedding_model: self.embedding_model.ok_or("embedding_model is required")?,
+            offset: self.offset.unwrap_or(0.0),
+            hnsw_m: self.hnsw_m.unwrap_or(16),
+            hnsw_ef_construction: self.hnsw_ef_construction.unwrap_or(64),
+            hnsw_search_ef: self.hnsw_search_ef.unwrap_or(50),
+        })
+    }
+}
 
 impl VectorDimensionSpec {
     pub fn dims(&self) -> i64 {
