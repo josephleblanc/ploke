@@ -71,7 +71,17 @@ impl TestEmbeddingBackend {
 
 impl EmbeddingSource {
     pub fn provider(&self) -> EmbeddingProviderSlug {
-        let slug = match self {
+        EmbeddingProviderSlug::from(self)
+    }
+
+    pub fn model(&self) -> EmbeddingModelId {
+        EmbeddingModelId::from(self)
+    }
+}
+
+impl From<&EmbeddingSource> for EmbeddingProviderSlug {
+    fn from(source: &EmbeddingSource) -> Self {
+        let slug = match source {
             EmbeddingSource::Local(_) => "local-transformers".to_string(),
             EmbeddingSource::HuggingFace(_) => "huggingface".to_string(),
             EmbeddingSource::OpenAI(_) => "openai".to_string(),
@@ -81,9 +91,11 @@ impl EmbeddingSource {
         };
         EmbeddingProviderSlug(slug)
     }
+}
 
-    pub fn model(&self) -> EmbeddingModelId {
-        let model_id = match self {
+impl From<&EmbeddingSource> for EmbeddingModelId {
+    fn from(source: &EmbeddingSource) -> Self {
+        let model_id = match source {
             EmbeddingSource::Local(b) => b.model_id().to_string(),
             EmbeddingSource::HuggingFace(b) => b.model.clone(),
             EmbeddingSource::OpenAI(b) => b.model.clone(),
@@ -92,20 +104,6 @@ impl EmbeddingSource {
             EmbeddingSource::Test(b) => b.set_id.model.0.clone(),
         };
         EmbeddingModelId(model_id)
-    }
-}
-// AI: I want the logic for the conversion to be moved into the `From` implementation for
-// EmbeddingProviderSlug and EmbeddingModelId AI!
-
-impl From<&EmbeddingSource> for EmbeddingProviderSlug {
-    fn from(source: &EmbeddingSource) -> Self {
-        source.provider()
-    }
-}
-
-impl From<&EmbeddingSource> for EmbeddingModelId {
-    fn from(source: &EmbeddingSource) -> Self {
-        source.model()
     }
 }
 
