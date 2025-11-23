@@ -902,7 +902,7 @@ mod tests {
         utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES},
         DbError, NodeType,
     };
-    use ploke_core::ArcStr;
+    use ploke_core::{ArcStr, EmbeddingModelId};
     use tokio::sync::Mutex;
 
     use lazy_static::lazy_static;
@@ -917,7 +917,7 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     use crate::MultiEmbeddingRuntimeConfig;
     #[cfg(feature = "multi_embedding")]
-    use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+    use ploke_core::{EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 
     #[tokio::test]
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {

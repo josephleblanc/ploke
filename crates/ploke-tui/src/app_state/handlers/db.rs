@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 use crate::app_state::events::SystemEvent;
 use crate::{AppEvent, EventBus, app_state::database, error::ErrorExt as _};
 
@@ -22,8 +23,15 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     )
     .await;
 
+    let default_model = sample_vector_dimension_specs()
+        .first()
+        .expect("vector dimension specs must be present")
+        .embedding_model()
+        .clone();
+
     for ty in NodeType::primary_nodes() {
-        match create_index_warn(&state.db, ty) {
+        let create_result = create_index_warn(&state.db, ty, default_model.clone());
+        match create_result {
             Ok(_) => {
                 tracing::info!(
                     "Database index updated by create_index_warn for rel: {}",

@@ -8,6 +8,7 @@ use crate::{
     app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, default_model, file_man::FileManager, llm::manager::llm_manager, observability, run_event_bus, user_config::{openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
 };
 use ploke_db::{bm25_index, create_index_primary};
+use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::workspace_root;
@@ -43,7 +44,12 @@ lazy_static! {
                 .expect("import_from_backup");
         }
         // Ensure primary index exists for consistent behavior in tests using Rag/DB lookups
-        create_index_primary(&db).expect("create primary index");
+        let default_embedding_model = sample_vector_dimension_specs()
+            .first()
+            .expect("vector dimension specs must be present")
+            .embedding_model()
+            .clone();
+        create_index_primary(&db, default_embedding_model).expect("create primary index");
 
         let db_handle = Arc::new(db);
 

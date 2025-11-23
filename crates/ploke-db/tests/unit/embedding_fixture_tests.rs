@@ -1,11 +1,6 @@
 use ploke_db::ext::embed_utils::{DbEmbedUtils, HasNullEmbeds};
-use ploke_db::{
-    hnsw_of_type,
-    multi_embedding::schema::vector_dims::sample_vector_dimension_specs,
-    Database,
-    DbError,
-    NodeType,
-};
+use ploke_db::{hnsw_of_type, Database, DbError, NodeType};
+use ploke_core::EmbeddingModelId;
 use ploke_error::Error as PlokeError;
 use ploke_test_utils::{
     workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH, MULTI_EMBED_FIXTURE_BACKUP_REL_PATH,
@@ -19,7 +14,19 @@ fn legacy_fixture_has_embedding_for_top_level_bool() -> Result<(), PlokeError> {
     target_file.push(LEGACY_FIXTURE_BACKUP_REL_PATH);
 
     let db = Database::init_with_schema()?;
-    let prior_rels_vec = db.relations_vec()?;
+    let prior_rels_vec: Vec<String> = {
+        let base = db.relations_vec()?;
+        #[cfg(feature = "multi_embedding")]
+        {
+            base.into_iter()
+                .filter(|rel| !rel.contains("multi_embedding"))
+                .collect::<Vec<_>>()
+        }
+        #[cfg(not(feature = "multi_embedding"))]
+        {
+            base
+        }
+    };
 
     db.import_from_backup(&target_file, &prior_rels_vec)
         .map_err(DbError::from)
@@ -51,18 +58,29 @@ fn legacy_hnsw_returns_any_consts_in_fixture() -> Result<(), PlokeError> {
     target_file.push(LEGACY_FIXTURE_BACKUP_REL_PATH);
 
     let db = Database::init_with_schema()?;
-    let prior_rels_vec = db.relations_vec()?;
+    let prior_rels_vec: Vec<String> = {
+        let base = db.relations_vec()?;
+        #[cfg(feature = "multi_embedding")]
+        {
+            base.into_iter()
+                .filter(|rel| !rel.contains("multi_embedding"))
+                .collect::<Vec<_>>()
+        }
+        #[cfg(not(feature = "multi_embedding"))]
+        {
+            base
+        }
+    };
 
     db.import_from_backup(&target_file, &prior_rels_vec)
         .map_err(DbError::from)
         .map_err(PlokeError::from)?;
 
-    let model = sample_vector_dimension_specs()
-        .first()
-        .expect("vector spec")
-        .embedding_model()
-        .clone();
+    let model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+    #[cfg(feature = "multi_embedding")]
     ploke_db::create_index_primary(&db, model.clone()).map_err(PlokeError::from)?;
+    #[cfg(not(feature = "multi_embedding"))]
+    ploke_db::create_index_primary(&db).map_err(PlokeError::from)?;
 
     let hits = hnsw_of_type(&db, NodeType::Const, 10, 40, model)?;
     assert!(

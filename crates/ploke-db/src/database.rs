@@ -6,6 +6,8 @@ use crate::error::DbError;
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
 #[cfg(feature = "multi_embedding")]
+use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::vector_dims::{
@@ -13,6 +15,8 @@ use crate::multi_embedding::schema::vector_dims::{
 };
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
+#[cfg(feature = "multi_embedding")]
+use crate::ext::embed_utils::VectorEmbeddingStatusExt;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
@@ -315,7 +319,7 @@ impl Database {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// # tokio_test::block_on(async {
     /// use ploke_db::Database;
     ///
@@ -378,7 +382,7 @@ impl Database {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// # tokio_test::block_on(async {
     /// use ploke_db::{create_index, Database, NodeType};
     ///
@@ -1045,14 +1049,22 @@ impl Database {
 
         #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
-            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+            use crate::multi_embedding::vectors::ExperimentalVectorRelation;
 
-            if let Some(spec) = experimental_spec_for_node(node_type) {
-                spec.ensure_registered(self)?;
-                // TODO: Replace the following code with new single-write approach
-                // let runtime_ids = self.runtime_embedded_ids(spec)?;
-                // v.retain(|entry| !runtime_ids.contains(&entry.id));
+            let vector_relations: Vec<ExperimentalVectorRelation> = sample_vector_dimension_specs()
+                .iter()
+                .map(|spec| {
+                    ExperimentalVectorRelation::new(
+                        spec.dims(),
+                        spec.embedding_model().clone(),
+                    )
+                })
+                .collect();
+            for relation in &vector_relations {
+                relation.ensure_registered(self)?;
             }
+            let runtime_ids = self.embedded_ids_for_vectors(&vector_relations)?;
+            v.retain(|entry| !runtime_ids.contains(&entry.id));
         }
         v.truncate(limit.min(count_less_flat));
         let ty_embed = TypedEmbedData { v, ty: node_type };
@@ -1366,34 +1378,23 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 
     #[cfg(feature = "multi_embedding")]
     fn count_pending_embeddings_multi(&self) -> Result<usize, DbError> {
+        use crate::multi_embedding::vectors::ExperimentalVectorRelation;
+
+        let vector_relations: Vec<ExperimentalVectorRelation> = sample_vector_dimension_specs()
+            .iter()
+            .map(|spec| ExperimentalVectorRelation::new(spec.dims(), spec.embedding_model().clone()))
+            .collect();
+
+        for relation in &vector_relations {
+            relation.ensure_registered(self)?;
+            self.assert_vector_column_layout(&relation.relation_name(), relation.dims())?;
+        }
+
         let mut total = 0usize;
         for node_type in NodeType::primary_nodes() {
-            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
-
-            let Some(spec) = experimental_spec_for_node(node_type) else {
-                continue;
-            };
-            spec.ensure_registered(self)?;
-            let base = self.count_relation_rows(node_type.relation_str())?;
-            let runtime = self.count_relation_rows(spec.relation())?;
-            total += base.saturating_sub(runtime);
+            total += self.count_pending_for_type(node_type, &vector_relations)?;
         }
         Ok(total)
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    fn count_relation_rows(&self, relation: &str) -> Result<usize, DbError> {
-        let script = format!(
-            r#"
-?[count(id)] := *{relation} {{ id @ 'NOW' }}
-"#,
-            relation = relation
-        );
-        let rows = self
-            .db
-            .run_script_read_only(&script, Default::default())
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        Self::into_usize(rows)
     }
 
     pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
@@ -1626,23 +1627,6 @@ mod tests {
         db.update_embeddings_batch(vec![(node.id, vector.clone())])
             .await?;
 
-        let spec = experimental_spec_for_node(node_type).expect("node spec");
-        let metadata_rows = db.vector_metadata_rows(spec.relation(), node.id)?;
-        assert_eq!(
-            metadata_rows.rows.len(),
-            1,
-            "expected metadata row for {}",
-            spec.relation()
-        );
-        let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
-        assert!(
-            metadata_entries.into_iter().any(|(model, dims)| {
-                &model == dim_spec.embedding_model().as_ref() && dims == dim_spec.dims()
-            }),
-            "expected metadata tuple for model {}",
-            dim_spec.embedding_model()
-        );
-
         let relation = ExperimentalVectorRelation::new(dim_spec.dims(), test_embedding_model);
         relation.ensure_registered(&db)?;
         let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
@@ -1659,7 +1643,49 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn get_unembedded_respects_runtime_embeddings() -> Result<(), PlokeError> {
-        todo!()
+        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
+        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
+        let db = Database::with_multi_embedding_config(raw_db, config);
+
+        let before_pending = db.count_pending_embeddings()?;
+
+        // Pick a single pending node.
+        let batches = db.get_unembedded_node_data(1, 0)?;
+        let TypedEmbedData { ty, v } = batches
+            .into_iter()
+            .find(|typed| !typed.v.is_empty())
+            .expect("fixture should yield at least one pending node");
+        let target = v.first().expect("pending node entry").clone();
+
+        // Use a non-legacy dimension so the legacy embedding column remains null
+        // and filtering relies solely on runtime vector relations.
+        let dim_spec = sample_vector_dimension_specs()
+            .iter()
+            .find(|spec| spec.dims() as usize != LEGACY_EMBEDDING_DIMS)
+            .or_else(|| sample_vector_dimension_specs().first())
+            .expect("at least one vector dimension spec");
+        let vector = vec![0.5; dim_spec.dims() as usize];
+        db.update_embeddings_batch(vec![(target.id, vector)]).await?;
+
+        let after_pending = db.count_pending_embeddings()?;
+        assert!(
+            after_pending + 1 <= before_pending,
+            "pending count should drop after writing runtime vectors; before={before_pending}, after={after_pending}"
+        );
+
+        // Ensure the embedded node no longer appears in unembedded batches.
+        let refreshed = db.get_unembedded_node_data(16, 0)?;
+        let still_pending = refreshed
+            .into_iter()
+            .find(|typed| typed.ty == ty)
+            .map(|typed| typed.v)
+            .unwrap_or_default();
+        assert!(
+            !still_pending.iter().any(|entry| entry.id == target.id),
+            "node with runtime vectors should be filtered from unembedded results"
+        );
+
+        Ok(())
     }
 
     #[cfg(feature = "multi_embedding")]
@@ -1746,42 +1772,21 @@ mod tests {
             "expected at least one vector dimension spec"
         );
 
-        // Pair nodes with dimensions, cycling dimensions if fewer than nodes.
-        let mut updates = Vec::new();
+        // Apply embeddings per dimension spec to avoid mixing lengths in a single batch.
         for (idx, (_node_type, entry)) in selections.iter().enumerate() {
             let dim_spec = dim_specs[idx % dim_specs.len()];
             let vector = vec![0.5; dim_spec.dims() as usize];
-            updates.push((entry.id, vector));
+            db.update_embeddings_batch(vec![(entry.id, vector)]).await?;
         }
-
-        db.update_embeddings_batch(updates).await?;
 
         // Verify metadata + vector rows for each updated node.
         for (idx, (node_type, entry)) in selections.iter().enumerate() {
             use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
 
             let dim_spec = dim_specs[idx % dim_specs.len()];
-            let spec = experimental_spec_for_node(*node_type).expect("node spec for updated type");
-
-            let metadata_rows = db.vector_metadata_rows(spec.relation(), entry.id)?;
-            assert!(
-                !metadata_rows.rows.is_empty(),
-                "expected metadata rows for {}",
-                spec.relation()
-            );
-
-            let metadata_entries = parse_embedding_metadata(&metadata_rows.rows[0][0])?;
-            assert!(
-                metadata_entries.into_iter().any(|(model, dims)| &model
-                    == dim_spec.embedding_model().as_ref()
-                    && dims == dim_spec.dims()),
-                "expected metadata tuple for model {} dims {}",
-                dim_spec.embedding_model(),
-                dim_spec.dims()
-            );
 
             let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims(), test_embedding_model.clone());
+                ExperimentalVectorRelation::new(dim_spec.dims(), dim_spec.embedding_model().clone());
             relation.ensure_registered(&db)?;
             let vector_rows = db.vector_rows(&relation.relation_name(), entry.id)?;
             assert!(

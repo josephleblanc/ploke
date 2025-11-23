@@ -142,7 +142,7 @@ impl UserConfig {
                 ..
             } => EmbeddingSetId::new(
                 EmbeddingProviderSlug::new_from_str("local-transformers"),
-                EmbeddingModelId::new_from_str(local_cfg.model_id.clone()),
+                EmbeddingModelId::new_from_str(&local_cfg.model_id),
                 shape,
             ),
             EmbeddingConfig {
@@ -150,7 +150,7 @@ impl UserConfig {
                 ..
             } => EmbeddingSetId::new(
                 EmbeddingProviderSlug::new_from_str("huggingface"),
-                EmbeddingModelId::new_from_str(hf_cfg.model.clone()),
+                EmbeddingModelId::new_from_str(&hf_cfg.model),
                 shape,
             ),
             EmbeddingConfig {
@@ -158,7 +158,7 @@ impl UserConfig {
                 ..
             } => EmbeddingSetId::new(
                 EmbeddingProviderSlug::new_from_str("openai"),
-                EmbeddingModelId::new_from_str(openai_cfg.model.clone()),
+                EmbeddingModelId::new_from_str(&openai_cfg.model),
                 shape,
             ),
             EmbeddingConfig {

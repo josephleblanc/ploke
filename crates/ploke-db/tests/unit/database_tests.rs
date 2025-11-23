@@ -3,7 +3,7 @@ use ploke_db::create_index;
 use ploke_db::to_usize;
 use ploke_db::Database;
 use ploke_db::NodeType;
-use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
+use ploke_core::EmbeddingModelId;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -156,12 +156,12 @@ async fn clear_relations_removes_user_relations() {
 #[tokio::test]
 async fn clear_hnsw_idx_drops_all_indices() {
     let db = Database::init_with_schema().expect("failed to init schema");
-    let model = sample_vector_dimension_specs()
-        .first()
-        .expect("vector spec")
-        .embedding_model()
-        .clone();
+    #[cfg(feature = "multi_embedding")]
+    let model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+    #[cfg(feature = "multi_embedding")]
     create_index(&db, NodeType::Function, model).expect("failed to create hnsw index");
+    #[cfg(not(feature = "multi_embedding"))]
+    create_index(&db, NodeType::Function).expect("failed to create hnsw index");
 
     let relations = db.relations_vec().expect("failed to read relations");
     assert!(

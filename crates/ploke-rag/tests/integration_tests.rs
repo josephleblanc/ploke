@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ploke_core::EmbeddingData;
 use ploke_db::{create_index_primary, Database};
+use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::{EmbeddingConfig, LocalEmbedder},
@@ -23,7 +24,12 @@ lazy_static::lazy_static! {
         db.import_from_backup(&target_file, &prior_rels_vec)
             .map_err(ploke_db::DbError::from)
             .map_err(ploke_error::Error::from)?;
-        create_index_primary(&db)?;
+        let default_model = sample_vector_dimension_specs()
+            .first()
+            .expect("vector dimension specs must be present")
+            .embedding_model()
+            .clone();
+        create_index_primary(&db, default_model)?;
         Ok(Arc::new(db))
     };
 }

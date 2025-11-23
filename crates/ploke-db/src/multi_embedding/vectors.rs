@@ -37,7 +37,8 @@ impl ExperimentalVectorRelation {
     }
 
     pub fn relation_name(&self) -> String {
-        format!("{}_{}", self.embedding_model.as_ref(), self.dims)
+        let model = sanitize_relation_component(self.embedding_model.as_ref());
+        format!("emb_{}_{}", model, self.dims)
     }
 
     pub fn script_identity(&self) -> String {
@@ -131,6 +132,21 @@ impl ExperimentalVectorRelation {
             Err(other) => Err(other),
         }
     }
+}
+
+fn sanitize_relation_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 4);
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, 'v');
+    }
+    out
 }
 
 fn insert_vector_row(

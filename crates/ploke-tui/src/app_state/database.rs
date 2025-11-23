@@ -8,6 +8,7 @@ use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
 #[cfg(feature = "multi_embedding")]
 use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
+use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 #[cfg(feature = "multi_embedding")]
 use ploke_db::{SimilarArgsForSet, search_similar_args_for_set};
 #[cfg(feature = "multi_embedding")]
@@ -226,7 +227,12 @@ pub(super) async fn load_db(
         .import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    ploke_db::create_index_primary(&state.db)?;
+    let default_model = sample_vector_dimension_specs()
+        .first()
+        .expect("vector dimension specs must be present")
+        .embedding_model()
+        .clone();
+    ploke_db::create_index_primary(&state.db, default_model)?;
     // .inspect_err(|e| e.emit_error())?;
 
     // get count for sanity and user feedback
@@ -781,7 +787,7 @@ pub(super) async fn batch_prompt_search(
                     search_similar_args(args)?
                 };
 
-                #[cfg(not(feature = "multi_embedding_db"))]
+                #[cfg(not(feature = "multi_embedding"))]
                 let EmbedDataVerbose { typed_data, dist } = {
                     let args = SimilarArgs {
                         db: &state.db,
@@ -1516,7 +1522,7 @@ mod test {
 
         init_tracing_once();
 
-        // Legacy-style DB without multi_embedding_db enabled.
+        // Legacy-style DB without multi_embedding enabled.
         let db = Arc::new(ploke_db::Database::init_with_schema()?);
 
         // Use the existing dense search test fixture DB for embeddings.
@@ -1531,7 +1537,7 @@ mod test {
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db_nodes.clone(), embedding_processor)?;
 
-        // Build a dummy EmbeddingSetId; because multi_embedding_db is disabled on the
+        // Build a dummy EmbeddingSetId; because multi_embedding is disabled on the
         // Database, search_for_set should transparently fall back to legacy search.
         let shape = EmbeddingShape::f32_raw(384);
         let dummy_set = EmbeddingSetId::new(
@@ -1544,13 +1550,13 @@ mod test {
         let hits: Vec<(Uuid, f32)> = rag.search_for_set(search_term, 15, &dummy_set).await?;
         assert!(
             !hits.is_empty(),
-            "expected search_for_set to fall back and return results when multi_embedding_db is disabled"
+            "expected search_for_set to fall back and return results when multi_embedding is disabled"
         );
 
         Ok(())
     }
 
-    #[cfg(all(feature = "multi_embedding_db", feature = "test_setup"))]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn batch_prompt_search_uses_set_aware_search_when_enabled(
     ) -> color_eyre::Result<()> {

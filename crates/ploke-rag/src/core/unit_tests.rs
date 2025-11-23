@@ -54,7 +54,7 @@ mod tests {
     /// Multi-embedding fixture database used by set-aware RAG tests.
     ///
     /// This database is restored from the schema-tagged multi-embedding backup and is configured
-    /// to enable the `multi_embedding_db` runtime gate so helpers like `search_for_set` exercise
+    /// to enable the `multi_embedding` runtime gate so helpers like `search_for_set` exercise
     /// the new per-dimension vector relations instead of the legacy single `embedding` column.
     #[cfg(feature = "multi_embedding")]
     lazy_static! {
@@ -122,8 +122,8 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
@@ -151,7 +151,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_bm25_rebuild() -> Result<(), Error> {
         init_tracing_once();
@@ -169,7 +169,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
@@ -207,7 +207,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
@@ -235,7 +235,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_bm25_search_fallback() -> Result<(), Error> {
         // Initialize tracing for the test
@@ -264,7 +264,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_structs() -> Result<(), Error> {
         init_tracing_once();
@@ -291,7 +291,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_enums() -> Result<(), Error> {
         init_tracing_once();
@@ -318,7 +318,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_traits() -> Result<(), Error> {
         init_tracing_once();
@@ -364,7 +364,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_unions() -> Result<(), Error> {
         init_tracing_once();
@@ -391,7 +391,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_macros() -> Result<(), Error> {
         init_tracing_once();
@@ -418,7 +418,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_type_aliases() -> Result<(), Error> {
         init_tracing_once();
@@ -445,7 +445,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_constants() -> Result<(), Error> {
         init_tracing_once();
@@ -472,7 +472,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_statics() -> Result<(), Error> {
         init_tracing_once();
@@ -499,7 +499,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
@@ -527,7 +527,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_bm25_search_complex_enum() -> Result<(), Error> {
         init_tracing_once();
@@ -565,7 +565,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn test_search_function_definitions() -> Result<(), Error> {
         init_tracing_once();
@@ -684,7 +684,7 @@ mod tests {
     }
 
     /// RAG-level regression test for set-aware search falling back to legacy dense search
-    /// when `multi_embedding_db` is disabled on the underlying `Database`.
+    /// when `multi_embedding` is disabled on the underlying `Database`.
     ///
     /// Un-ignore when:
     /// - HNSW index creation is idempotent for the legacy `fixture_nodes` backup (no
@@ -702,7 +702,7 @@ mod tests {
 
         init_tracing_once();
 
-        // Legacy-style DB without multi_embedding_db enabled.
+        // Legacy-style DB without multi_embedding enabled.
         let db = Arc::new(ploke_db::Database::init_with_schema()?);
 
         // Use the existing dense search test fixture DB for embeddings.
@@ -717,7 +717,7 @@ mod tests {
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db_nodes.clone(), embedding_processor)?;
 
-        // Build a dummy EmbeddingSetId; because multi_embedding_db is disabled on the
+        // Build a dummy EmbeddingSetId; because multi_embedding is disabled on the
         // Database, search_for_set should transparently fall back to legacy search.
         let shape = EmbeddingShape::f32_raw(384);
         let dummy_set = EmbeddingSetId::new(
@@ -730,7 +730,7 @@ mod tests {
         let hits: Vec<(Uuid, f32)> = rag.search_for_set(search_term, 15, &dummy_set).await?;
         assert!(
             !hits.is_empty(),
-            "expected search_for_set to fall back and return results when multi_embedding_db is disabled"
+            "expected search_for_set to fall back and return results when multi_embedding is disabled"
         );
 
         Ok(())
@@ -801,7 +801,7 @@ mod tests {
     /// Shape test: dense search should only be expected to return results for
     /// symbols that actually have non-null legacy embeddings in the fixture
     /// database. This avoids over-constraining tests on specific symbols.
-    #[cfg(not(feature = "multi_embedding_db"))]
+    #[cfg(not(feature = "multi_embedding"))]
     #[tokio::test]
     async fn rag_dense_search_matches_embed_presence() -> Result<(), Error> {
         init_tracing_once();

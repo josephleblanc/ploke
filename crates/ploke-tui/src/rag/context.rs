@@ -101,7 +101,7 @@ pub async fn process_with_rag(
                     ..
                 } => EmbeddingSetId::new(
                     EmbeddingProviderSlug::new_from_str("local-transformers"),
-                    EmbeddingModelId::new_from_str(local_cfg.model_id.clone()),
+                    EmbeddingModelId::new_from_str(&local_cfg.model_id),
                     shape,
                 ),
                 EmbeddingConfig {
@@ -109,7 +109,7 @@ pub async fn process_with_rag(
                     ..
                 } => EmbeddingSetId::new(
                     EmbeddingProviderSlug::new_from_str("huggingface"),
-                    EmbeddingModelId::new_from_str(hf_cfg.model.clone()),
+                    EmbeddingModelId::new_from_str(&hf_cfg.model),
                     shape,
                 ),
                 EmbeddingConfig {
@@ -117,7 +117,7 @@ pub async fn process_with_rag(
                     ..
                 } => EmbeddingSetId::new(
                     EmbeddingProviderSlug::new_from_str("openai"),
-                    EmbeddingModelId::new_from_str(openai_cfg.model.clone()),
+                    EmbeddingModelId::new_from_str(&openai_cfg.model),
                     shape,
                 ),
                 EmbeddingConfig {
@@ -151,7 +151,7 @@ pub async fn process_with_rag(
                 .await
         };
 
-        #[cfg(not(feature = "multi_embedding_db"))]
+        #[cfg(not(feature = "multi_embedding"))]
         let ctx_result = rag
             .get_context(&user_msg, top_k, budget, retrieval_strategy)
             .await;

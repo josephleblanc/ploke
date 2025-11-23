@@ -25,6 +25,7 @@ use tui::user_config::UserConfig;
 use tui::{AppEvent, EventBus, EventBusCaps, EventPriority};
 
 use ploke_db::{Database, bm25_index, create_index_primary};
+use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
@@ -43,7 +44,12 @@ lazy_static! {
                 .map_err(ploke_db::DbError::from)
                 .map_err(ploke_error::Error::from)?;
         }
-        create_index_primary(&db)?;
+        let default_embedding_model = sample_vector_dimension_specs()
+            .first()
+            .expect("vector dimension specs must be present")
+            .embedding_model()
+            .clone();
+        create_index_primary(&db, default_embedding_model)?;
         Ok(Arc::new(db))
     };
 }

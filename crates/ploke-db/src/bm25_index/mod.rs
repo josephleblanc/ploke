@@ -755,8 +755,7 @@ pub(crate) fn collect_rebuild_sources(
 mod tests {
     use super::*;
     use crate::{
-        create_index_primary, multi_embedding::ExperimentalEmbeddingDbExt,
-        utils::test_utils::fixture_db_backup_path, DbError,
+        create_index_primary, utils::test_utils::fixture_db_backup_path, DbError,
     };
     use lazy_static::lazy_static;
     use ploke_core::EmbeddingModelId;
