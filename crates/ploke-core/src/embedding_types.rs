@@ -46,8 +46,18 @@ impl std::fmt::Display for EmbeddingModelId {
     }
 }
 
-// AI: Add a test for the Display implementation, to verify that we are or are not printing with quotes
-// around the text in EmbeddingModelId AI!
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embedding_model_id_display() {
+        let model_id = EmbeddingModelId::new_from_str("text-embedding-3-small");
+        let display = format!("{}", model_id);
+        // Should not have quotes around the text
+        assert_eq!(display, "text-embedding-3-small");
+    }
+}
 
 /// Data type for elements in an embedding vector.
 ///
