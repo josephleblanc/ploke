@@ -9,11 +9,11 @@ pub mod nodes;
 
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use std::collections::BTreeMap;
 
 use cozo::MemStorage;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use cozo::{DataValue, NamedRows, ScriptMutability, UuidWrapper};
 pub use ploke_common::{
     fixtures_crates_dir, fixtures_dir, workspace_root, LEGACY_FIXTURE_BACKUP_REL_PATH,
@@ -21,13 +21,13 @@ pub use ploke_common::{
     MULTI_EMBED_FIXTURE_METADATA_REL_PATH, MULTI_EMBED_SCHEMA_TAG,
 };
 pub use ploke_core::NodeId;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::multi_embedding::{
     embedding_entry, vector_dimension_specs, ExperimentalVectorRelation, VectorDimensionSpec,
 };
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::DbError;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
@@ -209,7 +209,7 @@ pub fn setup_db_full_embeddings(
     db.get_unembedded_node_data(limit, cursor)
 }
 
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 fn data_value_to_uuid(value: &DataValue) -> Result<Uuid, ploke_error::Error> {
     if let DataValue::Uuid(UuidWrapper(uuid)) = value {
         Ok(*uuid)
@@ -226,7 +226,7 @@ fn data_value_to_uuid(value: &DataValue) -> Result<Uuid, ploke_error::Error> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[test]
     fn setup_db_full_embeddings_returns_embedding_batches() -> Result<(), ploke_error::Error> {
         let batches = setup_db_full_embeddings("fixture_nodes")?;

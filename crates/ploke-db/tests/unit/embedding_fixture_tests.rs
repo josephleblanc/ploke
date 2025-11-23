@@ -98,7 +98,7 @@ fn backup_import_compat_legacy_schema() -> Result<(), PlokeError> {
 /// Under the multi-embedding schema feature, importing the multi-embedding
 /// backup must succeed so downstream tests relying on runtime-owned relations
 /// have a well-defined starting point.
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 #[test]
 fn backup_import_compat_multi_schema() -> Result<(), PlokeError> {
     let mut multi_path = workspace_root();

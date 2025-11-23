@@ -30,13 +30,4 @@ debug = []
 type_bearing_ids = []
 # get relations to have a mapping to higher level abstractions.
 level_up_relations = []
-# Enables schema structs/migrations for multi-embedding work.
-multi_embedding_schema = []
-# Adds helpers for DB dual-write scaffolding when ingest needs them.
-multi_embedding_db = ["multi_embedding_schema"]
-# Exposes runtime-related ingest hooks (primarily for tests/build checks).
-multi_embedding_runtime = ["multi_embedding_db"]
-# Bundles schema/db/runtime toggles for release-style builds.
-multi_embedding_release = ["multi_embedding_runtime"]
-# Placeholder gate for future ingest-aware kill-switch wiring.
-multi_embedding_kill_switch = []
+multi_embedding = []

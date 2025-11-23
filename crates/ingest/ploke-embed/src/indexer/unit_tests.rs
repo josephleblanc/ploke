@@ -276,7 +276,7 @@ async fn test_local_model_embedding_processor() -> Result<(), ploke_error::Error
 /// The multi-embedding wiring (metadata/vector relations) is validated in
 /// `ploke-db` tests; here we just prove that the indexer is using the same
 /// dual-write path under the `multi_embedding_runtime` feature.
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
 ) -> Result<(), ploke_error::Error> {
@@ -557,7 +557,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
     );
     Ok(())
 }
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn indexer_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
     use ploke_core::{EmbeddingData, EmbeddingShape};

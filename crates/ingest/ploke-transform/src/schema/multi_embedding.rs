@@ -1,4 +1,4 @@
-#![cfg(feature = "multi_embedding_schema")]
+#![cfg(feature = "multi_embedding")]
 
 //! Multi-embedding schema definitions.
 //!

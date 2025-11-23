@@ -7,7 +7,7 @@ use ploke_common::{
 use ploke_db::{
     Database, DbError,
     multi_embedding::{
-        ExperimentalEmbeddingDbExt, ExperimentalVectorRelation, experimental_node_relation_specs,
+        ExperimentalEmbeddingDbExt, ExperimentalVectorRelation,
         vector_dimension_specs,
     },
 };
@@ -25,7 +25,6 @@ use walkdir::WalkDir;
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
-        Some("verify-fixtures") => verify_fixtures(args.collect()),
         Some("embedding:collect-evidence") => collect_embedding_evidence(args.collect()),
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
@@ -153,142 +152,6 @@ const SLICE1_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice1-sche
 const SLICE2_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice2-db.json";
 const SLICE3_ARTIFACT_REL_PATH: &str = "target/test-output/embedding/slice3-runtime.json";
 
-// TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
-fn verify_fixtures(args: Vec<String>) -> ExitCode {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_verify_fixtures_usage();
-        return ExitCode::SUCCESS;
-    }
-    let opts = match parse_verify_args(args) {
-        Ok(opts) => opts,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let root = workspace_root();
-    println!("Verifying fixtures under {}", root.display());
-    let mut missing: Vec<(&FixtureCheck, PathBuf)> = Vec::new();
-    let mut drift: Vec<(&FixtureCheck, String)> = Vec::new();
-    let mut multi_errors: Vec<String> = Vec::new();
-
-    let mut checks: Vec<&FixtureCheck> = FIXTURE_CHECKS.iter().collect();
-    if opts.multi_embedding {
-        checks.push(&MULTI_FIXTURE_DB_CHECK);
-    }
-
-    for check in checks {
-        let mut regen_attempted = false;
-        'check: loop {
-            let full_path = root.join(check.rel_path);
-            if !full_path.exists() {
-                println!(
-                    "✘ {:<18} {} (missing)",
-                    check.id,
-                    display_relative(&full_path, &root)
-                );
-                if attempt_auto_regen(check, &root, &mut regen_attempted, "missing fixture") {
-                    continue 'check;
-                }
-                missing.push((check, full_path));
-                break;
-            }
-
-            if let Some(integrity) = &check.integrity {
-                match verify_integrity(&root, integrity) {
-                    Ok(_) => {
-                        println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
-                        break;
-                    }
-                    Err(err) => {
-                        println!(
-                            "✘ {:<18} {} (drift)",
-                            check.id,
-                            display_relative(&full_path, &root)
-                        );
-                        if attempt_auto_regen(check, &root, &mut regen_attempted, "drift detected")
-                        {
-                            continue 'check;
-                        }
-                        drift.push((check, err));
-                        break;
-                    }
-                }
-            } else {
-                println!("✔ {:<18} {}", check.id, display_relative(&full_path, &root));
-                break;
-            }
-        }
-    }
-
-    if opts.multi_embedding {
-        let multi_missing = missing
-            .iter()
-            .any(|(check, _)| check.id == MULTI_FIXTURE_DB_CHECK.id);
-        let multi_drift = drift
-            .iter()
-            .any(|(check, _)| check.id == MULTI_FIXTURE_DB_CHECK.id);
-        if multi_missing || multi_drift {
-            multi_errors.push(
-                "Multi-embedding verification skipped: fixture database backup unavailable.".into(),
-            );
-        } else {
-            match verify_multi_embedding_fixture(&root, MULTI_FIXTURE_DB_CHECK.rel_path) {
-                Ok(report) => {
-                    println!(
-                        "✔ {:<18} metadata_relations={}, vector_relations={}, metadata_rows={}, vector_rows={}",
-                        "multi_embedding",
-                        report.metadata_relations,
-                        report.vector_relations,
-                        report.total_metadata_rows,
-                        report.total_vector_rows
-                    );
-                    if let Err(err) = persist_multi_embedding_evidence(&root, &report) {
-                        multi_errors.push(err);
-                    }
-                }
-                Err(mut errs) => multi_errors.append(&mut errs),
-            }
-        }
-    }
-
-    if missing.is_empty() && drift.is_empty() && multi_errors.is_empty() {
-        println!("All required fixtures are present.");
-        return ExitCode::SUCCESS;
-    }
-
-    if !missing.is_empty() {
-        eprintln!("\nMissing fixtures detected:");
-        for (check, path) in &missing {
-            eprintln!(
-                "- {id}: {desc}\n  Path: {path}\n  Fix:  {remedy}",
-                id = check.id,
-                desc = check.description,
-                path = path.display(),
-                remedy = check.remediation
-            );
-        }
-    }
-    if !drift.is_empty() {
-        eprintln!("\nFixture drift detected (backup no longer matches source files):");
-        for (check, err) in &drift {
-            eprintln!(
-                "- {id}: {desc}\n  Issue: {err}\n  Fix:   {remedy}",
-                id = check.id,
-                desc = check.description,
-                err = err,
-                remedy = check.remediation
-            );
-        }
-    }
-    if !multi_errors.is_empty() {
-        eprintln!("\nMulti-embedding fixture issues:");
-        for err in &multi_errors {
-            eprintln!("- {err}");
-        }
-    }
-    ExitCode::FAILURE
-}
 
 fn attempt_auto_regen(
     check: &FixtureCheck,
@@ -518,101 +381,6 @@ struct MultiEmbeddingFixtureTelemetry {
     vector_rows: usize,
 }
 
-fn verify_multi_embedding_fixture(
-    root: &Path,
-    rel_path: &str,
-) -> Result<MultiEmbeddingReport, Vec<String>> {
-    let backup_path = root.join(rel_path);
-    let database = Database::load_backup(&backup_path).map_err(|err| {
-        vec![format!(
-            "Failed to load fixture database {}: {err}",
-            backup_path.display()
-        )]
-    })?;
-    let mut errors = Vec::new();
-    let mut total_metadata_rows = 0usize;
-    let mut total_vector_rows = 0usize;
-    let mut metadata_relations = 0usize;
-    let mut vector_relations = 0usize;
-    let vector_specs = vector_dimension_specs();
-
-    for spec in experimental_node_relation_specs() {
-        metadata_relations += 1;
-        let metadata_relation = spec.metadata_schema.relation();
-        if let Err(err) = database.ensure_relation_registered(metadata_relation) {
-            errors.push(format!(
-                "Relation `{}` missing from backup: {}",
-                metadata_relation, err
-            ));
-            continue;
-        }
-
-        let metadata_count = match count_relation_rows(&database, metadata_relation, "id") {
-            Ok(count) => count,
-            Err(err) => {
-                errors.push(format!(
-                    "Unable to count rows in `{}`: {}",
-                    metadata_relation, err
-                ));
-                continue;
-            }
-        };
-        total_metadata_rows += metadata_count;
-
-        for dim_spec in vector_specs {
-            vector_relations += 1;
-            let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_relation_base);
-            let relation_name = relation.relation_name();
-            if let Err(err) = database.ensure_relation_registered(&relation_name) {
-                errors.push(format!(
-                    "Vector relation `{}` missing from backup: {}",
-                    relation_name, err
-                ));
-                continue;
-            }
-            if let Err(err) = database.assert_vector_column_layout(&relation_name, dim_spec.dims())
-            {
-                errors.push(format!(
-                    "Vector relation `{}` column layout mismatch: {}",
-                    relation_name, err
-                ));
-                continue;
-            }
-
-            let vector_count = match count_relation_rows(&database, &relation_name, "node_id") {
-                Ok(count) => count,
-                Err(err) => {
-                    errors.push(format!(
-                        "Unable to count rows in `{}`: {}",
-                        relation_name, err
-                    ));
-                    continue;
-                }
-            };
-            total_vector_rows += vector_count;
-
-            if vector_count != metadata_count {
-                errors.push(format!(
-                    "Relation `{}`: metadata rows ({metadata_count}) != vector rows ({vector_count}) for dimension {}",
-                    relation_name,
-                    dim_spec.dims()
-                ));
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(MultiEmbeddingReport {
-            metadata_relations,
-            vector_relations,
-            total_metadata_rows,
-            total_vector_rows,
-        })
-    } else {
-        Err(errors)
-    }
-}
 
 fn persist_multi_embedding_evidence(
     root: &Path,

@@ -1,20 +1,20 @@
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use std::sync::Arc;
 
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_tui::EventBus;
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_tui::event_bus::EventBusCaps;
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_test_utils::workspace_root;
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::{create_index_primary, Database};
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::multi_embedding::{experimental_node_relation_specs, ExperimentalEmbeddingDbExt};
 
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn load_db_with_multi_embedding_fixture() -> Result<(), ploke_error::Error> {
     // Initialize a database and load the multi-embedding fixture backup
@@ -51,7 +51,7 @@ async fn load_db_with_multi_embedding_fixture() -> Result<(), ploke_error::Error
     Ok(())
 }
 
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn scan_for_change_with_multi_embedding_relations() -> Result<(), ploke_error::Error> {
     // Build minimal app state with multi-embedding fixture

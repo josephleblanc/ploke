@@ -123,9 +123,9 @@ use ploke_db::{
     bm25_index::bm25_service::{self, Bm25Cmd},
     search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData,
 };
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_core::EmbeddingSetId;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::{search_similar_args_for_set, SimilarArgsForSet};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;

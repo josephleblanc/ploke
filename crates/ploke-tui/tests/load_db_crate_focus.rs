@@ -71,7 +71,7 @@ async fn crate_focus_assigns_absolute_root_from_db() {
     crate_focus_assigns_absolute_root_from_db_impl().await;
 }
 
-#[cfg(feature = "multi_embedding_runtime")]
+#[cfg(feature = "multi_embedding")]
 #[tokio::test]
 async fn crate_focus_assigns_absolute_root_under_multi_embedding_runtime() {
     // Ensure the same DB-backed crate_focus path works when multi-embedding runtime flags are enabled.

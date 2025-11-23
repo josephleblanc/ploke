@@ -13,7 +13,7 @@ use std::{
 use chrono::Utc;
 use ploke_db::Database;
 use ploke_test_utils::{ setup_db_full, fixtures_crates_dir };
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 use ploke_test_utils::{ MULTI_EMBED_SCHEMA_TAG,
 };
 use serde::Serialize;

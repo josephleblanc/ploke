@@ -8,7 +8,7 @@ pub mod get_by_id;
 pub mod helpers;
 pub mod ext;
 mod index;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 pub mod multi_embedding;
 pub mod observability;
 mod query;
@@ -18,14 +18,14 @@ pub(crate) mod utils;
 
 
 pub use database::{to_usize, Database, EmbeddingInsert, TypedEmbedData};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 pub use database::{MultiEmbeddingRuntimeConfig, MULTI_EMBEDDING_DB_ENV};
 pub use error::DbError;
 pub use index::hnsw::{
     create_index, create_index_primary, create_index_warn, hnsw_all_types, hnsw_of_type,
     replace_index_warn, search_similar, search_similar_args, EmbedDataVerbose, SimilarArgs,
 };
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 pub use index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
 pub use observability::{
     CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,

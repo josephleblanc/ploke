@@ -48,23 +48,7 @@ futures = "0.3"
 default = ["debug"]
 debug = []
 update_embeds = []
-# Enables schema-only scaffolding required by embedding ingest helpers.
-multi_embedding_schema = [
-    "ploke-db/multi_embedding_schema",
-    "ploke-transform/multi_embedding_schema",
+multi_embedding = [
+    "ploke-db/multi_embedding",
+    "ploke-transform/multi_embedding",
 ]
-# Pulls dual-write database codepaths into scope for embedding ingest.
-multi_embedding_db = [
-    "multi_embedding_schema",
-    "ploke-db/multi_embedding_db",
-    "ploke-transform/multi_embedding_db",
-]
-# Activates runtime/indexer codepaths that understand multi-set embeddings.
-multi_embedding_runtime = [
-    "multi_embedding_db",
-    "ploke-db/multi_embedding_runtime",
-]
-# Bundles schema/db/runtime for release testing.
-multi_embedding_release = ["multi_embedding_runtime"]
-# Allows linking kill-switch plumbing without flipping runtime flags off.
-multi_embedding_kill_switch = []

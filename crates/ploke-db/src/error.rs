@@ -31,11 +31,11 @@ pub enum DbError {
     #[error("Error receiving message: {0}")]
     CrossBeamSend(String),
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Unsupported embedding dimension requested: {dims}")]
     UnsupportedEmbeddingDimension { dims: i64 },
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
     ExperimentalScriptFailure {
         action: &'static str,
@@ -43,19 +43,19 @@ pub enum DbError {
         details: String,
     },
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding relation {relation} not registered")]
     ExperimentalRelationMissing { relation: String },
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding relation {relation} missing vector column for dims {dims}")]
     ExperimentalVectorLayoutMismatch { relation: String, dims: i64 },
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding metadata parse error: {reason}")]
     ExperimentalMetadataParse { reason: String },
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding vector length mismatch: expected {expected}, got {actual}")]
     ExperimentalVectorLengthMismatch { expected: usize, actual: usize },
 }

@@ -15,9 +15,9 @@ use ploke_core::{
     ArcStr,
     rag_types::{AssembledContext, ContextPart},
 };
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::user_config::EmbeddingConfig;
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
@@ -90,7 +90,7 @@ pub async fn process_with_rag(
         let top_k = TOP_K;
         let retrieval_strategy = RETRIEVAL_STRATEGY.deref();
 
-        #[cfg(feature = "multi_embedding_db")]
+        #[cfg(feature = "multi_embedding")]
         fn embedding_set_for_runtime(
             cfg: &crate::app_state::core::RuntimeConfig,
             shape: EmbeddingShape,
@@ -136,7 +136,7 @@ pub async fn process_with_rag(
             }
         }
 
-        #[cfg(feature = "multi_embedding_db")]
+        #[cfg(feature = "multi_embedding")]
         let ctx_result = if state.db.multi_embedding_db_enabled() {
             let runtime_cfg = {
                 let guard = state.config.read().await;

@@ -549,7 +549,7 @@ impl RagService {
     /// dense search is constrained to the per-dimension vector relation backing
     /// the set. Falls back to the legacy search semantics when
     /// `multi_embedding_db` is disabled on the database.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[instrument(skip(self, query, set_id), fields(query_len = %query.len(), top_k = top_k))]
     pub async fn search_for_set(
         &self,
@@ -641,7 +641,7 @@ impl RagService {
     /// this helper so that dense search is constrained to the per-dimension vector
     /// relation backing the set. When the database is not multi-embedding aware,
     /// this method transparently falls back to the legacy dense search semantics.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[instrument(
         skip(self, query, budget, strategy, set_id),
         fields(query_len = %query.len(), top_k = top_k)

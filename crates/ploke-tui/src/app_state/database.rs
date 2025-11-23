@@ -6,11 +6,11 @@ use std::{
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, NodeId};
 use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_db::{SimilarArgsForSet, search_similar_args_for_set};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::user_config::EmbeddingConfig;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
@@ -677,7 +677,7 @@ pub(super) async fn batch_prompt_search(
 
     let mut results = Vec::new();
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     fn embedding_set_for_runtime(
         cfg: &crate::app_state::core::RuntimeConfig,
         shape: EmbeddingShape,
@@ -723,7 +723,7 @@ pub(super) async fn batch_prompt_search(
         }
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     let maybe_embedding_set: Option<EmbeddingSetId> = if state.db.multi_embedding_db_enabled() {
         let runtime_cfg = {
             let guard = state.config.read().await;
@@ -755,7 +755,7 @@ pub(super) async fn batch_prompt_search(
             for ty in NodeType::primary_nodes() {
                 let ef_range = 1..=101;
 
-                #[cfg(feature = "multi_embedding_db")]
+                #[cfg(feature = "multi_embedding")]
                 let EmbedDataVerbose { typed_data, dist } = if let Some(set_id) = &maybe_embedding_set {
                     let args = SimilarArgsForSet {
                         db: &state.db,
@@ -1448,7 +1448,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn search_for_set_returns_results_for_seeded_set() -> Result<(), Error> {
         use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
@@ -1506,7 +1506,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn search_for_set_falls_back_when_multi_embedding_disabled() -> Result<(), Error> {
         use ploke_core::{EmbeddingSetId, EmbeddingShape};

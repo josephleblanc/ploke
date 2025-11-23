@@ -3,15 +3,15 @@ use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::vector_dims::{
     dimension_spec_for_length, embedding_entry, vector_dimension_specs, VectorDimensionSpec,
 };
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::vectors::ExperimentalVectorRelation;
 use crate::NodeType;
 use crate::QueryResult;
@@ -35,20 +35,20 @@ const LEGACY_EMBEDDING_DIMS: usize = 384;
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     feature_gates: MultiEmbeddingRuntimeConfig,
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 pub const MULTI_EMBEDDING_DB_ENV: &str = "PLOKE_MULTI_EMBEDDING_DB";
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 #[derive(Debug, Clone)]
 pub struct MultiEmbeddingRuntimeConfig {
     multi_embedding_db: bool,
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 impl MultiEmbeddingRuntimeConfig {
     /// Creates a config initialized from the `PLOKE_MULTI_EMBEDDING_DB` env var.
     pub fn from_env() -> Self {
@@ -75,7 +75,7 @@ impl MultiEmbeddingRuntimeConfig {
     }
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 impl Default for MultiEmbeddingRuntimeConfig {
     fn default() -> Self {
         Self::from_env()
@@ -107,7 +107,7 @@ impl ImmutQuery for Database {
     }
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 fn env_flag_enabled(key: &str) -> bool {
     match std::env::var(key) {
         Ok(value) => matches!(
@@ -211,12 +211,12 @@ impl Database {
     pub fn new(db: Db<MemStorage>) -> Self {
         Self {
             db,
-            #[cfg(feature = "multi_embedding_db")]
+            #[cfg(feature = "multi_embedding")]
             feature_gates: MultiEmbeddingRuntimeConfig::default(),
         }
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     pub fn with_multi_embedding_config(
         db: Db<MemStorage>,
         config: MultiEmbeddingRuntimeConfig,
@@ -227,7 +227,7 @@ impl Database {
         }
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     pub fn multi_embedding_db_enabled(&self) -> bool {
         self.feature_gates.multi_embedding_db_enabled()
     }
@@ -674,7 +674,7 @@ impl Database {
 
         // When multi-embedding DB support is enabled, dual-write into the runtime-owned
         // metadata/vector relations using the full update set (all supported dimensions).
-        #[cfg(feature = "multi_embedding_db")]
+        #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
             // For multi-embedding relations we accept all supported dimensions; the
             // adapter will reject unsupported lengths via `dimension_spec_for_length`.
@@ -796,7 +796,7 @@ impl Database {
         {
             let expected = set_id.dimension() as usize;
             if vector.len() != expected {
-                #[cfg(feature = "multi_embedding_schema")]
+                #[cfg(feature = "multi_embedding")]
                 {
                     return Err(DbError::ExperimentalVectorLengthMismatch {
                         expected,
@@ -841,7 +841,7 @@ impl Database {
     /// Callers can use the returned spec to select the correct
     /// per-dimension vector relation and HNSW parameters when performing
     /// reads/searches for a specific embedding set.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     pub fn vector_spec_for_set(
         &self,
         set_id: &EmbeddingSetId,
@@ -1054,7 +1054,7 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
-        #[cfg(feature = "multi_embedding_db")]
+        #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
             if let Some(spec) = experimental_spec_for_node(node_type) {
                 spec.metadata_schema.ensure_registered(self)?;
@@ -1343,7 +1343,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        #[cfg(feature = "multi_embedding_db")]
+        #[cfg(feature = "multi_embedding")]
         if self.multi_embedding_db_enabled() {
             return self.count_pending_embeddings_multi();
         }
@@ -1372,7 +1372,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         Self::into_usize(result)
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     fn count_pending_embeddings_multi(&self) -> Result<usize, DbError> {
         let mut total = 0usize;
         for node_type in NodeType::primary_nodes() {
@@ -1387,7 +1387,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         Ok(total)
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     fn count_relation_rows(&self, relation: &str) -> Result<usize, DbError> {
         let script = format!(
             r#"
@@ -1480,49 +1480,13 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 }
 
-#[cfg(all(test, feature = "multi_embedding_db"))]
-impl Database {
-    /// Test-only helper that clears the legacy embedding column for a given node so runtime-owned
-    /// metadata relations become the sole source of truth.
-    fn clear_legacy_embedding(&self, node_type: NodeType, node_id: Uuid) -> Result<(), DbError> {
-        let rel_name = node_type.relation_str();
-        let rel_identity = node_type.identity();
-        let key_vals_string = node_type
-            .keys()
-            .chain(node_type.vals().filter(|v| *v != "embedding"))
-            .join(", ");
-        let script = format!(
-            r#"
-{{
-    ?[new_id, new_embedding] <- [[to_uuid("{node_id}"), null]]
-    :replace _legacy_embedding {{ new_id, new_embedding }}
-}}
-{{
-    ?[at, embedding, {key_vals}] :=
-        *_legacy_embedding {{ new_id: id, new_embedding: embedding }},
-        at = 'ASSERT',
-        *{rel_name} {{ {key_vals} @ 'NOW' }}
-    :put {rel_identity}
-}}
-"#,
-            node_id = node_id,
-            key_vals = key_vals_string,
-            rel_name = rel_name,
-            rel_identity = rel_identity,
-        );
-        self.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
-            .map(|_| ())
-            .map_err(|err| DbError::Cozo(format!("{err} | script: {script}")))
-    }
-}
-
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 struct MultiEmbeddingRow {
     node_id: Uuid,
     params: BTreeMap<String, DataValue>,
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 impl Database {
     /// Dual-writes metadata and vector relations for the provided update batch.
     fn write_multi_embedding_relations(
@@ -1684,7 +1648,7 @@ impl Database {
         Ok(mapped)
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     fn runtime_embedded_ids(
         &self,
         spec: &ExperimentalNodeRelationSpec,
@@ -1713,17 +1677,17 @@ impl Database {
 mod tests {
     use super::*;
     use crate::bm25_index::DocData;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::multi_embedding::adapter::{
         parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
     };
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::multi_embedding::vectors::ExperimentalVectorRelation;
     use crate::Database;
     use crate::DbError;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::MultiEmbeddingRuntimeConfig;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
@@ -1798,7 +1762,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn update_embeddings_dual_writes_metadata_and_vectors() -> Result<(), PlokeError> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
@@ -1846,7 +1810,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn get_unembedded_respects_runtime_embeddings() -> Result<(), PlokeError> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
@@ -1886,7 +1850,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn count_pending_embeddings_parity_legacy_vs_multi() -> Result<(), PlokeError> {
         // Test legacy behavior (flag disabled)
@@ -1932,7 +1896,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn update_embeddings_supports_multiple_dims_and_node_types() -> Result<(), PlokeError> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;

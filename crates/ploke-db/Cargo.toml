@@ -39,32 +39,6 @@ tokio-test = "0.4.4"
 criterion = "0.7"
 
 [features]
-defaults = [
-    "multi_embedding_db",
-    "multi_embedding_schema",
-    "multi_embedding_runtime",
-    "multi_embedding_release",
-    "multi_embedding_experiment",
-]
+defaults = ["multi_embedding"]
 type_bearing_ids = []
-# Enables schema-only helpers for multi-embedding relations.
-multi_embedding_schema = ["ploke-transform/multi_embedding_schema"]
-# Turns on dual-write/dual-read helpers plus adapter coverage.
-multi_embedding_db = [
-    "multi_embedding_schema",
-    "ploke-transform/multi_embedding_db",
-]
-# Pulls runtime-facing adapters/tests into the build.
-multi_embedding_runtime = [
-    "multi_embedding_db",
-    "ploke-transform/multi_embedding_runtime",
-]
-# Bundles schema/db/runtime for end-to-end soak or release builds.
-multi_embedding_release = [
-    "multi_embedding_runtime",
-    "ploke-transform/multi_embedding_release",
-]
-# Keeps kill-switch plumbing available even when compile-time flags are on.
-multi_embedding_kill_switch = []
-# Temporary alias so legacy commands referencing `multi_embedding_experiment` keep working.
-multi_embedding_experiment = ["multi_embedding_schema"]
+multi_embedding = ["ploke-transform/multi_embedding"]

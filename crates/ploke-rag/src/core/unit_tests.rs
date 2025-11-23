@@ -56,7 +56,7 @@ mod tests {
     /// This database is restored from the schema-tagged multi-embedding backup and is configured
     /// to enable the `multi_embedding_db` runtime gate so helpers like `search_for_set` exercise
     /// the new per-dimension vector relations instead of the legacy single `embedding` column.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     lazy_static! {
         pub static ref TEST_DB_MULTI: Result<Arc<Database>, Error> = {
             use ploke_db::MultiEmbeddingRuntimeConfig;
@@ -600,7 +600,7 @@ mod tests {
     /// - `ploke-db`'s `multi_embedding_hnsw_index_and_search` and related tests are green,
     ///   so this test acts as an end-to-end RAG wiring guard rather than the only source
     ///   of truth for HNSW behavior.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     #[ignore = "Covered by multi-embedding DB tests in ploke-db; un-ignore once Slice 2 evidence (slice2-db.json) is green and we want a RAG-level seeded-vector regression guard."]
     async fn search_for_set_returns_results_for_seeded_set() -> Result<(), Error> {
@@ -691,7 +691,7 @@ mod tests {
     ///   "index already exists" errors), and
     /// - Slice 2 fallback behavior is already validated in `ploke-db`, so this test
     ///   becomes a secondary wiring guard reflected in `slice2-db.json`.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     #[ignore = "Fallback behavior is covered in ploke-db; un-ignore once HNSW index reuse is stable for legacy fixtures and Slice 2 telemetry (slice2-db.json) includes this RAG fallback as a passing gate."]
     async fn search_for_set_falls_back_when_multi_embedding_disabled() -> Result<(), Error> {
@@ -747,7 +747,7 @@ mod tests {
     /// - `slice3-runtime.json` (and, if applicable, `slice3-runtime-live-*.json`) record
     ///   a run where those symbols' embeddings are created by the real pipeline and this
     ///   test passes under `multi_embedding_runtime`.
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     #[ignore = "Multi-embedding RAG parity over canonical symbols depends on real runtime embeddings; un-ignore once Slice 3 runtime/indexer evidence (slice3-runtime.json) shows these symbols populated by the live pipeline."]
     async fn multi_embedding_search_returns_hits_for_canonical_symbols() -> Result<(), Error> {

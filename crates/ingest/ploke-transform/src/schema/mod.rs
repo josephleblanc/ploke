@@ -18,10 +18,10 @@ pub mod assoc_nodes;
 pub mod crate_node;
 pub mod edges;
 pub mod meta;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 pub mod multi_embedding;
 pub mod primary_nodes;
-#[cfg(feature = "multi_embedding_schema")]
+#[cfg(feature = "multi_embedding")]
 pub use multi_embedding::*;
 pub mod secondary_nodes;
 pub mod subnode_variants;
@@ -96,7 +96,7 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     // -- type_nodes --
     create_and_insert_types(db)?;
 
-    #[cfg(feature = "multi_embedding_schema")]
+    #[cfg(feature = "multi_embedding")]
     multi_embedding::create_multi_embedding_relations(db)?;
 
     // -- edges --

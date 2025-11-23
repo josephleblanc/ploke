@@ -6,17 +6,17 @@ use cozo::{DataValue, NamedRows, Num, ScriptMutability};
 use itertools::Itertools;
 use tracing::instrument;
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::adapter::ExperimentalEmbeddingDatabaseExt;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
-#[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
+use crate::multi_embedding::vectors::{EmbeddingModel, ExperimentalVectorRelation};
+#[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::HnswDistance;
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 use ploke_core::EmbeddingSetId;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
@@ -70,7 +70,7 @@ pub fn hnsw_of_type(
     k: usize,
     ef: usize,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     if db.multi_embedding_db_enabled() {
         return multi_embedding_hnsw_of_type(db, ty, k, ef);
     }
@@ -232,7 +232,7 @@ pub struct SimilarArgs<'a> {
 /// This mirrors `SimilarArgs` but adds an `EmbeddingSetId` so callers can
 /// direct HNSW search to the correct per-dimension vector relation when
 /// `multi_embedding_db` is enabled.
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 pub struct SimilarArgsForSet<'a> {
     pub db: &'a Database,
     pub vector_query: &'a Vec<f32>,
@@ -242,6 +242,7 @@ pub struct SimilarArgsForSet<'a> {
     pub max_hits: usize,
     pub radius: f64,
     pub set_id: &'a EmbeddingSetId,
+    pub vector_embedding_model: EmbeddingModel,
 }
 
 #[instrument(skip_all, fields(query_result))]
@@ -378,11 +379,13 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
 /// constrained to the per-dimension vector relation associated with the
 /// set. The result layout (headers/rows) matches `search_similar_args`
 /// so it can be fed into `QueryResult::to_embedding_nodes` unchanged.
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 #[instrument(skip_all, fields(query_result))]
 pub fn search_similar_args_for_set(
     args: SimilarArgsForSet,
 ) -> Result<EmbedDataVerbose, ploke_error::Error> {
+    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
     let SimilarArgsForSet {
         db,
         vector_query,
@@ -392,6 +395,7 @@ pub fn search_similar_args_for_set(
         max_hits,
         radius,
         set_id,
+        vector_embedding_model
     } = args;
 
     if !db.multi_embedding_db_enabled() {
@@ -432,13 +436,13 @@ pub fn search_similar_args_for_set(
             dist: Vec::new(),
         });
     };
-    spec.metadata_schema
+    spec
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
     let dim_spec = db
         .vector_spec_for_set(set_id)
         .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model);
     relation
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
@@ -600,22 +604,25 @@ fn named_rows_to_embeddings(rows: NamedRows) -> Vec<Embedding> {
         .collect()
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 fn multi_embedding_hnsw_of_type(
     db: &Database,
     ty: NodeType,
     k: usize,
     ef: usize,
+    vector_embedding_model: EmbeddingModel,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
+    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+
     let Some(spec) = experimental_spec_for_node(ty) else {
         return Ok(Vec::new());
     };
-    spec.metadata_schema
+    spec
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
     let mut aggregated = Vec::new();
     for dim_spec in vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), spec.vector_embedding_model);
+        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), vector_embedding_model.clone());
         relation
             .ensure_registered(db)
             .map_err(ploke_error::Error::from)?;
@@ -660,7 +667,7 @@ fn multi_embedding_hnsw_of_type(
 /// an `EmbeddingSetId` (e.g., runtime search flows) should prefer this
 /// helper over the dimension-agnostic `hnsw_of_type` when the set identity
 /// matters.
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 pub fn multi_embedding_hnsw_for_set(
     db: &Database,
     ty: NodeType,
@@ -718,7 +725,7 @@ pub fn multi_embedding_hnsw_for_set(
     }
 }
 
-#[cfg(feature = "multi_embedding_db")]
+#[cfg(feature = "multi_embedding")]
 fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Result<(), DbError> {
     if !db.multi_embedding_db_enabled() {
         return Ok(());
@@ -766,7 +773,7 @@ fn create_multi_embedding_indexes_for_type(db: &Database, ty: NodeType) -> Resul
 //    exists for the named database, and then if it does exist, remove the current hnsw index and
 //    replace it with the new hnsw index with the same name.
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     create_multi_embedding_indexes_for_type(db, ty)?;
 
     // Create documents table
@@ -804,7 +811,7 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
 }
 
 pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     create_multi_embedding_indexes_for_type(db, ty).map_err(ploke_error::Error::from)?;
 
     // Create documents table
@@ -877,14 +884,14 @@ mod tests {
     use ploke_error::Error;
     use tokio_test::assert_err;
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::index::hnsw::multi_embedding_hnsw_for_set;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::multi_embedding::schema::vector_dims::vector_dimension_specs;
     use crate::Database;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use crate::MultiEmbeddingRuntimeConfig;
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 
     #[tokio::test]
@@ -935,7 +942,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_index_and_search() -> Result<(), ploke_error::Error> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
@@ -958,7 +965,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_returns_empty_without_vectors() -> Result<(), ploke_error::Error>
     {
@@ -984,7 +991,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn vector_spec_for_set_rejects_mismatched_provider_model(
     ) -> Result<(), ploke_error::Error> {
@@ -1018,7 +1025,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn vector_spec_for_set_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
@@ -1045,7 +1052,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
         let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
@@ -1092,7 +1099,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn search_similar_args_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
         use crate::index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
@@ -1150,7 +1157,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "multi_embedding_db")]
+    #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn search_similar_args_for_set_errors_when_feature_disabled(
     ) -> Result<(), ploke_error::Error> {
