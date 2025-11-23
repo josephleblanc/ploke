@@ -1,3 +1,4 @@
+use ploke_db::ext::embed_utils::{DbEmbedUtils, HasNullEmbeds};
 use ploke_db::{hnsw_of_type, Database, DbError, NodeType};
 use ploke_error::Error as PlokeError;
 use ploke_test_utils::{
@@ -18,24 +19,15 @@ fn legacy_fixture_has_embedding_for_top_level_bool() -> Result<(), PlokeError> {
         .map_err(DbError::from)
         .map_err(PlokeError::from)?;
 
-    let script = r#"
-?[name, is_null_embedding] :=
-    *const{name, embedding @ 'NOW' },
-    name = "TOP_LEVEL_BOOL",
-    is_null_embedding = is_null(embedding)
-"#;
+    let rows = db.get_null_embedding_rows("TOP_LEVEL_BOOL", NodeType::Const)?;
 
-    let rows = db.raw_query(script).map_err(PlokeError::from)?;
     assert_eq!(
         rows.rows.len(),
         1,
         "expected exactly one const row for TOP_LEVEL_BOOL"
     );
 
-    let is_null_embedding = rows.rows[0]
-        .get(1)
-        .and_then(|v| v.get_bool())
-        .unwrap_or(true);
+    let is_null_embedding = rows.is_null_embedding()?;
 
     assert!(
         !is_null_embedding,

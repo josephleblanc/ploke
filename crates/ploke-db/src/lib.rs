@@ -6,6 +6,7 @@ mod database;
 mod error;
 pub mod get_by_id;
 pub mod helpers;
+pub mod ext;
 mod index;
 #[cfg(feature = "multi_embedding_schema")]
 pub mod multi_embedding;
@@ -14,6 +15,7 @@ mod query;
 mod result;
 mod span;
 pub(crate) mod utils;
+
 
 pub use database::{to_usize, Database, EmbeddingInsert, TypedEmbedData};
 #[cfg(feature = "multi_embedding_db")]
