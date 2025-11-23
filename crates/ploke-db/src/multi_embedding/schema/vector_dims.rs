@@ -15,6 +15,17 @@ pub struct VectorDimensionSpec {
     hnsw_search_ef: i64,
 }
 
+pub struct VectorDimBuilder {
+    dims: Option<i64>,
+    provider: Option<Option<EmbeddingProviderSlug>>,
+    embedding_model: Option<EmbeddingModelId>,
+    offset: Option<f32>,
+    hnsw_m: Option<i64>,
+    hnsw_ef_construction: Option<i64>,
+    hnsw_search_ef: Option<i64>,
+}
+// Add builder methods AI!
+
 impl VectorDimensionSpec {
     pub fn dims(&self) -> i64 {
         self.dims
