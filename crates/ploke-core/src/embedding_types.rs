@@ -1,18 +1,53 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ArcStr;
+
 /// Strongly-typed identifier for an embedding model.
-///
-/// Planning references:
-/// - `EmbeddingModelId` in `required-groundwork.md` (remote-embedding plan).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EmbeddingModelId(pub String);
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
+pub struct EmbeddingModelId(ArcStr);
+
+impl AsRef<str> for EmbeddingModelId {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl EmbeddingModelId {
+    pub fn new_from_str(model_id: &str) -> Self {
+        Self(ArcStr::from(model_id))
+    }
+}
+
+impl std::fmt::Display for EmbeddingModelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Strongly-typed identifier for an embedding provider (e.g., "openai", "local-transformers").
-///
-/// Planning references:
-/// - `EmbeddingProviderSlug` in `required-groundwork.md` (remote-embedding plan).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EmbeddingProviderSlug(pub String);
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
+pub struct EmbeddingProviderSlug(ArcStr);
+
+impl AsRef<str> for EmbeddingProviderSlug {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl EmbeddingProviderSlug {
+    pub fn new_from_str(model_id: &str) -> Self {
+        Self(ArcStr::from(model_id))
+    }
+}
+
+impl std::fmt::Display for EmbeddingModelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// AI: Add a test for the Display implementation, to verify that we are or are not printing with quotes
+// around the text in EmbeddingModelId AI!
 
 /// Data type for elements in an embedding vector.
 ///
