@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArcStr;
 
+// AI: Create a macro that will be able to replicate the methods and traits implemented on
+// `EmbeddingModelId` and `EmbeddingProviderSlug` below. AI!
+
 /// Typed wrapper for an embedding model.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingModelId(ArcStr);
@@ -49,9 +52,10 @@ impl std::fmt::Display for EmbeddingProviderSlug {
 /// Data type for elements in an embedding vector.
 ///
 /// Cozo only allows for vectors to be F32 or F64
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingDType {
+    #[default]
     F32,
     F64,
 }
@@ -59,10 +63,11 @@ pub enum EmbeddingDType {
 /// Encoding format for serialized embeddings.
 ///
 /// For now we only use raw floating-point vectors; additional formats can be added later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingEncoding {
     /// Raw dense vector representation (e.g., `<F32; dims>` columns in Cozo).
+    #[default]
     RawVector,
     /// Byte-encoded form (e.g., for transport or compressed storage).
     Bytes,
@@ -98,6 +103,16 @@ impl EmbeddingShape {
             dimension,
             dtype: EmbeddingDType::F32,
             encoding: EmbeddingEncoding::RawVector,
+        }
+    }
+
+    /// Convenience constructor to create new dimension vec with defaults (containing
+    /// Cozo-compatable values) otherwise.
+    pub fn new_dims_default(dimension: u32) -> Self {
+        Self {
+            dimension,
+            dtype: Default::default(),
+            encoding: Default::default(),
         }
     }
 }
