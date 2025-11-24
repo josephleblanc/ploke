@@ -1,5 +1,6 @@
 //! Error types for ploke-db
 
+use ploke_core::ArcStr;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
@@ -57,7 +58,16 @@ pub enum DbError {
 
     #[error("Experimental embedding vector length mismatch: expected {expected}, got {actual}")]
     ExperimentalVectorLengthMismatch { expected: usize, actual: usize },
+
+    #[error("Field required to build VectorDimensionSpec from VectorDimBuilder: {0}")]
+    BuilderFieldRequired( &'static str ),
 }
+
+// impl DbError {
+//     pub(crate) fn build_field_required(field: &'static str) -> Self {
+//         Self::BuilderFieldRequired { field }
+//     }
+// }
 
 #[derive(Error, Debug)]
 pub enum DbWarning {

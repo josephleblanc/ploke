@@ -11,7 +11,7 @@ use ploke_core::{
     EmbeddingSetId, EmbeddingShape,
 };
 #[cfg(feature = "multi_embedding")]
-use ploke_db::multi_embedding::VectorDimensionSpec;
+use ploke_db::multi_embedding::{schema::vector_dims::VectorDimBuilder, VectorDimensionSpec};
 #[cfg(not(feature = "multi_embedding"))]
 use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
@@ -43,6 +43,31 @@ pub enum EmbeddingSource {
     Cozo(CozoBackend),
     #[cfg(test)]
     Test(TestEmbeddingBackend),
+}
+
+#[cfg(feature = "multi_embedding")]
+impl From<&EmbeddingSource> for VectorDimensionSpec {
+    fn from(value: &EmbeddingSource) -> Self {
+        use EmbeddingSource::*;
+        let dims = match value {
+            Local(local_embedder) => local_embedder.dimensions(),
+            HuggingFace(backend) => backend.dimensions,
+            OpenAI(backend) => backend.dimensions,
+            Cozo(backend) => backend.dimensions,
+            #[cfg(test)]
+            Test(backend) => backend.set_id.dimension() as usize,
+        };
+        let provider = EmbeddingProviderSlug::from(value);
+        let model = EmbeddingModelId::from(value);
+
+        let builder = VectorDimBuilder::new()
+            .dims(dims as i64)
+            .provider(Some(provider))
+            .embedding_model(model);
+        builder
+            .build()
+            .expect("EmbeddingSource conversion must yield valid VectorDimensionSpec")
+    }
 }
 
 #[cfg(test)]
@@ -100,12 +125,12 @@ impl From<&EmbeddingSource> for EmbeddingProviderSlug {
 impl From<&EmbeddingSource> for EmbeddingModelId {
     fn from(source: &EmbeddingSource) -> Self {
         let model_id = match source {
-            EmbeddingSource::Local(b) => &b.model_id(),
+            EmbeddingSource::Local(b) => b.model_id(),
             EmbeddingSource::HuggingFace(b) => b.model.as_str(),
             EmbeddingSource::OpenAI(b) => &b.model,
             EmbeddingSource::Cozo(_) => "mock-model",
             #[cfg(test)]
-            EmbeddingSource::Test(b) => &b.set_id.model.as_ref(),
+            EmbeddingSource::Test(b) => b.set_id.model.as_ref(),
         };
         EmbeddingModelId::new_from_str(model_id)
     }
@@ -206,6 +231,11 @@ impl EmbeddingProcessor {
     pub fn embedding_set(&self) -> EmbeddingSetId {
         EmbeddingSetId::new(self.provider(), self.model(), self.shape())
     }
+
+    #[cfg(feature = "multi_embedding")]
+    pub fn vector_spec(&self) -> VectorDimensionSpec {
+        VectorDimensionSpec::from(&self.source)
+    }
 }
 
 // Cozo placeholder backend
@@ -284,6 +314,8 @@ pub struct IndexerTask {
     /// This couples the runtime indexer configuration (provider/model) with the
     /// multi-embedding DB helpers that operate on per-set relations.
     pub embedding_set: EmbeddingSetId,
+    #[cfg(feature = "multi_embedding")]
+    pub vector_spec: VectorDimensionSpec,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
@@ -301,6 +333,8 @@ impl IndexerTask {
     ) -> Self {
         let embedding_shape = embedding_processor.shape();
         let embedding_set = embedding_processor.embedding_set();
+        #[cfg(feature = "multi_embedding")]
+        let vector_spec = embedding_processor.vector_spec();
 
         // Sanity check: the configured set dimension must match the processor.
         debug_assert_eq!(
@@ -315,6 +349,8 @@ impl IndexerTask {
             embedding_processor,
             embedding_shape,
             embedding_set,
+            #[cfg(feature = "multi_embedding")]
+            vector_spec,
             cancellation_token,
             batch_size,
             bm25_tx: None,
@@ -358,14 +394,14 @@ impl IndexerTask {
         >,
         counter: Arc<AtomicUsize>,
         shutdown: crossbeam_channel::Sender<()>,
-        #[cfg(feature = "multi_embedding")] vector_embedding_spec: VectorDimensionSpec,
     ) -> Result<(), ploke_error::Error> {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
         let db_clone = Arc::clone(&task.db);
         let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
 
-        let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
+        let run_task = Arc::clone(&task);
+        let mut idx_handle = tokio::spawn(async move { run_task.run(progress_tx, control_rx).await });
 
         let received_completed = AtomicBool::new(false);
         let start = Instant::now();
@@ -521,7 +557,7 @@ impl IndexerTask {
         }
 
         #[cfg(feature = "multi_embedding")]
-        let vector_model = vector_embedding_spec.embedding_model().clone();
+        let vector_model = task.vector_spec.embedding_model().clone();
         #[cfg(not(feature = "multi_embedding"))]
         let vector_model = sample_vector_dimension_specs()
             .first()

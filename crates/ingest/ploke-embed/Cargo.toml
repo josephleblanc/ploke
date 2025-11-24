@@ -45,7 +45,7 @@ futures = "0.3"
 
 
 [features]
-default = ["debug"]
+default = ["debug", "multi_embedding"]
 debug = []
 update_embeds = []
 multi_embedding = [
