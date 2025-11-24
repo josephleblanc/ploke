@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::database::Database;
 use crate::error::DbError;
 use cozo::{DataValue, Db, MemStorage, NamedRows, Num, ScriptMutability};
+use ploke_core::{EmbeddingDType, EmbeddingSetId};
 use std::ops::Deref;
 use uuid::Uuid;
 
@@ -192,7 +193,7 @@ impl ExperimentalEmbeddingDbExt for Database {
 pub trait ExperimentalEmbeddingDatabaseExt: ExperimentalEmbeddingDbExt {
     fn create_idx(
         &self,
-        relation_name: &str,
+        emb_set: EmbeddingSetId,
         dims: i64,
         m: i64,
         ef_construction: i64,
@@ -252,15 +253,19 @@ pub(crate) fn parse_embedding_metadata(value: &DataValue) -> Result<Vec<(String,
 impl ExperimentalEmbeddingDatabaseExt for Database {
     fn create_idx(
         &self,
-        relation_name: &str,
+        emb_set: EmbeddingSetId,
         dims: i64,
         m: i64,
         ef_construction: i64,
         distance: HnswDistance,
     ) -> Result<(), DbError> {
+        // NOTE: The [vector] part of the script below indicates that this query expects that the
+        // target relation will have a field called "vector", which will contain the vector of the
+        // expected dim and dtype.
+        let rel_name = emb_set.rel_name;
         let script = format!(
             r#"
-::hnsw create {rel}:vector_idx {{
+::hnsw create {rel_name}:vector_idx {{
     fields: [vector],
     dim: {dims},
     dtype: F32,
@@ -269,7 +274,6 @@ impl ExperimentalEmbeddingDatabaseExt for Database {
     distance: {distance}
 }}
 "#,
-            rel = relation_name,
             dims = dims,
             m = m,
             ef_construction = ef_construction,
@@ -279,7 +283,7 @@ impl ExperimentalEmbeddingDatabaseExt for Database {
             .map(|_| ())
             .map_err(|err| DbError::ExperimentalScriptFailure {
                 action: "create_idx",
-                relation: relation_name.to_string(),
+                relation: rel_name.to_string(),
                 details: err.to_string(),
             })
     }

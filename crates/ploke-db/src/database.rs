@@ -3,25 +3,11 @@ use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::adapter::{parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt};
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::schema::vector_dims::{
-    dimension_spec_for_length, embedding_entry, sample_vector_dimension_specs, VectorDimensionSpec,
-};
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-#[cfg(feature = "multi_embedding")]
-use crate::ext::embed_utils::VectorEmbeddingStatusExt;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, EmbeddingSetId, FileData, TrackingHash};
+use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
@@ -30,60 +16,10 @@ use uuid::Uuid;
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
-/// Legacy single-column embedding width used by the primary node relations.
-/// This must stay in sync with the schema definition in `ploke-transform` and
-/// the HNSW helpers that index the `embedding` field.
-const LEGACY_EMBEDDING_DIMS: usize = 384;
-
 /// Main database connection and query interface
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
-    #[cfg(feature = "multi_embedding")]
-    feature_gates: MultiEmbeddingRuntimeConfig,
-}
-
-#[cfg(feature = "multi_embedding")]
-pub const MULTI_EMBEDDING_DB_ENV: &str = "PLOKE_MULTI_EMBEDDING_DB";
-
-#[cfg(feature = "multi_embedding")]
-#[derive(Debug, Clone)]
-pub struct MultiEmbeddingRuntimeConfig {
-    multi_embedding_db: bool,
-}
-
-#[cfg(feature = "multi_embedding")]
-impl MultiEmbeddingRuntimeConfig {
-    /// Creates a config initialized from the `PLOKE_MULTI_EMBEDDING_DB` env var.
-    pub fn from_env() -> Self {
-        Self {
-            multi_embedding_db: env_flag_enabled(MULTI_EMBEDDING_DB_ENV),
-        }
-    }
-
-    /// Enables multi-embedding DB support in the returned config.
-    pub fn enable_multi_embedding_db(mut self) -> Self {
-        self.multi_embedding_db = true;
-        self
-    }
-
-    /// Disables multi-embedding DB support in the returned config.
-    pub fn disable_multi_embedding_db(mut self) -> Self {
-        self.multi_embedding_db = false;
-        self
-    }
-
-    /// Returns whether dual-write helpers should run.
-    pub fn multi_embedding_db_enabled(&self) -> bool {
-        self.multi_embedding_db
-    }
-}
-
-#[cfg(feature = "multi_embedding")]
-impl Default for MultiEmbeddingRuntimeConfig {
-    fn default() -> Self {
-        Self::from_env()
-    }
 }
 
 #[derive(Deserialize)]
@@ -108,17 +44,6 @@ impl ImmutQuery for Database {
     fn raw_query(&self, query: &str) -> Result<NamedRows, DbError> {
         self.run_script(query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
             .map_err(DbError::from)
-    }
-}
-
-#[cfg(feature = "multi_embedding")]
-fn env_flag_enabled(key: &str) -> bool {
-    match std::env::var(key) {
-        Ok(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "on" | "yes"
-        ),
-        Err(_) => false,
     }
 }
 
@@ -169,19 +94,6 @@ impl Deref for TypedEmbedData {
     }
 }
 
-/// Strongly-typed embedding update payload used by runtime/indexer callers.
-///
-/// This struct threads the embedding set identity (provider/model/shape) into
-/// the database layer so we can validate that vectors are consistent with the
-/// configured embedding set before delegating to the legacy/multi-embedding
-/// helpers.
-#[derive(Debug, Clone)]
-pub struct EmbeddingInsert {
-    pub node_id: Uuid,
-    pub set_id: EmbeddingSetId,
-    pub vector: Vec<f32>,
-}
-
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     module_name: String,
@@ -213,33 +125,12 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
-        Self {
-            db,
-            #[cfg(feature = "multi_embedding")]
-            feature_gates: MultiEmbeddingRuntimeConfig::default(),
-        }
+        Self { db }
     }
-
-    #[cfg(feature = "multi_embedding")]
-    pub fn with_multi_embedding_config(
-        db: Db<MemStorage>,
-        config: MultiEmbeddingRuntimeConfig,
-    ) -> Self {
-        Self {
-            db,
-            feature_gates: config,
-        }
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    pub fn multi_embedding_db_enabled(&self) -> bool {
-        self.feature_gates.multi_embedding_db_enabled()
-    }
-
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self::new(db))
+        Ok(Self { db })
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -249,7 +140,7 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        Ok(Self::new(db))
+        Ok(Self { db })
     }
 
     /// Gets all the file data in the same namespace as the crate name given as argument.
@@ -311,32 +202,41 @@ impl Database {
     ///
     /// This method removes all relations that were created by the application,
     /// excluding system relations that contain ":". It's useful for resetting
-    /// the database state during testing or when reprocessing data. Internally
-    /// we rely on the relation names returned by `::relations`, which wrap user
-    /// tables in quotes. The implementation strips those quotes and builds a
-    /// single `::remove <rel1> <rel2> ...` statement, so even though the Cozo
-    /// output looks unusual the resulting removal script is valid.
+    /// the database state during testing or when reprocessing data.
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// # tokio_test::block_on(async {
+    ///
     /// use ploke_db::Database;
+    /// use cozo::ScriptMutability;
     ///
+    /// // Initialize database with schema
     /// let db = Database::init_with_schema().unwrap();
-    /// let before = db.relations_vec().unwrap();
-    /// assert!(
-    ///     before.iter().any(|name| !name.contains(':')),
-    ///     "fixture should contain user relations: {before:?}"
-    /// );
     ///
+    /// // Get initial relations
+    /// let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let initial_count = initial_relations.rows.len();
+    /// assert!(initial_count > 0, "Should have some relations after schema creation");
+    ///
+    /// // Clear all user relations
     /// db.clear_relations().await.unwrap();
     ///
-    /// let after = db.relations_vec().unwrap();
-    /// assert!(
-    ///     after.iter().all(|name| name.contains(':')),
-    ///     "only system relations should remain: {after:?}"
-    /// );
+    /// // Verify no user relations remain
+    /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let user_relations: Vec<_> = remaining_relations.rows
+    ///     .into_iter()
+    ///     .filter(|row| {
+    ///         if let cozo::DataValue::Str(name) = &row[0] {
+    ///             !name.starts_with("::")
+    ///         } else {
+    ///             false
+    ///         }
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
     /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
@@ -384,54 +284,74 @@ impl Database {
     ///
     /// ```ignore
     /// # tokio_test::block_on(async {
-    /// use ploke_db::{create_index, Database, NodeType};
-    ///
-    /// let db = Database::init_with_schema().unwrap();
-    /// create_index(&db, NodeType::Function).unwrap();
-    /// assert!(
-    ///     db.relations_vec()
-    ///         .unwrap()
-    ///         .iter()
-    ///         .any(|name| name.ends_with(":hnsw_idx"))
-    /// );
-    ///
-    /// db.clear_hnsw_idx().await.unwrap();
-    ///
-    /// assert!(
-    ///     db.relations_vec()
-    ///         .unwrap()
-    ///         .iter()
-    ///         .all(|name| !name.ends_with(":hnsw_idx"))
-    /// );
+    ///     use ploke_db::Database;
+    ///     use cozo::ScriptMutability;
+    ///     
+    ///     // Initialize database with schema
+    ///     let mut db = Database::init_with_schema().expect("Could not init database with schema");
+    ///     
+    ///     // Create some HNSW indices for testing
+    ///     // WARN: This doesn't actually work because we don't have anything to index yet, we
+    ///     // need a better test that uses a lazily loaded database that already contains embeddings.
+    ///     db.index_embeddings(ploke_db::NodeType::Function, 384).await
+    ///         .expect("Error indexing embeddings");
+    ///     
+    ///     // Count initial relations (including indices)
+    ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let hnsw_indices: Vec<_> = initial_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     // Should have some HNSW indices after creating them
+    ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
+    ///     
+    ///     // Clear all HNSW indices
+    ///     db.clear_hnsw_idx().await.expect("Error clearing hnsw indicies from database");
+    ///     
+    ///     // Verify no HNSW indices remain
+    ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let remaining_hnsw: Vec<_> = remaining_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
     /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
     pub async fn clear_hnsw_idx(&self) -> Result<(), PlokeError> {
-        let rels: Vec<String> = self
-            .relations_vec()?
-            .into_iter()
-            .filter(|n| n.ends_with(HNSW_SUFFIX))
-            .collect();
-
-        tracing::trace!(
-            target: "ploke_db::clear_hnsw_idx",
-            count = rels.len(),
-            ?rels,
-            "dropping hnsw indices"
-        );
-
-        for index in rels {
-            let drop_script = format!("::hnsw drop {}", index);
-            if let Err(err) = self.db.run_script(
-                &drop_script,
+        let rels = self
+            .db
+            .run_script(
+                "::relations",
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
-            ) {
-                let db_err = DbError::from(err);
-                if !db_err.to_string().contains("not found") {
-                    return Err(PlokeError::from(db_err));
-                }
-            }
+            )
+            .map_err(DbError::from)?
+            .rows
+            .into_iter()
+            .map(|r| r[0].to_string())
+            .filter(|n| n.ends_with(":hnsw_idx"));
+
+        for index in rels {
+            let mut script = String::from("::index drop ");
+            script.extend(index.chars().filter(|c| *c == '\"'));
+            self.db
+                .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+                .map_err(DbError::from)?;
         }
         Ok(())
     }
@@ -532,10 +452,10 @@ impl Database {
         ];
         Ok(mock_nodes)
     }
-    pub fn load_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+    pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        Ok(Self::new(new_db))
+        Ok(Self { db: new_db })
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, PlokeError> {
@@ -643,7 +563,7 @@ impl Database {
 
     pub async fn update_embeddings_batch(
         &self,
-        updates: Vec<(Uuid, Vec<f32>)>,
+        updates: Vec<(uuid::Uuid, Vec<f32>)>,
     ) -> Result<(), DbError> {
         if updates.is_empty() {
             return Ok(());
@@ -654,50 +574,24 @@ impl Database {
             Self::validate_embedding_vec(embedding)?;
         }
 
-        // Convert updates to DataValue format for the legacy single-column embedding.
-        // The legacy column is fixed-width (384 dims today), so we only project updates
-        // whose vector length matches the legacy width. All updates (including other
-        // dimensions) are still routed to the multi-embedding relations when enabled.
-        let legacy_updates_data: Vec<DataValue> = updates
-            .iter()
-            .filter(|(_, embedding)| embedding.len() == LEGACY_EMBEDDING_DIMS)
+        // Convert updates to DataValue format - as a list of [id, embedding] pairs
+        let updates_data: Vec<DataValue> = updates
+            .into_iter()
             .map(|(id, embedding)| {
-                let id_val = DataValue::Uuid(UuidWrapper(*id));
+                let id_val = DataValue::Uuid(UuidWrapper(id));
                 let embedding_val = DataValue::List(
                     embedding
-                        .iter()
-                        .map(|f| DataValue::Num(cozo::Num::Float(*f as f64)))
+                        .into_iter()
+                        .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
                         .collect(),
                 );
+                // Each update is a list containing [id, embedding]
                 DataValue::List(vec![id_val, embedding_val])
             })
             .collect();
 
-        let mut legacy_params = BTreeMap::new();
-        legacy_params.insert("updates".to_string(), DataValue::List(legacy_updates_data));
-
-        // When multi-embedding DB support is enabled, dual-write into the runtime-owned
-        // metadata/vector relations using the full update set (all supported dimensions).
-        #[cfg(feature = "multi_embedding")]
-        if self.multi_embedding_db_enabled() {
-            if let Some((_, first_vector)) = updates.first() {
-                let expected = first_vector.len();
-                let spec = dimension_spec_for_length(expected).ok_or(
-                    DbError::UnsupportedEmbeddingDimension {
-                        dims: expected as i64,
-                    },
-                )?;
-                for (_, vector) in &updates {
-                    if vector.len() != expected {
-                        return Err(DbError::ExperimentalVectorLengthMismatch {
-                            expected,
-                            actual: vector.len(),
-                        });
-                    }
-                }
-                self.write_multi_embedding_relations(&updates, spec)?;
-            }
-        }
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates_data));
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
@@ -750,11 +644,7 @@ impl Database {
             script2.push_str("\n}");
 
             let result = self
-                .run_script(
-                    &script2,
-                    legacy_params.clone(),
-                    cozo::ScriptMutability::Mutable,
-                )
+                .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
                 .map_err(|e| {
                     let error_json = cozo::format_error_as_json(e, None);
                     let error_str = serde_json::to_string_pretty(&error_json).unwrap();
@@ -774,42 +664,6 @@ impl Database {
         Ok(())
     }
 
-    /// Updates embeddings for a specific embedding set.
-    ///
-    /// This helper is intended for runtime/indexer callers that already know
-    /// which embedding set produced a given batch (provider, model, shape).
-    /// It validates that each vector length matches the set's declared
-    /// dimension and then delegates to `update_embeddings_batch` so existing
-    /// legacy + multi-embedding behavior (dual-write when enabled) remains
-    /// the single implementation.
-    pub async fn update_embeddings_batch_for_set(
-        &self,
-        inserts: Vec<EmbeddingInsert>,
-    ) -> Result<(), DbError> {
-        if inserts.is_empty() {
-            return Ok(());
-        }
-
-        let mut updates = Vec::with_capacity(inserts.len());
-        for EmbeddingInsert {
-            node_id,
-            set_id,
-            vector,
-        } in inserts
-        {
-            let expected = set_id.dimension() as usize;
-            if vector.len() != expected {
-                return Err(DbError::ExperimentalVectorLengthMismatch {
-                    expected,
-                    actual: vector.len(),
-                });
-            }
-            updates.push((node_id, vector));
-        }
-
-        self.update_embeddings_batch(updates).await
-    }
-
     /// Validate that an embedding vector is non-empty
     fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
         if embedding.is_empty() {
@@ -819,45 +673,6 @@ impl Database {
         } else {
             Ok(())
         }
-    }
-
-    /// Resolves the multi-embedding dimension spec for a given embedding set.
-    ///
-    /// This helper bridges the `EmbeddingSetId` type used by runtime/indexer
-    /// code with the static `VectorDimensionSpec` table that drives
-    /// multi-embedding relations and HNSW parameters. It enforces that:
-    ///
-    /// - the set's declared dimension is one of the supported lengths; and
-    /// - the provider/model strings match the spec for that dimension.
-    ///
-    /// Callers can use the returned spec to select the correct
-    /// per-dimension vector relation and HNSW parameters when performing
-    /// reads/searches for a specific embedding set.
-    #[cfg(feature = "multi_embedding")]
-    pub fn vector_spec_for_set(
-        &self,
-        set_id: &EmbeddingSetId,
-    ) -> Result<VectorDimensionSpec, DbError> {
-        let dim = set_id.dimension() as usize;
-        let spec = dimension_spec_for_length(dim)
-            .ok_or(DbError::UnsupportedEmbeddingDimension { dims: dim as i64 })?;
-
-        // Best-effort sanity check that the runtime set identity matches the
-        // static spec table (provider/model). This keeps subtle mismatches
-        // from quietly routing queries to the wrong relation.
-        let provider = &set_id.provider;
-        let model = &set_id.model;
-        if provider != spec.provider() || model != spec.embedding_model() {
-            return Err(DbError::QueryExecution(format!(
-                "EmbeddingSetId provider/model ({provider}, {model}) does not match \
-                 vector dimension spec ({spec_provider}, {spec_model}) for dims {dims}",
-                spec_provider = spec.provider(),
-                spec_model = spec.embedding_model(),
-                dims = spec.dims()
-            )));
-        }
-
-        Ok(spec.clone())
     }
 
     /// Fetches all primary nodes that do not yet have an embedding.
@@ -1027,8 +842,36 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
+        let mut base_script = String::new();
+        // TODO: Add pre-registered fixed rules to the system.
+        let base_script_start = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+    needs_embedding[id, name, hash, span] := *"#;
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
+
+    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{id: mod_id, tracking_hash: file_hash},
+        *file_mod { owner_id: mod_id, file_path, namespace },
+
+    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace]
+        :sort id
+        :limit $limit
+     "#;
         let rel_name = node_type.relation_str();
-        let base_script = Self::build_unembedded_batch_script(rel_name, "is_null(embedding)", "");
+
+        base_script.push_str(base_script_start);
+        base_script.push_str(rel_name);
+        base_script.push_str(base_script_end);
 
         // Create parameters map
         let mut params = BTreeMap::new();
@@ -1046,61 +889,9 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
-
-        #[cfg(feature = "multi_embedding")]
-        if self.multi_embedding_db_enabled() {
-            use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-
-            let vector_relations: Vec<ExperimentalVectorRelation> = sample_vector_dimension_specs()
-                .iter()
-                .map(|spec| {
-                    ExperimentalVectorRelation::new(
-                        spec.dims(),
-                        spec.embedding_model().clone(),
-                    )
-                })
-                .collect();
-            for relation in &vector_relations {
-                relation.ensure_registered(self)?;
-            }
-            let runtime_ids = self.embedded_ids_for_vectors(&vector_relations)?;
-            v.retain(|entry| !runtime_ids.contains(&entry.id));
-        }
         v.truncate(limit.min(count_less_flat));
         let ty_embed = TypedEmbedData { v, ty: node_type };
         Ok(ty_embed)
-    }
-
-    fn build_unembedded_batch_script(
-        rel_name: &str,
-        needs_condition: &str,
-        extra_defs: &str,
-    ) -> String {
-        format!(
-            r#"
-{ancestor_rules}
-{extra_defs}
-    needs_embedding[id, name, hash, span] := *{rel_name}{{ id, name, tracking_hash: hash, span, embedding }}, {needs_condition}
-
-    is_root_module[id] := *module{{id}}, *file_mod {{owner_id: id}}
-
-    batch[id, name, file_path, file_hash, hash, span, namespace] := 
-        needs_embedding[id, name, hash, span],
-        ancestor[id, mod_id],
-        is_root_module[mod_id],
-        *module{{id: mod_id, tracking_hash: file_hash}},
-        *file_mod {{ owner_id: mod_id, file_path, namespace }},
-
-    ?[id, name, file_path, file_hash, hash, span, namespace] := 
-        batch[id, name, file_path, file_hash, hash, span, namespace]
-        :sort id
-        :limit $limit
-     "#,
-            ancestor_rules = Self::ANCESTOR_RULES,
-            rel_name = rel_name,
-            needs_condition = needs_condition,
-            extra_defs = extra_defs,
-        )
     }
 
     pub fn get_embed_rel(
@@ -1215,10 +1006,7 @@ impl Database {
         let less_flat_row = query_result.rows.first();
         let count_less_flat = query_result.rows.len();
         if let Some(lfr) = less_flat_row {
-            tracing::info!(
-                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}",
-                rel_name
-            );
+            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
         }
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
         v.truncate(limit.min(count_less_flat));
@@ -1318,10 +1106,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         let less_flat_row = query_result.rows.first();
         let count_less_flat = query_result.rows.len();
         if let Some(lfr) = less_flat_row {
-            tracing::info!(
-                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}",
-                rel_name
-            );
+            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
         }
         let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
         v.truncate(limit.min(count_less_flat));
@@ -1347,11 +1132,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        #[cfg(feature = "multi_embedding")]
-        if self.multi_embedding_db_enabled() {
-            return self.count_pending_embeddings_multi();
-        }
-
         let lhs = r#"?[count(id)] := 
         "#;
         let mut query: String = String::new();
@@ -1374,27 +1154,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         tracing::info!("result of query:\n{:?}", result);
 
         Self::into_usize(result)
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    fn count_pending_embeddings_multi(&self) -> Result<usize, DbError> {
-        use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-
-        let vector_relations: Vec<ExperimentalVectorRelation> = sample_vector_dimension_specs()
-            .iter()
-            .map(|spec| ExperimentalVectorRelation::new(spec.dims(), spec.embedding_model().clone()))
-            .collect();
-
-        for relation in &vector_relations {
-            relation.ensure_registered(self)?;
-            self.assert_vector_column_layout(&relation.relation_name(), relation.dims())?;
-        }
-
-        let mut total = 0usize;
-        for node_type in NodeType::primary_nodes() {
-            total += self.count_pending_for_type(node_type, &vector_relations)?;
-        }
-        Ok(total)
     }
 
     pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
@@ -1475,59 +1234,12 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 }
 
-#[cfg(feature = "multi_embedding")]
-impl Database {
-    /// Writes vector relations for the provided update batch using a single
-    /// dimension spec. All vectors in the batch must match the spec's dims.
-    fn write_multi_embedding_relations(
-        &self,
-        updates: &[(Uuid, Vec<f32>)],
-        spec: &VectorDimensionSpec,
-    ) -> Result<(), DbError> {
-        use crate::multi_embedding::ExperimentalEmbeddingDbExt as _;
-
-        if updates.is_empty() {
-            return Ok(());
-        }
-
-        let expected = spec.dims() as usize;
-        for (_, vector) in updates {
-            if vector.len() != expected {
-                return Err(DbError::ExperimentalVectorLengthMismatch {
-                    expected,
-                    actual: vector.len(),
-                });
-            }
-        }
-
-        let relation = ExperimentalVectorRelation::new(spec.dims(), spec.embedding_model().clone());
-        relation.ensure_registered(self)?;
-        self.assert_vector_column_layout(&relation.relation_name(), spec.dims())?;
-
-        for (node_id, vector) in updates {
-            relation.upsert_vector_values(self, *node_id, spec, vector)?;
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bm25_index::DocData;
-    #[cfg(feature = "multi_embedding")]
-    use crate::multi_embedding::adapter::{
-        parse_embedding_metadata, ExperimentalEmbeddingDatabaseExt,
-    };
-    #[cfg(feature = "multi_embedding")]
-    use crate::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
-    #[cfg(feature = "multi_embedding")]
-    use crate::multi_embedding::vectors::ExperimentalVectorRelation;
     use crate::Database;
     use crate::DbError;
-    #[cfg(feature = "multi_embedding")]
-    use crate::MultiEmbeddingRuntimeConfig;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
     use tracing::Level;
@@ -1542,260 +1254,11 @@ mod tests {
         Database::new(db)
     }
 
-    #[test]
-    fn load_backup_restores_legacy_fixture_backup() -> Result<(), PlokeError> {
-        // The legacy single-embedding backup is used throughout the codebase as a
-        // canonical test fixture (e.g. RAG tests, HNSW tests). This test ensures
-        // that `Database::load_backup` can successfully restore that Cozo backup
-        // into a fresh in-memory database and that the resulting database has
-        // user relations populated.
-        let mut path = ploke_test_utils::workspace_root();
-        path.push(ploke_test_utils::LEGACY_FIXTURE_BACKUP_REL_PATH);
-        assert!(
-            path.exists(),
-            "expected legacy backup fixture to exist at {:?}",
-            path
-        );
-
-        let db = Database::load_backup(&path)?;
-        let relations = db.relations_vec()?;
-        assert!(
-            !relations.is_empty(),
-            "restored database should contain at least one relation"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn load_backup_empty_backup_yields_only_system_relations() -> Result<(), PlokeError> {
-        // Create a temporary empty file and treat it as a backup. Cozo currently
-        // accepts an empty backup stream when restoring into a fresh database;
-        // in that case we expect the resulting database to contain only system
-        // relations (all names contain ":") and no user-defined tables.
-        let mut path = std::env::temp_dir();
-        path.push("ploke_empty_backup_for_tests.cozo");
-
-        // Ensure the file exists and is empty.
-        std::fs::write(&path, &[] as &[u8]).expect("failed to create empty backup file");
-
-        let db = Database::load_backup(&path)?;
-
-        // Best-effort cleanup; ignore errors if the file is already gone.
-        let _ = std::fs::remove_file(&path);
-
-        let relations = db.relations_vec()?;
-        assert!(
-            relations.iter().all(|name| name.contains(':')),
-            "database restored from an empty backup should only contain system relations; got {relations:?}"
-        );
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn update_embeddings_batch_empty() -> Result<(), DbError> {
         let db = setup_db();
         db.update_embeddings_batch(vec![]).await?;
         // Should not panic/error with empty input
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn update_embeddings_dual_writes_metadata_and_vectors() -> Result<(), PlokeError> {
-        use ploke_core::EmbeddingModelId;
-
-        use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
-
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-        let test_embedding_model =
-            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-
-        let batches = db.get_unembedded_node_data(16, 0)?;
-        let (node_type, node) = batches
-            .into_iter()
-            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
-            .ok_or(DbError::NotFound)?;
-
-        let dim_spec = sample_vector_dimension_specs()
-            .first()
-            .expect("dimension spec");
-        let vector = vec![0.5; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(node.id, vector.clone())])
-            .await?;
-
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), test_embedding_model);
-        relation.ensure_registered(&db)?;
-        let vector_rows = db.vector_rows(&relation.relation_name(), node.id)?;
-        assert_eq!(
-            vector_rows.rows.len(),
-            1,
-            "expected vector row for {}",
-            relation.relation_name()
-        );
-
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn get_unembedded_respects_runtime_embeddings() -> Result<(), PlokeError> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        let before_pending = db.count_pending_embeddings()?;
-
-        // Pick a single pending node.
-        let batches = db.get_unembedded_node_data(1, 0)?;
-        let TypedEmbedData { ty, v } = batches
-            .into_iter()
-            .find(|typed| !typed.v.is_empty())
-            .expect("fixture should yield at least one pending node");
-        let target = v.first().expect("pending node entry").clone();
-
-        // Use a non-legacy dimension so the legacy embedding column remains null
-        // and filtering relies solely on runtime vector relations.
-        let dim_spec = sample_vector_dimension_specs()
-            .iter()
-            .find(|spec| spec.dims() as usize != LEGACY_EMBEDDING_DIMS)
-            .or_else(|| sample_vector_dimension_specs().first())
-            .expect("at least one vector dimension spec");
-        let vector = vec![0.5; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(target.id, vector)]).await?;
-
-        let after_pending = db.count_pending_embeddings()?;
-        assert!(
-            after_pending + 1 <= before_pending,
-            "pending count should drop after writing runtime vectors; before={before_pending}, after={after_pending}"
-        );
-
-        // Ensure the embedded node no longer appears in unembedded batches.
-        let refreshed = db.get_unembedded_node_data(16, 0)?;
-        let still_pending = refreshed
-            .into_iter()
-            .find(|typed| typed.ty == ty)
-            .map(|typed| typed.v)
-            .unwrap_or_default();
-        assert!(
-            !still_pending.iter().any(|entry| entry.id == target.id),
-            "node with runtime vectors should be filtered from unembedded results"
-        );
-
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn count_pending_embeddings_parity_legacy_vs_multi() -> Result<(), PlokeError> {
-        // Test legacy behavior (flag disabled)
-        let legacy_raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let legacy_db = Database::new(legacy_raw_db);
-        let legacy_count = legacy_db.count_pending_embeddings()?;
-        assert!(legacy_count > 0, "fixture should have pending embeddings");
-
-        // Test multi-embedding behavior (flag enabled) - use separate fixture load
-        let multi_raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let multi_db = Database::with_multi_embedding_config(multi_raw_db, config);
-        let multi_count = multi_db.count_pending_embeddings()?;
-
-        // Initially, counts should match (no runtime embeddings yet)
-        assert_eq!(
-            legacy_count, multi_count,
-            "pending counts should match when no runtime embeddings exist; legacy={legacy_count}, multi={multi_count}"
-        );
-
-        // After seeding some embeddings, multi-embedding count should decrease
-        let batches = multi_db.get_unembedded_node_data(5, 0)?;
-        let nodes_to_embed: Vec<_> = batches
-            .into_iter()
-            .flat_map(|typed| typed.v.into_iter().take(3))
-            .collect();
-
-        if !nodes_to_embed.is_empty() {
-            let dim_spec = sample_vector_dimension_specs()
-                .first()
-                .expect("dimension spec");
-            let updates: Vec<_> = nodes_to_embed
-                .iter()
-                .map(|node| (node.id, vec![0.5; dim_spec.dims() as usize]))
-                .collect();
-            multi_db.update_embeddings_batch(updates).await?;
-
-            let multi_count_after = multi_db.count_pending_embeddings()?;
-            assert!(
-                multi_count_after < multi_count,
-                "multi-embedding count should decrease after embedding; before={multi_count}, after={multi_count_after}"
-            );
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn update_embeddings_supports_multiple_dims_and_node_types() -> Result<(), PlokeError> {
-        use ploke_core::EmbeddingModelId;
-
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-        let test_embedding_model =
-            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-
-        let batches = db.get_unembedded_node_data(32, 0)?;
-        let mut selections = Vec::new();
-        for typed in batches {
-            for entry in typed.v {
-                selections.push((typed.ty, entry));
-                if selections.len() >= 2 {
-                    break;
-                }
-            }
-            if selections.len() >= 2 {
-                break;
-            }
-        }
-
-        assert!(
-            !selections.is_empty(),
-            "fixture should have at least one unembedded node"
-        );
-
-        let dim_specs: Vec<_> = sample_vector_dimension_specs().iter().take(2).collect();
-        assert!(
-            !dim_specs.is_empty(),
-            "expected at least one vector dimension spec"
-        );
-
-        // Apply embeddings per dimension spec to avoid mixing lengths in a single batch.
-        for (idx, (_node_type, entry)) in selections.iter().enumerate() {
-            let dim_spec = dim_specs[idx % dim_specs.len()];
-            let vector = vec![0.5; dim_spec.dims() as usize];
-            db.update_embeddings_batch(vec![(entry.id, vector)]).await?;
-        }
-
-        // Verify metadata + vector rows for each updated node.
-        for (idx, (node_type, entry)) in selections.iter().enumerate() {
-            use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
-
-            let dim_spec = dim_specs[idx % dim_specs.len()];
-
-            let relation =
-                ExperimentalVectorRelation::new(dim_spec.dims(), dim_spec.embedding_model().clone());
-            relation.ensure_registered(&db)?;
-            let vector_rows = db.vector_rows(&relation.relation_name(), entry.id)?;
-            assert!(
-                !vector_rows.rows.is_empty(),
-                "expected vector row for {}",
-                relation.relation_name()
-            );
-        }
-
         Ok(())
     }
 

@@ -76,9 +76,8 @@ pub fn hnsw_of_type(
     #[cfg(not(feature = "multi_embedding"))]
     let _ = emb_model;
     #[cfg(feature = "multi_embedding")]
-    if db.multi_embedding_db_enabled() {
-        return multi_embedding_hnsw_of_type(db, ty, k, ef, emb_model);
-    }
+    return multi_embedding_hnsw_of_type(db, ty, k, ef, emb_model);
+
     let mut params = std::collections::BTreeMap::new();
     let rel = ty.relation_str();
     params.insert("k".to_string(), DataValue::from(k as i64));
@@ -388,7 +387,9 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
 pub fn search_similar_args_for_set(
     args: SimilarArgsForSet,
 ) -> Result<EmbedDataVerbose, ploke_error::Error> {
-    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+    use crate::multi_embedding::{
+        schema::metadata::experimental_spec_for_node, ExperimentalEmbeddingDbExt as _,
+    };
 
     let SimilarArgsForSet {
         db,
@@ -401,12 +402,6 @@ pub fn search_similar_args_for_set(
         set_id,
     } = args;
     let emb_id = set_id.model.clone();
-
-    if !db.multi_embedding_db_enabled() {
-        return Err(ploke_error::Error::from(DbError::QueryExecution(
-            "search_similar_args_for_set requires multi_embedding_db to be enabled".into(),
-        )));
-    }
 
     let mut params = std::collections::BTreeMap::new();
     params.insert("k".to_string(), DataValue::from(k as i64));
@@ -442,37 +437,38 @@ pub fn search_similar_args_for_set(
     };
     spec.ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
-    let dim_spec = db
-        .vector_spec_for_set(set_id)
-        .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_id);
-    relation
-        .ensure_registered(db)
+    let relation = ExperimentalVectorRelation::new(vector_query.len() as i64, emb_id);
+    let emb_rel_name = relation.relation_name();
+
+    // Check if vector embedding is already in the database, no-op if not found + return error.
+    db.ensure_relation_registered(&emb_rel_name)
         .map_err(ploke_error::Error::from)?;
     let vector_rel = relation.relation_name();
 
     let mut script = String::new();
-    let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
+    let has_embedding_script = format!(
+        r#"
+    parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
-    has_embedding[id, name, hash, span] := *"#;
-    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
+    has_embedding[id, name, hash, span] := *{rel} {{id, name, tracking_hash: hash, span, embedding_vec @ 'NOW' }},
+        {vector_rel} {{ id @ 'NOW' }}
 
-    is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
+    is_root_module[id] := *module{{id @ 'NOW' }}, *file_mod {{owner_id: id @ 'NOW'}}
 
     batch[id, name, file_path, file_hash, hash, span, namespace] := 
         has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash @ 'NOW'},
-        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW'},
+        *module{{id: mod_id, tracking_hash: file_hash @ 'NOW'}},
+        *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}},
 
     ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
         batch[id, name, file_path, file_hash, hash, span, namespace],
-     "#;
+     "#
+    );
 
     // HNSW over the per-dimension vector relation backing this embedding set.
     let hnsw_script = format!(
@@ -493,9 +489,7 @@ pub fn search_similar_args_for_set(
     );
     let limit_param = ":limit $limit";
 
-    script.push_str(base_script_start);
-    script.push_str(rel);
-    script.push_str(base_script_end);
+    script.push_str(&has_embedding_script);
     script.push_str(&hnsw_script);
     script.push_str(limit_param);
 
@@ -689,10 +683,8 @@ pub fn multi_embedding_hnsw_for_set(
 
     // Resolve the dimension spec for this set (provider/model/dims) and
     // use it to select the correct per-dimension relation.
-    let dim_spec = db
-        .vector_spec_for_set(set_id)
-        .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_model);
+    let dims = set_id.dimension();
+    let relation = ExperimentalVectorRelation::new(dims as i64, emb_model);
     relation
         .ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
@@ -737,29 +729,20 @@ fn create_multi_embedding_indexes_for_type(
 ) -> Result<(), DbError> {
     use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
 
-    if !db.multi_embedding_db_enabled() {
-        return Ok(());
-    }
-    let Some(spec) = experimental_spec_for_node(ty) else {
-        return Ok(());
-    };
-    spec.ensure_registered(db)?;
-    for dim_spec in sample_vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_model.clone());
-        relation.ensure_registered(db)?;
-        if let Err(err) = db.create_idx(
-            &relation.relation_name(),
-            dim_spec.dims(),
-            dim_spec.hnsw_m(),
-            dim_spec.hnsw_ef_construction(),
-            HnswDistance::L2,
-        ) {
-            let msg = err.to_string();
-            if msg.contains("already exists") {
-                continue;
-            } else {
-                return Err(err);
-            }
+    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_model.clone());
+    relation.ensure_registered(db)?;
+    if let Err(err) = db.create_idx(
+        &relation.relation_name(),
+        dim_spec.dims(),
+        dim_spec.hnsw_m(),
+        dim_spec.hnsw_ef_construction(),
+        HnswDistance::L2,
+    ) {
+        let msg = err.to_string();
+        if msg.contains("already exists") {
+            continue;
+        } else {
+            return Err(err);
         }
     }
     Ok(())
@@ -787,8 +770,12 @@ pub fn create_index(
     ty: NodeType,
     #[cfg(feature = "multi_embedding")] emb_model: EmbeddingModelId,
 ) -> Result<(), DbError> {
-    #[cfg(feature = "multi_embedding")]
-    create_multi_embedding_indexes_for_type(db, ty, emb_model)?;
+    // short-circuit with create_multi_embedding_indexes_for_type when new feature flag enabled
+    if cfg!(feature = "multi_embedding") {
+        #[cfg(feature = "multi_embedding")]
+        create_multi_embedding_indexes_for_type(db, ty, emb_model)?;
+        return Ok(());
+    }
 
     // Create documents table
     // Create HNSW index on embeddings

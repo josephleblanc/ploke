@@ -10,10 +10,10 @@ use ploke_core::{
     EmbeddingDType, EmbeddingData, EmbeddingEncoding, EmbeddingModelId, EmbeddingProviderSlug,
     EmbeddingSetId, EmbeddingShape,
 };
-#[cfg(feature = "multi_embedding")]
-use ploke_db::multi_embedding::{schema::vector_dims::VectorDimBuilder, VectorDimensionSpec};
 #[cfg(not(feature = "multi_embedding"))]
 use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
+#[cfg(feature = "multi_embedding")]
+use ploke_db::multi_embedding::{schema::vector_dims::VectorDimBuilder, VectorDimensionSpec};
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
@@ -401,7 +401,8 @@ impl IndexerTask {
         let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
 
         let run_task = Arc::clone(&task);
-        let mut idx_handle = tokio::spawn(async move { run_task.run(progress_tx, control_rx).await });
+        let mut idx_handle =
+            tokio::spawn(async move { run_task.run(progress_tx, control_rx).await });
 
         let received_completed = AtomicBool::new(false);
         let start = Instant::now();
@@ -562,7 +563,9 @@ impl IndexerTask {
         let vector_model = sample_vector_dimension_specs()
             .first()
             .map(|spec| spec.embedding_model().clone())
-            .unwrap_or_else(|| EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"));
+            .unwrap_or_else(|| {
+                EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2")
+            });
         for ty in NodeType::primary_nodes() {
             let db_ret = ploke_db::create_index_warn(&db_clone, ty, vector_model.clone());
             tracing::info!("db_ret = {:?}", db_ret);

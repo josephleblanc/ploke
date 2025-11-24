@@ -15,8 +15,9 @@ use itertools::Itertools;
 use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_db::{
     bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
-    hnsw_all_types, CallbackManager, Database, DbError, NodeType,
+    hnsw_all_types,
     multi_embedding::schema::vector_dims::sample_vector_dimension_specs,
+    CallbackManager, Database, DbError, NodeType,
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
