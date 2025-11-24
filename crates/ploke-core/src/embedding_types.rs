@@ -2,52 +2,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArcStr;
 
-// AI: Create a macro that will be able to replicate the methods and traits implemented on
-// `EmbeddingModelId` and `EmbeddingProviderSlug` below. AI!
+/// Macro to generate common implementations for string wrapper types.
+/// This generates AsRef<str>, Display, and basic constructor methods.
+macro_rules! impl_string_wrapper {
+    ($type:ident) => {
+        impl AsRef<str> for $type {
+            fn as_ref(&self) -> &str {
+                self.0.as_ref()
+            }
+        }
+
+        impl $type {
+            pub fn new_from_str(value: &str) -> Self {
+                Self(ArcStr::from(value))
+            }
+        }
+
+        impl std::fmt::Display for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
 
 /// Typed wrapper for an embedding model.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingModelId(ArcStr);
 
-impl AsRef<str> for EmbeddingModelId {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl EmbeddingModelId {
-    pub fn new_from_str(model_id: &str) -> Self {
-        Self(ArcStr::from(model_id))
-    }
-}
-
-impl std::fmt::Display for EmbeddingModelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+impl_string_wrapper!(EmbeddingModelId);
 
 /// Typed wrapper for an embedding provider (e.g., "openai", "local-transformers").
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingProviderSlug(ArcStr);
 
-impl AsRef<str> for EmbeddingProviderSlug {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl EmbeddingProviderSlug {
-    pub fn new_from_str(model_id: &str) -> Self {
-        Self(ArcStr::from(model_id))
-    }
-}
-
-impl std::fmt::Display for EmbeddingProviderSlug {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+impl_string_wrapper!(EmbeddingProviderSlug);
 
 /// Data type for elements in an embedding vector.
 ///
