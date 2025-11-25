@@ -13,7 +13,7 @@ use ploke_core::{
 #[cfg(not(feature = "multi_embedding"))]
 use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 #[cfg(feature = "multi_embedding")]
-use ploke_db::multi_embedding::{schema::vector_dims::VectorDimBuilder, VectorDimensionSpec};
+use ploke_db::multi_embedding::{schema::vector_dims::HnswEmbedInfoBuilder, HnswEmbedInfo};
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ pub enum EmbeddingSource {
 }
 
 #[cfg(feature = "multi_embedding")]
-impl From<&EmbeddingSource> for VectorDimensionSpec {
+impl From<&EmbeddingSource> for HnswEmbedInfo {
     fn from(value: &EmbeddingSource) -> Self {
         use EmbeddingSource::*;
         let dims = match value {
@@ -60,13 +60,13 @@ impl From<&EmbeddingSource> for VectorDimensionSpec {
         let provider = EmbeddingProviderSlug::from(value);
         let model = EmbeddingModelId::from(value);
 
-        let builder = VectorDimBuilder::new()
+        let builder = HnswEmbedInfoBuilder::new()
             .dims(dims as i64)
             .provider(Some(provider))
             .embedding_model(model);
         builder
             .build()
-            .expect("EmbeddingSource conversion must yield valid VectorDimensionSpec")
+            .expect("EmbeddingSource conversion must yield valid HnswEmbedInfo")
     }
 }
 
@@ -233,8 +233,8 @@ impl EmbeddingProcessor {
     }
 
     #[cfg(feature = "multi_embedding")]
-    pub fn vector_spec(&self) -> VectorDimensionSpec {
-        VectorDimensionSpec::from(&self.source)
+    pub fn vector_spec(&self) -> HnswEmbedInfo {
+        HnswEmbedInfo::from(&self.source)
     }
 }
 
@@ -315,7 +315,7 @@ pub struct IndexerTask {
     /// multi-embedding DB helpers that operate on per-set relations.
     pub embedding_set: EmbeddingSetId,
     #[cfg(feature = "multi_embedding")]
-    pub vector_spec: VectorDimensionSpec,
+    pub vector_spec: HnswEmbedInfo,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
@@ -558,7 +558,7 @@ impl IndexerTask {
         }
 
         #[cfg(feature = "multi_embedding")]
-        let vector_model = task.vector_spec.embedding_model().clone();
+        let vector_model = task.vector_spec.clone();
         #[cfg(not(feature = "multi_embedding"))]
         let vector_model = sample_vector_dimension_specs()
             .first()

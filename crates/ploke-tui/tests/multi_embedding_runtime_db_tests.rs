@@ -12,7 +12,7 @@ use ploke_test_utils::workspace_root;
 #[cfg(feature = "multi_embedding")]
 use ploke_db::{create_index_primary, Database};
 #[cfg(feature = "multi_embedding")]
-use ploke_db::multi_embedding::{experimental_node_relation_specs, ExperimentalEmbeddingDbExt};
+use ploke_db::multi_embedding::{experimental_node_relation_specs, EmbeddingDbExt};
 
 #[cfg(feature = "multi_embedding")]
 #[tokio::test]

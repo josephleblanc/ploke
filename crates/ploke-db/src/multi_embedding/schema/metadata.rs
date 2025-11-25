@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::error::DbError;
-use crate::multi_embedding::adapter::ExperimentalEmbeddingDbExt;
+use crate::multi_embedding::adapter::EmbeddingDbExt;
 use crate::NodeType;
 use cozo::ScriptMutability;
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ pub trait ExperimentalRelationSchemaDbExt {
 
 impl ExperimentalRelationSchemaDbExt for ExperimentalRelationSchema {
     fn ensure_registered(&self, db: &Database) -> Result<(), DbError> {
-        match db.ensure_relation_registered(self.relation()) {
+        match db.ensure_relation_registered(self.typed_relation()) {
             Ok(()) => Ok(()),
             Err(DbError::ExperimentalRelationMissing { .. }) => db
                 .run_script(
@@ -23,9 +23,9 @@ impl ExperimentalRelationSchemaDbExt for ExperimentalRelationSchema {
                     ScriptMutability::Mutable,
                 )
                 .map(|_| ())
-                .map_err(|err| DbError::ExperimentalScriptFailure {
+                .map_err(|err| DbError::EmbeddingScriptFailure {
                     action: "schema_create",
-                    relation: self.relation().to_string(),
+                    relation: self.typed_relation(),
                     details: err.to_string(),
                 }),
             Err(other) => Err(other),

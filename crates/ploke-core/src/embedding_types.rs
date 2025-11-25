@@ -1,42 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ArcStr;
-
-/// Macro to generate common implementations for string wrapper types.
-/// This generates AsRef<str>, Display, and basic constructor methods.
-macro_rules! impl_string_wrapper {
-    ($type:ident) => {
-        impl AsRef<str> for $type {
-            fn as_ref(&self) -> &str {
-                self.0.as_ref()
-            }
-        }
-
-        impl $type {
-            pub fn new_from_str(value: &str) -> Self {
-                Self(ArcStr::from(value))
-            }
-        }
-
-        impl std::fmt::Display for $type {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-    };
-}
+use crate::{arcstr_wrapper, ArcStr};
 
 /// Typed wrapper for an embedding model.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingModelId(ArcStr);
 
-impl_string_wrapper!(EmbeddingModelId);
+arcstr_wrapper!(EmbeddingModelId);
 
 /// Typed wrapper for an embedding provider (e.g., "openai", "local-transformers").
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingProviderSlug(ArcStr);
 
-impl_string_wrapper!(EmbeddingProviderSlug);
+arcstr_wrapper!(EmbeddingProviderSlug);
 
 /// Data type for elements in an embedding vector.
 ///

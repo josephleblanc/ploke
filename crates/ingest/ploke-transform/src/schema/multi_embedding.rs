@@ -8,6 +8,7 @@
 use crate::error::TransformError;
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use itertools::Itertools;
+use ploke_core::embedding_set::EmbRelName;
 use std::collections::BTreeMap;
 
 /// Raw field definition used by the multi-embedding relations.
@@ -42,6 +43,9 @@ pub struct ExperimentalRelationSchema {
 }
 
 impl ExperimentalRelationSchema {
+    pub fn typed_relation(&self) -> EmbRelName {
+        EmbRelName::new_from_str(self.relation)
+    }
     pub fn relation(&self) -> &'static str {
         self.relation
     }

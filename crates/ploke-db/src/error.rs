@@ -1,7 +1,12 @@
 //! Error types for ploke-db
 
+#[cfg(feature = "multi_embedding")]
+use ploke_core::embedding_set::EmbRelName;
 use ploke_core::ArcStr;
 use thiserror::Error;
+
+#[cfg(feature = "multi_embedding")]
+use crate::multi_embedding::schema::vector_dims::HnswRelName;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum DbError {
@@ -38,9 +43,17 @@ pub enum DbError {
 
     #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
-    ExperimentalScriptFailure {
+    EmbeddingScriptFailure {
         action: &'static str,
-        relation: String,
+        relation: EmbRelName,
+        details: String,
+    },
+
+    #[cfg(feature = "multi_embedding")]
+    #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
+    HnswEmbeddingScriptFailure {
+        action: &'static str,
+        relation: HnswRelName,
         details: String,
     },
 
@@ -50,7 +63,7 @@ pub enum DbError {
 
     #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding relation {relation} missing vector column for dims {dims}")]
-    ExperimentalVectorLayoutMismatch { relation: String, dims: i64 },
+    ExperimentalVectorLayoutMismatch { relation: EmbRelName, dims: u32 },
 
     #[cfg(feature = "multi_embedding")]
     #[error("Experimental embedding metadata parse error: {reason}")]
@@ -59,7 +72,7 @@ pub enum DbError {
     #[error("Experimental embedding vector length mismatch: expected {expected}, got {actual}")]
     ExperimentalVectorLengthMismatch { expected: usize, actual: usize },
 
-    #[error("Field required to build VectorDimensionSpec from VectorDimBuilder: {0}")]
+    #[error("Field required to build HnswEmbedInfo from HnswEmbedInfoBuilder: {0}")]
     BuilderFieldRequired( &'static str ),
 }
 

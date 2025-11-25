@@ -24,7 +24,7 @@ pub use ploke_core::NodeId;
 #[cfg(feature = "multi_embedding")]
 use ploke_db::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding")]
-use ploke_db::multi_embedding::{embedding_entry, ExperimentalVectorRelation, VectorDimensionSpec};
+use ploke_db::multi_embedding::{embedding_entry, ExperimentalVectorRelation, HnswEmbedInfo};
 #[cfg(feature = "multi_embedding")]
 use ploke_db::DbError;
 use syn_parser::discovery::run_discovery_phase;

@@ -8,15 +8,13 @@ use ploke_core::EmbeddingModelId;
 use tracing::instrument;
 
 #[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::adapter::ExperimentalEmbeddingDatabaseExt;
+use crate::multi_embedding::adapter::IndexDbExt;
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::metadata::ExperimentalRelationSchemaDbExt;
 #[cfg(feature = "multi_embedding")]
 use crate::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
 #[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::vectors::ExperimentalVectorRelation;
-#[cfg(feature = "multi_embedding")]
-use crate::multi_embedding::HnswDistance;
+use crate::multi_embedding::{HnswDistance, HnswEmbedInfo};
 #[cfg(feature = "multi_embedding")]
 use ploke_core::EmbeddingSetId;
 
@@ -34,11 +32,12 @@ pub fn hnsw_all_types(
     db: &Database,
     k: usize,
     ef: usize,
-    emb_id: EmbeddingModelId,
+    #[cfg(feature = "multi_embedding")]
+    hnsw_info: HnswEmbedInfo,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
     let mut results = Vec::new();
     for ty in NodeType::primary_nodes() {
-        let ty_ret: Vec<Embedding> = hnsw_of_type(db, ty, k, ef, emb_id.clone())?;
+        let ty_ret: Vec<Embedding> = hnsw_of_type(db, ty, k, ef, hnsw_info.clone())?;
         results.extend(ty_ret);
     }
     Ok(results)
@@ -71,12 +70,13 @@ pub fn hnsw_of_type(
     ty: NodeType,
     k: usize,
     ef: usize,
-    emb_model: EmbeddingModelId,
+    #[cfg(feature = "multi_embedding")]
+    hnsw_info: HnswEmbedInfo,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
     #[cfg(not(feature = "multi_embedding"))]
     let _ = emb_model;
     #[cfg(feature = "multi_embedding")]
-    return multi_embedding_hnsw_of_type(db, ty, k, ef, emb_model);
+    return multi_embedding_hnsw_of_type(db, ty, k, ef, hnsw_info);
 
     let mut params = std::collections::BTreeMap::new();
     let rel = ty.relation_str();
@@ -388,7 +388,7 @@ pub fn search_similar_args_for_set(
     args: SimilarArgsForSet,
 ) -> Result<EmbedDataVerbose, ploke_error::Error> {
     use crate::multi_embedding::{
-        schema::metadata::experimental_spec_for_node, ExperimentalEmbeddingDbExt as _,
+        schema::metadata::experimental_spec_for_node, EmbeddingDbExt as _,
     };
 
     let SimilarArgsForSet {
@@ -426,24 +426,11 @@ pub fn search_similar_args_for_set(
     );
     let rel = ty.relation_str();
 
-    // Resolve the node + vector specs for this set so we can target the
-    // correct per-dimension relation and reuse the same batch/file-path
-    // shaping as the legacy search.
-    let Some(spec) = experimental_spec_for_node(ty) else {
-        return Ok(EmbedDataVerbose {
-            typed_data: TypedEmbedData { v: Vec::new(), ty },
-            dist: Vec::new(),
-        });
-    };
-    spec.ensure_registered(db)
-        .map_err(ploke_error::Error::from)?;
-    let relation = ExperimentalVectorRelation::new(vector_query.len() as i64, emb_id);
-    let emb_rel_name = relation.relation_name();
+    let emb_rel_name = set_id.relation_name();
 
     // Check if vector embedding is already in the database, no-op if not found + return error.
-    db.ensure_relation_registered(&emb_rel_name)
+    db.ensure_relation_registered(emb_rel_name.clone())
         .map_err(ploke_error::Error::from)?;
-    let vector_rel = relation.relation_name();
 
     let mut script = String::new();
     let has_embedding_script = format!(
@@ -454,7 +441,7 @@ pub fn search_similar_args_for_set(
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     has_embedding[id, name, hash, span] := *{rel} {{id, name, tracking_hash: hash, span, embedding_vec @ 'NOW' }},
-        {vector_rel} {{ id @ 'NOW' }}
+        {emb_rel_name} {{ id @ 'NOW' }}
 
     is_root_module[id] := *module{{id @ 'NOW' }}, *file_mod {{owner_id: id @ 'NOW'}}
 
@@ -470,11 +457,17 @@ pub fn search_similar_args_for_set(
      "#
     );
 
+    // WARN: Going to ad-hoc derive the hnsw relation name here, would be better to do something
+    // like include the HnswEmbedInfo in the SimilarArgsForSet or something, but I want to see if
+    // this is working as a basic check first.
+    // TODO: Determine whether this is suffucient or if we need to include HnswEmbedInfo in
+    // SimilarArgsForSet or not.
+    let hnsw_rel = format!("{}{}_0", emb_rel_name, HNSW_SUFFIX);
     // HNSW over the per-dimension vector relation backing this embedding set.
     let hnsw_script = format!(
         r#"
-                *{vector_rel}{{ node_id, vector: v @ 'NOW' }},
-                ~{vector_rel}:vector_idx{{ node_id |
+                *{emb_rel_name} {{ node_id, vector: v @ 'NOW' }},
+                ~{hnsw_rel} {{ node_id |
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
@@ -484,7 +477,6 @@ pub fn search_similar_args_for_set(
                 *{rel}{{ id: node_id, name @ 'NOW' }},
                 :order distance
             "#,
-        vector_rel = vector_rel,
         rel = rel,
     );
     let limit_param = ":limit $limit";
@@ -607,9 +599,9 @@ fn multi_embedding_hnsw_of_type(
     ty: NodeType,
     k: usize,
     ef: usize,
-    emb_model: EmbeddingModelId,
+    hsnw_info: HnswEmbedInfo,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
-    use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
+    use crate::multi_embedding::{schema::metadata::experimental_spec_for_node, vectors::CozoVectorExt};
 
     let Some(spec) = experimental_spec_for_node(ty) else {
         return Ok(Vec::new());
@@ -617,16 +609,11 @@ fn multi_embedding_hnsw_of_type(
     spec.ensure_registered(db)
         .map_err(ploke_error::Error::from)?;
     let mut aggregated = Vec::new();
-    for dim_spec in sample_vector_dimension_specs() {
-        let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_model.clone());
-        relation
-            .ensure_registered(db)
-            .map_err(ploke_error::Error::from)?;
         let script = format!(
             r#"
 ?[node_id, name, distance] :=
-    *{vector_rel}{{ node_id, vector: v @ 'NOW' }},
-    ~{vector_rel}:vector_idx{{ node_id |
+    *{vector_rel} {{ node_id, vector: v @ 'NOW' }},
+    ~{hnsw_rel} {{ node_id |
         query: v,
         k: {k},
         ef: {ef},
@@ -634,24 +621,14 @@ fn multi_embedding_hnsw_of_type(
     }},
     *{node_rel}{{ id: node_id, name @ 'NOW' }}
 "#,
-            vector_rel = relation.relation_name(),
+            vector_rel = hsnw_info.vector_relation(),
+            hnsw_rel = hsnw_info.hnsw_rel_name(),
             node_rel = ty.relation_str(),
             k = k,
             ef = ef,
         );
-        match db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable) {
-            Ok(rows) => aggregated.extend(named_rows_to_embeddings(rows)),
-            Err(err) => {
-                let db_err = DbError::from(err);
-                let message = db_err.to_string();
-                if message.contains("Index") && message.contains("not found") {
-                    continue;
-                } else {
-                    return Err(ploke_error::Error::from(db_err));
-                }
-            }
-        }
-    }
+    let rows = db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)?;
+    aggregated.extend(named_rows_to_embeddings(rows));
     Ok(aggregated)
 }
 
@@ -683,11 +660,8 @@ pub fn multi_embedding_hnsw_for_set(
 
     // Resolve the dimension spec for this set (provider/model/dims) and
     // use it to select the correct per-dimension relation.
-    let dims = set_id.dimension();
-    let relation = ExperimentalVectorRelation::new(dims as i64, emb_model);
-    relation
-        .ensure_registered(db)
-        .map_err(ploke_error::Error::from)?;
+    let dims = set_id.dims();
+    let vector_rel = set_id.relation_name();
 
     let script = format!(
         r#"
@@ -701,7 +675,6 @@ pub fn multi_embedding_hnsw_for_set(
     }},
     *{node_rel}{{ id: node_id, name @ 'NOW' }}
 "#,
-        vector_rel = relation.relation_name(),
         node_rel = ty.relation_str(),
         k = k,
         ef = ef,
@@ -725,26 +698,13 @@ pub fn multi_embedding_hnsw_for_set(
 fn create_multi_embedding_indexes_for_type(
     db: &Database,
     ty: NodeType,
-    emb_model: EmbeddingModelId,
+    hnsw_model: HnswEmbedInfo,
 ) -> Result<(), DbError> {
     use crate::multi_embedding::schema::metadata::experimental_spec_for_node;
 
-    let relation = ExperimentalVectorRelation::new(dim_spec.dims(), emb_model.clone());
-    relation.ensure_registered(db)?;
-    if let Err(err) = db.create_idx(
-        &relation.relation_name(),
-        dim_spec.dims(),
-        dim_spec.hnsw_m(),
-        dim_spec.hnsw_ef_construction(),
-        HnswDistance::L2,
-    ) {
-        let msg = err.to_string();
-        if msg.contains("already exists") {
-            continue;
-        } else {
-            return Err(err);
-        }
-    }
+    let relation = hnsw_model.hnsw_rel_name();
+    // relation.ensure_registered(db)?;
+    db.create_idx(hnsw_model)?;
     Ok(())
 }
 
@@ -768,12 +728,12 @@ fn create_multi_embedding_indexes_for_type(
 pub fn create_index(
     db: &Database,
     ty: NodeType,
-    #[cfg(feature = "multi_embedding")] emb_model: EmbeddingModelId,
+    #[cfg(feature = "multi_embedding")] hnsw_info: HnswEmbedInfo,
 ) -> Result<(), DbError> {
     // short-circuit with create_multi_embedding_indexes_for_type when new feature flag enabled
     if cfg!(feature = "multi_embedding") {
         #[cfg(feature = "multi_embedding")]
-        create_multi_embedding_indexes_for_type(db, ty, emb_model)?;
+        create_multi_embedding_indexes_for_type(db, ty, hnsw_info)?;
         return Ok(());
     }
 
@@ -806,13 +766,13 @@ pub fn create_index(
 
 pub fn create_index_primary(
     db: &Database,
-    #[cfg(feature = "multi_embedding")] emb_model: EmbeddingModelId,
+    #[cfg(feature = "multi_embedding")] hnsw_info: HnswEmbedInfo,
 ) -> Result<(), DbError> {
     for ty in NodeType::primary_nodes() {
         #[cfg(not(feature = "multi_embedding"))]
         create_index(db, ty)?;
         #[cfg(feature = "multi_embedding")]
-        create_index(db, ty, emb_model.clone())?;
+        create_index(db, ty, hnsw_info.clone())?;
     }
     Ok(())
 }
@@ -820,10 +780,10 @@ pub fn create_index_primary(
 pub fn create_index_warn(
     db: &Database,
     ty: NodeType,
-    #[cfg(feature = "multi_embedding")] emb_model: EmbeddingModelId,
+    #[cfg(feature = "multi_embedding")] hnsw_info: HnswEmbedInfo,
 ) -> Result<(), ploke_error::Error> {
     #[cfg(feature = "multi_embedding")]
-    create_multi_embedding_indexes_for_type(db, ty, emb_model).map_err(ploke_error::Error::from)?;
+    create_multi_embedding_indexes_for_type(db, ty, hnsw_info).map_err(ploke_error::Error::from)?;
 
     // Create documents table
     // Create HNSW index on embeddings

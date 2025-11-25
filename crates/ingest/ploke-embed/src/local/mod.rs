@@ -2,7 +2,7 @@ use candle_core::{safetensors, DType, Device, Error as CandleError, IndexOp, Ten
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, HiddenAct};
 use hf_hub::{api::sync::Api, api::sync::ApiError as HubError, Repo, RepoType};
-use ploke_db::multi_embedding::VectorDimensionSpec;
+use ploke_db::multi_embedding::HnswEmbedInfo;
 use ploke_error::Error as PlokeError;
 use ploke_transform::error::TransformError;
 use std::{collections::HashMap, fmt, path::PathBuf};
@@ -123,10 +123,10 @@ pub struct LocalEmbedder {
     dimensions: usize,
 }
 
-// Convenience conversion methods for VectorDimensionSpec for better interop with database
-// impl From<&LocalEmbedder> for VectorDimensionSpec {
+// Convenience conversion methods for HnswEmbedInfo for better interop with database
+// impl From<&LocalEmbedder> for HnswEmbedInfo {
 //     fn from(value: &LocalEmbedder) -> Self {
-//         VectorDimensionSpec {
+//         HnswEmbedInfo {
 //             dims: 
 //         }
 //     }
