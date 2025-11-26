@@ -10,10 +10,18 @@ use syn_parser::parser::nodes::{
 use syn_parser::parser::types::VisibilityKind;
 
 use crate::schema::assoc_nodes::MethodNodeSchema;
+
+#[cfg(not(feature = "multi_embedding_schema"))]
 use crate::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, MacroNodeSchema, ModuleNodeSchema,
     StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema,
 };
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::{
+    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, MacroNodeSchema, ModuleNodeSchema,
+    StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema,
+};
+
 use crate::schema::secondary_nodes::AttributeNodeSchema; // For join() functionality
                                                          //
 pub trait CommonFields
@@ -142,6 +150,7 @@ macro_rules! common_fields {
                         schema.vis_path().to_string(),
                         vis_path.unwrap_or(DataValue::Null),
                     ),
+                    #[cfg(not(feature = "multi_embedding_schema"))]
                     (schema.embedding().to_string(), DataValue::Null),
                 ])
             }

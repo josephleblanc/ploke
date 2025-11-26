@@ -1,6 +1,10 @@
+#[cfg(not(feature = "multi_embedding_schema"))]
+use crate::schema::primary_nodes::TraitNodeSchema;
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::TraitNodeSchema;
+
 use crate::{
-    macro_traits::CommonFields,
-    schema::{assoc_nodes::MethodNodeSchema, primary_nodes::TraitNodeSchema},
+    macro_traits::CommonFields, schema::assoc_nodes::MethodNodeSchema,
     transform::impls::process_methods,
 };
 

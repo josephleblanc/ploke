@@ -4,6 +4,14 @@
 use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
+
+// WARN: These schema are different for the ploke-transform feature flag "multi_embedding_schema",
+// which has been set as the default feature flag for that crate.
+// See the ploke-db Cargo.toml for the related configuration of ploke-db, which wants to only have
+// the "multi_embedding_schema" version on for ploke-transform when the ploke-db flag for
+// "multi_embedding_db" is on (as is default right now for linting purposes).
+// TODO:multi_embedding
+// Delete above warning after finishing new feature implementation for multi_embedding
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
     MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,

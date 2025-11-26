@@ -25,7 +25,8 @@ env_logger = "0.11"                                                         # Ad
 ploke-test-utils = { path = "../../test-utils", features = ["test_setup"] }
 
 [features]
-default = ["type_bearing_ids"]
+default = ["type_bearing_ids", "multi_embedding_schema"]
+multi_embedding_schema = []
 debug = []
 type_bearing_ids = []
 # get relations to have a mapping to higher level abstractions.

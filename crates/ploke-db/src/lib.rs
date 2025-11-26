@@ -13,7 +13,7 @@ mod result;
 mod span;
 pub(crate) mod utils;
 
-#[cfg(feature = "multi_embedding_experiment")]
+#[cfg(feature = "multi_embedding_db")]
 pub mod multi_embedding_experiment;
 
 pub use database::{to_usize, Database, TypedEmbedData};

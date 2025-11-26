@@ -1,6 +1,9 @@
-use crate::{
-    macro_traits::CommonFields, schema::primary_nodes::ConstNodeSchema, utils::log_db_error,
-};
+#[cfg(not(feature = "multi_embedding_schema"))]
+use crate::schema::primary_nodes::ConstNodeSchema;
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::ConstNodeSchema;
+
+use crate::{macro_traits::CommonFields, utils::log_db_error};
 
 use super::*;
 
