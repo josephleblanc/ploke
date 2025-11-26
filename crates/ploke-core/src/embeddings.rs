@@ -163,7 +163,7 @@ impl EmbeddingShape {
         }
     }
 
-    fn dtype_tag(self) -> &'static str {
+    pub fn dtype_tag(self) -> &'static str {
         match self.dtype {
             EmbeddingDType::F32 => "f32",
             EmbeddingDType::F64 => "f64",
@@ -210,6 +210,10 @@ impl EmbeddingSetId {
         let uuid = Uuid::new_v5(&Uuid::NAMESPACE_OID, payload.as_bytes());
         let truncated = u64::from_be_bytes(uuid.as_bytes()[..8].try_into().expect("uuid 16 bytes"));
         Self(truncated)
+    }
+
+    pub fn into_inner(self) -> u64 {
+        self.0
     }
 }
 
