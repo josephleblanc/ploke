@@ -755,7 +755,7 @@ pub(crate) fn collect_rebuild_sources(
 mod tests {
     use super::*;
     use crate::{
-        create_index_primary, utils::test_utils::fixture_db_backup_path, DbError,
+        create_index_primary, multi_embedding::VECTOR_DIMENSION_SPECS, utils::test_utils::fixture_db_backup_path, DbError
     };
     use lazy_static::lazy_static;
     use ploke_core::EmbeddingModelId;
@@ -798,11 +798,11 @@ mod tests {
                 .map_err(DbError::from)
                 .map_err(ploke_error::Error::from)?;
 
-            let test_embedding_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+            let test_embedding_model_hnsw_info = VECTOR_DIMENSION_SPECS[0].clone();
             #[cfg(not( feature = "multi_embedding" ))]
             create_index_primary(&db)?;
             #[cfg(feature = "multi_embedding")]
-            create_index_primary(&db, test_embedding_model)?;
+            create_index_primary(&db, test_embedding_model_hnsw_info)?;
             Ok(Arc::new( db ))
         };
     }

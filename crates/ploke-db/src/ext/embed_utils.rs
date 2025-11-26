@@ -30,10 +30,15 @@ pub trait DbEmbedUtils {
 
     fn upsert_vector_values(
         &self,
-        node_id: Uuid,
-        emb_set: &EmbeddingSetId,
-        vector: &[f32],
+        embedding_data: EmbeddingInsert
     ) -> Result<(), DbError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingInsert {
+    pub node_id: Uuid,
+    pub emb_set: EmbeddingSetId,
+    pub vector: Vec< f32 >,
 }
 
 impl DbEmbedUtils for Database {
@@ -52,10 +57,13 @@ impl DbEmbedUtils for Database {
     /// with the provided vector value, at the relation derived from the `EmbeddingSetId`
     fn upsert_vector_values(
         &self,
-        node_id: Uuid,
-        emb_set: &EmbeddingSetId,
-        vector: &[f32],
+        embedding_data: EmbeddingInsert
     ) -> Result<(), DbError> {
+        let EmbeddingInsert {
+            node_id,
+            emb_set,
+            vector,
+        } = embedding_data;
         if vector.len() != emb_set.dims() as usize {
             return Err(DbError::ExperimentalVectorLengthMismatch {
                 expected: emb_set.dims() as usize,

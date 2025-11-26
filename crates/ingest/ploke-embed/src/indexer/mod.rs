@@ -55,15 +55,13 @@ impl From<&EmbeddingSource> for HnswEmbedInfo {
             OpenAI(backend) => backend.dimensions,
             Cozo(backend) => backend.dimensions,
             #[cfg(test)]
-            Test(backend) => backend.set_id.dimension() as usize,
+            Test(backend) => backend.set_id.dims() as usize,
         };
         let provider = EmbeddingProviderSlug::from(value);
         let model = EmbeddingModelId::from(value);
 
         let builder = HnswEmbedInfoBuilder::new()
-            .dims(dims as i64)
-            .provider(Some(provider))
-            .embedding_model(model);
+            .emb_set(EmbeddingSetId::new(provider, model, EmbeddingShape::new_dims_default(dims as u32)));
         builder
             .build()
             .expect("EmbeddingSource conversion must yield valid HnswEmbedInfo")
@@ -90,7 +88,7 @@ impl TestEmbeddingBackend {
         &self,
         snippets: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        let dims = self.set_id.dimension() as usize;
+        let dims = self.set_id.dims() as usize;
         Ok(snippets
             .into_iter()
             .map(|_| vec![self.mock_vector_value; dims])
@@ -203,7 +201,7 @@ impl EmbeddingProcessor {
             EmbeddingSource::OpenAI(backend) => backend.dimensions,
             EmbeddingSource::Cozo(backend) => backend.dimensions,
             #[cfg(test)]
-            EmbeddingSource::Test(b) => b.set_id.dimension() as usize,
+            EmbeddingSource::Test(b) => b.set_id.dims() as usize,
         }
     }
 
@@ -303,17 +301,6 @@ pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
     pub embedding_processor: Arc<EmbeddingProcessor>,
-    /// Shape for all embedding vectors produced by this indexer.
-    ///
-    /// This is derived from the `EmbeddingProcessor` at construction time and
-    /// used to enforce that every batch we write is homogeneous with respect
-    /// to dimension and encoding, matching the multi-embedding DB helpers.
-    pub embedding_shape: EmbeddingShape,
-    /// Strongly-typed identifier for the embedding set this indexer writes to.
-    ///
-    /// This couples the runtime indexer configuration (provider/model) with the
-    /// multi-embedding DB helpers that operate on per-set relations.
-    pub embedding_set: EmbeddingSetId,
     #[cfg(feature = "multi_embedding")]
     pub vector_spec: HnswEmbedInfo,
     pub cancellation_token: CancellationToken,
@@ -339,7 +326,7 @@ impl IndexerTask {
         // Sanity check: the configured set dimension must match the processor.
         debug_assert_eq!(
             embedding_shape.dimension,
-            embedding_set.dimension(),
+            embedding_set.dims(),
             "EmbeddingSetId dimension must match EmbeddingProcessor shape"
         );
 
@@ -347,8 +334,6 @@ impl IndexerTask {
             db,
             io,
             embedding_processor,
-            embedding_shape,
-            embedding_set,
             #[cfg(feature = "multi_embedding")]
             vector_spec,
             cancellation_token,
@@ -916,7 +901,7 @@ impl IndexerTask {
             embeddings.first().map(|v| v.len())
         );
 
-        let dims = self.embedding_shape.dimension as usize;
+        let dims = self.vector_spec.dims() as usize;
         for embedding in &embeddings {
             if embedding.len() != dims {
                 return Err(EmbedError::DimensionMismatch {
@@ -925,23 +910,36 @@ impl IndexerTask {
                 });
             }
         }
-
+        #[cfg( not(feature = "multi_embedding") )]
         let updates = valid_data
             .into_iter()
             .zip(embeddings)
             .zip(valid_nodes.into_iter())
-            .map(|((embs, embedding), _ty)| ploke_db::EmbeddingInsert {
+            .map(|((embs, embedding), _ty)| (embs, embedding))
+            .collect();
+
+        #[cfg(feature = "multi_embedding")]
+        use ploke_db::ext::embed_utils::EmbeddingInsert;
+        #[cfg(feature = "multi_embedding")]
+        let updates = valid_data
+            .into_iter()
+            .zip(embeddings)
+            .zip(valid_nodes.into_iter())
+            .map(|((embs, embedding), _ty)| EmbeddingInsert {
                 node_id: embs.id,
-                set_id: self.embedding_set.clone(),
+                emb_set: self.vector_spec.emb_set().clone(),
                 vector: embedding,
             })
-            .collect();
+            .collect::<Vec<EmbeddingInsert>>();
 
         tracing::info!(
             "Updating database for embedding set {:?}...",
-            self.embedding_set
+            self.vector_spec.emb_set()
         );
+        #[cfg( not(feature = "multi_embedding") )]
         self.db.update_embeddings_batch_for_set(updates).await?;
+        #[cfg(feature = "multi_embedding")]
+        self.db.update_embeddings_batch(updates).await?;
         tracing::info!("Finished processing batch");
         Ok(())
     }

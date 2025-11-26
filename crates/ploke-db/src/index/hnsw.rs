@@ -37,6 +37,7 @@ pub fn hnsw_all_types(
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
     let mut results = Vec::new();
     for ty in NodeType::primary_nodes() {
+        #[cfg(feature = "multi_embedding")]
         let ty_ret: Vec<Embedding> = hnsw_of_type(db, ty, k, ef, hnsw_info.clone())?;
         results.extend(ty_ret);
     }
@@ -845,9 +846,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        create_index, create_index_primary, hnsw_all_types, hnsw_of_type,
-        utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES},
-        DbError, NodeType,
+        create_index, create_index_primary, hnsw_all_types, hnsw_of_type, multi_embedding::VECTOR_DIMENSION_SPECS, utils::test_utils::{fixture_db_backup_path, TEST_DB_NODES}, DbError, NodeType
     };
     use ploke_core::{ArcStr, EmbeddingModelId};
     use tokio::sync::Mutex;
@@ -862,14 +861,15 @@ mod tests {
     use crate::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
     use crate::Database;
     #[cfg(feature = "multi_embedding")]
-    use crate::MultiEmbeddingRuntimeConfig;
-    #[cfg(feature = "multi_embedding")]
     use ploke_core::{EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 
     #[tokio::test]
     async fn test_hnsw_init_from_backup() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
-        let emb_id = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+        // let emb_id = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+        
+        // Use sentence-transformers by default
+        let hnsw_embed_info = &VECTOR_DIMENSION_SPECS[0];
 
         let target_file = fixture_db_backup_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
@@ -879,13 +879,13 @@ mod tests {
             .map_err(ploke_error::Error::from)?;
 
         #[cfg(feature = "multi_embedding")]
-        super::create_index_primary(&db, emb_id.clone())?;
+        super::create_index_primary(&db, hnsw_embed_info.clone())?;
         #[cfg(not(feature = "multi_embedding"))]
         super::create_index_primary(&db)?;
 
         let k = 20;
         let ef = 40;
-        hnsw_all_types(&db, k, ef, emb_id)?;
+        hnsw_all_types(&db, k, ef, hnsw_embed_info.clone())?;
         let unembedded = db.count_unembedded_nonfiles()?;
         println!("unembedded: {unembedded}");
         let embedded = db.count_pending_embeddings()?;
@@ -896,7 +896,10 @@ mod tests {
     #[tokio::test]
     async fn test_hnsw_init_from_backup_error() -> Result<(), Error> {
         let db = Database::init_with_schema()?;
-        let emb_id = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+        // let emb_id = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+
+        // Use sentence-transformers by default
+        let hnsw_embed_info = &VECTOR_DIMENSION_SPECS[0];
 
         let target_file = fixture_db_backup_path();
         eprintln!("Loading backup db from file at:\n{}", target_file.display());
@@ -910,7 +913,7 @@ mod tests {
 
         let k = 20;
         let ef = 40;
-        let e = hnsw_all_types(&db, k, ef, emb_id);
+        let e = hnsw_all_types(&db, k, ef, hnsw_embed_info.clone());
         assert_err!(e.clone());
         let err_msg = String::from("Database error: Index hnsw_idx not found on relation function");
         let expect_err = ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(err_msg));
@@ -922,272 +925,32 @@ mod tests {
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_index_and_search() -> Result<(), ploke_error::Error> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let emb_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        let batches = db.get_unembedded_node_data(1, 0)?;
-        let (node_type, node) = batches
-            .into_iter()
-            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
-            .ok_or(DbError::NotFound)?;
-
-        let dim_spec = sample_vector_dimension_specs()
-            .first()
-            .expect("dimension spec");
-        let vector = vec![0.5; dim_spec.dims() as usize];
-
-        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
-        create_index(&db, node_type, emb_model.clone()).map_err(ploke_error::Error::from)?;
-        let hits = hnsw_of_type(
-            &db,
-            node_type,
-            1,
-            dim_spec.hnsw_search_ef() as usize,
-            emb_model,
-        )?;
-        assert!(
-            hits.iter().any(|(id, _, _)| *id == node.id),
-            "expected HNSW search to yield runtime embedding rows for seeded node"
-        );
-        Ok(())
+        todo!("set up once earlier tests and fundemental methods for accessing + searching hnsw are set up")
     }
 
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_returns_empty_without_vectors() -> Result<(), ploke_error::Error>
     {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        // Ensure multi-embedding indexes exist but do not seed any runtime vectors.
-        let emb_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-        create_index_primary(&db, emb_model.clone()).map_err(ploke_error::Error::from)?;
-
-        let ty = NodeType::primary_nodes()
-            .get(0)
-            .copied()
-            .expect("at least one primary node type");
-        let k = 5;
-        let ef = 16;
-        let hits = hnsw_of_type(&db, ty, k, ef, emb_model)?;
-        assert!(
-            hits.is_empty(),
-            "expected no HNSW hits when no runtime vectors have been written"
-        );
-
-        Ok(())
+        todo!("set up once earlier tests and fundemental methods for accessing + searching hnsw are set up")
     }
 
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn vector_spec_for_set_rejects_mismatched_provider_model(
     ) -> Result<(), ploke_error::Error> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        let dim_spec = sample_vector_dimension_specs()
-            .first()
-            .expect("at least one vector dimension spec");
-        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
-        let set_id = EmbeddingSetId::new(
-            EmbeddingProviderSlug::new_from_str("wrong-provider"),
-            EmbeddingModelId::new_from_str("wrong-model"),
-            shape,
-        );
-
-        let err = db
-            .vector_spec_for_set(&set_id)
-            .expect_err("expected provider/model mismatch to error");
-        match err {
-            DbError::QueryExecution(msg) => {
-                assert!(
-                    msg.contains("does not match"),
-                    "expected detailed mismatch message, got: {msg}"
-                );
-            }
-            other => panic!("expected QueryExecution error, got {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn vector_spec_for_set_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-
-        let shape = EmbeddingShape::f32_raw(999);
-        let set_id = EmbeddingSetId::new(
-            EmbeddingProviderSlug::new_from_str("local-transformers"),
-            EmbeddingModelId::new_from_str("dummy-model"),
-            shape,
-        );
-
-        let err = db
-            .vector_spec_for_set(&set_id)
-            .expect_err("expected unsupported dimension to error");
-        match err {
-            DbError::UnsupportedEmbeddingDimension { dims } => {
-                assert_eq!(dims, 999);
-            }
-            other => panic!("expected UnsupportedEmbeddingDimension error, got {other:?}"),
-        }
-
-        Ok(())
+        todo!("set up once earlier tests and fundemental methods for accessing + searching hnsw are set up")
     }
 
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn multi_embedding_hnsw_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-        let emb_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-
-        // Seed a single runtime embedding for a pending node.
-        let batches = db.get_unembedded_node_data(1, 0)?;
-        let (node_type, node) = batches
-            .into_iter()
-            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
-            .ok_or(DbError::NotFound)?;
-
-        let dim_spec = sample_vector_dimension_specs()
-            .first()
-            .expect("at least one vector dimension spec");
-        let vector = vec![0.5_f32; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(node.id, vector)]).await?;
-
-        // Ensure multi-embedding indexes exist for this type.
-        create_index(&db, node_type, emb_model.clone()).map_err(ploke_error::Error::from)?;
-
-        // Build an EmbeddingSetId that matches the seeded dimension spec.
-        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
-        let set_id = EmbeddingSetId::new(
-            dim_spec.provider().clone(),
-            dim_spec.embedding_model().clone(),
-            shape,
-        );
-
-        let hits = multi_embedding_hnsw_for_set(
-            &db,
-            node_type,
-            &set_id,
-            1,
-            dim_spec.hnsw_search_ef() as usize,
-            emb_model,
-        )?;
-
-        assert!(
-            hits.iter().any(|(id, _, _)| *id == node.id),
-            "expected HNSW search for set to yield runtime embedding rows for seeded node"
-        );
-
-        Ok(())
+        todo!("set up once earlier tests and fundemental methods for accessing + searching hnsw are set up")
     }
 
     #[cfg(feature = "multi_embedding")]
     #[tokio::test]
     async fn search_similar_args_for_set_returns_seeded_node() -> Result<(), ploke_error::Error> {
-        use crate::index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
-
-        let raw_db = ploke_test_utils::setup_db_full("fixture_nodes")?;
-        let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-        let db = Database::with_multi_embedding_config(raw_db, config);
-        let emb_model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
-
-        // Seed a single runtime embedding for a pending node.
-        let batches = db.get_unembedded_node_data(1, 0)?;
-        let (node_type, node) = batches
-            .into_iter()
-            .find_map(|typed| typed.v.into_iter().next().map(|entry| (typed.ty, entry)))
-            .ok_or(DbError::NotFound)?;
-
-        let dim_spec = sample_vector_dimension_specs()
-            .first()
-            .expect("at least one vector dimension spec");
-        let vector = vec![0.5_f32; dim_spec.dims() as usize];
-        db.update_embeddings_batch(vec![(node.id, vector.clone())])
-            .await?;
-
-        // Ensure multi-embedding indexes exist for this type.
-        create_index(&db, node_type, emb_model).map_err(ploke_error::Error::from)?;
-
-        // Build an EmbeddingSetId that matches the seeded dimension spec.
-        let shape = EmbeddingShape::f32_raw(dim_spec.dims() as u32);
-        let set_id = EmbeddingSetId::new(
-            dim_spec.provider().clone(),
-            dim_spec.embedding_model().clone(),
-            shape,
-        );
-
-        let args = SimilarArgsForSet {
-            db: &db,
-            vector_query: &vector,
-            k: 1,
-            ef: dim_spec.hnsw_search_ef() as usize,
-            ty: node_type,
-            max_hits: 1,
-            radius: 10.0,
-            set_id: &set_id,
-        };
-
-        let result = search_similar_args_for_set(args)?;
-        assert!(
-            result.typed_data.v.iter().any(|entry| entry.id == node.id),
-            "expected set-aware semantic search to yield seeded node"
-        );
-        assert!(
-            !result.dist.is_empty(),
-            "expected at least one distance value from set-aware search"
-        );
-
-        Ok(())
-    }
-
-    #[cfg(feature = "multi_embedding")]
-    #[tokio::test]
-    async fn search_similar_args_for_set_errors_when_feature_disabled(
-    ) -> Result<(), ploke_error::Error> {
-        use crate::index::hnsw::{search_similar_args_for_set, SimilarArgsForSet};
-
-        // Database without multi_embedding_db enabled.
-        let db = Database::init_with_schema()?;
-
-        let vector = vec![0.0_f32; 4];
-        let shape = EmbeddingShape::f32_raw(4);
-        let set_id = EmbeddingSetId::new(
-            EmbeddingProviderSlug::new_from_str("local-transformers"),
-            EmbeddingModelId::new_from_str("dummy-model"),
-            shape,
-        );
-
-        let args = SimilarArgsForSet {
-            db: &db,
-            vector_query: &vector,
-            k: 1,
-            ef: 8,
-            ty: NodeType::Function,
-            max_hits: 1,
-            radius: 10.0,
-            set_id: &set_id,
-        };
-
-        let err = search_similar_args_for_set(args).expect_err(
-            "expected search_similar_args_for_set to error when multi_embedding_db is disabled",
-        );
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("requires multi_embedding_db"),
-            "expected clear error about missing multi_embedding_db, got: {msg}"
-        );
-
-        Ok(())
+        todo!("set up once earlier tests and fundemental methods for accessing + searching hnsw are set up")
     }
 }

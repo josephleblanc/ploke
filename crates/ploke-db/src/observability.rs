@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     database::{to_string, to_uuid},
-    Database, DbError,
+    Database, 
 };
+use crate::error::DbError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Deserialize)]
 pub struct Validity {

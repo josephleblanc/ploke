@@ -140,6 +140,12 @@ impl HnswEmbedInfoBuilder {
         self.distance = Some(distance);
         self
     }
+    //
+    // pub fn provider(mut self, provider: EmbeddingProviderSlug) -> Self {
+    //     if let Some(emb_set) = self.emb_set {
+    //         emb_set.provider = provider;
+    //     }
+    // }
 
     fn generate_hnsw_name(&self) -> Option<HnswRelName> {
         if let Some(emb_set) = &self.emb_set {

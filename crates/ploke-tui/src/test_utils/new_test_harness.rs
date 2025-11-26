@@ -9,6 +9,7 @@ use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
 use ploke_core::ArcStr;
+use ploke_db::multi_embedding::VECTOR_DIMENSION_SPECS;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -44,11 +45,8 @@ lazy_static! {
                 .map_err(ploke_db::DbError::from)
                 .map_err(ploke_error::Error::from)?;
         }
-        let default_embedding_model = sample_vector_dimension_specs()
-            .first()
-            .expect("vector dimension specs must be present")
-            .embedding_model()
-            .clone();
+        // use sentence-transformers with sane hnsw defaults for embedding model
+        let default_embedding_model = VECTOR_DIMENSION_SPECS[0].clone();
         create_index_primary(&db, default_embedding_model)?;
         Ok(Arc::new(db))
     };

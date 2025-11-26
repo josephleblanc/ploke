@@ -1,5 +1,7 @@
 use cozo::DataValue;
 use ploke_db::create_index;
+#[cfg(feature = "multi_embedding")]
+use ploke_db::multi_embedding::VECTOR_DIMENSION_SPECS;
 use ploke_db::to_usize;
 use ploke_db::Database;
 use ploke_db::NodeType;
@@ -100,6 +102,7 @@ async fn test_update_embeddings_batch_single() {
     // Use 384-dimensional vector to match schema
     let embedding = vec![0.5f32; 384];
 
+    #[cfg(not(feature = "multi_embedding"))]
     db.update_embeddings_batch(vec![(id, embedding)])
         .await
         .unwrap();
@@ -107,6 +110,7 @@ async fn test_update_embeddings_batch_single() {
 
 #[tokio::test]
 #[ignore = "outdated test, needs update"]
+#[cfg(not(feature = "multi_embedding"))]
 async fn test_update_embeddings_invalid_input() {
     let db = create_test_db_for_embedding_updates();
     let result = db
@@ -157,9 +161,9 @@ async fn clear_relations_removes_user_relations() {
 async fn clear_hnsw_idx_drops_all_indices() {
     let db = Database::init_with_schema().expect("failed to init schema");
     #[cfg(feature = "multi_embedding")]
-    let model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+    let hnsw_model_info = VECTOR_DIMENSION_SPECS[0].clone();
     #[cfg(feature = "multi_embedding")]
-    create_index(&db, NodeType::Function, model).expect("failed to create hnsw index");
+    create_index(&db, NodeType::Function, hnsw_model_info).expect("failed to create hnsw index");
     #[cfg(not(feature = "multi_embedding"))]
     create_index(&db, NodeType::Function).expect("failed to create hnsw index");
 

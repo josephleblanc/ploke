@@ -5,7 +5,7 @@ use std::{
 
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, NodeId};
-use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
+use ploke_db::{multi_embedding::VECTOR_DIMENSION_SPECS, search_similar_args, EmbedDataVerbose, NodeType, SimilarArgs};
 #[cfg(feature = "multi_embedding")]
 use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId, EmbeddingShape};
 use ploke_db::multi_embedding::schema::vector_dims::sample_vector_dimension_specs;
@@ -227,11 +227,9 @@ pub(super) async fn load_db(
         .import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    let default_model = sample_vector_dimension_specs()
-        .first()
-        .expect("vector dimension specs must be present")
-        .embedding_model()
-        .clone();
+
+    // by default, use sentence-transformers model with sane hnsw settings from lazy static
+    let default_model = VECTOR_DIMENSION_SPECS[0].clone();
     ploke_db::create_index_primary(&state.db, default_model)?;
     // .inspect_err(|e| e.emit_error())?;
 

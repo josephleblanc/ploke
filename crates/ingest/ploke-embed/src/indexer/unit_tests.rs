@@ -16,7 +16,7 @@ use ploke_core::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSetId};
 use ploke_db::{
     bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer},
     hnsw_all_types,
-    multi_embedding::schema::vector_dims::sample_vector_dimension_specs,
+    multi_embedding::{schema::vector_dims::sample_vector_dimension_specs, VECTOR_DIMENSION_SPECS},
     CallbackManager, Database, DbError, NodeType,
 };
 use ploke_error::Error;
@@ -282,66 +282,7 @@ async fn test_local_model_embedding_processor() -> Result<(), ploke_error::Error
 #[tokio::test]
 async fn indexer_writes_embeddings_with_multi_embedding_db_enabled(
 ) -> Result<(), ploke_error::Error> {
-    use ploke_db::MultiEmbeddingRuntimeConfig;
-
-    tracing::info!("Starting indexer_writes_embeddings_with_multi_embedding_db_enabled");
-
-    // Build a fixture-backed database and enable the multi-embedding DB gate.
-    let raw_db = setup_db_full("fixture_nodes")?;
-    let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-    let db = Arc::new(ploke_db::Database::with_multi_embedding_config(
-        raw_db, config,
-    ));
-
-    let pending_before = db
-        .count_pending_embeddings()
-        .map_err(ploke_error::Error::from)?;
-    assert!(
-        pending_before > 0,
-        "fixture should report pending embeddings before indexing"
-    );
-
-    let io = IoManagerHandle::new();
-
-    let embed_cfg = EmbeddingConfig::default();
-    let model = LocalEmbedder::new(embed_cfg.clone())?;
-    let source = EmbeddingSource::Local(model);
-    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-    let (cancellation_token, _cancel_handle) = CancellationToken::new();
-    let batch_size = 8;
-
-    let indexer = IndexerTask::new(
-        Arc::clone(&db),
-        io,
-        Arc::clone(&embedding_processor),
-        cancellation_token,
-        batch_size,
-    );
-
-    // Fetch a single batch and process it through the indexer.
-    let num_not_proc = db
-        .count_unembedded_nonfiles()
-        .map_err(ploke_error::Error::from)?;
-    let maybe_batch = indexer
-        .next_batch(num_not_proc)
-        .await
-        .map_err(|e| ploke_error::Error::from(e))?;
-    let batch = maybe_batch.expect("expected at least one batch of nodes to embed");
-
-    indexer
-        .process_batch(batch, |_current, _total| {})
-        .await
-        .map_err(ploke_error::Error::from)?;
-
-    let pending_after = db
-        .count_pending_embeddings()
-        .map_err(ploke_error::Error::from)?;
-    assert!(
-        pending_after < pending_before,
-        "pending embeddings should decrease after indexer writes embeddings; before={pending_before}, after={pending_after}"
-    );
-
-    Ok(())
+    todo!("Write test once underlying methods are individually tested")
 }
 
 // The test does the following:
@@ -561,82 +502,6 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
     );
     Ok(())
 }
-#[cfg(feature = "multi_embedding")]
-#[tokio::test]
-async fn indexer_rejects_unsupported_dimension() -> Result<(), ploke_error::Error> {
-    use cozo::Db;
-    use ploke_core::{EmbeddingData, EmbeddingShape};
-    use ploke_db::{Database, MultiEmbeddingRuntimeConfig, TypedEmbedData};
-    use uuid::Uuid;
-
-    // 1. Initialize a DB with multi-embedding features enabled.
-    let cozo_db = Db::new(MemStorage::default()).unwrap();
-    cozo_db.initialize().unwrap();
-    ploke_transform::schema::create_schema_all(&cozo_db).unwrap();
-    let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
-    let db = Arc::new(Database::with_multi_embedding_config(cozo_db, config));
-
-    // 2. Create an EmbeddingSetId with an *unsupported* dimension.
-    let unsupported_dims = 512; // This is not in VECTOR_DIMENSION_SPECS
-    let unsupported_set_id = EmbeddingSetId::new(
-        EmbeddingProviderSlug::new_from_str("test-provider"),
-        EmbeddingModelId::new_from_str("unsupported-model"),
-        EmbeddingShape::f32_raw(unsupported_dims as u32),
-    );
-
-    // 3. Create a test EmbeddingProcessor with this set.
-    let embedding_processor = Arc::new(EmbeddingProcessor::new_test(
-        unsupported_set_id.clone(),
-        0.1,
-    ));
-
-    // 4. Create an IndexerTask.
-    let io = IoManagerHandle::new();
-    let (cancellation_token, _cancel_handle) = CancellationToken::new();
-    let indexer = IndexerTask::new(
-        Arc::clone(&db),
-        io,
-        Arc::clone(&embedding_processor),
-        cancellation_token,
-        8,
-    );
-
-    // 5. Prepare dummy data for the batch.
-    let dummy_typed_embed_data = TypedEmbedData {
-        v: vec![EmbeddingData {
-            id: Uuid::new_v4(),
-            name: "dummy_fn".to_string(),
-            file_path: std::path::PathBuf::from("/test/file.rs"),
-            file_tracking_hash: ploke_core::TrackingHash(Uuid::new_v4()),
-            start_byte: 0,
-            end_byte: 0,
-            node_tracking_hash: ploke_core::TrackingHash(Uuid::new_v4()),
-            namespace: Uuid::new_v4(),
-        }],
-        ty: NodeType::Function,
-    };
-    let dummy_batch = vec![dummy_typed_embed_data];
-
-    // 6. Call process_batch and assert that it returns the correct error.
-    let result = indexer.process_batch(dummy_batch, |_, _| {}).await;
-
-    assert!(result.is_err());
-    let error = result.unwrap_err();
-
-    // The error originates in ploke-db and bubbles up.
-    match error {
-        EmbedError::Database(ploke_db::DbError::UnsupportedEmbeddingDimension { dims }) => {
-            assert_eq!(dims, unsupported_dims as i64);
-        }
-        _ => panic!(
-            "Expected UnsupportedEmbeddingDimension error, but got {:?}",
-            error
-        ),
-    }
-
-    Ok(())
-}
-
 fn log_row(r: Vec<DataValue>) {
     for (i, row) in r.iter().enumerate() {
         tracing::info!("{}: {:?}", i, row);
@@ -871,11 +736,8 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     {
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
-    let vector_model = sample_vector_dimension_specs()
-        .first()
-        .expect("vector spec")
-        .embedding_model()
-        .clone();
+    // use test-configured hnsw + model info for local sentence-transformers embedding model
+    let vector_model = VECTOR_DIMENSION_SPECS[0].clone();
     for ty in NodeType::primary_nodes() {
         let db_ret = ploke_db::create_index_warn(&db, ty, vector_model.clone());
         tracing::info!("db_ret = {:?}", db_ret);

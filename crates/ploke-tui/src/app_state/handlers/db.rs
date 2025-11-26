@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use ploke_db::multi_embedding::VECTOR_DIMENSION_SPECS;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -23,11 +24,8 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     )
     .await;
 
-    let default_model = sample_vector_dimension_specs()
-        .first()
-        .expect("vector dimension specs must be present")
-        .embedding_model()
-        .clone();
+    // by default, use sentence-transformers model with sane hnsw settings from lazy static
+    let default_model = VECTOR_DIMENSION_SPECS[0].clone();
 
     for ty in NodeType::primary_nodes() {
         let create_result = create_index_warn(&state.db, ty, default_model.clone());

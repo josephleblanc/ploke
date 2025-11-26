@@ -304,3 +304,17 @@ TODO:
   - [ ] update `clear_hnsw_idx` 
     - The clear_hnsw_idx() method just deletes all HNSW indices in the database
     - new method needs to be selective based on `{model}_{dims}:hnsw_idx_{n}`
+
+## Embedding Model Configuration
+
+Q: When should this configuration be loaded?
+
+Q: Where are the other options persisted?
+
+Q: How are other embedding model options presented?
+
+- Use a similar approach to the general purpose model picker?
+  - depends on the structure of the endpoint API, e.g. is there a query-able endpoint that provides details on the embedding model in a structured format? Is the structured format universal or dependent on the particular embedding model service router?
+- Add specific endpoint support, with a limited number of supported embedding models?
+- Create a kind of form that the user can use to create the new embedding model?
+  - Would also need a verification interaction.

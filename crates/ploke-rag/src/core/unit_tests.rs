@@ -26,30 +26,31 @@ mod tests {
         });
     }
 
-    lazy_static! {
-        /// Legacy single-embedding fixture database used by baseline RAG tests.
-        ///
-        /// This database is restored from the legacy backup of an earlier parse of the
-        /// `fixture_nodes` crate and is intentionally kept on the single-embedding path so
-        /// we can compare new multi-embedding behavior against a stable reference.
-        ///
-        /// Note: HNSW indexes are not persisted in the backup and are recreated on load.
-        // TODO: Add a mutex guard to avoid cross-contamination of tests.
-        pub static ref TEST_DB_NODES: Result<Arc<Database>, Error> = {
-            let mut target_file = workspace_root();
-            // Always use the legacy single-embedding backup for this handle; multi-embedding
-            // tests rely on `TEST_DB_MULTI` instead so we can keep expectations separated.
-            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-
-            let db = Database::load_backup(&target_file)?;
-            // NOTE: The below was previously used incorrectly to re-seed the database with the
-            // primary index after the database was reloaded, but the hnsw indices already exist in
-            // the backed up database. We should not use the below approach.
-            // create_index_primary(&db)?;
-            // tracing::info!("TEST_DB_NODES: finished create_index_primary");
-            Ok(Arc::new(db))
-        };
-    }
+    // lazy_static! {
+    //     /// Legacy single-embedding fixture database used by baseline RAG tests.
+    //     ///
+    //     /// This database is restored from the legacy backup of an earlier parse of the
+    //     /// `fixture_nodes` crate and is intentionally kept on the single-embedding path so
+    //     /// we can compare new multi-embedding behavior against a stable reference.
+    //     ///
+    //     /// Note: HNSW indexes are not persisted in the backup and are recreated on load.
+    //     // TODO: Add a mutex guard to avoid cross-contamination of tests.
+    //     pub static ref TEST_DB_NODES: Result<Arc<Database>, Error> = {
+    //         let mut target_file = workspace_root();
+    //         // Always use the legacy single-embedding backup for this handle; multi-embedding
+    //         // tests rely on `TEST_DB_MULTI` instead so we can keep expectations separated.
+    //         target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+    //         todo!("add this once we have a way to load a backup db and/or set up a new db for multi_embedding");
+    //
+    //         // let db = Database::load_db(&target_file)?;
+    //         // NOTE: The below was previously used incorrectly to re-seed the database with the
+    //         // primary index after the database was reloaded, but the hnsw indices already exist in
+    //         // the backed up database. We should not use the below approach.
+    //         // create_index_primary(&db)?;
+    //         // tracing::info!("TEST_DB_NODES: finished create_index_primary");
+    //         Ok(Arc::new(db))
+    //     };
+    // }
 
     /// Multi-embedding fixture database used by set-aware RAG tests.
     ///
@@ -62,10 +63,7 @@ mod tests {
             use ploke_db::MultiEmbeddingRuntimeConfig;
             use ploke_test_utils::{seed_multi_embedding_schema, setup_db_full};
 
-            // Start from the same fixture crate used by the legacy tests, then seed the
-            // multi-embedding metadata/vector relations via the shared helpers.
             let raw_db = setup_db_full("fixture_nodes")?;
-            let config = MultiEmbeddingRuntimeConfig::from_env().enable_multi_embedding_db();
             let database = Database::with_multi_embedding_config(raw_db, config);
 
             seed_multi_embedding_schema(&database)?;

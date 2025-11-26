@@ -296,8 +296,6 @@ fn test_vector_similarity_search_identical() {
     for i in 0..384 {
         if i < 385 {
             query_vec.push(DataValue::from(i as f64 / 384.0));
-            // } else {
-            //     query_vec.push(DataValue::from(0.5))
         }
     }
 

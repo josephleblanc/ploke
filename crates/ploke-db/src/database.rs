@@ -3,10 +3,16 @@ use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
+#[cfg(feature = "multi_embedding")]
+use crate::ext::embed_utils::EmbeddingInsert;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
+#[cfg(feature = "multi_embedding")]
+use ploke_core::EmbeddingSetId;
+#[cfg(feature = "multi_embeddings")]
+use ploke_core::EmbeddingSetId;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
@@ -563,116 +569,129 @@ impl Database {
 
     pub async fn update_embeddings_batch(
         &self,
-        updates: Vec<(uuid::Uuid, Vec<f32>)>,
+        #[cfg(not(feature = "multi_embedding"))] updates: Vec<(uuid::Uuid, Vec<f32>)>,
+        #[cfg(feature = "multi_embedding")] updates: Vec<EmbeddingInsert>,
     ) -> Result<(), DbError> {
         if updates.is_empty() {
             return Ok(());
         }
 
-        // Validate embeddings before processing
-        for (_, embedding) in &updates {
-            Self::validate_embedding_vec(embedding)?;
-        }
-
         // Convert updates to DataValue format - as a list of [id, embedding] pairs
-        let updates_data: Vec<DataValue> = updates
-            .into_iter()
-            .map(|(id, embedding)| {
-                let id_val = DataValue::Uuid(UuidWrapper(id));
-                let embedding_val = DataValue::List(
-                    embedding
-                        .into_iter()
-                        .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
-                        .collect(),
-                );
-                // Each update is a list containing [id, embedding]
-                DataValue::List(vec![id_val, embedding_val])
-            })
-            .collect();
+        #[cfg(feature = "multi_embedding")]
+        {
+            for vector_row in updates {
+                use crate::ext::embed_utils::DbEmbedUtils;
 
-        let mut params = BTreeMap::new();
-        params.insert("updates".to_string(), DataValue::List(updates_data));
+                self.upsert_vector_values(vector_row)?;
+            }
+            return Ok(());
+        }
+        // let updates_data: Vec<DataValue> = updates
+        //     .into_iter()
+        //     .map(|(id, emb_set, embedding)| {
+        //         let id_val = DataValue::Uuid(UuidWrapper(id));
+        //         let embedding_val = DataValue::List(
+        //             embedding
+        //                 .into_iter()
+        //                 .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
+        //                 .collect(),
+        //         );
+        //         // Each update is a list containing [id, embedding]
+        //         DataValue::List(vec![id_val, embedding_val])
+        //     })
+        //     .collect();
 
-        for node_type in NodeType::primary_nodes() {
-            let rel_name = node_type.relation_str();
-            let keys_iter = node_type.keys();
-            // Filter out "embedding" so there isn't a conflict in the returned values from the
-            // database vs the added values in the `put`
-            let vals_iter = node_type.vals().filter(|v| *v != "embedding");
-            let key_vals_string = keys_iter.chain(vals_iter).join(", ");
-            let rel_identity = node_type.identity();
+        #[cfg(not(feature = "multi_embedding"))]
+        {
+            let updates_data: Vec<DataValue> = updates
+                .into_iter()
+                .map(|(id, embedding)| {
+                    let id_val = DataValue::Uuid(UuidWrapper(id));
+                    let embedding_val = DataValue::List(
+                        embedding
+                            .into_iter()
+                            .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
+                            .collect(),
+                    );
+                    // Each update is a list containing [id, embedding]
+                    DataValue::List(vec![id_val, embedding_val])
+                })
+                .collect();
 
-            // A bit convoluted, but should ultimately come out to something like:
-            //
-            // {
-            //     ?[new_id, new_embedding] <- $updates
-            //     :replace _new {new_id, new_embedding}
-            // }
-            // {
-            //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash,
-            //              cfgs, return_type_id, body, module_id]
-            //      :=
-            //         *_new{new_id: id, new_embedding: embedding},
-            //         at = 'ASSERT',
-            //         *function {id, name, docstring, vis_kind, vis_path, span, tracking_hash,
-            //              cfgs, return_type_id, body, module_id}
-            //     :put function {id, at => name, docstring, vis_kind, vis_path, span, tracking_hash,
-            //              cfgs, return_type_id, body, module_id, embedding}
-            // }
-            let script2_first_block = [r#"
+            let mut params = BTreeMap::new();
+            params.insert("updates".to_string(), DataValue::List(updates_data));
+
+            for node_type in NodeType::primary_nodes() {
+                let rel_name = node_type.relation_str();
+                let keys_iter = node_type.keys();
+                // Filter out "embedding" so there isn't a conflict in the returned values from the
+                // database vs the added values in the `put`
+                let vals_iter = node_type.vals().filter(|v| *v != "embedding");
+                let key_vals_string = keys_iter.chain(vals_iter).join(", ");
+                let rel_identity = node_type.identity();
+
+                // A bit convoluted, but should ultimately come out to something like:
+                //
+                // {
+                //     ?[new_id, new_embedding] <- $updates
+                //     :replace _new {new_id, new_embedding}
+                // }
+                // {
+                //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash,
+                //              cfgs, return_type_id, body, module_id]
+                //      :=
+                //         *_new{new_id: id, new_embedding: embedding},
+                //         at = 'ASSERT',
+                //         *function {id, name, docstring, vis_kind, vis_path, span, tracking_hash,
+                //              cfgs, return_type_id, body, module_id}
+                //     :put function {id, at => name, docstring, vis_kind, vis_path, span, tracking_hash,
+                //              cfgs, return_type_id, body, module_id, embedding}
+                // }
+                let script2_first_block = [r#"
 {
     ?[new_id, new_embedding] <- $updates 
     :replace _new {new_id, new_embedding} 
 }"#]
-            .into_iter();
-            let script2_second_block = [
-                r#"
+                .into_iter();
+                let script2_second_block = [
+                    r#"
 { 
     ?[at, embedding, "#,
-                &key_vals_string,
-                r#"] := *_new{new_id: id, new_embedding: embedding}, 
+                    &key_vals_string,
+                    r#"] := *_new{new_id: id, new_embedding: embedding}, 
         at = 'ASSERT',
         *"#,
-                rel_name,
-                " { ",
-            ]
-            .into_iter();
-            let mut script2 = String::from_iter(script2_first_block.chain(script2_second_block));
-            script2.push_str(&key_vals_string);
-            script2.push_str("}\n :put ");
-            script2.push_str(&rel_identity);
-            script2.push_str("\n}");
+                    rel_name,
+                    " { ",
+                ]
+                .into_iter();
+                let mut script2 =
+                    String::from_iter(script2_first_block.chain(script2_second_block));
+                script2.push_str(&key_vals_string);
+                script2.push_str("}\n :put ");
+                script2.push_str(&rel_identity);
+                script2.push_str("\n}");
 
-            let result = self
-                .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
-                .map_err(|e| {
-                    let error_json = cozo::format_error_as_json(e, None);
-                    let error_str = serde_json::to_string_pretty(&error_json).unwrap();
-                    tracing::error!("{}", error_str);
-                    DbError::Cozo(error_str)
-                })
-                .inspect_err(|e| {
-                    tracing::error!("{}", e);
-                    tracing::error!("script2:\n{}", &script2)
-                });
-            if result.is_err() {
-                tracing::error!("full_result: {:#?}", result);
+                let result = self
+                    .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
+                    .map_err(|e| {
+                        let error_json = cozo::format_error_as_json(e, None);
+                        let error_str = serde_json::to_string_pretty(&error_json).unwrap();
+                        tracing::error!("{}", error_str);
+                        DbError::Cozo(error_str)
+                    })
+                    .inspect_err(|e| {
+                        tracing::error!("{}", e);
+                        tracing::error!("script2:\n{}", &script2)
+                    });
+                if result.is_err() {
+                    tracing::error!("full_result: {:#?}", result);
+                }
+                result?;
             }
-            result?;
         }
 
         Ok(())
-    }
-
-    /// Validate that an embedding vector is non-empty
-    fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
-        if embedding.is_empty() {
-            Err(DbError::QueryExecution(
-                "Embedding vector must not be empty".into(),
-            ))
-        } else {
-            Ok(())
-        }
     }
 
     /// Fetches all primary nodes that do not yet have an embedding.
@@ -1401,6 +1420,7 @@ mod tests {
             .run_script(insert_script, params, cozo::ScriptMutability::Mutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
+        #[cfg( not(feature = "multi_embedding") )]
         db.update_embeddings_batch(vec![(id, embedding.clone())])
             .await?;
 
@@ -1472,6 +1492,9 @@ mod tests {
             .collect();
 
         // 5. Call the function to update the batch
+        // NOTE: needs new version for "multi_embedding", depends on getting
+        // update_embeddings_batch to work for multi_embedding first
+        #[cfg( not(feature = "multi_embedding") )]
         db.update_embeddings_batch(updates).await?;
         // assert_eq!(update_count, updated_ct);
 

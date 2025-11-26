@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use lazy_static::lazy_static;
+#[cfg(feature = "test_harness")]
+use ploke_db::multi_embedding::VECTOR_DIMENSION_SPECS;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -44,11 +46,8 @@ lazy_static! {
                 .expect("import_from_backup");
         }
         // Ensure primary index exists for consistent behavior in tests using Rag/DB lookups
-        let default_embedding_model = sample_vector_dimension_specs()
-            .first()
-            .expect("vector dimension specs must be present")
-            .embedding_model()
-            .clone();
+        // use sentence-transformers with sane hnsw defaults for embedding model
+        let default_embedding_model = VECTOR_DIMENSION_SPECS[0].clone();
         create_index_primary(&db, default_embedding_model).expect("create primary index");
 
         let db_handle = Arc::new(db);

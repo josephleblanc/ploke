@@ -18,7 +18,6 @@ pub(crate) mod utils;
 
 
 pub use database::{to_usize, Database, TypedEmbedData};
-#[cfg(feature = "multi_embedding")]
 pub use error::DbError;
 pub use index::hnsw::{
     create_index, create_index_primary, create_index_warn, hnsw_all_types, hnsw_of_type,

@@ -1,4 +1,5 @@
 use ploke_db::ext::embed_utils::{DbEmbedUtils, HasNullEmbeds};
+use ploke_db::multi_embedding::VECTOR_DIMENSION_SPECS;
 use ploke_db::{hnsw_of_type, Database, DbError, NodeType};
 use ploke_core::EmbeddingModelId;
 use ploke_error::Error as PlokeError;
@@ -76,7 +77,7 @@ fn legacy_hnsw_returns_any_consts_in_fixture() -> Result<(), PlokeError> {
         .map_err(DbError::from)
         .map_err(PlokeError::from)?;
 
-    let model = EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2");
+    let model = VECTOR_DIMENSION_SPECS[0].clone();
     #[cfg(feature = "multi_embedding")]
     ploke_db::create_index_primary(&db, model.clone()).map_err(PlokeError::from)?;
     #[cfg(not(feature = "multi_embedding"))]
