@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 use itertools::Itertools;
 use ploke_core::embeddings::{EmbRelName, EmbeddingSet, EmbeddingSetId};
+use tracing::info;
 
 use crate::{Database, DbError, NodeType};
 
@@ -45,24 +46,20 @@ pub trait EmbeddingExt {
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
-    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        // 1. Get rel_name from embedding_set_id
-        // 2. Build the main query
-        let all_node_types_unembedded_rules = NodeType::primary_nodes()
+    fn count_pending_embeddings(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        let rel_name = embedding_set.rel_name.to_string().replace('-', "_");
+        let conditions = NodeType::primary_nodes()
             .iter()
             .map(|node_type| {
                 format!(
-                    "unembedded[id] := *{node_rel}{{id}}, !*{embed_rel}{{node_id: id}}",
+                    "(*{node_rel}{{id}}, not *{embed_rel}{{node_id: id}})",
                     node_rel = node_type.relation_str(),
-                    embed_rel = embedding_set_id.rel_name
+                    embed_rel = &rel_name
                 )
             })
-            .join("\n");
+            .join(" or ");
 
-        let query = format!(
-            "{}\n?[count(id)] := unembedded[id]",
-            all_node_types_unembedded_rules
-        );
+        let query = format!("?[count(id)] := {}", conditions);
 
         let result = self
             .run_script(
@@ -94,7 +91,7 @@ unembedded_file_mod[id] := *module{{id}}, *file_mod{{owner_id: id}},
 
 ?[count(id)] := unembedded_file_mod[id]
 "#,
-            embed_rel = embedding_set.rel_name
+            embed_rel = embedding_set.rel_name.to_string().replace('-', "_")
         );
 
         let result = self
@@ -195,29 +192,76 @@ mod tests {
     //     ploke_test_utils::setup_db_full("fixture_nodes")?;
     // }
 
-    use cozo::MemStorage;
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use cozo::{MemStorage, ScriptMutability};
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
+    use tracing::Level;
 
-    use crate::{multi_embedding::db_ext::EmbeddingExt, Database};
+    use crate::{
+        multi_embedding::{
+            db_ext::EmbeddingExt,
+            schema::{EmbeddingSetExt, EmbeddingVector},
+        },
+        Database,
+    };
+    fn setup_db() -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+        ploke_test_utils::setup_db_full("fixture_nodes")
+    }
+    use crate::multi_embedding::schema::CozoEmbeddingSetExt;
 
-    #[cfg(feature = "multi_embedding_db")]
+    // #[cfg(feature = "multi_embedding_db")]
     #[test]
     fn multi_pending_embeddings_count_basic() -> Result<(), ploke_error::Error> {
+        ploke_test_utils::init_test_tracing(Level::INFO);
         // let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        let db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        // let db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        let db = setup_db()?;
 
-        let embedding_set_id = EmbeddingSet::new(
-            EmbeddingProviderSlug::new_from_str("test-provider"),
-            EmbeddingModelId::new_from_str("test-model"),
+        let embedding_set = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("test_provider"),
+            EmbeddingModelId::new_from_str("test_model"),
             EmbeddingShape::new_dims_default(123),
         );
-        let count = <cozo::Db<MemStorage> as EmbeddingExt>::count_pending_embeddings(
-            &db,
-            &embedding_set_id,
-        )?;
-        tracing::info!("Total relations found with new method:\n\t{count}");
+        let create_rel_script = embedding_set.script_create();
+
+        tracing::info!("Running script:\n{create_rel_script}");
+        let db_result = db
+            .run_script(
+                &create_rel_script,
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
+        tracing::info!("db_result: {:?}", db_result.rows);
+
+        let put_rel_script = embedding_set.script_put();
+        tracing::info!("Running script:\n{put_rel_script}");
+        let db_result = db
+            .run_script(&put_rel_script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        tracing::info!("db_result: {:?}", db_result.rows);
+
+        let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
+        tracing::info!("Running script:\n{create_vector_script}");
+        let db_result = db
+            .run_script(
+                &create_vector_script,
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
+        tracing::info!("db_result: {:?}", db_result.rows);
+
+        tracing::info!("counting unembedded vectors: {:?}", db_result.rows);
+        let count =
+            <cozo::Db<MemStorage> as EmbeddingExt>::count_pending_embeddings(&db, &embedding_set)?;
+        tracing::info!("Total nodes found without embeddings using new method:\n\t{count}");
+
+        panic!();
 
         Ok(())
     }

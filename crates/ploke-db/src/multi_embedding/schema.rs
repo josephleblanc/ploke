@@ -29,6 +29,8 @@ pub struct EmbeddingVector {
     pub embedding_set_id: EmbeddingSetId,
 }
 
+impl CozoEmbeddingSetExt for EmbeddingSet {}
+
 impl EmbeddingVector {
     pub fn script_create_from_set(embedding_set: &EmbeddingSet) -> String {
         format!(
@@ -87,30 +89,39 @@ pub trait EmbeddingSetExt {
 }
 
 pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
+    fn script_identity(&self) -> &'static str {
+        "node_id, at => provider, model, dims, embedding_dtype, rel_name"
+    }
+
+    fn script_fields(&self) -> &'static str {
+        "node_id, at, provider, model, dims, embedding_dtype, rel_name"
+    }
+
     fn script_create() -> &'static str {
         ":create embedding_set { 
-id: Int,
-at: Validity,
+id: String,
+at: Validity
 =>
 provider: String, 
 model: String, 
 dims: Int,
-embedding_dtype: String
+embedding_dtype: String,
 rel_name: String
 }"
     }
 
     fn script_put(&self) -> String {
         format!(
-            ":put embedding_set {{
-id: {hash_id},
-at: 'ASSERT',
-provider: {provider}, 
-model: {model}, 
+            r#"?[{fields}] <- [[ id: '{hash_id}', at: 'ASSERT', provider: '{provider}', model: '{model}', 
 dims: {shape_dims},
-embedding_dtype: {shape_embedding_dtype},
-rel_name: {rel_name}
-}}",
+embedding_dtype: '{shape_embedding_dtype}',
+rel_name: '{rel_name}' ]]
+
+:put embedding_set {{
+{identity}
+}}"#,
+            identity = self.script_identity(),
+            fields = self.script_fields(),
             hash_id = self.hash_id(),
             provider = self.provider(),
             model = self.model(),

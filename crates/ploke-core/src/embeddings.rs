@@ -90,18 +90,14 @@ impl EmbeddingSet {
         &self.rel_name
     }
 
-    pub fn script_identity(&self) -> String {
-        format!(
-            "{} {{ node_id, embedding_model, provider, at => embedding_dims, vector }}",
-            self.relation_name()
-        )
+    pub fn script_identity(&self) -> &'static str {
+        "embedding_set {{ node_id, embedding_model, provider, at => embedding_dims, vector }}"
     }
 
     pub fn script_create(&self) -> String {
         format!(
-            ":create {} {{ node_id: Uuid, embedding_model: String, provider: String, at: Validity => embedding_dims: Int, vector: <F32; {}> }}",
-            self.relation_name(),
-            self.dims()
+            ":create embedding_set {{ node_id: Uuid, embedding_model: String, provider: String, at: Validity => embedding_dims: Int, vector: <F32; {}> }}",
+            self.shape.dimension
         )
     }
 }
