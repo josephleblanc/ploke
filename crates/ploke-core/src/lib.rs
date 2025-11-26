@@ -23,6 +23,7 @@ pub use io_types::{
 mod arc_str;
 pub mod rag_types;
 pub use arc_str::ArcStr;
+pub mod embeddings;
 
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {

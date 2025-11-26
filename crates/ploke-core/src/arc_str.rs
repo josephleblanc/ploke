@@ -8,6 +8,31 @@ use std::sync::Arc;
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct ArcStr(pub Arc<str>);
 
+/// Macro to generate common implementations for string wrapper types.
+/// This generates AsRef<str>, Display, and basic constructor methods.
+#[macro_export]
+macro_rules! arcstr_wrapper {
+    ($type:ident) => {
+        impl AsRef<str> for $type {
+            fn as_ref(&self) -> &str {
+                self.0.as_ref()
+            }
+        }
+
+        impl $type {
+            pub fn new_from_str(value: &str) -> Self {
+                Self(ArcStr::from(value))
+            }
+        }
+
+        impl std::fmt::Display for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
 impl fmt::Debug for ArcStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Debug prints with quotes like a normal &str
@@ -31,6 +56,12 @@ impl AsRef<str> for ArcStr {
 impl Borrow<str> for ArcStr {
     fn borrow(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::fmt::Display for ArcStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
