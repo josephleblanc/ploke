@@ -1131,6 +1131,34 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         Ok(count)
     }
 
+    // ASDF
+    #[cfg(not(feature = "multi_embedding_db"))]
+    pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
+        let lhs = r#"?[count(id)] := 
+        "#;
+        let mut query: String = String::new();
+
+        query.push_str(lhs);
+        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
+            query.push_str(&format!(
+                "*{} {{ id, embedding: null, tracking_hash, span @ 'NOW' }}",
+                primary_node.relation_str()
+            ));
+            if i + 1 < NodeType::primary_nodes().len() {
+                query.push_str(" or ")
+            }
+        }
+        tracing::info!("count nodes with query:\n{}", query);
+        let result = self
+            .db
+            .run_script_read_only(&query, Default::default())
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        tracing::info!("result of query:\n{:?}", result);
+
+        Self::into_usize(result)
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
         let lhs = r#"?[count(id)] := 
         "#;
@@ -1263,6 +1291,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // ASDF
     async fn test_get_file_data() -> Result<(), PlokeError> {
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
