@@ -34,5 +34,6 @@ chrono = "0.4"
 
 [features]
 default = ["test_setup"]
+multi_embedding_test = ["ploke-transform/multi_embedding_schema"]
 test_setup = []
 # Feature flag for the UUID refactor in test-utils (REMOVED)

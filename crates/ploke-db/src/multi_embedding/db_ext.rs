@@ -187,3 +187,38 @@ unembedded_file_mod[id] := *module{{id}}, *file_mod{{owner_id: id}},
             .ok_or(DbError::NotFound)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // #[cfg(feature = "multi_embedding_db")]
+    // fn setup_db() -> Result<(), ploke_error::Error> {
+    //     ploke_test_utils::setup_db_full("fixture_nodes")?;
+    // }
+
+    use cozo::MemStorage;
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+
+    use crate::{multi_embedding::db_ext::EmbeddingExt, Database};
+
+    #[cfg(feature = "multi_embedding_db")]
+    #[test]
+    fn multi_pending_embeddings_count_basic() -> Result<(), ploke_error::Error> {
+        // let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        let db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+
+        let embedding_set_id = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("test-provider"),
+            EmbeddingModelId::new_from_str("test-model"),
+            EmbeddingShape::new_dims_default(123),
+        );
+        let count = <cozo::Db<MemStorage> as EmbeddingExt>::count_pending_embeddings(
+            &db,
+            &embedding_set_id,
+        )?;
+        tracing::info!("Total relations found with new method:\n\t{count}");
+
+        Ok(())
+    }
+}
