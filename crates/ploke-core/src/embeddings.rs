@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{arcstr_wrapper, ArcStr};
 
@@ -11,16 +12,18 @@ use crate::{arcstr_wrapper, ArcStr};
 ///
 /// The `embedding_sets` relation will be the database-stored basic info on an embedding model that
 /// is used to create some set of vector embeddings, and will exist alongside `HnswEmbedInfo`,
-/// which will also have the `rel_name` to reference the `EmbeddingSetId`.
+/// which will also have the `rel_name` to reference the `EmbeddingSet`.
 ///
-/// We want to have an EmbeddingSetId, separate from the data on hnsw indices in `HnswEmbedInfo`,
+/// We want to have an EmbeddingSet, separate from the data on hnsw indices in `HnswEmbedInfo`,
 /// to track the embedding model and provider themselves, which may map to multiple `HnswEmbedInfo`
 /// (e.g. different hnsw search settings, same underlying embedding model).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EmbeddingSetId {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd)]
+pub struct EmbeddingSet {
     pub provider: EmbeddingProviderSlug,
     pub model: EmbeddingModelId,
     pub shape: EmbeddingShape,
+    /// Deterministic truncated-UUID identifier for this embedding set, used for joins.
+    pub hash_id: EmbeddingSetId,
     /// The name created by {model}_{dims}, used as the relation name in the database for the
     /// vector embeddings generated from this embedding model, which will be a relation with only
     /// the vector and the related node_id it points towards.
@@ -55,7 +58,7 @@ impl std::fmt::Display for EmbRelName {
     }
 }
 
-impl EmbeddingSetId {
+impl EmbeddingSet {
     /// Convenience constructor from components.
     pub fn new(
         provider: EmbeddingProviderSlug,
@@ -64,10 +67,12 @@ impl EmbeddingSetId {
     ) -> Self {
         let dims = shape.dimension;
         let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}"));
+        let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,
             model,
             shape,
+            hash_id,
             rel_name,
         }
     }
@@ -116,7 +121,7 @@ arcstr_wrapper!(EmbeddingProviderSlug);
 /// Data type for elements in an embedding vector.
 ///
 /// Cozo only allows for vectors to be F32 or F64
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingDType {
     #[default]
@@ -129,7 +134,7 @@ pub enum EmbeddingDType {
 /// Planning references:
 /// - `EmbeddingShape` in `required-groundwork.md`
 /// - Remote embedding trait/system design reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd)]
 pub struct EmbeddingShape {
     pub dimension: u32,
     pub dtype: EmbeddingDType,
@@ -157,6 +162,61 @@ impl EmbeddingShape {
             dtype: Default::default(),
         }
     }
+
+    fn dtype_tag(self) -> &'static str {
+        match self.dtype {
+            EmbeddingDType::F32 => "f32",
+            EmbeddingDType::F64 => "f64",
+        }
+    }
+}
+
+/// Deterministic identifier for an embedding set, derived from provider+model+shape.
+///
+/// Uses UUID v5 over a stable string payload, truncated to 64 bits for compact storage. This is
+/// meant for internal joins; it is not intended as a cryptographic hash.
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Serialize, Deserialize,
+)]
+pub struct EmbeddingSetId(u64);
+
+impl EmbeddingSetId {
+    /// Deterministically derive an `EmbeddingSetId` from the provider/model/shape triple.
+    ///
+    /// ```
+    /// use ploke_core::embeddings::{
+    ///     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    /// };
+    ///
+    /// let provider = EmbeddingProviderSlug::new_from_str("openai");
+    /// let model = EmbeddingModelId::new_from_str("text-embedding-3-small");
+    /// let shape = EmbeddingShape::f32_raw(1536);
+    /// let set = EmbeddingSet::new(provider, model, shape);
+    ///
+    /// assert_eq!(set.hash_id.to_string(), "27da93bd3ded566b");
+    /// ```
+    pub fn from_components(
+        provider: &EmbeddingProviderSlug,
+        model: &EmbeddingModelId,
+        shape: &EmbeddingShape,
+    ) -> Self {
+        let payload = format!(
+            "{}:{}:{}:{}",
+            provider,
+            model,
+            shape.dimension,
+            shape.dtype_tag()
+        );
+        let uuid = Uuid::new_v5(&Uuid::NAMESPACE_OID, payload.as_bytes());
+        let truncated = u64::from_be_bytes(uuid.as_bytes()[..8].try_into().expect("uuid 16 bytes"));
+        Self(truncated)
+    }
+}
+
+impl std::fmt::Display for EmbeddingSetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
 }
 
 #[cfg(test)]
@@ -179,5 +239,19 @@ mod tests {
         // Should not have quotes around the text
         assert_ne!(display, r#""openai""#);
         assert_eq!(display, "openai");
+    }
+
+    #[test]
+    fn embedding_set_id_truncated_uuid_v5() {
+        let provider = EmbeddingProviderSlug::new_from_str("openai");
+        let model = EmbeddingModelId::new_from_str("text-embedding-3-small");
+        let shape = EmbeddingShape::f32_raw(1536);
+        let set = EmbeddingSet::new(provider.clone(), model.clone(), shape);
+
+        assert_eq!(set.hash_id.to_string(), "27da93bd3ded566b");
+        assert_eq!(
+            set.hash_id,
+            EmbeddingSetId::from_components(&provider, &model, &shape)
+        );
     }
 }
