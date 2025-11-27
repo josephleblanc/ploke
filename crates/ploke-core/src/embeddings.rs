@@ -60,13 +60,16 @@ impl std::fmt::Display for EmbRelName {
 
 impl EmbeddingSet {
     /// Convenience constructor from components.
+    ///
+    /// Does some sanitization (replaceing hyphen '-' with underscore '_').
     pub fn new(
         provider: EmbeddingProviderSlug,
         model: EmbeddingModelId,
         shape: EmbeddingShape,
     ) -> Self {
         let dims = shape.dimension;
-        let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}"));
+        // Note sanitization step.
+        let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}").replace("-", "_"));
         let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,
@@ -90,16 +93,16 @@ impl EmbeddingSet {
         &self.rel_name
     }
 
-    pub fn script_identity(&self) -> &'static str {
-        "embedding_set {{ node_id, embedding_model, provider, at => embedding_dims, vector }}"
-    }
-
-    pub fn script_create(&self) -> String {
-        format!(
-            ":create embedding_set {{ node_id: Uuid, embedding_model: String, provider: String, at: Validity => embedding_dims: Int, vector: <F32; {}> }}",
-            self.shape.dimension
-        )
-    }
+    // pub fn script_identity(&self) -> &'static str {
+    //     "embedding_set {{ node_id, embedding_model, provider, at => embedding_dims, vector }}"
+    // }
+    //
+    // pub fn script_create(&self) -> String {
+    //     format!(
+    //         ":create embedding_set {{ node_id: Uuid, embedding_model: String, provider: String, at: Validity => embedding_dims: Int, vector: <F32; {}> }}",
+    //         self.shape.dimension
+    //     )
+    // }
 }
 
 /// Typed wrapper for an embedding model.

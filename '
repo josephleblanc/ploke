@@ -108,12 +108,13 @@ pub trait EmbeddingSetExt {
 pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     const REL_NAME: &'static str = "embedding_set";
 
-    fn embedding_set_relation_name() -> &'static str {
+    fn rel_name() -> &'static str {
         Self::REL_NAME
     }
 
     fn script_create() -> &'static str {
         cozo_create_embedding_set!("embedding_set")
+        // If you want this to vary per-impl, override script_create() or add a const below.
     }
 
     fn script_identity(&self) -> &'static str {

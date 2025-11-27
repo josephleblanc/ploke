@@ -748,6 +748,7 @@ impl Database {
         Self::into_usize(result)
     }
 
+    #[cfg(not(feature = "multi_embedding_db"))]
     pub fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
         let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
             let rel = ty.relation_str();

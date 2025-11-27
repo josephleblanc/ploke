@@ -1,5 +1,6 @@
 //! Error types for ploke-db
 
+use ploke_core::embeddings::EmbRelName;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
@@ -30,6 +31,13 @@ pub enum DbError {
 
     #[error("Error receiving message: {0}")]
     CrossBeamSend(String),
+
+    #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
+    EmbeddingScriptFailure {
+        action: &'static str,
+        relation: EmbRelName,
+        details: String,
+    },
 }
 
 #[derive(Error, Debug)]

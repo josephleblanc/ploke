@@ -28,6 +28,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [x] Implement a `Database` type to wrap the cozo database
   - NOTE: This is in `ploke-db`
  * [ ] `CrateContext` Only added some of the fields, could possibly also add better file processing or a list of the Uuids of the modules/primary node types here.
+ - [ ] line numbers - it would be good to store the line numbers of the start/end span for items in the code graph for many reasons
 
 ## TUI
 * [ ] Clean up main app rendering loop (extract into functions)

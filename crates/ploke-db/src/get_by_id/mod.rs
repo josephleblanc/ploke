@@ -161,6 +161,7 @@ mod tests {
     use super::{CommonFields, GetNodeInfo};
 
     #[test]
+    #[cfg(not(feature = "multi_embedding_db"))]
     fn test_canon_path() -> Result<(), Error> {
         let db_arc = TEST_DB_NODES
             .clone()

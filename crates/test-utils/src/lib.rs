@@ -272,7 +272,7 @@ pub fn init_tracing_v2() -> WorkerGuard {
 }
 
 #[cfg(feature = "test_setup")]
-pub fn init_test_tracing(level: tracing::Level) {
+pub fn init_test_tracing_with_target(target: &'static str, level: tracing::Level) {
     use tracing::Level;
 
     let filter = filter::Targets::new()
@@ -287,6 +287,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_target("ploke-embed", level)
         .with_target("ploke-io", level)
         .with_target("ploke-transform", level)
+        .with_target(target, level)
         .with_target("cozo", Level::ERROR);
 
     let layer = tracing_subscriber::fmt::layer()
@@ -302,6 +303,11 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with(layer)
         .with(filter)
         .init();
+}
+
+#[cfg(feature = "test_setup")]
+pub fn init_test_tracing(level: tracing::Level) {
+    init_test_tracing_with_target("", level);
 }
 
 pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<Level>) {

@@ -112,6 +112,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    #[cfg(not(feature = "multi_embedding_db"))]
     fn test_resolve_nodes_by_canon_in_file_via_paths_from_id() {
         // Acquire test DB (fixture_nodes) loaded by the test framework
         let db_arc = TEST_DB_NODES
@@ -228,6 +229,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "multi_embedding_db"))]
     fn test_relaxed_fallback_when_file_mismatch() {
         let db_arc = TEST_DB_NODES
             .clone()
