@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use cozo::DataValue;
+use cozo::{DataValue, UuidWrapper};
 use itertools::Itertools as _;
 use ploke_core::embeddings::{
     EmbRelName, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingSetId,
@@ -32,7 +32,9 @@ pub struct EmbeddingVector {
 macro_rules! cozo_create_embedding_set {
     ($rel:literal) => {
         concat!(
-            ":create ", $rel, " {\n",
+            ":create ",
+            $rel,
+            " {\n",
             "id: String,\n",
             "at: Validity\n",
             "=>\n",
@@ -62,9 +64,40 @@ impl EmbeddingVector {
             dims = embedding_set.dims()
         )
     }
+
+    pub fn script_fields() -> &'static str {
+        "node_id, at, vector, embedding_set_id"
+    }
+
+    /// Validate that an embedding vector is non-empty
+    pub fn validate_embedding_vec(&self) -> Result<(), DbError> {
+        if self.vector.is_empty() {
+            Err(DbError::QueryExecution(
+                "Embedding vector must not be empty".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Convert to DataValue format - as a list of [node_id, embedding_set_id, embedding]
+    pub fn into_cozo_datavalue(self) -> cozo::DataValue {
+        let id_val = DataValue::Uuid(UuidWrapper(self.node_id));
+        let embedding_val = DataValue::List(
+            self.vector
+                .into_iter()
+                .map(|f| DataValue::Num(cozo::Num::Float(f)))
+                .collect(),
+        );
+        let embedding_set_id =
+            DataValue::Num(cozo::Num::Int(self.embedding_set_id.into_inner() as i64));
+        // Each update is a list containing [node_id, embedding_set_id, embedding]
+        DataValue::List(vec![id_val, embedding_set_id, embedding_val])
+    }
 }
 
 impl EmbeddingSetExt for EmbeddingSet {
+    type Vector = EmbeddingVector;
     fn provider(&self) -> EmbeddingProviderSlug {
         // TODO: check if this is Arc::clone
         self.provider.clone()
@@ -90,13 +123,14 @@ impl EmbeddingSetExt for EmbeddingSet {
 }
 
 pub trait EmbeddingSetExt {
+    type Vector: Into<EmbeddingVector>;
     fn provider(&self) -> EmbeddingProviderSlug;
     fn model(&self) -> EmbeddingModelId;
     fn shape(&self) -> EmbeddingShape;
     fn hash_id(&self) -> EmbeddingSetId;
     fn rel_name(&self) -> EmbRelName;
 
-    fn create_vector_with_node(&self, node_id: Uuid, vector: Vec<f64>) -> EmbeddingVector {
+    fn new_vector_with_node(&self, node_id: Uuid, vector: Vec<f64>) -> EmbeddingVector {
         EmbeddingVector {
             node_id,
             vector,
@@ -156,6 +190,35 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
         script
     }
 
+    fn script_put_vector_with_param_batch(&self) -> String {
+        let vector_fields = EmbeddingVector::script_fields();
+
+    let script = format!(r#"
+{{
+    input[node_id, embedding_set_id, vector] <- $updates
+
+    ?[node_id, embedding_set_id, vector, at] := 
+        input[node_id, embedding_set_id, vector],
+        at = 'ASSERT'
+
+    :put {embedding_rel_name} {{ node_id, embedding_set_id, vector, at }}
+}}
+"#, embedding_rel_name = self.rel_name());
+        script
+    }
+
+    fn script_get_vector_rows(&self) -> String {
+        let fields = EmbeddingVector::script_fields();
+        let vector_rel_name = self.rel_name();
+        format!("?[{fields}] := *{vector_rel_name} {{ {fields} }}")
+    }
+
+    fn script_count_vector_rows(&self) -> String {
+            format!("{} {}",
+                self.script_get_vector_rows(),
+                " :count" )
+    }
+
     fn param_put_vector(
         &self,
         vector: Vec<f64>,
@@ -166,7 +229,7 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
 
         BTreeMap::from([
             (
-                "id".to_string(),
+                "embedding_id".to_string(),
                 DataValue::from(self.hash_id().into_inner() as i64),
             ),
             ("node_id".to_string(), to_cozo_uuid(node_id)),

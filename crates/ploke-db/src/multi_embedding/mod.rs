@@ -1,3 +1,2 @@
-// #[cfg(feature = "multi_embedding_db")]
-mod db_ext;
-mod schema;
+pub(crate) mod db_ext;
+pub(crate) mod schema;

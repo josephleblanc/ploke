@@ -7,6 +7,7 @@ use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
@@ -14,12 +15,35 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 use uuid::Uuid;
 
+// cfg items
+
+#[cfg(feature = "multi_embedding_db")]
+use ploke_core::embeddings::{ 
+    EmbeddingSet,
+    EmbeddingModelId,
+    EmbeddingProviderSlug,
+    EmbeddingShape
+}; 
+
+#[cfg(feature = "multi_embedding_db")]
+lazy_static! {
+    static ref DEFAULT_EMBEDDING_SET: EmbeddingSet = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local"),
+        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+        EmbeddingShape::new_dims_default(384)
+    );
+}
+
+// end cfg items
+
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
 /// Main database connection and query interface
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
+    #[cfg(feature = "multi_embedding_db")]
+    active_embedding_set: EmbeddingSet,
 }
 
 #[derive(Deserialize)]
@@ -125,12 +149,18 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
-        Self { db }
+        #[cfg(not(feature = "multi_embedding_db"))]
+        { Self { db } }
+        #[cfg(feature = "multi_embedding_db")]
+        { Self { db, active_embedding_set: DEFAULT_EMBEDDING_SET.clone() } }
     }
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self { db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        { Ok( Self { db } ) }
+        #[cfg(feature = "multi_embedding_db")]
+        { Ok( Self { db, active_embedding_set: DEFAULT_EMBEDDING_SET.clone()  } ) }
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -140,7 +170,10 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        Ok(Self { db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        { Ok(Self { db }) }
+        #[cfg(feature = "multi_embedding_db")]
+        { Ok( Self { db, active_embedding_set: DEFAULT_EMBEDDING_SET.clone()  } ) }
     }
 
     /// Gets all the file data in the same namespace as the crate name given as argument.
@@ -455,7 +488,10 @@ impl Database {
     pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        Ok(Self { db: new_db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        { Ok(Self { db: new_db }) }
+        #[cfg(feature = "multi_embedding_db")]
+        { Ok( Self { db: new_db, active_embedding_set: DEFAULT_EMBEDDING_SET.clone()  } ) }
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, PlokeError> {
@@ -665,6 +701,7 @@ impl Database {
     }
 
     /// Validate that an embedding vector is non-empty
+    // #[cfg( not(feature = "multi_embedding") )]
     fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
         if embedding.is_empty() {
             Err(DbError::QueryExecution(
@@ -1161,28 +1198,10 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 
     #[cfg(feature = "multi_embedding_db")]
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        let lhs = r#"?[count(id)] := 
-        "#;
-        let mut query: String = String::new();
-
-        query.push_str(lhs);
-        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
-            query.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span @ 'NOW' }}",
-                primary_node.relation_str()
-            ));
-            if i + 1 < NodeType::primary_nodes().len() {
-                query.push_str(" or ")
-            }
-        }
-        tracing::info!("count nodes with query:\n{}", query);
-        let result = self
-            .db
-            .run_script_read_only(&query, Default::default())
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        tracing::info!("result of query:\n{:?}", result);
-
-        Self::into_usize(result)
+        use crate::multi_embedding::db_ext::EmbeddingExt;
+        let embedding_set = self.active_embedding_set.clone();
+        let inner_db = &self.db;
+        inner_db.count_pending_embeddings(&embedding_set)
     }
 
     pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
@@ -1295,7 +1314,10 @@ mod tests {
     // ASDF
     async fn test_get_file_data() -> Result<(), PlokeError> {
         // Initialize the logger to see output from Cozo
+        #[cfg(not (feature = "multi_embedding_db") )]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = ( ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")? );
         let count1 = db.count_pending_embeddings()?;
         tracing::debug!("Found {} nodes without embeddings", count1);
         assert_ne!(0, count1);

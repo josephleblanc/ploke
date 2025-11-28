@@ -38,6 +38,9 @@ pub enum DbError {
         relation: EmbRelName,
         details: String,
     },
+
+    #[error("Warning: Empty list of vectors passed as updates to database")]
+    EmbeddingUpdateEmpty,
 }
 
 #[derive(Error, Debug)]
