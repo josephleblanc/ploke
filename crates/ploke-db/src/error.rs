@@ -1,6 +1,6 @@
 //! Error types for ploke-db
 
-use ploke_core::embeddings::EmbRelName;
+use ploke_core::embeddings::{EmbRelName, HnswRelName};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
@@ -36,6 +36,19 @@ pub enum DbError {
     EmbeddingScriptFailure {
         action: &'static str,
         relation: EmbRelName,
+        details: String,
+    },
+
+    #[error("Experimental embedding script '{action}' failed for relation 'embedding_set': {details}")]
+    EmbeddingSetScriptFailure {
+        action: &'static str,
+        details: String,
+    },
+
+    #[error("Experimental embedding script '{action}' failed for relation {relation}: {details}")]
+    HnswEmbeddingScriptFailure {
+        action: &'static str,
+        relation: HnswRelName,
         details: String,
     },
 

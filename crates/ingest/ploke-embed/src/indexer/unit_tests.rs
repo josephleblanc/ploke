@@ -18,7 +18,7 @@ use ploke_db::{
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
-use ploke_test_utils::{setup_db_full, setup_db_full_crate};
+use ploke_test_utils::{setup_db_full, setup_db_full_crate, setup_db_full_multi_embedding};
 use tokio::{
     sync::{
         broadcast::{self, error::TryRecvError},
@@ -533,7 +533,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     tracing::info!("Starting test_next_batch: {target_crate}");
 
     let cozo_db = if target_crate.starts_with("fixture") {
-        setup_db_full(target_crate)
+        #[cfg(not(feature = "multi_embedding_embedder"))]
+        { setup_db_full(target_crate) }
+        #[cfg(feature = "multi_embedding_embedder")]
+        { setup_db_full_multi_embedding(target_crate) }
     } else if target_crate.starts_with("crates") {
         let crate_name = target_crate.trim_start_matches("crates/");
         setup_db_full_crate(crate_name)
@@ -777,7 +780,7 @@ async fn test_index_bm25() -> Result<(), Error> {
 }
 
 #[tokio::test]
-#[ignore = "long-running; run periodically to cover full crate"]
+// #[ignore = "long-running; run periodically to cover full crate"]
 async fn test_batch_ss_nodes() -> Result<(), Error> {
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_nodes").await

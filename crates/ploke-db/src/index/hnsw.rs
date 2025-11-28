@@ -7,7 +7,7 @@ use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
 #[cfg(feature = "multi_embedding_db")]
-use crate::multi_embedding::db_ext::HnswExt;
+use crate::multi_embedding::hnsw_ext::HnswExt;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -42,7 +42,7 @@ pub fn run_script_warn(
         Ok(r) => Ok(r),
         Err(e) => {
             if e.to_string()
-                .contains("Index hnsw_idx not found on relation const")
+                .contains("Index hnsw_idx not found on relation")
             {
                 Err(ploke_error::Error::Warning(
                     ploke_error::WarningError::PlokeDb(e.to_string()),
@@ -100,8 +100,7 @@ pub fn hnsw_of_type(
         let result = match db.run_script(&result, params, ScriptMutability::Immutable) {
             Ok(r) => Ok(r),
             Err(e) => {
-                if e
-                    .to_string()
+                if e.to_string()
                     .contains("Index hnsw_idx not found on relation const")
                 {
                     Err(ploke_error::Error::Warning(
@@ -141,15 +140,7 @@ pub fn search_similar(
     #[cfg(feature = "multi_embedding_db")]
     {
         return db
-            .search_similar_for_set(
-                &db.active_embedding_set,
-                ty,
-                vector_query,
-                k,
-                ef,
-                100,
-                None,
-            )
+            .search_similar_for_set(&db.active_embedding_set, ty, vector_query, k, ef, 100, None)
             .map(|res| res.typed_data);
     }
 
@@ -490,6 +481,8 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
 pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
     #[cfg(feature = "multi_embedding_db")]
     {
+        use crate::multi_embedding::hnsw_ext::HnswExt;
+
         return db.create_embedding_index(&db.active_embedding_set);
     }
 
@@ -502,25 +495,29 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
     }
 }
 
-pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
+#[cfg(feature = "multi_embedding_db")]
+/// Temporary wrapper function to replace current API
+pub fn create_index_warn(db: &Database) -> Result<(), ploke_error::Error> {
     #[cfg(feature = "multi_embedding_db")]
     {
-        let _ = ty;
-        return db
-            .create_embedding_index(&db.active_embedding_set)
-            .map_err(ploke_error::Error::from);
-    }
+        use crate::multi_embedding::hnsw_ext::HnswExt;
 
-    #[cfg(not(feature = "multi_embedding_db"))]
-    {
-        // Create documents table
-        // Create HNSW index on embeddings
-        let script = [
-            r#"
+        db
+            .create_embedding_index(&db.active_embedding_set)
+            .map_err(ploke_error::Error::from)
+    }
+}
+
+#[cfg(not(feature = "multi_embedding_db"))]
+pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
+    // Create documents table
+    // Create HNSW index on embeddings
+    let script = [
+        r#"
             ::hnsw create "#,
-            ty.relation_str(),
-            HNSW_SUFFIX,
-            r#" {
+        ty.relation_str(),
+        HNSW_SUFFIX,
+        r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -529,21 +526,22 @@ pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error:
                 distance: L2
             }
             "#,
-        ]
-        .join("");
-        run_script_warn(
-            db,
-            &script,
-            std::collections::BTreeMap::new(),
-            ScriptMutability::Mutable,
-        )?;
-        Ok(())
-    }
+    ]
+    .join("");
+    run_script_warn(
+        db,
+        &script,
+        std::collections::BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )?;
+    Ok(())
 }
 
 pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
     #[cfg(feature = "multi_embedding_db")]
     {
+        use crate::multi_embedding::hnsw_ext::HnswExt;
+
         let _ = ty;
         return db
             .create_embedding_index(&db.active_embedding_set)

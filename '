@@ -49,6 +49,25 @@ macro_rules! cozo_script_embedding_set {
     };
 }
 
+macro_rules! cozo_replace_embedding_set {
+    ($rel:literal) => {
+        concat!(
+            ":replace ",
+            $rel,
+            " {\n",
+            "id: String,\n",
+            "at: Validity\n",
+            "=>\n",
+            "provider: String,\n",
+            "model: String,\n",
+            "dims: Int,\n",
+            "embedding_dtype: String,\n",
+            "rel_name: String\n",
+            "}"
+        )
+    };
+}
+
 impl CozoEmbeddingSetExt for EmbeddingSet {}
 
 impl EmbeddingVector {
@@ -148,11 +167,11 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     }
 
     fn script_create() -> &'static str {
-        cozo_script_embedding_set!(":create", "embedding_set")
+        cozo_create_embedding_set!("embedding_set")
     }
 
     fn script_replace() -> &'static str {
-        cozo_script_embedding_set!(":replace", "embedding_set")
+        cozo_replace_embedding_set!("embedding_set")
     }
 
     fn script_identity(&self) -> &'static str {

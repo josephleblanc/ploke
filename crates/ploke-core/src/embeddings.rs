@@ -107,6 +107,16 @@ impl EmbeddingSet {
     // }
 }
 
+impl Default for EmbeddingSet {
+    fn default() -> Self {
+        EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("local"),
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+            EmbeddingShape::new_dims_default(384)
+        )
+    }
+}
+
 /// Typed wrapper for an embedding model.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
 pub struct EmbeddingModelId(ArcStr);
@@ -118,6 +128,14 @@ arcstr_wrapper!(EmbeddingModelId);
 pub struct EmbeddingProviderSlug(ArcStr);
 
 arcstr_wrapper!(EmbeddingProviderSlug);
+
+/// Typed wrapper for an hnsw relation of the form {rel_name}{hnsw_suffix}, e.g.
+///
+/// emb_sentence_transformers_slash_all_MiniLM_L6_v2_384:hnsw_idx
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, Debug, Deserialize, Serialize)]
+pub struct HnswRelName(ArcStr);
+
+arcstr_wrapper!(HnswRelName);
 
 /// Data type for elements in an embedding vector.
 ///

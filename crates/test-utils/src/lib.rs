@@ -140,6 +140,53 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 }
 
 #[cfg(feature = "multi_embedding_test")]
+fn setup_db_create_multi_embeddings(db: cozo::Db<cozo::MemStorage>) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
+    use std::collections::BTreeMap;
+    use ploke_db::multi_embedding::schema::{ CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector };
+
+    use cozo::ScriptMutability;
+    use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape};
+    use ploke_db::DbError;
+    use syn_parser::utils::LogStyle;
+
+    tracing::info!("{}: create embedding set", "Db".log_step());
+    let create_rel_script = EmbeddingSet::script_create();
+    let relation_name = EmbeddingSet::embedding_set_relation_name();
+    let db_result = db
+        .run_script(create_rel_script, BTreeMap::new(), ScriptMutability::Mutable)
+        .map_err(DbError::from)?;
+    tracing::info!(?db_result.rows);
+
+    tracing::info!(
+        "{}: New multi_embedding relations created in the database
+(both embedding_set and default embeddings vector for sentence-transformers)",
+        "Setup".log_step()
+    );
+
+    tracing::info!("{}: put default embedding set", "Db".log_step());
+    let embedding_set = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local"),
+        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+        EmbeddingShape::new_dims_default(384)
+    );
+
+    let script_put = embedding_set.script_put();
+    let db_result = db
+        .run_script(&script_put, BTreeMap::new(), ScriptMutability::Mutable)
+        .map_err(DbError::from)?;
+    tracing::info!(put_embedding_set = ?db_result.rows);
+
+    tracing::info!("{}: create default vector embedding relation", "Db".log_step());
+    let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
+    let step_msg = format!( "create {} relation", embedding_set.relation_name() );
+    let db_result = db
+        .run_script(&create_vector_script, BTreeMap::new(), ScriptMutability::Mutable)
+        .map_err(DbError::from)?;
+    tracing::info!(create_embedding_vector = ?db_result.rows);
+    Ok( db )
+}
+
+#[cfg(feature = "multi_embedding_test")]
 pub fn setup_db_full_multi_embedding(
     fixture: &'static str,
 ) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
@@ -188,42 +235,7 @@ pub fn setup_db_full_multi_embedding(
     );
 
     tracing::info!("{}: create embedding set", "Db".log_step());
-    let create_rel_script = EmbeddingSet::script_create();
-    let relation_name = EmbeddingSet::embedding_set_relation_name();
-    let db_result = db
-        .run_script(create_rel_script, BTreeMap::new(), ScriptMutability::Mutable)
-        .map_err(DbError::from)?;
-    tracing::info!(?db_result.rows);
-
-    tracing::info!(
-        "{}: New multi_embedding relations created in the database
-(both embedding_set and default embeddings vector for sentence-transformers)",
-        "Setup".log_step()
-    );
-
-    tracing::info!("{}: put default embedding set", "Db".log_step());
-    let embedding_set = EmbeddingSet::new(
-        EmbeddingProviderSlug::new_from_str("local"),
-        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
-        EmbeddingShape::new_dims_default(384)
-    );
-
-    let script_put = embedding_set.script_put();
-    let db_result = db
-        .run_script(&script_put, BTreeMap::new(), ScriptMutability::Mutable)
-        .map_err(DbError::from)?;
-    tracing::info!(put_embedding_set = ?db_result.rows);
-
-    tracing::info!("{}: create default vector embedding relation", "Db".log_step());
-    let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
-    let step_msg = format!( "create {} relation", embedding_set.relation_name() );
-    let db_result = db
-        .run_script(&create_vector_script, BTreeMap::new(), ScriptMutability::Mutable)
-        .map_err(DbError::from)?;
-    tracing::info!(create_embedding_vector = ?db_result.rows);
-
-
-    Ok(db)
+    setup_db_create_multi_embeddings(db)
 }
 
 #[cfg(feature = "test_setup")]
@@ -235,7 +247,7 @@ pub fn setup_db_full_crate(
 ) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
-    tracing::info!("Settup up database with setup_db_full_crate");
+    tracing::info!("Setup up database with setup_db_full_crate");
     // initialize db
     let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
     tracing::info!("{}: Initialize", "Database".log_step());
@@ -260,6 +272,8 @@ pub fn setup_db_full_crate(
         "{}: Parsing and Database Transform Complete",
         "Setup".log_step()
     );
+    #[cfg(feature = "multi_embedding_test")]
+    { return setup_db_create_multi_embeddings(db); }
     Ok(db)
 }
 

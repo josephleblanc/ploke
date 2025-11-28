@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{default, sync::Arc};
 
     use itertools::Itertools;
     use lazy_static::lazy_static;
@@ -21,9 +21,77 @@ mod tests {
     use std::sync::Once;
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
+        #[cfg(not(feature = "multi_embedding_rag"))]
         TEST_TRACING.call_once(|| {
             ploke_test_utils::init_test_tracing(tracing::Level::ERROR);
         });
+        #[cfg(feature = "multi_embedding_rag")]
+        TEST_TRACING.call_once(|| {
+            ploke_test_utils::init_test_tracing_with_target("cozo-script", tracing::Level::INFO);
+        });
+    }
+
+    #[cfg(feature = "multi_embedding_rag")]
+    fn default_test_db_setup() -> Result<Arc<Database>, Error> {
+        use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+
+        init_tracing_once();
+
+        let db = Database::init_with_schema()?;
+
+        let mut target_file = workspace_root();
+        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        let prior_rels_vec = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .map_err(ploke_db::DbError::from)
+            .map_err(ploke_error::Error::from)?;
+        create_index_primary(&db)?;
+
+        let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
+        let r1 = db.create_embedding_set_relation()?;
+        tracing::info!(?r1);
+        
+        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone())?;
+        tracing::info!(?r2);
+        let r3 = db.create_embedding_index(&db.active_embedding_set.clone())?;
+        tracing::info!(?r3);
+
+        let database = Database::from(db);
+        Ok(Arc::new(database))
+    }
+
+    #[cfg(feature = "multi_embedding_rag")]
+    #[tokio::test]
+    async fn test_fixture_embeddings_loaded_into_active_set() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let rel = db.active_embedding_set.rel_name.as_ref().replace('-', "_");
+        let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
+        let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
+        let count = rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|val| val.get_int())
+            .unwrap_or(0) as usize;
+
+        assert!(
+            count > 0,
+            "Embedding relation {rel} is empty after loading fixture backup; \
+             dense search uses this relation so queries return nothing."
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_rag")]
+    #[tokio::test]
+    async fn test_db_nodes_setup() -> Result<(), Error> {
+        default_test_db_setup()?;
+        Ok(())
     }
 
     lazy_static! {
@@ -43,16 +111,17 @@ mod tests {
         /// cleaned up afterwards it should be OK.
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, Error> = {
-            let db = Database::init_with_schema()?;
-
-            let mut target_file = workspace_root();
-            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-            let prior_rels_vec = db.relations_vec()?;
-            db.import_from_backup(&target_file, &prior_rels_vec)
-                .map_err(ploke_db::DbError::from)
-                .map_err(ploke_error::Error::from)?;
-            create_index_primary(&db)?;
-            Ok(Arc::new( db ))
+            default_test_db_setup()
+            // let db = Database::init_with_schema()?;
+            //
+            // let mut target_file = workspace_root();
+            // target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            // let prior_rels_vec = db.relations_vec()?;
+            // db.import_from_backup(&target_file, &prior_rels_vec)
+            //     .map_err(ploke_db::DbError::from)
+            //     .map_err(ploke_error::Error::from)?;
+            // create_index_primary(&db)?;
+            // Ok(Arc::new( db ))
         };
     }
 
