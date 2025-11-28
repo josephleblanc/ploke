@@ -9,7 +9,7 @@ use ploke_error::Error as PlokeError;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{multi_embedding::schema::{EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, NodeType, QueryResult, TypedEmbedData};
+use crate::{multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, NodeType, QueryResult, TypedEmbedData};
 
 /// Trait used to extend the database with embeddings-aware methods
 pub trait EmbeddingExt {
@@ -285,19 +285,30 @@ not *{embed_rel}{{node_id: id}}
             .map_err(PlokeError::from)
     }
 
-    async fn update_embeddings_batch(&self, updates: Vec<(Uuid, Vec<f64>)>, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
-        // NOTE: original function returns on empty input, but we may not want to do that, seems
-        // error-prone
-        
-        // ensure no vectors are empty
-        let updates_data = updates.into_iter().map(|(node_id, vector)| 
-            embedding_set.new_vector_with_node(node_id, vector)
-        )
-            .map(|ev| ev.validate_embedding_vec().map(|_| ev))
-            .map_ok(EmbeddingVector::into_cozo_datavalue)
-            .try_collect()?;
+    async fn update_embeddings_batch(
+        &self,
+        updates: Vec<(Uuid, Vec<f64>)>,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), DbError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
 
-        let params = BTreeMap::from([( "updates".to_string(), DataValue::List(updates_data) )]);
+        // Convert updates into cozo-friendly values after validation.
+        let mut updates_data = Vec::with_capacity(updates.len());
+        for (node_id, vector) in updates {
+            let vector = embedding_set.new_vector_with_node(node_id, vector);
+            vector.validate_embedding_vec()?;
+            updates_data.push(vector.into_cozo_datavalue());
+        }
+
+        let params =
+            BTreeMap::from([("updates".to_string(), DataValue::List(updates_data))]);
+        let script = embedding_set.script_put_vector_with_param_batch();
+
+        self.run_script(&script, params, ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+
         Ok(())
     }
 
@@ -846,4 +857,3 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         Ok(())
     }
 }
-
