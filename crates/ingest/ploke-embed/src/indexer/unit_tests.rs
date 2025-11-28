@@ -710,7 +710,20 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     {
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
-    for ty in NodeType::primary_nodes() {
+    #[cfg(feature = "multi_embedding_embedder")]
+    {
+        use ploke_db::multi_embedding::schema::EmbeddingSetExt;
+ 
+        let db_ret = ploke_db::create_index_warn(&db); 
+        let vec_rel_name = db.active_embedding_set.rel_name();
+        let script_check_indices = "::indices {vec_rel_name}";
+        let db_ret = db.run_script(script_check_indices, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(DbError::from)?;
+        tracing::info!(?db_ret);
+    }
+
+    #[cfg(not( feature = "multi_embedding_embedder" ))]
+    { for ty in NodeType::primary_nodes() {
         let db_ret = ploke_db::create_index_warn(&db, ty);
         tracing::info!("db_ret = {:?}", db_ret);
     }
@@ -728,7 +741,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
                 tracing::error!("{}", e.to_string());
             }
         };
-    }
+    } 
     assert!(no_error);
     let db_ret = db
         .run_script(
@@ -737,7 +750,9 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
             cozo::ScriptMutability::Immutable,
         )
         .map_err(DbError::from)?;
-    tracing::info!("db_ret = {:?}", db_ret);
+        tracing::info!("db_ret = {:?}", db_ret);
+    }
+
     if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
         tracing::warn!("CallbackManager not closed?");
     }

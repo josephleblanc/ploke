@@ -790,6 +790,7 @@ mod tests {
     }
     /// Helper macro to reduce boilderplate for printing logging statements when printing
     /// cozoscript in tests, see `run_script!` macro.
+    #[macro_export]
     macro_rules! log_script {
         ($label:expr, $name:expr, $script:expr) => {
             info!(
@@ -826,6 +827,7 @@ mod tests {
         }};
     }
 
+    #[macro_export]
     macro_rules! run_script_params {
         ($db:expr, $mutability:expr, $label:expr, $name:expr, $script:expr, $params:expr) => {{
             let script = $script;
@@ -842,7 +844,7 @@ mod tests {
 
     use ploke_error::Error as PlokeError;
 
-    fn eprint_relations(fixture_db: cozo::Db<MemStorage>) -> Result<(), PlokeError> {
+    pub(crate) fn eprint_relations(fixture_db: cozo::Db<MemStorage>) -> Result<(), PlokeError> {
         let script = "::relations";
         let list_relations = fixture_db
             .run_script(script, BTreeMap::new(), ScriptMutability::Mutable)

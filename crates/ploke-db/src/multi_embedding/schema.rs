@@ -4,12 +4,12 @@ use cozo::{DataValue, UuidWrapper};
 use itertools::Itertools as _;
 use ploke_core::embeddings::{
     EmbRelName, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingSetId,
-    EmbeddingShape,
+    EmbeddingShape, HnswRelName,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::DbError;
+use crate::{database::HNSW_SUFFIX, DbError};
 
 /// An embedding vector stored as a single row in the cozo database, containing minimal information
 /// of the:
@@ -130,6 +130,12 @@ pub trait EmbeddingSetExt {
     fn shape(&self) -> EmbeddingShape;
     fn hash_id(&self) -> EmbeddingSetId;
     fn rel_name(&self) -> EmbRelName;
+    fn hnsw_rel_name(&self) -> HnswRelName {
+        let rel_name = self.rel_name();
+        let hnsw_suffix = HNSW_SUFFIX;
+        let hnsw_string = format!( "{rel_name}{hnsw_suffix}" );
+        HnswRelName::new_from_str( &hnsw_string)
+    }
 
     fn new_vector_with_node(&self, node_id: Uuid, vector: Vec<f64>) -> EmbeddingVector {
         EmbeddingVector {
@@ -179,20 +185,6 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
             shape_embedding_dtype = self.shape().dtype_tag(),
             rel_name = self.rel_name()
         )
-    }
-
-    fn script_put_vector_with_param(&self) -> String {
-        let script = format!(
-            r#"
-?[node_id, at, vector] <- [[
-    $node_id,
-    'ASSERT',
-    $vector
-]] :put {vector_identity}
-"#,
-            vector_identity = self.script_vector_identity()
-        );
-        script
     }
 
     fn script_put_vector_with_param_batch(&self) -> String {

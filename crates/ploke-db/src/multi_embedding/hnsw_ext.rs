@@ -5,8 +5,14 @@ use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
 use uuid::Uuid;
 
-use crate::{database::HNSW_SUFFIX, multi_embedding::{db_ext::EmbeddingExt, schema::{EmbeddingSetExt, EmbeddingVector}}, Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData};
-
+use crate::{
+    database::HNSW_SUFFIX,
+    multi_embedding::{
+        db_ext::EmbeddingExt,
+        schema::{EmbeddingSetExt, EmbeddingVector},
+    },
+    Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
+};
 
 pub trait HnswExt {
     fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
@@ -42,8 +48,14 @@ pub trait HnswExt {
             .map(|fl| DataValue::Num(Num::Float(fl)))
             .collect_vec();
         DataValue::List(as_list)
-}
+    }
 
+    fn is_hnsw_index_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, ploke_error::Error>;
+
+    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error>;
 }
 
 impl HnswExt for cozo::Db<cozo::MemStorage> {
@@ -68,7 +80,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         let rel_name = embedding_set.rel_name.as_ref().replace('-', "_");
         let hnsw_suffix = HNSW_SUFFIX;
 
-        let hnsw_index_rel_name = format!( "{rel_name}{hnsw_suffix}" );
+        let hnsw_index_rel_name = format!("{rel_name}{hnsw_suffix}");
 
         if self.is_relation_registered(&embedding_set.rel_name)? {
             return Ok(());
@@ -150,9 +162,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         let mut neighbors = Vec::new();
         for row in result.rows {
             let id = match row.get(0) {
-                Some(DataValue::Uuid(UuidWrapper(uuid))) => {
-                    *uuid
-                },
+                Some(DataValue::Uuid(UuidWrapper(uuid))) => *uuid,
                 _ => continue,
             };
             let name = row
@@ -251,11 +261,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         }?;
 
         let mut dist_vec = Vec::new();
-        if let Some(dist_idx) = query_result
-            .headers
-            .iter()
-            .position(|h| h == "distance")
-        {
+        if let Some(dist_idx) = query_result.headers.iter().position(|h| h == "distance") {
             dist_vec.extend(
                 query_result
                     .rows
@@ -270,6 +276,30 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             typed_data,
             dist: dist_vec,
         })
+    }
+
+    fn is_hnsw_index_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, ploke_error::Error> {
+        let vec_rel_name = embedding_set.rel_name();
+        let script_check_indices = "::indices {vec_rel_name}";
+        let db_ret = self
+            .run_script(
+                script_check_indices,
+                BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(DbError::from)?;
+        for item in db_ret.rows {
+            eprintln!("{item:?}");
+        }
+
+        Ok(false)
+    }
+
+    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
+        todo!()
     }
 }
 
@@ -312,5 +342,135 @@ impl HnswExt for Database {
             limit,
             radius,
         )
+    }
+
+    fn is_hnsw_index_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, ploke_error::Error> {
+        self.deref().is_hnsw_index_registered(embedding_set)
+    }
+
+    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use super::*;
+    use cozo::NamedRows;
+    use ploke_error::Error;
+    use syn_parser::utils::LogStyle;
+    use tracing::info;
+
+    use crate::{
+        multi_embedding::{schema::CozoEmbeddingSetExt, test_utils::{eprint_relations, setup_db, setup_empty_db}},
+        query::builder::EMBEDDABLE_NODES_NOW_LEGACY_RHS, { run_script_params, log_script },
+    };
+
+    static TEST_TRACING: Once = Once::new();
+    fn init_tracing_once(target: &'static str, level: tracing::Level) {
+        TEST_TRACING.call_once(|| {
+            ploke_test_utils::init_test_tracing_with_target(target, level);
+        });
+    }
+
+    fn log_step(header: &'static str, relation_name: &str) {
+        tracing::info!(
+            target: "cozo-script",
+            "{}\n\t{}: {}",
+            header.log_header(),
+            "relation".log_step(),
+            relation_name.log_magenta()
+        );
+    }
+
+    #[test]
+    // WARNING: This test cannot pass, because it relies on the old version of the embeddings
+    // stored in the database, which are not loaded here. Under the cfg flag combinations it is
+    // impossible to load the old schema.
+    //
+    // NOTE: Keeping this just so we don't try to do the same thing again in the future.
+    fn test_is_hnsw_index_registered() -> Result<(), Error> {
+        // init_tracing_once("cozo-script", tracing::Level::INFO);
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+
+        let embedding_set = EmbeddingSet::default();
+        let db_res = db.is_hnsw_index_registered(&embedding_set);
+        eprint_relations(&db)?;
+
+        let relation = embedding_set.relation_name().as_ref();
+        log_step("create vector-unique relation", relation);
+        let db_ret = db.create_embedding_index(&embedding_set);
+        info!(create_vector_rel = ?db_ret);
+
+        log_step("check for previous hnsw indices per type", "primary nodes");
+
+        let legacy_node_script = script_get_legacy_node_embeddings();
+        log_script!(
+            "get vector embeddings from 'embedding' field",
+            "primary nodes",
+            legacy_node_script
+        );
+        let rows = db
+            .run_script(
+                &legacy_node_script,
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .map_err(DbError::from)?;
+
+        let mut updates_data: Vec<DataValue> = Vec::new();
+        for row in rows.into_iter() {
+            let id = row[0].to_owned();
+            let ev = row[1].to_owned();
+            if !matches!(id, DataValue::Uuid(_)) {
+                tracing::error!("expected id to be of DataValue::Uuid(_) type, found: {id:?}");
+                panic!();
+            } else if !matches!(ev, DataValue::Vec(_)) {
+                tracing::error!("expected ev to be of DataValue::Vec(_) type, found: {ev:?}");
+                panic!();
+            }
+            let set_id = DataValue::Num( Num::Int( embedding_set.hash_id().into_inner() as i64 ) );
+            updates_data.push(DataValue::List(vec![id, set_id, ev]));
+        }
+        let params = BTreeMap::from([("updates".to_string(), DataValue::List(updates_data))]);
+        let put_vectors_batch = embedding_set.script_put_vector_with_param_batch();
+        run_script_params!(
+            db,
+            cozo::ScriptMutability::Mutable,
+            "Testing Script:",
+            "put vector embeddings batch with params",
+            &put_vectors_batch,
+            params
+        )?;
+
+        panic!();
+
+        Ok(())
+    }
+
+    fn script_get_legacy_node_embeddings() -> String {
+        // let legacy_embeddings_script_rhs = EMBEDDABLE_NODES_NOW_LEGACY_RHS.clone();
+        // let legacy_fields = NodeType::LEGACY_EMBEDDABLE_NODE_FIELDS;
+        // let legacy_nodes_rule = format_args!("legacy_nodes[id, embedding] := ( {legacy_embeddings_script_rhs} ), !is_null(embedding)");
+        let script = format!(
+            r#"
+ legacy_nodes[id, embedding] := (  *function {{id, name, span, tracking_hash, embedding  @ 'NOW' }} or  *const {{id, name, span,
+tracking_hash @ 'NOW' }} or  *enum {{id, name, span, tracking_hash, embedding  @ 'NOW' }} or  *macro
+{{id, name, span, tracking_hash, embedding  @ 'NOW' }} or  *module {{id, name, span, tracking_hash,
+embedding  @ 'NOW' }} or  *static {{id, name, span, tracking_hash, embedding  @ 'NOW' }} or  *struct
+{{id, name, span, tracking_hash, embedding  @ 'NOW' }} or  *trait {{id, name, span, tracking_hash,
+embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding  @ 'NOW' }} or *union
+{{id, name, span, tracking_hash, embedding  @ 'NOW' }} ), !is_null(embedding)
+
+        ?[id, embedding] := legacy_nodes[id, embedding]
+        "#
+        );
+        script
     }
 }

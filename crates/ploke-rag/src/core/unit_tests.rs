@@ -68,21 +68,26 @@ mod tests {
             .as_ref()
             .expect("Must set up TEST_DB_NODES correctly.");
 
-        let rel = db.active_embedding_set.rel_name.as_ref().replace('-', "_");
+        let rel = db.active_embedding_set.rel_name.clone();
+        eprintln!("rel: {}", rel);
         let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
         let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
-        let count = rows
-            .rows
-            .first()
-            .and_then(|row| row.first())
-            .and_then(|val| val.get_int())
-            .unwrap_or(0) as usize;
+        for row in rows.rows {
+            eprintln!("{row:?}");
+        }
+        // let count = rows
+        //     .rows
+        //     .first()
+        //     .and_then(|row| row.first())
+        //     .and_then(|val| val.get_int())
+        //     .unwrap_or(0) as usize;
 
-        assert!(
-            count > 0,
-            "Embedding relation {rel} is empty after loading fixture backup; \
-             dense search uses this relation so queries return nothing."
-        );
+        panic!();
+        // assert!(
+        //     count > 0,
+        //     "Embedding relation {rel} is empty after loading fixture backup; \
+        //      dense search uses this relation so queries return nothing."
+        // );
 
         Ok(())
     }

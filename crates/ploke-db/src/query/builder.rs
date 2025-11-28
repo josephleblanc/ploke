@@ -202,6 +202,42 @@ impl NodeType {
     }
 
     #[cfg(feature = "multi_embedding_db")]
+    pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [ &'static str; 5 ] = ["id", "name", "tracking_hash", "span", "embedding"];
+
+    #[cfg(feature = "multi_embedding_db")]
+    pub const EMBEDDABLE_NODE_FIELDS: [ &'static str; 4 ] = ["id", "name", "tracking_hash", "span"];
+
+    #[cfg(feature = "multi_embedding_db")]
+    pub fn legacy_embeddable_nodes_now_rhs() -> String {
+        let star: &'static str = " *";
+        let left: &'static str = " {";
+        let right: &'static str = " @ 'NOW' }";
+        let hash: &'static str = "hash";
+        let rhs = NodeType::primary_nodes()
+            .iter()
+            .map(|n| {
+                [star]
+                    .iter()
+                    .chain(&[n.relation_str()])
+                    .chain(&[left])
+                    .chain(
+                        n.fields()
+                            .iter()
+                            .filter(|s| {
+                                Self::LEGACY_EMBEDDABLE_NODE_FIELDS.contains(s)
+                            })
+                            // // replace tracking_hash for simplicity in `get_nodes_ordered`
+                            // .map(|th| if *th == "tracking_hash" { &hash } else { th })
+                            .intersperse(&", "),
+                    )
+                    .chain(&[right])
+                    .join("")
+            })
+            .join(" or ");
+        rhs
+    }
+
+    #[cfg(feature = "multi_embedding_db")]
     pub fn embeddable_nodes_now() -> String {
         let star: &'static str = " *";
         let left: &'static str = " {";
@@ -238,6 +274,9 @@ lazy_static::lazy_static! {
     };
     pub static ref EMBEDDABLE_NODES_NOW: String = {
         NodeType::embeddable_nodes_now()
+    };
+    pub static ref EMBEDDABLE_NODES_NOW_LEGACY_RHS: String = {
+        NodeType::legacy_embeddable_nodes_now_rhs()
     };
 }
 

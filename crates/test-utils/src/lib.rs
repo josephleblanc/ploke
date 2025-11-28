@@ -234,7 +234,6 @@ pub fn setup_db_full_multi_embedding(
         "Setup".log_step()
     );
 
-    tracing::info!("{}: create embedding set", "Db".log_step());
     setup_db_create_multi_embeddings(db)
 }
 
