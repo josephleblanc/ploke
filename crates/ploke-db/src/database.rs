@@ -858,6 +858,13 @@ impl Database {
     /// This is useful for retrieving the `EmbeddingData` required to retrieve code snippets from
     /// files after finding the Ids via a search method (dense embedding search, bm25 search)
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            return self
+                .deref()
+                .get_nodes_ordered_for_set(nodes, &self.active_embedding_set);
+        }
+
         let ancestor_rules = Self::ANCESTOR_RULES;
         let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
             let rel = ty.relation_str();

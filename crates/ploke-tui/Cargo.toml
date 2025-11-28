@@ -101,7 +101,13 @@ arrayvec = "0.7"
 percent-encoding = "2"
 
 [features]
-default = ["test_harness"]
+default = ["test_harness", "multi_embedding_ui"]
+multi_embedding_ui = [
+    "ploke-embed/multi_embedding_embedder",
+    "ploke-transform/multi_embedding_schema",
+    "ploke-test-utils/multi_embedding_test",
+    "ploke-db/multi_embedding_db",
+]
 llm_refactor = []
 live_api_tests = []
 test_harness = []

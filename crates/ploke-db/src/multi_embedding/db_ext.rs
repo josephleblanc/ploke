@@ -2,14 +2,15 @@
 
 use std::{collections::BTreeMap, ops::Deref};
 
-use cozo::{DataValue, NamedRows, ScriptMutability};
+use cozo::{DataValue, NamedRows, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::{EmbRelName, EmbeddingSet, EmbeddingSetId};
+use ploke_core::EmbeddingData;
 use ploke_error::Error as PlokeError;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, NodeType, QueryResult, TypedEmbedData};
+use crate::{database::HNSW_SUFFIX, multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData};
 
 /// Trait used to extend the database with embeddings-aware methods
 pub trait EmbeddingExt {
@@ -77,6 +78,13 @@ pub trait EmbeddingExt {
     ///
     /// See also `script_embeddable_nodes_now_rhs` above
     fn get_common_nodes(&self) -> Result<QueryResult, PlokeError>;
+
+    /// Retrieves ordered embedding data for the given ids constrained to a specific embedding set.
+    fn get_nodes_ordered_for_set(
+        &self,
+        nodes: Vec<Uuid>,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<Vec<EmbeddingData>, PlokeError>;
 
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
@@ -285,6 +293,88 @@ not *{embed_rel}{{node_id: id}}
             .map_err(PlokeError::from)
     }
 
+    fn get_nodes_ordered_for_set(
+        &self,
+        nodes: Vec<Uuid>,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<Vec<EmbeddingData>, PlokeError> {
+        if nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+        let ancestor_rules = r#"
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+"#;
+        let has_embedding_rule = NodeType::primary_nodes()
+            .iter()
+            .map(|ty| {
+                format!(
+                    r#"
+has_embedding[id, name, hash, span] :=
+    *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}},
+    *{embed_rel}{{ node_id: id, embedding_set_id: set_id @ 'NOW' }},
+    set_id = $embedding_set_id
+"#,
+                    rel = ty.relation_str(),
+                    embed_rel = embed_rel
+                )
+            })
+            .join("\n");
+
+        let script = format!(
+            r#"
+target_ids[id, ordering] <- $data
+
+{ancestor_rules}
+
+{has_embedding_rule}
+
+batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
+    has_embedding[id, name, hash, span],
+    ancestor[id, mod_id],
+    *module{{id: mod_id, tracking_hash: file_hash @ 'NOW'}},
+    *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}},
+    target_ids[id, ordering]
+
+?[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
+    batch[id, name, file_path, file_hash, hash, span, namespace, ordering]
+:sort ordering
+"#,
+            ancestor_rules = ancestor_rules,
+            has_embedding_rule = has_embedding_rule
+        );
+
+        let ids_data: Vec<DataValue> = nodes
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| {
+                DataValue::List(vec![
+                    DataValue::Uuid(UuidWrapper(id)),
+                    DataValue::from(i as i64),
+                ])
+            })
+            .collect();
+
+        let mut params = BTreeMap::new();
+        params.insert("data".into(), DataValue::List(ids_data));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+
+        let query_result = self
+            .run_script(&script, params, ScriptMutability::Immutable)
+            .map(QueryResult::from)
+            .map_err(DbError::from)
+            .map_err(PlokeError::from)?;
+
+        query_result.to_embedding_nodes()
+    }
+
     async fn update_embeddings_batch(
         &self,
         updates: Vec<(Uuid, Vec<f64>)>,
@@ -452,6 +542,15 @@ impl EmbeddingExt for Database {
         self.deref().get_common_nodes()
     }
 
+    fn get_nodes_ordered_for_set(
+        &self,
+        nodes: Vec<Uuid>,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<Vec<EmbeddingData>, PlokeError> {
+        self.deref()
+            .get_nodes_ordered_for_set(nodes, embedding_set)
+    }
+
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
     async fn update_embeddings_batch(&self, updates: Vec<(Uuid, Vec<f64>)>, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
@@ -466,6 +565,299 @@ impl EmbeddingExt for Database {
         embedding_set: EmbeddingSet
     ) -> Result<TypedEmbedData, PlokeError> {
         self.deref().get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
+    }
+}
+
+fn vec_to_param(vector_query: Vec<f32>) -> DataValue {
+    let as_list = vector_query
+        .into_iter()
+        .map(|fl| {
+            if (fl as f64).is_subnormal() {
+                0.0
+            } else {
+                fl as f64
+            }
+        })
+        .map(|fl| DataValue::Num(Num::Float(fl)))
+        .collect_vec();
+    DataValue::List(as_list)
+}
+
+pub trait HnswExt {
+    fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
+    fn create_embedding_index(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
+    fn hnsw_neighbors_for_type(
+        &self,
+        node_type: NodeType,
+        embedding_set: &EmbeddingSet,
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Uuid, String, DataValue)>, ploke_error::Error>;
+    fn search_similar_for_set(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error>;
+}
+
+impl HnswExt for cozo::Db<cozo::MemStorage> {
+    fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+        if self.is_relation_registered(&embedding_set.rel_name)? {
+            return Ok(());
+        }
+
+        let script = EmbeddingVector::script_create_from_set(embedding_set);
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|err| DbError::EmbeddingScriptFailure {
+                action: "create_embedding_relation",
+                relation: embedding_set.rel_name.clone(),
+                details: err.to_string(),
+            })
+    }
+
+    fn create_embedding_index(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+        self.ensure_embedding_relation(embedding_set)?;
+
+        let rel_name = embedding_set.rel_name.as_ref().replace('-', "_");
+        let script = format!(
+            r#"
+::hnsw create {rel_name}{hnsw_suffix} {{
+    fields: [vector],
+    dim: {dim},
+    dtype: F32,
+    m: 32,
+    ef_construction: 200,
+    distance: L2
+}}
+"#,
+            rel_name = rel_name,
+            hnsw_suffix = HNSW_SUFFIX,
+            dim = embedding_set.dims(),
+        );
+
+        self.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(|err| DbError::Cozo(err.to_string()))
+    }
+
+    fn hnsw_neighbors_for_type(
+        &self,
+        node_type: NodeType,
+        embedding_set: &EmbeddingSet,
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Uuid, String, DataValue)>, ploke_error::Error> {
+        let rel_name = node_type.relation_str();
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+
+        let mut params = BTreeMap::new();
+        params.insert("k".into(), DataValue::from(k as i64));
+        params.insert("ef".into(), DataValue::from(ef as i64));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+
+        let script = format!(
+            r#"
+?[result_id, name, distance] :=
+    *{embed_rel}{{ node_id: id, vector: v, embedding_set_id: set_id @ 'NOW' }},
+    set_id = $embedding_set_id,
+    ~{embed_rel}{hnsw_suffix}{{ node_id: result_id, embedding_set_id: idx_set |
+        query: v,
+        k: $k,
+        ef: $ef,
+        bind_distance: distance
+    }},
+    idx_set = $embedding_set_id,
+    *{rel_name}{{ id: result_id, name @ 'NOW' }}
+"#,
+            embed_rel = embed_rel,
+            hnsw_suffix = HNSW_SUFFIX,
+            rel_name = rel_name,
+        );
+
+        let result = match self.run_script(&script, params, ScriptMutability::Immutable) {
+            Ok(rows) => Ok(rows),
+            Err(err) => {
+                if err.to_string().contains("hnsw_idx") {
+                    Err(ploke_error::Error::Warning(
+                        ploke_error::WarningError::PlokeDb(err.to_string()),
+                    ))
+                } else {
+                    Err(DbError::Cozo(err.to_string()).into())
+                }
+            }
+        }?;
+
+        let mut neighbors = Vec::new();
+        for row in result.rows {
+            let id = match row.get(0) {
+                Some(DataValue::Uuid(UuidWrapper(uuid))) => *uuid,
+                _ => continue,
+            };
+            let name = row
+                .get(1)
+                .and_then(|v| v.get_str())
+                .unwrap_or_default()
+                .to_string();
+            let dist = row.get(2).cloned().unwrap_or(DataValue::Null);
+            neighbors.push((id, name, dist));
+        }
+        Ok(neighbors)
+    }
+
+    fn search_similar_for_set(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error> {
+        let mut params = BTreeMap::new();
+        params.insert("k".into(), DataValue::from(k as i64));
+        params.insert("ef".into(), DataValue::from(ef as i64));
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("vector_query".into(), vec_to_param(vector_query));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+        if let Some(radius) = radius {
+            params.insert("radius".into(), DataValue::Num(Num::Float(radius)));
+        }
+
+        let rel = node_type.relation_str();
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+        let radius_clause = if radius.is_some() {
+            ",\n        radius: $radius,"
+        } else {
+            ","
+        };
+        let script = format!(
+            r#"
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+from_index[id, distance] :=
+    ~{embed_rel}{hnsw_suffix}{{ node_id, embedding_set_id: set_id |
+        query: vec($vector_query),
+        k: $k,
+        ef: $ef{radius_clause}
+        bind_distance: distance
+    }},
+    set_id = $embedding_set_id
+
+has_embedding[id, name, hash, span, distance] :=
+    from_index[id, distance],
+    *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }}
+
+is_root_module[id] := *module{{id @ 'NOW' }}, *file_mod {{owner_id: id @ 'NOW'}}
+
+batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
+    has_embedding[id, name, hash, span, distance],
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *module{{id: mod_id, tracking_hash: file_hash @ 'NOW'}},
+    *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}}
+
+?[id, name, file_path, file_hash, hash, span, namespace, distance] :=
+    batch[id, name, file_path, file_hash, hash, span, namespace, distance]
+:order distance
+:limit $limit
+"#,
+            embed_rel = embed_rel,
+            hnsw_suffix = HNSW_SUFFIX,
+            rel = rel,
+            radius_clause = radius_clause,
+        );
+
+        let query_result = match self.run_script(&script, params, ScriptMutability::Immutable) {
+            Ok(rows) => Ok(QueryResult::from(rows)),
+            Err(err) => {
+                if err.to_string().contains("hnsw_idx") {
+                    Err(ploke_error::Error::Warning(
+                        ploke_error::WarningError::PlokeDb(err.to_string()),
+                    ))
+                } else {
+                    Err(DbError::Cozo(err.to_string()).into())
+                }
+            }
+        }?;
+
+        let mut dist_vec = Vec::new();
+        if let Some(dist_idx) = query_result
+            .headers
+            .iter()
+            .position(|h| h == "distance")
+        {
+            dist_vec.extend(
+                query_result
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(dist_idx).and_then(|v| v.get_float())),
+            );
+        }
+
+        let v = query_result.to_embedding_nodes()?;
+        let typed_data = TypedEmbedData { v, ty: node_type };
+        Ok(EmbedDataVerbose {
+            typed_data,
+            dist: dist_vec,
+        })
+    }
+}
+
+impl HnswExt for Database {
+    fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+        self.deref().ensure_embedding_relation(embedding_set)
+    }
+
+    fn create_embedding_index(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+        self.deref().create_embedding_index(embedding_set)
+    }
+
+    fn hnsw_neighbors_for_type(
+        &self,
+        node_type: NodeType,
+        embedding_set: &EmbeddingSet,
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Uuid, String, DataValue)>, ploke_error::Error> {
+        self.deref()
+            .hnsw_neighbors_for_type(node_type, embedding_set, k, ef)
+    }
+
+    fn search_similar_for_set(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error> {
+        self.deref().search_similar_for_set(
+            embedding_set,
+            node_type,
+            vector_query,
+            k,
+            ef,
+            limit,
+            radius,
+        )
     }
 }
 
@@ -641,6 +1033,139 @@ mod tests {
 
         Ok(())
         }
+
+    #[test]
+    fn get_nodes_ordered_for_set_preserves_order() -> Result<(), PlokeError> {
+        let db = TEST_DB_IMMUTABLE.clone();
+        let embedding_set = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("local"),
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+            EmbeddingShape::new_dims_default(384),
+        );
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        // Take a couple of node ids from the fixture functions and insert vectors for our embedding set.
+        let rows = run_script!(
+            db,
+            ScriptMutability::Immutable,
+            "Testing Script:",
+            "fetch function ids",
+            "?[id] := *function { id @ 'NOW' } :limit 2"
+        )?;
+        let ids: Vec<Uuid> = rows
+            .rows
+            .iter()
+            .filter_map(|row| row.first())
+            .filter_map(|v| {
+                if let DataValue::Uuid(UuidWrapper(u)) = v {
+                    Some(*u)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(!ids.is_empty(), "fixture must contain function ids");
+
+        let updates = ids
+            .iter()
+            .map(|id| embedding_set.new_vector_with_node(*id, vec![0.1; 384]))
+            .map(EmbeddingVector::into_cozo_datavalue)
+            .collect_vec();
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates));
+        let put_vectors = embedding_set.script_put_vector_with_param_batch();
+        run_script_params!(
+            db,
+            ScriptMutability::Mutable,
+            "Testing Script:",
+            "insert vectors for ordered nodes",
+            &put_vectors,
+            params
+        )?;
+
+        let ordered = db.get_nodes_ordered_for_set(ids.clone(), &embedding_set)?;
+        let returned_ids: Vec<Uuid> = ordered.iter().map(|e| e.id).collect();
+        assert_eq!(returned_ids, ids);
+
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_index_filters_embedding_set() -> Result<(), PlokeError> {
+        let db = cozo::Db::new(MemStorage::default()).map_err(DbError::from)?;
+        db.initialize().map_err(DbError::from)?;
+
+        let set_a = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("prov_a"),
+            EmbeddingModelId::new_from_str("test_model"),
+            EmbeddingShape::new_dims_default(3),
+        );
+        let set_b = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("prov_b"),
+            EmbeddingModelId::new_from_str("test_model"),
+            EmbeddingShape::new_dims_default(3),
+        );
+
+        db.ensure_embedding_relation(&set_a)?;
+
+        let create_fn_rel =
+            ":create function { id: Uuid, at: Validity => name: String }";
+        db.run_script(
+            create_fn_rel,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        let id_a1 = Uuid::new_v4();
+        let id_a2 = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let insert_functions = format!(
+            "?[id, at, name] <- [[ '{id_a1}', 'ASSERT', 'a1' ], [ '{id_a2}', 'ASSERT', 'a2' ], [ '{id_b}', 'ASSERT', 'b' ]]\n:put function {{ id, at => name }}",
+        );
+        db.run_script(
+            &insert_functions,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        let updates = vec![
+            set_a
+                .new_vector_with_node(id_a1, vec![1.0, 0.0, 0.0])
+                .into_cozo_datavalue(),
+            set_a
+                .new_vector_with_node(id_a2, vec![0.0, 1.0, 0.0])
+                .into_cozo_datavalue(),
+            set_b
+                .new_vector_with_node(id_b, vec![0.0, 0.0, 1.0])
+                .into_cozo_datavalue(),
+        ];
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates));
+        let put_vectors = set_a.script_put_vector_with_param_batch();
+        db.run_script(
+            &put_vectors,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+
+        db.create_embedding_index(&set_a)?;
+
+        let neighbors =
+            db.hnsw_neighbors_for_type(NodeType::Function, &set_a, 2, 10)?;
+        assert!(
+            !neighbors.is_empty(),
+            "expected neighbors to be returned for set_a"
+        );
+        assert!(
+            neighbors.iter().all(|(id, _, _)| *id != id_b),
+            "hnsw results should ignore other embedding_set_id rows"
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn test_get_common_nodes() -> Result<(), PlokeError> {

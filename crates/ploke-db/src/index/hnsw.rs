@@ -6,6 +6,8 @@ use itertools::Itertools;
 use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::db_ext::HnswExt;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -58,18 +60,25 @@ pub fn hnsw_of_type(
     k: usize,
     ef: usize,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
-    let mut params = std::collections::BTreeMap::new();
-    let rel = ty.relation_str();
-    params.insert("k".to_string(), DataValue::from(k as i64));
-    params.insert("ef".to_string(), DataValue::from(ef as i64));
-    params.insert("rel".to_string(), DataValue::from(rel));
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        return db.hnsw_neighbors_for_type(ty, &db.active_embedding_set, k, ef);
+    }
 
-    let result = [
-        r#"
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        let mut params = std::collections::BTreeMap::new();
+        let rel = ty.relation_str();
+        params.insert("k".to_string(), DataValue::from(k as i64));
+        params.insert("ef".to_string(), DataValue::from(ef as i64));
+        params.insert("rel".to_string(), DataValue::from(rel));
+
+        let result = [
+            r#"
             ?[id, name, distance] := 
                 *"#,
-        rel,
-        r#"{
+            rel,
+            r#"{
                     id, 
                     name, 
                     embedding: v
@@ -77,46 +86,48 @@ pub fn hnsw_of_type(
                 },
                 !is_null(v),
                 ~"#,
-        rel,
-        HNSW_SUFFIX,
-        r#"{id, name | 
+            rel,
+            HNSW_SUFFIX,
+            r#"{id, name | 
                     query: v, 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance,
                 }
             "#,
-    ]
-    .join("");
-    let result = match db.run_script(&result, params, ScriptMutability::Immutable) {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            if e.to_string()
-                .contains("Index hnsw_idx not found on relation const")
-            {
-                Err(ploke_error::Error::Warning(
-                    ploke_error::WarningError::PlokeDb(e.to_string()),
-                ))
-            } else {
-                Err(DbError::Cozo(e.to_string()).into())
+        ]
+        .join("");
+        let result = match db.run_script(&result, params, ScriptMutability::Immutable) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                if e
+                    .to_string()
+                    .contains("Index hnsw_idx not found on relation const")
+                {
+                    Err(ploke_error::Error::Warning(
+                        ploke_error::WarningError::PlokeDb(e.to_string()),
+                    ))
+                } else {
+                    Err(DbError::Cozo(e.to_string()).into())
+                }
             }
+        }?;
+
+        let mut results = Vec::new();
+        for row in result.rows {
+            tracing::trace!("{:?}", row);
+            let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
+                tracing::trace!("{:?}", id);
+                id
+            } else {
+                uuid::Uuid::max()
+            };
+            let content = row[1].get_str().unwrap().to_string();
+            results.push((id, content, row[2].to_owned()));
         }
-    }?;
 
-    let mut results = Vec::new();
-    for row in result.rows {
-        tracing::trace!("{:?}", row);
-        let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-            tracing::trace!("{:?}", id);
-            id
-        } else {
-            uuid::Uuid::max()
-        };
-        let content = row[1].get_str().unwrap().to_string();
-        results.push((id, content, row[2].to_owned()));
+        Ok(results)
     }
-
-    Ok(results)
 }
 
 #[instrument(skip_all, fields(query_result))]
@@ -127,36 +138,53 @@ pub fn search_similar(
     ef: usize,
     ty: NodeType,
 ) -> Result<TypedEmbedData, ploke_error::Error> {
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("k".to_string(), DataValue::from(k as i64));
-    params.insert("ef".to_string(), DataValue::from(ef as i64));
-    params.insert("limit".to_string(), DataValue::from(100_i64));
-    params.insert(
-        "vector_query".to_string(),
-        DataValue::List(
-            vector_query
-                .into_iter()
-                .map(|fl| {
-                    if (fl as f64).is_subnormal() {
-                        1.0
-                    } else {
-                        fl as f64
-                    }
-                })
-                .map(|fl| DataValue::Num(Num::Float(fl)))
-                .collect_vec(),
-        ),
-    );
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        return db
+            .search_similar_for_set(
+                &db.active_embedding_set,
+                ty,
+                vector_query,
+                k,
+                ef,
+                100,
+                None,
+            )
+            .map(|res| res.typed_data);
+    }
 
-    let mut script = String::new();
-    let base_script_start = r#"
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("k".to_string(), DataValue::from(k as i64));
+        params.insert("ef".to_string(), DataValue::from(ef as i64));
+        params.insert("limit".to_string(), DataValue::from(100_i64));
+        params.insert(
+            "vector_query".to_string(),
+            DataValue::List(
+                vector_query
+                    .into_iter()
+                    .map(|fl| {
+                        if (fl as f64).is_subnormal() {
+                            1.0
+                        } else {
+                            fl as f64
+                        }
+                    })
+                    .map(|fl| DataValue::Num(Num::Float(fl)))
+                    .collect_vec(),
+            ),
+        );
+
+        let mut script = String::new();
+        let base_script_start = r#"
     parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     has_embedding[id, name, hash, span] := *"#;
-    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
 
     is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
 
@@ -170,8 +198,8 @@ pub fn search_similar(
     ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
         batch[id, name, file_path, file_hash, hash, span, namespace],
      "#;
-    let hnsw_script = [
-        r#"
+        let hnsw_script = [
+            r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
@@ -179,39 +207,40 @@ pub fn search_similar(
                     @ 'NOW'
                 },
                 ~function"#,
-        HNSW_SUFFIX,
-        r#"{id, name| 
+            HNSW_SUFFIX,
+            r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 }
             "#,
-    ];
-    let limit_param = ":limit $limit";
+        ];
+        let limit_param = ":limit $limit";
 
-    let rel = ty.relation_str();
-    script.push_str(base_script_start);
-    script.push_str(rel);
-    script.push_str(base_script_end);
+        let rel = ty.relation_str();
+        script.push_str(base_script_start);
+        script.push_str(rel);
+        script.push_str(base_script_end);
 
-    tracing::trace!("script for similarity search is: {}", script);
-    let query_result = db
-        .run_script(&script, params, cozo::ScriptMutability::Immutable)
-        .inspect_err(|e| tracing::error!("{e}"))
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
+        tracing::trace!("script for similarity search is: {}", script);
+        let query_result = db
+            .run_script(&script, params, cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-    let less_flat_row = query_result.rows.first();
-    let count_less_flat = query_result.rows.len();
-    if let Some(lfr) = less_flat_row {
-        tracing::trace!(
-            "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
-            rel
-        );
+        let less_flat_row = query_result.rows.first();
+        let count_less_flat = query_result.rows.len();
+        if let Some(lfr) = less_flat_row {
+            tracing::trace!(
+                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
+                rel
+            );
+        }
+        let v = QueryResult::from(query_result).to_embedding_nodes()?;
+        let ty_embed = TypedEmbedData { v, ty };
+        Ok(ty_embed)
     }
-    let v = QueryResult::from(query_result).to_embedding_nodes()?;
-    let ty_embed = TypedEmbedData { v, ty };
-    Ok(ty_embed)
 }
 
 pub struct SimilarArgs<'a> {
@@ -235,39 +264,53 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
         max_hits,
         radius,
     } = args;
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("k".to_string(), DataValue::from(k as i64));
-    params.insert("ef".to_string(), DataValue::from(ef as i64));
-    params.insert("limit".to_string(), DataValue::from(max_hits as i64));
-    params.insert("radius".to_string(), DataValue::from(radius));
-    params.insert(
-        "vector_query".to_string(),
-        DataValue::List(
-            vector_query
-                .iter()
-                // .into_iter()
-                .map(|fl| {
-                    if (*fl as f64).is_subnormal() {
-                        0.0
-                    } else {
-                        *fl as f64
-                    }
-                })
-                .map(|fl| DataValue::Num(Num::Float(fl)))
-                .collect_vec(),
-        ),
-    );
-    let rel = ty.relation_str();
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        return db.search_similar_for_set(
+            &db.active_embedding_set,
+            ty,
+            vector_query.clone(),
+            k,
+            ef,
+            max_hits,
+            Some(radius),
+        );
+    }
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("k".to_string(), DataValue::from(k as i64));
+        params.insert("ef".to_string(), DataValue::from(ef as i64));
+        params.insert("limit".to_string(), DataValue::from(max_hits as i64));
+        params.insert("radius".to_string(), DataValue::from(radius));
+        params.insert(
+            "vector_query".to_string(),
+            DataValue::List(
+                vector_query
+                    .iter()
+                    // .into_iter()
+                    .map(|fl| {
+                        if (*fl as f64).is_subnormal() {
+                            0.0
+                        } else {
+                            *fl as f64
+                        }
+                    })
+                    .map(|fl| DataValue::Num(Num::Float(fl)))
+                    .collect_vec(),
+            ),
+        );
+        let rel = ty.relation_str();
 
-    let mut script = String::new();
-    let base_script_start = r#"
+        let mut script = String::new();
+        let base_script_start = r#"
     parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     has_embedding[id, name, hash, span] := *"#;
-    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
 
     is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
 
@@ -281,20 +324,20 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
         batch[id, name, file_path, file_hash, hash, span, namespace],
      "#;
-    // ?[id, name, distance] :=
-    let hnsw_script = [
-        r#"
+        // ?[id, name, distance] :=
+        let hnsw_script = [
+            r#"
                 *"#,
-        rel,
-        r#"{
+            rel,
+            r#"{
                     id, 
                     name, 
                     @ 'NOW'
                 },
                 ~"#,
-        rel,
-        HNSW_SUFFIX,
-        r#"{id, name| 
+            rel,
+            HNSW_SUFFIX,
+            r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
@@ -303,52 +346,53 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
                 },
                 :order distance
             "#,
-    ];
-    let limit_param = ":limit $limit";
+        ];
+        let limit_param = ":limit $limit";
 
-    script.push_str(base_script_start);
-    script.push_str(rel);
-    script.push_str(base_script_end);
-    script.push_str(&hnsw_script.into_iter().collect::<String>());
-    script.push_str(limit_param);
+        script.push_str(base_script_start);
+        script.push_str(rel);
+        script.push_str(base_script_end);
+        script.push_str(&hnsw_script.into_iter().collect::<String>());
+        script.push_str(limit_param);
 
-    tracing::trace!("script for similarity search is: {}", script);
-    let query_result = db
-        .run_script(&script, params, cozo::ScriptMutability::Immutable)
-        .inspect_err(|e| tracing::error!("{e}"))
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
+        tracing::trace!("script for similarity search is: {}", script);
+        let query_result = db
+            .run_script(&script, params, cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-    let less_flat_row = query_result.rows.first();
-    let count_less_flat = query_result.rows.len();
-    if let Some(lfr) = less_flat_row {
-        tracing::trace!(
-            "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
-            rel
-        );
+        let less_flat_row = query_result.rows.first();
+        let count_less_flat = query_result.rows.len();
+        if let Some(lfr) = less_flat_row {
+            tracing::trace!(
+                "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
+                rel
+            );
+        }
+        let mut dist_vec = Vec::new();
+        if !query_result.rows.is_empty() {
+            tracing::trace!("query_result.headers: {:?}", query_result.headers);
+            let dist_idx = query_result
+                .headers
+                .iter()
+                .enumerate()
+                .find(|(idx, s)| *s == "distance")
+                .map(|(idx, _)| idx)
+                .expect("Must return `distance` in database return values");
+            let dist_floats = query_result
+                .rows
+                .iter()
+                .filter_map(|r| r[dist_idx].get_float());
+            dist_vec.extend(dist_floats);
+        }
+        let v = QueryResult::from(query_result).to_embedding_nodes()?;
+        let ty_embed = TypedEmbedData { v, ty };
+        let verbose_embed = EmbedDataVerbose {
+            typed_data: ty_embed,
+            dist: dist_vec,
+        };
+        Ok(verbose_embed)
     }
-    let mut dist_vec = Vec::new();
-    if !query_result.rows.is_empty() {
-        tracing::trace!("query_result.headers: {:?}", query_result.headers);
-        let dist_idx = query_result
-            .headers
-            .iter()
-            .enumerate()
-            .find(|(idx, s)| *s == "distance")
-            .map(|(idx, _)| idx)
-            .expect("Must return `distance` in database return values");
-        let dist_floats = query_result
-            .rows
-            .iter()
-            .filter_map(|r| r[dist_idx].get_float());
-        dist_vec.extend(dist_floats);
-    }
-    let v = QueryResult::from(query_result).to_embedding_nodes()?;
-    let ty_embed = TypedEmbedData { v, ty };
-    let verbose_embed = EmbedDataVerbose {
-        typed_data: ty_embed,
-        dist: dist_vec,
-    };
-    Ok(verbose_embed)
 }
 
 #[derive(Debug, Clone)]
@@ -407,14 +451,22 @@ pub fn search_similar_test(
 }
 
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
-    // Create documents table
-    // Create HNSW index on embeddings
-    let script = [
-        r#"
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        let _ = ty;
+        return db.create_embedding_index(&db.active_embedding_set);
+    }
+
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        // Create documents table
+        // Create HNSW index on embeddings
+        let script = [
+            r#"
             ::hnsw create "#,
-        ty.relation_str(),
-        HNSW_SUFFIX,
-        r#" {
+            ty.relation_str(),
+            HNSW_SUFFIX,
+            r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -423,33 +475,52 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
                 distance: L2
             }
             "#,
-    ]
-    .join("");
-    db.run_script(
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
+        ]
+        .join("");
+        db.run_script(
+            &script,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
 
-    Ok(())
+        Ok(())
+    }
 }
 
 pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
-    for ty in NodeType::primary_nodes() {
-        create_index(db, ty)?;
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        return db.create_embedding_index(&db.active_embedding_set);
     }
-    Ok(())
+
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        for ty in NodeType::primary_nodes() {
+            create_index(db, ty)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
-    // Create documents table
-    // Create HNSW index on embeddings
-    let script = [
-        r#"
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        let _ = ty;
+        return db
+            .create_embedding_index(&db.active_embedding_set)
+            .map_err(ploke_error::Error::from);
+    }
+
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        // Create documents table
+        // Create HNSW index on embeddings
+        let script = [
+            r#"
             ::hnsw create "#,
-        ty.relation_str(),
-        HNSW_SUFFIX,
-        r#" {
+            ty.relation_str(),
+            HNSW_SUFFIX,
+            r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -458,26 +529,37 @@ pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error:
                 distance: L2
             }
             "#,
-    ]
-    .join("");
-    run_script_warn(
-        db,
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
-    Ok(())
+        ]
+        .join("");
+        run_script_warn(
+            db,
+            &script,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
 }
 
 pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
-    // Create documents table
-    // Create HNSW index on embeddings
-    let script = [
-        r#"
+    #[cfg(feature = "multi_embedding_db")]
+    {
+        let _ = ty;
+        return db
+            .create_embedding_index(&db.active_embedding_set)
+            .map_err(ploke_error::Error::from);
+    }
+
+    #[cfg(not(feature = "multi_embedding_db"))]
+    {
+        // Create documents table
+        // Create HNSW index on embeddings
+        let script = [
+            r#"
             ::hnsw replace "#,
-        ty.relation_str(),
-        HNSW_SUFFIX,
-        r#" {
+            ty.relation_str(),
+            HNSW_SUFFIX,
+            r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -486,15 +568,16 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
                 distance: L2
             }
             "#,
-    ]
-    .join("");
-    run_script_warn(
-        db,
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
-    Ok(())
+        ]
+        .join("");
+        run_script_warn(
+            db,
+            &script,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
