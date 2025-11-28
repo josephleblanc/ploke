@@ -9,7 +9,7 @@ use ploke_error::Error as PlokeError;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{multi_embedding::schema::{EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, NodeType, QueryResult};
+use crate::{multi_embedding::schema::{EmbeddingSetExt, EmbeddingVector}, query::builder::EMBEDDABLE_NODES_NOW, Database, DbError, NodeType, QueryResult, TypedEmbedData};
 
 /// Trait used to extend the database with embeddings-aware methods
 pub trait EmbeddingExt {
@@ -81,6 +81,14 @@ pub trait EmbeddingExt {
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
 async fn update_embeddings_batch(&self, updates: Vec<(Uuid, Vec<f64>)>, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
+
+    fn get_unembed_rel(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: usize,
+        embedding_set: EmbeddingSet
+    ) -> Result<TypedEmbedData, PlokeError>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -88,6 +96,7 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
         let pending_nodes_rhs = self.script_pending_nodes_rhs(embedding_set);
 
         let query = format!("?[count(id)] := {}", pending_nodes_rhs);
+        tracing::debug!(target: "cozo-script", ?query);
 
         let result = self
             .run_script(
@@ -115,7 +124,7 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
         let query = format!(
             r#"
 unembedded_file_mod[id] := *module{{id}}, *file_mod{{owner_id: id}}, 
-!*{embed_rel}{{node_id: id}}
+not *{embed_rel}{{node_id: id}}
 
 ?[count(id)] := unembedded_file_mod[id]
 "#,
@@ -290,6 +299,162 @@ unembedded_file_mod[id] := *module{{id}}, *file_mod{{owner_id: id}},
 
         let params = BTreeMap::from([( "updates".to_string(), DataValue::List(updates_data) )]);
         Ok(())
+    }
+
+    fn get_unembed_rel(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: usize,
+        embedding_set: EmbeddingSet
+    ) -> Result<TypedEmbedData, PlokeError> {
+        let node_relation_name = node_type.relation_str();
+        let embed_rel = embedding_set.relation_name();
+        let script = format!(r#"
+    parent_of[child, parent] := *syntax_edge{{ source_id: parent, target_id: child, relation_kind: "Contains" }}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+    needs_embedding[id, name, hash, span] := *{node_relation_name} {{
+            id, 
+            name, 
+            tracking_hash: hash, 
+            span, 
+         }}, not *{embed_rel} {{node_id: id}}
+
+    is_root_module[id] := *module{{ id }}, *file_mod {{owner_id: id}}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{{ id: mod_id, tracking_hash: file_hash }},
+        *file_mod {{  owner_id: mod_id, file_path, namespace  }},
+
+    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace]
+        :sort id
+        :limit $limit
+     "#);
+
+        // Create parameters map
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::from(cursor as i64));
+
+        let query_result = self
+            .run_script(&script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let count_more_flat = query_result.rows.iter().flatten().count();
+        let count_less_flat = query_result.rows.len();
+        tracing::info!("== more_flat: {count_more_flat} | less_flat: {count_less_flat} ==");
+        let more_flat_row = query_result.rows.iter().flatten().next();
+        let less_flat_row = query_result.rows.first();
+        tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        let ty_embed = TypedEmbedData { v, ty: node_type };
+        Ok(ty_embed)
+    }
+}
+
+
+/// Trait used to extend the database with embeddings-aware methods
+impl EmbeddingExt for Database {
+    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_pending_embeddings(embedding_set_id)
+    }
+
+    /// Helper function to specifically count unembedded non-files.
+    ///
+    /// Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
+    /// `ploke-embed`.
+    fn count_unembedded_nonfiles(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_unembedded_nonfiles(embedding_set_id)
+    }
+
+    /// Helper function to specifically count unembedded files.
+    ///
+    // Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
+    // `ploke-embed`
+    fn count_unembedded_files(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_unembedded_files(embedding_set_id)
+    }
+
+    /// Checks for the presence of the embedding info for a given embedding set.
+    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError> {
+        self.deref().is_embedding_present(embedding_set_id)
+    }
+
+    fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError> {
+        self.deref().is_embedding_id_present(embedding_set_id)
+    }
+
+    fn get_embedding_rel_name(
+        &self,
+        embedding_set_id: EmbeddingSetId,
+    ) -> Result<EmbRelName, DbError> {
+        self.deref().get_embedding_rel_name(embedding_set_id)
+    }
+
+    /// Checks whether or not a given vector relation name is already registered in the database.
+    ///
+    /// Useful when checking that the database has registered the relation for and embedding model.
+    ///
+    /// e.g. If the relation is present in the database, then the database is ready to register
+    /// the embedding vectors for code snippets.
+    fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
+        self.deref().is_relation_registered(relation_name)
+    }
+
+    fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        self.deref().script_pending_nodes_rhs(embedding_set)
+    }
+
+    /// These nodes are also filtered in the function `embeddable_nodes_now` (cfg-gated) behind the
+    /// lazy static for the rhs script, `EMBEDDABLE_NODES_NOW`, and form the set of nodes that we
+    /// use for embeddings.
+    fn script_embeddable_nodes_now_rhs() -> &'static str {
+        // WARNING: This is not really good practice, and is just copied from the above
+        // implementation for cozo::Db.
+        // Revisit this once we are ready to do a better refactor for wrapper databases
+        EMBEDDABLE_NODES_NOW.as_str()
+    }
+
+    /// The script used to get the common nodes in `get_common_nodes`
+    fn script_get_common_nodes(&self) -> Result<String, DbError> {
+        self.deref().script_get_common_nodes()
+    }
+
+    /// Get the rows for nodes that we often use for embeddings or other similar functions, which
+    /// are grouped in this function by the common fields they share, namely:
+    ///
+    /// id, name, tracking_hash, span
+    ///
+    /// These nodes are also filtered in the function `embeddable_nodes_now` (cfg-gated) behind the
+    /// lazy static for the rhs script, `EMBEDDABLE_NODES_NOW`, and form the set of nodes that we
+    /// use for embeddings.
+    ///
+    /// See also `script_embeddable_nodes_now_rhs` above
+    fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
+        self.deref().get_common_nodes()
+    }
+
+    // TODO: After we get this to work, try removing the async (I don't know if it really wins us
+    // anything here)
+    async fn update_embeddings_batch(&self, updates: Vec<(Uuid, Vec<f64>)>, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+        self.deref().update_embeddings_batch(updates, embedding_set).await
+    }
+
+    fn get_unembed_rel(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: usize,
+        embedding_set: EmbeddingSet
+    ) -> Result<TypedEmbedData, PlokeError> {
+        self.deref().get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
     }
 }
 
@@ -517,11 +682,25 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             EmbeddingModelId::new_from_str("test_model/with_slash"),
             EmbeddingShape::new_dims_default(123),
         );
-        let create_rel_script = EmbeddingVector::script_create_from_set(&embedding_set);
+
+        // manually rewriting the cozoscript here because now we sanitize it out in the
+        // constructor for embedding_set
+        let relation_name = "test_model/with_slash";
+        let create_rel_script_bad = format!(r#":create {relation_name} {{
+    node_id: Uuid,
+    at: Validity,
+    =>
+    vector: <F32; {dims}>,
+    embedding_set_id: Int }}"#, dims = embedding_set.dims());
+        let db_result = run_script!(empty_db, ScriptMutability::Mutable, "Testing Script:", relation_name, &create_rel_script_bad);
+        assert!(db_result.is_err(), "Expect an EmbeddingModelId with a slash '/' in the name to error");
+
+        // now testing the sanitizer is catching the forward-slash `/`
+        let create_rel_script_good = EmbeddingVector::script_create_from_set(&embedding_set);
 
         let relation_name = embedding_set.relation_name();
-        let db_result = run_script!(empty_db, ScriptMutability::Mutable, "Testing Script:", relation_name, &create_rel_script);
-        assert!(db_result.is_err(), "Expect an EmbeddingModelId with a slash '/' in the name to error");
+        let db_result = run_script!(empty_db, ScriptMutability::Mutable, "Testing Script:", relation_name, &create_rel_script_good);
+        assert!(db_result.is_ok(), "Expect an EmbeddingModelId with a slash '/' in the name to error");
 
         Ok(())
     }
@@ -552,11 +731,14 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
 
     #[test]
     fn multi_pending_embeddings_count_basic() -> Result<(), ploke_error::Error> {
-        // ploke_test_utils::init_test_tracing(Level::DEBUG);
+        ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
         // let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         // let db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        
+        // setup function takes care of:
+        // - create embedding_set relation
         let db = setup_db()?;
-        //
+
         let common_nodes_result = db.get_common_nodes()?;
         let common_nodes_count = common_nodes_result.rows.len();
 
@@ -568,21 +750,6 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             EmbeddingShape::new_dims_default(123),
         );
         let create_rel_script = EmbeddingSet::script_create();
-
-        info!(
-            "{} {}\n{}",
-            "Testing Script:".log_step(),
-            "create embedding_set relation".log_name(),
-            "Running script:\n{create_rel_script}"
-        );
-        let db_result = db
-            .run_script(
-                create_rel_script,
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )
-            .map_err(DbError::from)?;
-        info!(?db_result.rows);
 
         let put_rel_script = embedding_set.script_put();
 
@@ -642,102 +809,41 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         );
 
         info!(?db_result.rows);
-        let count =
+        let count_all_embeddable =
             <cozo::Db<MemStorage> as EmbeddingExt>::count_pending_embeddings(&db, &embedding_set)?;
-        info!("Total nodes found without embeddings using new method:\n\t{count}");
+        info!(target: "cozo-script",
+            "{}: {}",
+            "count_pending_embeddings".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
         assert_eq!(
-            136, count,
+            136, count_all_embeddable,
             "Expect all nodes present (flaky, add better count later)"
         );
 
-        panic!();
+        let count_unembedded_files =
+            <cozo::Db<MemStorage> as EmbeddingExt>::count_unembedded_files(&db, &embedding_set)?;
+        info!(target: "cozo-script",
+            "{}: {}",
+            "count_unembedded_files".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
+        assert_eq!(
+            10, count_unembedded_files,
+            "Expect all nodes present"
+        );
+
+        let count_unembedded_nonfiles =
+            <cozo::Db<MemStorage> as EmbeddingExt>::count_unembedded_nonfiles(&db, &embedding_set)?;
+        info!(target: "cozo-script",
+            "{}: {}",
+            "count_unembedded_nonfiles".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
+        assert_eq!(
+            126, count_unembedded_nonfiles,
+            "Expect all nodes present"
+        );
+
+        assert!(count_all_embeddable == (count_unembedded_nonfiles + count_unembedded_files),
+            "totals should line up"
+        );
 
         Ok(())
     }
 }
 
-
-/// Trait used to extend the database with embeddings-aware methods
-impl EmbeddingExt for Database {
-    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        self.deref().count_pending_embeddings(embedding_set_id)
-    }
-
-    /// Helper function to specifically count unembedded non-files.
-    ///
-    /// Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
-    /// `ploke-embed`.
-    fn count_unembedded_nonfiles(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        self.deref().count_unembedded_nonfiles(embedding_set_id)
-    }
-
-    /// Helper function to specifically count unembedded files.
-    ///
-    // Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
-    // `ploke-embed`
-    fn count_unembedded_files(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        self.deref().count_unembedded_files(embedding_set_id)
-    }
-
-    /// Checks for the presence of the embedding info for a given embedding set.
-    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError> {
-        self.deref().is_embedding_present(embedding_set_id)
-    }
-
-    fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError> {
-        self.deref().is_embedding_id_present(embedding_set_id)
-    }
-
-    fn get_embedding_rel_name(
-        &self,
-        embedding_set_id: EmbeddingSetId,
-    ) -> Result<EmbRelName, DbError> {
-        self.deref().get_embedding_rel_name(embedding_set_id)
-    }
-
-    /// Checks whether or not a given vector relation name is already registered in the database.
-    ///
-    /// Useful when checking that the database has registered the relation for and embedding model.
-    ///
-    /// e.g. If the relation is present in the database, then the database is ready to register
-    /// the embedding vectors for code snippets.
-    fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
-        self.deref().is_relation_registered(relation_name)
-    }
-
-    fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
-        self.deref().script_pending_nodes_rhs(embedding_set)
-    }
-
-    /// These nodes are also filtered in the function `embeddable_nodes_now` (cfg-gated) behind the
-    /// lazy static for the rhs script, `EMBEDDABLE_NODES_NOW`, and form the set of nodes that we
-    /// use for embeddings.
-    fn script_embeddable_nodes_now_rhs() -> &'static str {
-        self.deref().script_embeddable_nodes_now_rhs()
-    }
-
-    /// The script used to get the common nodes in `get_common_nodes`
-    fn script_get_common_nodes(&self) -> Result<String, DbError> {
-        self.deref().script_get_common_nodes()
-    }
-
-    /// Get the rows for nodes that we often use for embeddings or other similar functions, which
-    /// are grouped in this function by the common fields they share, namely:
-    ///
-    /// id, name, tracking_hash, span
-    ///
-    /// These nodes are also filtered in the function `embeddable_nodes_now` (cfg-gated) behind the
-    /// lazy static for the rhs script, `EMBEDDABLE_NODES_NOW`, and form the set of nodes that we
-    /// use for embeddings.
-    ///
-    /// See also `script_embeddable_nodes_now_rhs` above
-    fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
-        self.deref().get_common_nodes()
-    }
-
-    // TODO: After we get this to work, try removing the async (I don't know if it really wins us
-    // anything here)
-    async fn update_embeddings_batch(&self, updates: Vec<(Uuid, Vec<f64>)>, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
-        self.deref().update_embeddings_batch(updates, embedding_set).await
-    }
-}

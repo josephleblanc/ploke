@@ -1,2 +1,2 @@
-pub(crate) mod db_ext;
-pub(crate) mod schema;
+pub mod db_ext;
+pub mod schema;

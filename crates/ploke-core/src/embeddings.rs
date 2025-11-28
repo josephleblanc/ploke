@@ -69,7 +69,9 @@ impl EmbeddingSet {
     ) -> Self {
         let dims = shape.dimension;
         // Note sanitization step.
-        let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}").replace("-", "_"));
+        let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}")
+            .replace("-", "_")
+            .replace("/", "_slash_"));
         let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,
