@@ -46,22 +46,25 @@ pub trait EmbeddingExt {
     /// embedded.
     ///
     /// Useful in `ploke-embed` when processing vector embeddings.
-    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError>;
+    fn count_pending_embeddings(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
 
     /// Helper function to specifically count unembedded non-files.
     ///
     /// Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
     /// `ploke-embed`.
-    fn count_unembedded_nonfiles(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError>;
+    fn count_unembedded_nonfiles(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
 
     /// Helper function to specifically count unembedded files.
     ///
     // Similar to `count_pending_embeddings`, it is useful when processing vector embeddings in
     // `ploke-embed`
-    fn count_unembedded_files(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError>;
+    fn count_unembedded_files(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
 
     /// Checks for the presence of the embedding info for a given embedding set.
-    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError>;
+    fn is_embedding_present(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError>;
+
+    /// Counts the number of embedding rows with a given embedding set id.
+    fn count_embedded_items(&self, embedding_set: &EmbeddingSet) -> Result<u64, DbError>;
 
     fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError>;
 
@@ -157,7 +160,7 @@ pub trait EmbeddingExt {
         embedding_set: &EmbeddingSet,
     ) -> Result<(), PlokeError>;
 
-    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error>;
+    fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -721,7 +724,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         Ok(())
     }
 
-    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error> {
+    fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
         tracing::info!("{}: create embedding set", "Db".log_step());
         let create_rel_script = EmbeddingSet::script_create();
         let relation_name = EmbeddingSet::embedding_set_relation_name();
@@ -768,6 +771,21 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map_err(DbError::from)?;
         tracing::info!(create_embedding_vector = ?db_result.rows);
         Ok(())
+    }
+
+    fn count_embedded_items(&self, embedding_set: &EmbeddingSet) -> Result<u64, DbError> {
+        let rel = embedding_set.rel_name();
+        let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
+        let db_res = self
+            .run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        db_res
+            .rows
+            .into_iter()
+            .next()
+            .and_then(|v| v.first().and_then(|n| n.get_int()))
+            .map(|i| i as u64)
+            .ok_or(DbError::NotFound)
     }
 }
 
@@ -899,9 +917,13 @@ impl EmbeddingExt for Database {
         self.deref().create_vector_embedding_relation(embedding_set)
     }
 
-    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error> {
+    fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
         self.deref().setup_multi_embedding()?;
         Ok(())
+    }
+
+    fn count_embedded_items(&self, embedding_set_id: &EmbeddingSet) -> Result<u64, DbError> {
+        self.deref().count_embedded_items(embedding_set_id)
     }
 }
 
@@ -1032,6 +1054,27 @@ mod tests {
         for rel in list_relations {
             eprintln!("{rel:?}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_count_embedded() -> Result<(), PlokeError> {
+        let inner_db = TEST_DB_IMMUTABLE.clone();
+        let db: Database = Database::new(inner_db);
+
+        let embedding_set = &db.active_embedding_set;
+        let count = db.count_embedded_items(embedding_set)?;
+
+        let rel = db.active_embedding_set.rel_name.clone();
+        eprintln!("rel: {}", rel);
+
+        let script = format!("?[node_id] := *{rel}{{ node_id @ 'NOW' }}");
+        let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
+        let count_rows_alt = rows.rows.len() as u64;
+        assert_eq!(
+            count_rows_alt, count,
+            "Expect both counting methods to be the same"
+        );
         Ok(())
     }
 

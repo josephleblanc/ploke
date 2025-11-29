@@ -48,13 +48,10 @@ mod tests {
         create_index_primary(&db)?;
 
         let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
-        let r1 = db.create_embedding_set_relation()?;
-        tracing::info!(?r1);
 
-        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone())?;
-        tracing::info!(?r2);
-        let r3 = db.create_embedding_index(&db.active_embedding_set.clone())?;
-        tracing::info!(?r3);
+        db.create_embedding_set_relation()?;
+        db.ensure_embedding_relation(&db.active_embedding_set.clone())?;
+        db.create_embedding_index(&db.active_embedding_set.clone())?;
 
         let database = Database::from(db);
         Ok(Arc::new(database))
@@ -75,19 +72,6 @@ mod tests {
         for row in rows.rows {
             eprintln!("{row:?}");
         }
-        // let count = rows
-        //     .rows
-        //     .first()
-        //     .and_then(|row| row.first())
-        //     .and_then(|val| val.get_int())
-        //     .unwrap_or(0) as usize;
-
-        panic!();
-        // assert!(
-        //     count > 0,
-        //     "Embedding relation {rel} is empty after loading fixture backup; \
-        //      dense search uses this relation so queries return nothing."
-        // );
 
         Ok(())
     }
