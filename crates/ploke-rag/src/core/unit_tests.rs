@@ -50,7 +50,7 @@ mod tests {
         let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
         let r1 = db.create_embedding_set_relation()?;
         tracing::info!(?r1);
-        
+
         let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone())?;
         tracing::info!(?r2);
         let r3 = db.create_embedding_index(&db.active_embedding_set.clone())?;

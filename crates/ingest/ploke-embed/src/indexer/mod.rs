@@ -610,6 +610,14 @@ impl IndexerTask {
                 node_type.relation_str()
             );
             let nodes = self.db.get_rel_with_cursor(node_type, fetch_size, cursor)?;
+            tracing::debug!(
+                target: "ploke-embed::next_batch",
+                rel = %node_type.relation_str(),
+                fetched = nodes.len(),
+                total_counted,
+                fetch_size,
+                cursor = %cursor,
+            );
 
             if !nodes.is_empty() {
                 tracing::info!("<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>", 
@@ -623,6 +631,12 @@ impl IndexerTask {
                     total_counted += node_count;
                     batch.push(nodes);
                 }
+            } else {
+                tracing::trace!(
+                    target: "ploke-embed::next_batch",
+                    "no nodes returned for {rel}",
+                    rel = node_type.relation_str()
+                );
             }
         }
 

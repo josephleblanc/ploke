@@ -50,7 +50,7 @@ use app_state::{
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use parser::run_parse;
-use ploke_db::bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd};
+use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer}, multi_embedding::db_ext::EmbeddingExt};
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
@@ -155,6 +155,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
     let new_db = ploke_db::Database::init_with_schema()?;
+    new_db.setup_multi_embedding()?;
     let db_handle = Arc::new(new_db);
 
     // Initial parse is now optional - user can run indexing on demand

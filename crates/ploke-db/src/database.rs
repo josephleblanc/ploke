@@ -628,6 +628,23 @@ impl Database {
         &self,
         updates: Vec<(uuid::Uuid, Vec<f32>)>,
     ) -> Result<(), DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            if updates.is_empty() {
+                return Ok(());
+            }
+            // Use multi-embedding path; active_embedding_set is validated at Database construction.
+            return self
+                .deref()
+                .update_embeddings_batch(
+                    updates
+                        .into_iter()
+                        .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
+                        .collect(),
+                    &self.active_embedding_set,
+                )
+                .await;
+        }
         if updates.is_empty() {
             return Ok(());
         }
@@ -1048,6 +1065,22 @@ impl Database {
         limit: usize,
         cursor: Uuid,
     ) -> Result<TypedEmbedData, PlokeError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            tracing::debug!(
+                target: "ploke-db::database",
+                rel = %node_type.relation_str(),
+                limit,
+                cursor = %cursor,
+                "delegating get_rel_with_cursor to multi_embedding_db impl",
+            );
+            return self.deref().get_rel_with_cursor(
+                node_type,
+                limit,
+                cursor,
+                &self.active_embedding_set,
+            );
+        }
         let mut base_script = String::new();
         // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
@@ -1272,6 +1305,29 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            use crate::multi_embedding::db_ext::EmbeddingExt;
+            let mut rows = Vec::new();
+            let limit: usize = 10_000;
+            for node_type in NodeType::primary_nodes() {
+                let typed = self
+                    .deref()
+                    .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
+                    .map_err(|e| DbError::QueryExecution(e.to_string()))?;
+                for emb in typed.v {
+                    rows.push(vec![
+                        DataValue::Uuid(UuidWrapper(emb.id)),
+                        DataValue::Str(emb.name.clone().into()),
+                    ]);
+                }
+            }
+            return Ok(NamedRows {
+                headers: vec!["id".into(), "name".into()],
+                rows,
+                next: None,
+            });
+        }
         let lhs = r#"?[ at, name, id] := 
         "#;
         let mut query2: String = String::new();

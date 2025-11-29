@@ -79,7 +79,7 @@ OpenCode.md
 logs/
 
 # query loading (per user)
-query/
+# query/
 
 # temporary
 docs/active/AGENT_FORUM.md

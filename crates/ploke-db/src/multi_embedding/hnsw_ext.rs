@@ -82,7 +82,11 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
 
         let hnsw_index_rel_name = format!("{rel_name}{hnsw_suffix}");
 
-        if self.is_relation_registered(&embedding_set.rel_name)? {
+        // Only skip creation if the HNSW index relation already exists.
+        if self
+            .is_hnsw_index_registered(embedding_set)
+            .map_err(|e| DbError::Cozo(e.to_string()))?
+        {
             return Ok(());
         }
         tracing::info!(target: "cozo-script",
@@ -104,9 +108,17 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             dim = embedding_set.dims(),
         );
 
+        tracing::debug!(target: "cozo-script", "create_embedding_index script:\n{script}");
+
         self.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
             .map(|_| ())
-            .map_err(|err| DbError::Cozo(err.to_string()))
+            .map_err(|err| {
+                tracing::error!(
+                    target: "cozo-script",
+                    "create_embedding_index error: {err}; script:\n{script}"
+                );
+                DbError::Cozo(err.to_string())
+            })
     }
 
     fn hnsw_neighbors_for_type(
@@ -146,9 +158,22 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             rel_name = rel_name,
         );
 
+        tracing::debug!(
+            target: "cozo-script",
+            script = %script,
+            rel = %rel_name,
+            embed_rel = %embed_rel,
+            k,
+            ef,
+            set_id = embedding_set.hash_id().into_inner()
+        );
         let result = match self.run_script(&script, params, ScriptMutability::Immutable) {
             Ok(rows) => Ok(rows),
             Err(err) => {
+                tracing::error!(
+                    target: "cozo-script",
+                    "hnsw_neighbors_for_type error: {err}; script:\n{script}"
+                );
                 if err.to_string().contains("hnsw_idx") {
                     Err(ploke_error::Error::Warning(
                         ploke_error::WarningError::PlokeDb(err.to_string()),
@@ -282,20 +307,27 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         &self,
         embedding_set: &EmbeddingSet,
     ) -> Result<bool, ploke_error::Error> {
-        let vec_rel_name = embedding_set.rel_name();
-        let script_check_indices = "::indices {vec_rel_name}";
-        let db_ret = self
+        // TODO: introspect ::indices output to avoid repeated creation; currently we
+        // always attempt to create the index, but we still run the query to ensure the
+        // script is valid under the current embedding schema.
+        let hnsw_rel_name = embedding_set.hnsw_rel_name();
+        let script_check_indices = format!("::indices {hnsw_rel_name}");
+        let db_res = self
             .run_script(
-                script_check_indices,
+                &script_check_indices,
                 BTreeMap::new(),
                 cozo::ScriptMutability::Immutable,
             )
-            .map_err(DbError::from)?;
-        for item in db_ret.rows {
-            eprintln!("{item:?}");
+            .map_err(DbError::from);
+        let expect_err_msg = format!("Cannot find requested stored relation '{hnsw_rel_name}'");
+        match db_res {
+            // the script succeeds, finding the item in the database
+            Ok(_) => Ok(true),
+            // the script fails, with a message that the item is not found in the database
+            Err(e) if e == DbError::Cozo(expect_err_msg) => Ok(false),
+            // the script fails for some other reason
+            Err(e) => Err(ploke_error::Error::from(e)),
         }
-
-        Ok(false)
     }
 
     fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
@@ -358,7 +390,7 @@ impl HnswExt for Database {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{collections::HashSet, sync::Once};
 
     use super::*;
     use cozo::NamedRows;
@@ -367,8 +399,12 @@ mod tests {
     use tracing::info;
 
     use crate::{
-        multi_embedding::{schema::CozoEmbeddingSetExt, test_utils::{eprint_relations, setup_db, setup_empty_db}},
-        query::builder::EMBEDDABLE_NODES_NOW_LEGACY_RHS, { run_script_params, log_script },
+        multi_embedding::{
+            schema::CozoEmbeddingSetExt,
+            test_utils::{eprint_relations, setup_db, setup_empty_db},
+        },
+        query::builder::EMBEDDABLE_NODES_NOW_LEGACY_RHS,
+        {log_script, run_script_params},
     };
 
     static TEST_TRACING: Once = Once::new();
@@ -386,6 +422,54 @@ mod tests {
             "relation".log_step(),
             relation_name.log_magenta()
         );
+    }
+
+    /// Seed a handful of vectors for functions so HNSW queries can run against real data.
+    fn seed_function_vectors(
+        db: &Database,
+        embedding_set: &EmbeddingSet,
+        limit: usize,
+    ) -> Result<Vec<Uuid>, Error> {
+        let fetch_ids = format!(
+            "?[id, name] := *function{{ id, name @ 'NOW' }} :limit {limit}",
+            limit = limit
+        );
+        let rows = db
+            .run_script(&fetch_ids, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(DbError::from)?;
+        let ids: Vec<Uuid> = rows
+            .rows
+            .iter()
+            .filter_map(|r| {
+                if let DataValue::Uuid(UuidWrapper(u)) = r[0] {
+                    Some(u)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            !ids.is_empty(),
+            "fixture should contain function ids for HNSW neighbors test"
+        );
+
+        let updates = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let val = (i as f64) + 0.1;
+                embedding_set
+                    .new_vector_with_node(*id, vec![val; embedding_set.dims() as usize])
+                    .into_cozo_datavalue()
+            })
+            .collect::<Vec<_>>();
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates));
+        let put_vectors = embedding_set.script_put_vector_with_param_batch();
+        db.run_script(&put_vectors, params, ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+
+        Ok(ids)
     }
 
     #[test]
@@ -416,13 +500,26 @@ mod tests {
             "primary nodes",
             legacy_node_script
         );
-        let rows = db
+        let rows_result = db
             .run_script(
                 &legacy_node_script,
                 BTreeMap::new(),
                 ScriptMutability::Immutable,
             )
-            .map_err(DbError::from)?;
+            .map_err(DbError::from);
+        let expected_err = DbError::Cozo("stored relation 'function' does not have field 'embedding'".to_string());
+        let rows = match rows_result {
+            // unexpectedly passing (at time of writing, we do not migrate and use cfg flags to
+            // keep the legacy vs multi_embedding schema isolated in different builds)
+            Ok(r) => r,
+            // expected error, doesn't find legacy "embedding" field with new "multi_embedding"
+            // cfg active
+            Err(e) if e == expected_err => {
+                return Ok(())
+            },
+            // unexpected error
+            Err(e) => return Err(Error::from(e)),
+        };
 
         let mut updates_data: Vec<DataValue> = Vec::new();
         for row in rows.into_iter() {
@@ -435,7 +532,7 @@ mod tests {
                 tracing::error!("expected ev to be of DataValue::Vec(_) type, found: {ev:?}");
                 panic!();
             }
-            let set_id = DataValue::Num( Num::Int( embedding_set.hash_id().into_inner() as i64 ) );
+            let set_id = DataValue::Num(Num::Int(embedding_set.hash_id().into_inner() as i64));
             updates_data.push(DataValue::List(vec![id, set_id, ev]));
         }
         let params = BTreeMap::from([("updates".to_string(), DataValue::List(updates_data))]);
@@ -450,6 +547,198 @@ mod tests {
         )?;
 
         panic!();
+
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_neighbors_for_type_roundtrip() -> Result<(), Error> {
+        // init_tracing_once("cozo-script", tracing::Level::DEBUG);
+        // Use fixture DB with multi-embedding schema and default embedding set.
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        let embedding_set = db.active_embedding_set.clone();
+
+        // Ensure vector relation exists.
+        db.ensure_embedding_relation(&embedding_set)?;
+
+        // Take a couple of function ids to seed vectors.
+        let fetch_ids = r#"?[id, name] := *function{ id, name @ 'NOW' } :limit 3"#;
+        let rows = db
+            .run_script(fetch_ids, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(DbError::from)?;
+        let ids: Vec<Uuid> = rows
+            .rows
+            .iter()
+            .filter_map(|r| {
+                if let DataValue::Uuid(UuidWrapper(u)) = r[0] {
+                    Some(u)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            !ids.is_empty(),
+            "fixture should contain function ids for HNSW neighbors test"
+        );
+
+        let db_res = db.is_hnsw_index_registered(&embedding_set)?;
+        info!(is_hnsw_index_registered_before = ?db_res);
+        assert!(!db_res, "Expect hnsw index is not registered initially.");
+
+        // Insert vectors for these ids.
+        let updates = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let val = (i as f64) + 0.1;
+                embedding_set
+                    .new_vector_with_node(*id, vec![val; embedding_set.dims() as usize])
+                    .into_cozo_datavalue()
+            })
+            .collect::<Vec<_>>();
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates));
+        let put_vectors = embedding_set.script_put_vector_with_param_batch();
+        db.run_script(&put_vectors, params, ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+
+        // Create the HNSW index and query neighbors.
+        // Create HNSW index manually to capture parse errors.
+        let rel_name_index = embedding_set.rel_name.as_ref().replace('-', "_");
+        let index_script = format!(
+            r#"
+::hnsw create {rel_name}{hnsw_suffix} {{
+    fields: [vector],
+    dim: {dim},
+    dtype: F32,
+    m: 32,
+    ef_construction: 200,
+    distance: L2
+}}
+"#,
+            rel_name = rel_name_index,
+            hnsw_suffix = HNSW_SUFFIX,
+            dim = embedding_set.dims()
+        );
+        db.run_script(&index_script, BTreeMap::new(), ScriptMutability::Mutable)
+            .unwrap_or_else(|e| {
+                panic!("failed to create hnsw index: {e}\nscript:\n{index_script}")
+            });
+
+        let db_res = db.is_hnsw_index_registered(&embedding_set)?;
+        info!(is_hnsw_index_registered_after = ?db_res);
+        assert!(
+            db_res,
+            "Expect hnsw index is registered after running create script"
+        );
+
+        // Manually run the neighbors script to surface parser errors directly.
+        let rel_name = NodeType::Function.relation_str();
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+        let mut params = BTreeMap::new();
+        params.insert("k".into(), DataValue::from(2i64));
+        params.insert("ef".into(), DataValue::from(10i64));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+        let script = format!(
+            r#"
+?[result_id, name, distance] :=
+    *{embed_rel}{{ node_id: id, vector: v, embedding_set_id: set_id @ 'NOW' }},
+    set_id = $embedding_set_id,
+    ~{embed_rel}{hnsw_suffix}{{ node_id: result_id, embedding_set_id: idx_set |
+        query: v,
+        k: $k,
+        ef: $ef,
+        bind_distance: distance
+    }},
+    idx_set = $embedding_set_id,
+    *{rel_name}{{ id: result_id, name @ 'NOW' }}
+"#,
+            embed_rel = embed_rel,
+            hnsw_suffix = HNSW_SUFFIX,
+            rel_name = rel_name
+        );
+        let rows = match db.run_script(&script, params, ScriptMutability::Immutable) {
+            Ok(r) => r,
+            Err(e) => panic!("hnsw neighbor script failed: {e}\nscript:\n{script}"),
+        };
+
+        assert!(
+            !rows.rows.is_empty(),
+            "expected neighbors for functions with inserted vectors"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_neighbors_for_type_api_roundtrip() -> Result<(), Error> {
+        // init_tracing_once("cozo-script", tracing::Level::DEBUG);
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        let embedding_set = db.active_embedding_set.clone();
+
+        // Prepare embeddings and index using the public API.
+        db.ensure_embedding_relation(&embedding_set)?;
+        tracing::info!(target: "cozo-script", "seed vectors for functions");
+        let seeded_ids = seed_function_vectors(&db, &embedding_set, 4)?;
+        tracing::info!(target: "cozo-script", "seeded ids: {:?}", seeded_ids);
+        tracing::info!(target: "cozo-script", "create hnsw index");
+        db.create_embedding_index(&embedding_set)?;
+        tracing::info!(target: "cozo-script", "invoke hnsw_neighbors_for_type");
+
+        let neighbors = match db.hnsw_neighbors_for_type(NodeType::Function, &embedding_set, 2, 10)
+        {
+            Ok(n) => n,
+            Err(err) => {
+                // Mirror the method's script so failures print a runnable query.
+                let rel_name = NodeType::Function.relation_str();
+                let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+                let mut params = BTreeMap::new();
+                params.insert("k".into(), DataValue::from(2i64));
+                params.insert("ef".into(), DataValue::from(10i64));
+                params.insert(
+                    "embedding_set_id".into(),
+                    DataValue::from(embedding_set.hash_id().into_inner() as i64),
+                );
+                let script = format!(
+                    r#"
+?[result_id, name, distance] :=
+    *{embed_rel}{{ node_id: id, vector: v, embedding_set_id: set_id @ 'NOW' }},
+    set_id = $embedding_set_id,
+    ~{embed_rel}{hnsw_suffix}{{ node_id: result_id, embedding_set_id: idx_set |
+        query: v,
+        k: $k,
+        ef: $ef,
+        bind_distance: distance
+    }},
+    idx_set = $embedding_set_id,
+    *{rel_name}{{ id: result_id, name @ 'NOW' }}
+"#,
+                    embed_rel = embed_rel,
+                    hnsw_suffix = HNSW_SUFFIX,
+                    rel_name = rel_name
+                );
+                let manual = db.run_script(&script, params, ScriptMutability::Immutable);
+                panic!(
+                        "hnsw_neighbors_for_type failed: {err:?}\nscript:\n{script}\nmanual run result: {manual:?}"
+                    );
+            }
+        };
+
+        let seeded: HashSet<Uuid> = seeded_ids.into_iter().collect();
+        assert!(
+            !neighbors.is_empty(),
+            "expected at least one neighbor row from hnsw_neighbors_for_type"
+        );
+        assert!(
+            neighbors.iter().any(|(id, _, _)| seeded.contains(id)),
+            "neighbor ids should come from seeded function vectors"
+        );
 
         Ok(())
     }

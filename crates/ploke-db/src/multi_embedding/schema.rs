@@ -133,8 +133,8 @@ pub trait EmbeddingSetExt {
     fn hnsw_rel_name(&self) -> HnswRelName {
         let rel_name = self.rel_name();
         let hnsw_suffix = HNSW_SUFFIX;
-        let hnsw_string = format!( "{rel_name}{hnsw_suffix}" );
-        HnswRelName::new_from_str( &hnsw_string)
+        let hnsw_string = format!("{rel_name}{hnsw_suffix}");
+        HnswRelName::new_from_str(&hnsw_string)
     }
 
     fn new_vector_with_node(&self, node_id: Uuid, vector: Vec<f64>) -> EmbeddingVector {
@@ -190,7 +190,8 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     fn script_put_vector_with_param_batch(&self) -> String {
         let vector_fields = EmbeddingVector::script_fields();
 
-    let script = format!(r#"
+        let script = format!(
+            r#"
 {{
     input[node_id, embedding_set_id, vector] <- $updates
 
@@ -200,7 +201,9 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
 
     :put {embedding_rel_name} {{ node_id, embedding_set_id, vector, at }}
 }}
-"#, embedding_rel_name = self.rel_name());
+"#,
+            embedding_rel_name = self.rel_name()
+        );
         script
     }
 
@@ -211,9 +214,7 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     }
 
     fn script_count_vector_rows(&self) -> String {
-            format!("{} {}",
-                self.script_get_vector_rows(),
-                " :count" )
+        format!("{} {}", self.script_get_vector_rows(), " :count")
     }
 
     fn param_put_vector(

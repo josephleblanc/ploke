@@ -502,8 +502,7 @@ pub fn create_index_warn(db: &Database) -> Result<(), ploke_error::Error> {
     {
         use crate::multi_embedding::hnsw_ext::HnswExt;
 
-        db
-            .create_embedding_index(&db.active_embedding_set)
+        db.create_embedding_index(&db.active_embedding_set)
             .map_err(ploke_error::Error::from)
     }
 }

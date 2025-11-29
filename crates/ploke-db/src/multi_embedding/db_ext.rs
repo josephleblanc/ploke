@@ -22,6 +22,17 @@ use crate::{
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
 
+const ANCESTOR_RULES_NOW: &str = r#"
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+"#;
+
+const ROOT_MODULE_RULE: &str = r#"
+is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+"#;
+
 /// Trait used to extend the database with embeddings-aware methods
 pub trait EmbeddingExt {
     /// Counts the code primary node code items that have not yet been embedded.
@@ -106,6 +117,14 @@ pub trait EmbeddingExt {
         embedding_set: &EmbeddingSet,
     ) -> Result<Vec<EmbeddingData>, PlokeError>;
 
+    fn get_rel_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<TypedEmbedData, PlokeError>;
+
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
     async fn update_embeddings_batch(
@@ -133,7 +152,12 @@ pub trait EmbeddingExt {
 
     fn is_hnsw_relation_registered(&self, relation_name: &HnswRelName) -> Result<bool, DbError>;
 
-    fn create_vector_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError>;
+    fn create_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError>;
+
+    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -268,24 +292,6 @@ not *{embed_rel}{{node_id: id}}
             .ok_or(DbError::NotFound)
     }
 
-    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
-        let rows = self
-            .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
-            .map_err(|err| DbError::EmbeddingSetScriptFailure {
-                action: "relations_lookup",
-                details: err.to_string(),
-            })?;
-        let is_found = rows.rows.iter().any(|row| {
-            row.iter().any(|value| {
-                value
-                    .get_str()
-                    .map(|name| name == "embedding_set")
-                    .unwrap_or(false)
-            })
-        });
-        Ok(is_found)
-    }
-
     fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
         let rows = self
             .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
@@ -299,6 +305,24 @@ not *{embed_rel}{{node_id: id}}
                 value
                     .get_str()
                     .map(|name| name == relation_name.as_ref())
+                    .unwrap_or(false)
+            })
+        });
+        Ok(is_found)
+    }
+
+    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
+        let rows = self
+            .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(|err| DbError::EmbeddingSetScriptFailure {
+                action: "relations_lookup",
+                details: err.to_string(),
+            })?;
+        let is_found = rows.rows.iter().any(|row| {
+            row.iter().any(|value| {
+                value
+                    .get_str()
+                    .map(|name| name == "embedding_set")
                     .unwrap_or(false)
             })
         });
@@ -360,12 +384,6 @@ not *{embed_rel}{{node_id: id}}
         }
 
         let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
-        let ancestor_rules = r#"
-parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
-
-ancestor[desc, asc] := parent_of[desc, asc]
-ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-"#;
         let has_embedding_rule = NodeType::primary_nodes()
             .iter()
             .map(|ty| {
@@ -401,7 +419,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     batch[id, name, file_path, file_hash, hash, span, namespace, ordering]
 :sort ordering
 "#,
-            ancestor_rules = ancestor_rules,
+            ancestor_rules = ANCESTOR_RULES_NOW,
             has_embedding_rule = has_embedding_rule
         );
 
@@ -430,6 +448,95 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map_err(PlokeError::from)?;
 
         query_result.to_embedding_nodes()
+    }
+
+    fn get_rel_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<TypedEmbedData, PlokeError> {
+        let node_relation_name = node_type.relation_str();
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+
+        let script = format!(
+            r#"
+{ancestor_rules}
+{root_module_rule}
+
+    has_embedding[id] := *{embed_rel} {{
+            node_id: id,
+            embedding_set_id: set_id @ 'NOW'
+        }},
+        set_id = $embedding_set_id
+
+    needs_embedding[id, name, hash, span] := *{node_relation_name} {{
+            id,
+            name,
+            tracking_hash: hash,
+            span @ 'NOW'
+        }},
+        not has_embedding[id]
+
+    batch[id, name, file_path, file_hash, hash, span, namespace, string_id] :=
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{{ id: mod_id, tracking_hash: file_hash @ 'NOW' }},
+        *file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW' }},
+        to_string(id) > to_string($cursor),
+        string_id = to_string(id)
+
+    ?[id, name, file_path, file_hash, hash, span, namespace, string_id] :=
+        batch[id, name, file_path, file_hash, hash, span, namespace, string_id]
+        :sort string_id
+        :limit $limit
+     "#,
+            ancestor_rules = ANCESTOR_RULES_NOW,
+            root_module_rule = ROOT_MODULE_RULE,
+            node_relation_name = node_relation_name,
+            embed_rel = embed_rel,
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::Uuid(UuidWrapper(cursor)));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+
+        tracing::debug!(
+            target: "cozo-script",
+            ?cursor,
+            limit,
+            rel = %node_relation_name,
+            embed_rel = %embed_rel,
+            script = %script
+        );
+        let query_result = self
+            .run_script(&script, params, cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let count_less_flat = query_result.rows.len();
+        let cols = query_result.headers.len();
+        tracing::debug!(
+            target: "ploke-db::get_rel_with_cursor",
+            rel = %node_relation_name,
+            rows = count_less_flat,
+            cols = cols,
+        );
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        tracing::debug!(
+            target: "ploke-db::get_rel_with_cursor",
+            rel = %node_relation_name,
+            returned = v.len(),
+            limit,
+            cursor = %cursor
+        );
+        Ok(TypedEmbedData { v, ty: node_type })
     }
 
     async fn update_embeddings_batch(
@@ -518,9 +625,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     }
 
     fn ensure_default_relation_set(&self) -> Result<(), PlokeError> {
-
         let embedding_set = EmbeddingSet::default();
-
 
         // Check that the relation "embedding_set" is registered
         if !self.is_embedding_set_registered()? {
@@ -541,13 +646,6 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         }
         Ok(())
     }
-    fn create_vector_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError> {
-        let script_create_vector_rel = EmbeddingVector::script_create_from_set(embedding_set);
-        self.run_script(&script_create_vector_rel, BTreeMap::new(), ScriptMutability::Mutable)
-            .map_err(DbError::from)?;
-        Ok(())
-    }
-
     fn replace_embedding_set_relation(
         &self,
         embedding_set: EmbeddingSet,
@@ -607,6 +705,69 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             })
         });
         Ok(is_found)
+    }
+
+    fn create_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        let script_create_vector_rel = EmbeddingVector::script_create_from_set(embedding_set);
+        self.run_script(
+            &script_create_vector_rel,
+            BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+        Ok(())
+    }
+
+    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error> {
+        tracing::info!("{}: create embedding set", "Db".log_step());
+        let create_rel_script = EmbeddingSet::script_create();
+        let relation_name = EmbeddingSet::embedding_set_relation_name();
+        let db_result = self
+            .run_script(
+                create_rel_script,
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
+        tracing::info!(?db_result.rows);
+
+        tracing::info!(
+            "{}: New multi_embedding relations created in the database
+(both embedding_set and default embeddings vector for sentence-transformers)",
+            "Setup".log_step()
+        );
+
+        tracing::info!("{}: put default embedding set", "Db".log_step());
+        let embedding_set = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("local"),
+            EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+            EmbeddingShape::new_dims_default(384),
+        );
+
+        let script_put = embedding_set.script_put();
+        let db_result = self
+            .run_script(&script_put, BTreeMap::new(), ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        tracing::info!(put_embedding_set = ?db_result.rows);
+
+        tracing::info!(
+            "{}: create default vector embedding relation",
+            "Db".log_step()
+        );
+        let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
+        let step_msg = format!("create {} relation", embedding_set.relation_name());
+        let db_result = self
+            .run_script(
+                &create_vector_script,
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
+        tracing::info!(create_embedding_vector = ?db_result.rows);
+        Ok(())
     }
 }
 
@@ -670,6 +831,17 @@ impl EmbeddingExt for Database {
         self.deref().get_nodes_ordered_for_set(nodes, embedding_set)
     }
 
+    fn get_rel_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<TypedEmbedData, PlokeError> {
+        self.deref()
+            .get_rel_with_cursor(node_type, limit, cursor, embedding_set)
+    }
+
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
     async fn update_embeddings_batch(
@@ -720,8 +892,16 @@ impl EmbeddingExt for Database {
         self.deref().is_embedding_set_registered()
     }
 
-    fn create_vector_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError> {
+    fn create_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
         self.deref().create_vector_embedding_relation(embedding_set)
+    }
+
+    fn setup_multi_embedding(&self) -> Result< (), ploke_error::Error> {
+        self.deref().setup_multi_embedding()?;
+        Ok(())
     }
 }
 
@@ -1083,6 +1263,58 @@ mod tests {
             neighbors.iter().all(|(id, _, _)| *id != id_b),
             "hnsw results should ignore other embedding_set_id rows"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_rel_with_cursor_returns_rows_without_panic() -> Result<(), PlokeError> {
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        db.ensure_default_relation_set()?;
+
+        let pending = db.count_unembedded_nonfiles()?;
+        assert!(pending > 0, "fixture should contain unembedded nodes");
+
+        let typed = db.get_rel_with_cursor(NodeType::Function, 8, Uuid::nil())?;
+        assert!(
+            typed.v.len() <= 8,
+            "get_rel_with_cursor respects limit even with multi-embedding schema"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_pending_test_multi_embedding_path() -> Result<(), PlokeError> {
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        db.ensure_default_relation_set()?;
+
+        let pending = db.get_pending_test()?;
+        assert!(
+            pending.rows.len() > 0,
+            "fixture should return pending rows for active embedding set"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_rel_with_cursor_all_primary_nodes() -> Result<(), PlokeError> {
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        db.ensure_default_relation_set()?;
+
+        for node_type in NodeType::primary_nodes() {
+            let res = db.get_rel_with_cursor(node_type, 16, Uuid::nil());
+            assert!(
+                res.is_ok(),
+                "get_rel_with_cursor failed for {:?}: {:?}",
+                node_type,
+                res.err()
+            );
+        }
 
         Ok(())
     }

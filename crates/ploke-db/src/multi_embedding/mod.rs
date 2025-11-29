@@ -1,6 +1,6 @@
 pub mod db_ext;
-pub mod schema;
 pub mod hnsw_ext;
+pub mod schema;
 
 #[cfg(test)]
 mod test_utils {
@@ -18,7 +18,7 @@ mod test_utils {
     pub(crate) fn setup_empty_db() -> Result<cozo::Db<MemStorage>, Error> {
         let empty_db = cozo::Db::new(MemStorage::default()).map_err(DbError::from)?;
         empty_db.initialize().map_err(DbError::from)?;
-        Ok( empty_db )
+        Ok(empty_db)
     }
 
     pub(crate) fn eprint_relations(fixture_db: &cozo::Db<MemStorage>) -> Result<(), Error> {

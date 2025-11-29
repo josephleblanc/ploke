@@ -69,9 +69,11 @@ impl EmbeddingSet {
     ) -> Self {
         let dims = shape.dimension;
         // Note sanitization step.
-        let rel_name = EmbRelName::new_from_string(format!("emb_{model}_{dims}")
-            .replace("-", "_")
-            .replace("/", "_slash_"));
+        let rel_name = EmbRelName::new_from_string(
+            format!("emb_{model}_{dims}")
+                .replace("-", "_")
+                .replace("/", "_slash_"),
+        );
         let hash_id = EmbeddingSetId::from_components(&provider, &model, &shape);
         Self {
             provider,
@@ -112,7 +114,7 @@ impl Default for EmbeddingSet {
         EmbeddingSet::new(
             EmbeddingProviderSlug::new_from_str("local"),
             EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
-            EmbeddingShape::new_dims_default(384)
+            EmbeddingShape::new_dims_default(384),
         )
     }
 }

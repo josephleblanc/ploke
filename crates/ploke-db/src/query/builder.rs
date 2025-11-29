@@ -202,10 +202,11 @@ impl NodeType {
     }
 
     #[cfg(feature = "multi_embedding_db")]
-    pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [ &'static str; 5 ] = ["id", "name", "tracking_hash", "span", "embedding"];
+    pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [&'static str; 5] =
+        ["id", "name", "tracking_hash", "span", "embedding"];
 
     #[cfg(feature = "multi_embedding_db")]
-    pub const EMBEDDABLE_NODE_FIELDS: [ &'static str; 4 ] = ["id", "name", "tracking_hash", "span"];
+    pub const EMBEDDABLE_NODE_FIELDS: [&'static str; 4] = ["id", "name", "tracking_hash", "span"];
 
     #[cfg(feature = "multi_embedding_db")]
     pub fn legacy_embeddable_nodes_now_rhs() -> String {
@@ -223,9 +224,7 @@ impl NodeType {
                     .chain(
                         n.fields()
                             .iter()
-                            .filter(|s| {
-                                Self::LEGACY_EMBEDDABLE_NODE_FIELDS.contains(s)
-                            })
+                            .filter(|s| Self::LEGACY_EMBEDDABLE_NODE_FIELDS.contains(s))
                             // // replace tracking_hash for simplicity in `get_nodes_ordered`
                             // .map(|th| if *th == "tracking_hash" { &hash } else { th })
                             .intersperse(&", "),
@@ -253,9 +252,7 @@ impl NodeType {
                     .chain(
                         n.fields()
                             .iter()
-                            .filter(|s| {
-                                ["id", "name", "tracking_hash", "span"].contains(s)
-                            })
+                            .filter(|s| ["id", "name", "tracking_hash", "span"].contains(s))
                             // // replace tracking_hash for simplicity in `get_nodes_ordered`
                             // .map(|th| if *th == "tracking_hash" { &hash } else { th })
                             .intersperse(&", "),

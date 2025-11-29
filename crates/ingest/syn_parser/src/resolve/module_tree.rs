@@ -1650,8 +1650,7 @@ impl ModuleTree {
                     if let Some(module) = self.modules.get(&mod_id) {
                         eprintln!(
                             "  source module name={} path={:?}",
-                            module.name,
-                            module.path
+                            module.name, module.path
                         );
                     }
                 }

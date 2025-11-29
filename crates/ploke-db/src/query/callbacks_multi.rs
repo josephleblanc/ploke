@@ -13,18 +13,9 @@ pub struct CallbackManager {
     s: Sender<Result<Call, DbError>>,
     db_arc: Arc<Database>,
     update_counter: Arc<AtomicUsize>,
-    unregister_codes: Arc<HashMap<NodeType, u32>>,
+    unregister_code: u32,
     max_calls: Option<AtomicUsize>,
-    functions: Receiver<Call>,
-    consts: Receiver<Call>,
-    enums: Receiver<Call>,
-    macros: Receiver<Call>,
-    modules: Receiver<Call>,
-    statics: Receiver<Call>,
-    structs: Receiver<Call>,
-    traits: Receiver<Call>,
-    type_alias: Receiver<Call>,
-    unions: Receiver<Call>,
+    embeddings: Receiver<Call>,
     shutdown: Receiver<()>,
 }
 
@@ -44,61 +35,41 @@ impl Callback {
         }
     }
 }
+
+type UnregisterCode = u32;
+
 type Call = (CallbackOp, NamedRows, NamedRows);
 type CallHelper = (
     CallbackManager,
     Receiver<Result<Call, DbError>>,
-    Arc<HashMap<NodeType, u32>>,
+    UnregisterCode,
     Sender<()>,
 );
 
 impl CallbackManager {
     pub fn new_bounded(db: Arc<Database>, n: usize) -> Result<CallHelper, DbError> {
         let (s, r) = crossbeam_channel::bounded(n);
-        let mut unregister_codes = HashMap::new();
-        let mut sx: HashMap<NodeType, Receiver<Call>> = HashMap::new();
-        for ty in NodeType::primary_nodes() {
-            let (unreg_code, r) = db.register_callback(ty.relation_str(), Some(n));
-            unregister_codes.insert(ty, unreg_code);
-            sx.insert(ty, r);
-        }
+        let vec_relation = db.active_embedding_set.relation_name();
+        let (unreg_code, db_rx) = db.register_callback(vec_relation.as_ref(), Some(n));
         let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
-
-        let codes_arc = Arc::new(unregister_codes);
 
         let callback_manager = Self {
             s,
             db_arc: Arc::clone(&db),
             update_counter: Arc::new(AtomicUsize::new(0)),
-            unregister_codes: Arc::clone(&codes_arc),
-            functions: get_recvr(NodeType::Function, &mut sx)?,
-            consts: get_recvr(NodeType::Const, &mut sx)?,
-            enums: get_recvr(NodeType::Enum, &mut sx)?,
-            macros: get_recvr(NodeType::Macro, &mut sx)?,
-            modules: get_recvr(NodeType::Module, &mut sx)?,
-            statics: get_recvr(NodeType::Static, &mut sx)?,
-            structs: get_recvr(NodeType::Struct, &mut sx)?,
-            traits: get_recvr(NodeType::Trait, &mut sx)?,
-            type_alias: get_recvr(NodeType::TypeAlias, &mut sx)?,
-            unions: get_recvr(NodeType::Union, &mut sx)?,
+            unregister_code: unreg_code,
+            embeddings: db_rx,
             max_calls: None,
             shutdown: shutdown_rx,
         };
 
-        Ok((callback_manager, r, codes_arc, shutdown_tx))
+        Ok((callback_manager, r, unreg_code, shutdown_tx))
     }
 
-    pub fn new_unbounded(
-        db: Arc<Database>,
-    ) -> Result<(CallbackManager, Receiver<Result<Call, DbError>>), DbError> {
+    pub fn new_unbounded(db: Arc<Database>) -> Result<(CallbackManager, Receiver<Result<Call, DbError>>), DbError> {
         let (s, r) = crossbeam_channel::unbounded();
-        let mut unregister_codes = HashMap::new();
-        let mut sx: HashMap<NodeType, Receiver<Call>> = HashMap::new();
-        for ty in NodeType::primary_nodes() {
-            let (unreg_code, r) = db.register_callback(ty.relation_str(), None);
-            unregister_codes.insert(ty, unreg_code);
-            sx.insert(ty, r);
-        }
+        let vec_relation = db.active_embedding_set.relation_name();
+        let (unreg_code, db_rx) = db.register_callback(vec_relation.as_ref(), None);
 
         let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
 
@@ -106,17 +77,8 @@ impl CallbackManager {
             s,
             db_arc: Arc::clone(&db),
             update_counter: Arc::new(AtomicUsize::new(0)),
-            unregister_codes: Arc::new(unregister_codes),
-            functions: get_recvr(NodeType::Function, &mut sx)?,
-            consts: get_recvr(NodeType::Const, &mut sx)?,
-            enums: get_recvr(NodeType::Enum, &mut sx)?,
-            macros: get_recvr(NodeType::Macro, &mut sx)?,
-            modules: get_recvr(NodeType::Module, &mut sx)?,
-            statics: get_recvr(NodeType::Static, &mut sx)?,
-            structs: get_recvr(NodeType::Struct, &mut sx)?,
-            traits: get_recvr(NodeType::Trait, &mut sx)?,
-            type_alias: get_recvr(NodeType::TypeAlias, &mut sx)?,
-            unions: get_recvr(NodeType::Union, &mut sx)?,
+            unregister_code: unreg_code,
+            embeddings: db_rx,
             max_calls: None,
             shutdown: shutdown_rx,
         };
@@ -131,16 +93,7 @@ impl CallbackManager {
     pub fn run(self) -> Result<(), DbError> {
         loop {
             let msg_res = crossbeam_channel::select! {
-                recv(self.functions) -> msg => msg,
-                recv(self.consts) -> msg => msg,
-                recv(self.enums) -> msg => msg,
-                recv(self.macros) -> msg => msg,
-                recv(self.modules) -> msg => msg,
-                recv(self.statics) -> msg => msg,
-                recv(self.structs) -> msg => msg,
-                recv(self.traits) -> msg => msg,
-                recv(self.type_alias) -> msg => msg,
-                recv(self.unions) -> msg => msg,
+                recv(self.embeddings) -> msg => msg,
                 recv(self.shutdown) -> msg => {tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", ""); break;},
                 default(std::time::Duration::from_millis(100)) => continue,
             };
@@ -178,23 +131,22 @@ impl CallbackManager {
 
 impl Drop for CallbackManager {
     fn drop(&mut self) {
-        for (node_type, code) in self.unregister_codes.iter() {
-            tracing::info!(
-                "Unregistering callback for NodeType::{:?} with code {}",
-                node_type,
-                code
-            );
-            tracing::debug!(
-                "Unregistering callback for NodeType::{:?} | unregistered? {}",
-                node_type,
-                self.db_arc
-                    .unregister_callback(*code)
-                    .then(|| {
-                        tracing::error!("Failed to unregister callback for {:?}", node_type,);
-                    })
-                    .is_some()
-            );
-        }
+        let vec_rel_name = self.db_arc.active_embedding_set.relation_name().as_ref();
+        tracing::info!(
+            "Unregistering callback for relation {} with code {}",
+            vec_rel_name,
+            self.unregister_code
+        );
+        tracing::debug!(
+            "Unregistering callback for relation {} | unregistered? {}",
+            vec_rel_name,
+            self.db_arc
+                .unregister_callback(self.unregister_code)
+                .then(|| {
+                    tracing::error!("Failed to unregister callback for {:?}", vec_rel_name);
+                })
+                .is_some()
+        );
     }
 }
 
@@ -206,27 +158,26 @@ pub fn log_err(e: RecvError) -> DbError {
     DbError::CrossBeamSend(e.to_string())
 }
 
-fn get_recvr(
-    ty: NodeType,
-    receivers: &mut HashMap<NodeType, Receiver<Call>>,
-) -> Result<Receiver<(CallbackOp, NamedRows, NamedRows)>, DbError> {
-    match receivers.entry(ty) {
-        Entry::Occupied(occ) => {
-            let (ty, r) = occ.remove_entry();
-            Ok(r)
-        }
-        Entry::Vacant(vac) => Err(DbError::CallbackErr),
-    }
-}
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Duration,
+    };
 
     use cozo::NamedRows;
     use crossbeam_channel::Receiver;
+    use tracing::Level;
 
     use super::*;
     use crate::{Database, DbError, NodeType};
+
+    #[cfg(feature = "multi_embedding_db")]
+    use ploke_test_utils::init_test_tracing_with_target;
+    #[cfg(feature = "multi_embedding_db")]
+    use ploke_test_utils::setup_db_full_multi_embedding;
 
     struct MockDb;
 
@@ -239,24 +190,6 @@ mod tests {
             let (s, r) = crossbeam_channel::unbounded();
             (0, r)
         }
-    }
-
-    #[test]
-    fn test_get_recvr_success() {
-        let mut receivers = HashMap::new();
-        let (s, r) = crossbeam_channel::unbounded();
-        receivers.insert(NodeType::Function, r);
-
-        let result = get_recvr(NodeType::Function, &mut receivers);
-        assert!(result.is_ok());
-        assert!(receivers.is_empty());
-    }
-
-    #[test]
-    fn test_get_recvr_fail() {
-        let mut receivers = HashMap::new();
-        let result = get_recvr(NodeType::Function, &mut receivers);
-        assert!(result.is_err());
     }
 
     #[test]

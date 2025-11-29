@@ -39,7 +39,9 @@ pub enum DbError {
         details: String,
     },
 
-    #[error("Experimental embedding script '{action}' failed for relation 'embedding_set': {details}")]
+    #[error(
+        "Experimental embedding script '{action}' failed for relation 'embedding_set': {details}"
+    )]
     EmbeddingSetScriptFailure {
         action: &'static str,
         details: String,

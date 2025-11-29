@@ -18,6 +18,8 @@ use ploke_db::{
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
+#[cfg(feature = "multi_embedding_embedder")]
+use ploke_test_utils::init_test_tracing_with_target;
 use ploke_test_utils::{setup_db_full, setup_db_full_crate, setup_db_full_multi_embedding};
 use tokio::{
     sync::{
@@ -534,9 +536,13 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
     let cozo_db = if target_crate.starts_with("fixture") {
         #[cfg(not(feature = "multi_embedding_embedder"))]
-        { setup_db_full(target_crate) }
+        {
+            setup_db_full(target_crate)
+        }
         #[cfg(feature = "multi_embedding_embedder")]
-        { setup_db_full_multi_embedding(target_crate) }
+        {
+            setup_db_full_multi_embedding(target_crate)
+        }
     } else if target_crate.starts_with("crates") {
         let crate_name = target_crate.trim_start_matches("crates/");
         setup_db_full_crate(crate_name)
@@ -712,44 +718,43 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     }
     #[cfg(feature = "multi_embedding_embedder")]
     {
-        use ploke_db::multi_embedding::schema::EmbeddingSetExt;
- 
-        let db_ret = ploke_db::create_index_warn(&db); 
-        let vec_rel_name = db.active_embedding_set.rel_name();
-        let script_check_indices = "::indices {vec_rel_name}";
-        let db_ret = db.run_script(script_check_indices, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+        use ploke_db::multi_embedding::{hnsw_ext::HnswExt, schema::EmbeddingSetExt};
+
+        let db_ret = ploke_db::create_index_warn(&db);
+        let is_hnsw_registered = db.is_hnsw_index_registered(&db.active_embedding_set)?;
+        tracing::info!(?is_hnsw_registered);
+        assert!(is_hnsw_registered, "expect hnsw registered after embedding process finished");
+    }
+
+    #[cfg(not(feature = "multi_embedding_embedder"))]
+    {
+        for ty in NodeType::primary_nodes() {
+            let db_ret = ploke_db::create_index_warn(&db, ty);
+            tracing::info!("db_ret = {:?}", db_ret);
+        }
+
+        let mut no_error = true;
+        for ty in NodeType::primary_nodes() {
+            match ploke_db::hnsw_of_type(&db, ty, ef, k) {
+                Ok(indexed_count) => {
+                    tracing::info!("db_ret = {:?}", indexed_count);
+                }
+                Err(w) if w.is_warning() => {
+                    tracing::warn!("No index found for rel: {}", ty.relation_str());
+                }
+                Err(e) => {
+                    tracing::error!("{}", e.to_string());
+                }
+            };
+        }
+        assert!(no_error);
+        let db_ret = db
+            .run_script(
+                "::indices function",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
             .map_err(DbError::from)?;
-        tracing::info!(?db_ret);
-    }
-
-    #[cfg(not( feature = "multi_embedding_embedder" ))]
-    { for ty in NodeType::primary_nodes() {
-        let db_ret = ploke_db::create_index_warn(&db, ty);
-        tracing::info!("db_ret = {:?}", db_ret);
-    }
-
-    let mut no_error = true;
-    for ty in NodeType::primary_nodes() {
-        match ploke_db::hnsw_of_type(&db, ty, ef, k) {
-            Ok(indexed_count) => {
-                tracing::info!("db_ret = {:?}", indexed_count);
-            }
-            Err(w) if w.is_warning() => {
-                tracing::warn!("No index found for rel: {}", ty.relation_str());
-            }
-            Err(e) => {
-                tracing::error!("{}", e.to_string());
-            }
-        };
-    } 
-    assert!(no_error);
-    let db_ret = db
-        .run_script(
-            "::indices function",
-            BTreeMap::new(),
-            cozo::ScriptMutability::Immutable,
-        )
-        .map_err(DbError::from)?;
         tracing::info!("db_ret = {:?}", db_ret);
     }
 
@@ -788,7 +793,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 #[tokio::test]
 #[ignore = "long-running; run periodically to validate BM25 index path"]
 async fn test_index_bm25() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::DEBUG);
+    let _guard = init_test_tracing(Level::TRACE);
     test_next_batch_ss("fixture_nodes").await?;
 
     Ok(())
@@ -797,6 +802,9 @@ async fn test_index_bm25() -> Result<(), Error> {
 #[tokio::test]
 // #[ignore = "long-running; run periodically to cover full crate"]
 async fn test_batch_ss_nodes() -> Result<(), Error> {
+    #[cfg(feature = "multi_embedding_embedder")]
+    let _guard = init_test_tracing_with_target("cozo-script", Level::TRACE);
+    #[cfg(not(feature = "multi_embedding_embedder"))]
     let _guard = init_test_tracing(Level::INFO);
     test_next_batch_ss("fixture_nodes").await
 }
