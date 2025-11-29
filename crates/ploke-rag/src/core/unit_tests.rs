@@ -47,17 +47,18 @@ mod tests {
             .map_err(ploke_error::Error::from)?;
         create_index_primary(&db)?;
 
-        let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
-        let r1 = db.create_embedding_set_relation()?;
-        tracing::info!(?r1);
-
-        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone())?;
-        tracing::info!(?r2);
-        let r3 = db.create_embedding_index(&db.active_embedding_set.clone())?;
-        tracing::info!(?r3);
-
-        let database = Database::from(db);
-        Ok(Arc::new(database))
+        // let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
+        //
+        // let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone());
+        // tracing::info!(ensure_embedding_relation = ?r2);
+        // r2?;
+        //
+        // let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
+        // tracing::info!(create_embedding_index = ?r3);
+        // r3?;
+        //
+        // let database = Database::from(db);
+        Ok(Arc::new(db))
     }
 
     #[cfg(feature = "multi_embedding_rag")]

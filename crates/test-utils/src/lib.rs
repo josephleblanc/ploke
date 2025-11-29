@@ -191,7 +191,7 @@ fn setup_db_create_multi_embeddings(
         "Db".log_step()
     );
     let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
-    let step_msg = format!("create {} relation", embedding_set.relation_name());
+    let step_msg = format!("create {} relation", embedding_set.rel_name());
     let db_result = db
         .run_script(
             &create_vector_script,

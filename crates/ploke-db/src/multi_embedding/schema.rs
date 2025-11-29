@@ -99,14 +99,14 @@ impl EmbeddingVector {
 
 impl EmbeddingSetExt for EmbeddingSet {
     type Vector = EmbeddingVector;
-    fn provider(&self) -> EmbeddingProviderSlug {
+    fn provider(&self) -> &EmbeddingProviderSlug {
         // TODO: check if this is Arc::clone
-        self.provider.clone()
+        &self.provider
     }
 
-    fn model(&self) -> EmbeddingModelId {
+    fn model(&self) -> &EmbeddingModelId {
         // TODO: check if this is Arc::clone
-        self.model.clone()
+        &self.model
     }
 
     fn shape(&self) -> EmbeddingShape {
@@ -117,19 +117,19 @@ impl EmbeddingSetExt for EmbeddingSet {
         self.hash_id
     }
 
-    fn rel_name(&self) -> EmbRelName {
+    fn rel_name(&self) -> &EmbRelName {
         // TODO: check if this is Arc::clone
-        self.rel_name.clone()
+        &self.rel_name
     }
 }
 
 pub trait EmbeddingSetExt {
     type Vector: Into<EmbeddingVector>;
-    fn provider(&self) -> EmbeddingProviderSlug;
-    fn model(&self) -> EmbeddingModelId;
+    fn provider(&self) -> &EmbeddingProviderSlug;
+    fn model(&self) -> &EmbeddingModelId;
     fn shape(&self) -> EmbeddingShape;
     fn hash_id(&self) -> EmbeddingSetId;
-    fn rel_name(&self) -> EmbRelName;
+    fn rel_name(&self) -> &EmbRelName;
     fn hnsw_rel_name(&self) -> HnswRelName {
         let rel_name = self.rel_name();
         let hnsw_suffix = HNSW_SUFFIX;

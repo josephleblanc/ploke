@@ -59,6 +59,7 @@ impl std::fmt::Display for EmbRelName {
 }
 
 impl EmbeddingSet {
+    pub const RELATION_NAME: &str = "embedding_set";
     /// Convenience constructor from components.
     ///
     /// Does some sanitization (replaceing hyphen '-' with underscore '_').
@@ -88,7 +89,7 @@ impl EmbeddingSet {
         self.shape.dimension
     }
 
-    pub fn relation_name(&self) -> &EmbRelName {
+    pub fn vector_relation_name(&self) -> &EmbRelName {
         // NOTE: I'm not sure if we need this sanitization or not.
         // For now, going to comment it out, and just use the string itself, then bring back the
         // sanitization if we run into issues with tests trying to insert rows into cozo.

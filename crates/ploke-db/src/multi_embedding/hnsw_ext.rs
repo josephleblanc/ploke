@@ -473,9 +473,10 @@ mod tests {
     }
 
     #[test]
-    // WARNING: This test cannot pass, because it relies on the old version of the embeddings
-    // stored in the database, which are not loaded here. Under the cfg flag combinations it is
-    // impossible to load the old schema.
+    // WARNING: This test verifies that if we rely on the old version of the embeddings stored in
+    // the database under the "multi_embedding_*" flags we cannot load the old database due to the
+    // way we do not expose the old chema under the new flags. Under the cfg flag combinations it
+    // is impossible to load the old schema.
     //
     // NOTE: Keeping this just so we don't try to do the same thing again in the future.
     fn test_is_hnsw_index_registered() -> Result<(), Error> {
@@ -487,7 +488,7 @@ mod tests {
         let db_res = db.is_hnsw_index_registered(&embedding_set);
         eprint_relations(&db)?;
 
-        let relation = embedding_set.relation_name().as_ref();
+        let relation = embedding_set.rel_name().as_ref();
         log_step("create vector-unique relation", relation);
         let db_ret = db.create_embedding_index(&embedding_set);
         info!(create_vector_rel = ?db_ret);
@@ -545,8 +546,6 @@ mod tests {
             &put_vectors_batch,
             params
         )?;
-
-        panic!();
 
         Ok(())
     }
@@ -743,6 +742,92 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn search_similar_for_set_returns_expected_neighbors() -> Result<(), Error> {
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        let embedding_set = db.active_embedding_set.clone();
+
+        db.ensure_embedding_relation(&embedding_set)?;
+        let seeded_ids = seed_function_vectors(&db, &embedding_set, 4)?;
+        db.create_embedding_index(&embedding_set)?;
+
+        let dims = embedding_set.dims() as usize;
+        let query_vector = vec![0.1f32; dims];
+        let k = 3;
+        let ef = 10;
+        let limit = 3;
+
+        let result = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            query_vector.clone(),
+            k,
+            ef,
+            limit,
+            None,
+        )?;
+
+        let seeded: HashSet<Uuid> = seeded_ids.iter().copied().collect();
+        assert!(
+            !result.typed_data.v.is_empty(),
+            "expected search_similar_for_set to return neighbors"
+        );
+        assert_eq!(
+            result.typed_data.ty,
+            NodeType::Function,
+            "typed_data should indicate function nodes"
+        );
+        assert_eq!(
+            result.typed_data.v.len(),
+            result.dist.len(),
+            "distance vector should align with returned nodes"
+        );
+        assert!(
+            result.dist.len() <= limit,
+            "results should respect limit"
+        );
+        assert!(
+            result
+                .typed_data
+                .v
+                .iter()
+                .all(|row| seeded.contains(&row.id)),
+            "returned ids should come from seeded vectors"
+        );
+        assert!(
+            result
+                .dist
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min)
+                < 1e-6,
+            "closest neighbor should match the query vector"
+        );
+
+        let radius = Some(0.5);
+        let radius_result = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            query_vector,
+            k,
+            ef,
+            limit,
+            radius,
+        )?;
+
+        assert!(
+            radius_result.typed_data.v.len() == 1,
+            "radius filter should reduce to the exact match neighbor"
+        );
+        assert!(
+            radius_result.dist.first().map(|d| d.abs()).unwrap_or(1.0) < 1e-6,
+            "radius-filtered neighbor should have near-zero distance"
+        );
+
+        Ok(())
+    }
+
     fn script_get_legacy_node_embeddings() -> String {
         // let legacy_embeddings_script_rhs = EMBEDDABLE_NODES_NOW_LEGACY_RHS.clone();
         // let legacy_fields = NodeType::LEGACY_EMBEDDABLE_NODE_FIELDS;
@@ -761,5 +846,46 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         "#
         );
         script
+    }
+    #[cfg(feature = "multi_embedding_db")]
+    #[test]
+    fn test_load_db() -> Result<(), Error> {
+        use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+        use ploke_test_utils::workspace_root;
+
+        use crate::create_index_primary;
+
+        let db = Database::init_with_schema()?;
+
+        let mut target_file = workspace_root();
+        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        let prior_rels_vec = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+
+        // TODO: put the embeddings setup into create_index_primary, then make create_index_primary
+        // a method on the database (if possible, weird with Arc)
+        create_index_primary(&db)?;
+
+        let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
+
+        // let r1 = db.create_embedding_set_relation();
+        // tracing::info!(create_embedding_set_relation = ?r1);
+        // r1?;
+
+        let r1 = db.ensure_embedding_set_relation();
+        tracing::info!(create_embedding_set_relation = ?r1);
+        r1?;
+
+        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone());
+        tracing::info!(ensure_embedding_relation = ?r2);
+        r2?;
+
+        let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
+        tracing::info!(create_embedding_index = ?r3);
+        r3?;
+
+        Ok(())
     }
 }
