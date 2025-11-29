@@ -78,6 +78,35 @@ mod tests {
 
     #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
+    async fn test_fixture_embeddings_present_in_active_set() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let rel = db.active_embedding_set.rel_name.clone();
+        let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
+        let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
+
+        let embed_count = rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|v| v.get_int())
+            .unwrap_or(0);
+        let pending = db.count_pending_embeddings()?;
+
+        assert!(
+            embed_count > 0,
+            "Active embedding set {rel} restored with 0 vectors (pending nodes: {pending}); \
+             dense search cannot return results without precomputed embeddings"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "multi_embedding_rag")]
+    #[tokio::test]
     async fn test_db_nodes_setup() -> Result<(), Error> {
         default_test_db_setup()?;
         Ok(())

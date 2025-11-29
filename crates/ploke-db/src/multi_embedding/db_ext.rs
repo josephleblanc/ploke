@@ -1498,9 +1498,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
 
     #[test]
     fn multi_pending_embeddings_count_basic() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
-        // let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        // let db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
 
         // setup function takes care of:
         // - create embedding_set relation

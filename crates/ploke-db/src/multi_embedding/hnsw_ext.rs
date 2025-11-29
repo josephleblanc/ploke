@@ -55,7 +55,7 @@ pub trait HnswExt {
         embedding_set: &EmbeddingSet,
     ) -> Result<bool, ploke_error::Error>;
 
-    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error>;
+    fn create_index_warn(&self, embedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error>;
 }
 
 impl HnswExt for cozo::Db<cozo::MemStorage> {
@@ -330,8 +330,19 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         }
     }
 
-    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
-        todo!()
+    fn create_index_warn(&self, embedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
+        // Early-exit if already registered to mirror idempotent legacy behavior.
+        if self.is_hnsw_index_registered(embedding_set)? {
+            return Ok(());
+        }
+
+        match self.create_embedding_index(embedding_set) {
+            Ok(()) => Ok(()),
+            Err(DbError::Cozo(msg)) if msg.contains("hnsw_idx") => Err(ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeDb(msg),
+            )),
+            Err(e) => Err(ploke_error::Error::from(e)),
+        }
     }
 }
 
@@ -383,8 +394,8 @@ impl HnswExt for Database {
         self.deref().is_hnsw_index_registered(embedding_set)
     }
 
-    fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
-        todo!()
+    fn create_index_warn(&self, embedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
+        self.deref().create_index_warn(embedding_set)
     }
 }
 
@@ -738,6 +749,147 @@ mod tests {
         assert!(
             neighbors.iter().any(|(id, _, _)| seeded.contains(id)),
             "neighbor ids should come from seeded function vectors"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn search_similar_for_set_orders_and_respects_radius() -> Result<(), Error> {
+        let cozo_db = setup_db()?;
+        let db = Database::new(cozo_db);
+        let embedding_set = db.active_embedding_set.clone();
+
+        db.ensure_embedding_relation(&embedding_set)?;
+        db.create_embedding_index(&embedding_set)?;
+
+        // Grab three function ids to seed deterministic vectors.
+        let fetch_ids = r#"?[id, name] := *function{ id, name @ 'NOW' } :limit 3"#;
+        let rows = db
+            .run_script(fetch_ids, BTreeMap::new(), ScriptMutability::Immutable)
+            .map_err(DbError::from)?;
+        let ids: Vec<Uuid> = rows
+            .rows
+            .iter()
+            .filter_map(|r| {
+                if let DataValue::Uuid(UuidWrapper(u)) = r[0] {
+                    Some(u)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            ids.len() == 3,
+            "expected 3 function ids from fixture, got {}",
+            ids.len()
+        );
+
+        // Seed orthogonal basis vectors so similarity ordering is predictable.
+        let dim = embedding_set.dims() as usize;
+        let mut make_basis = |idx: usize| -> Vec<f64> {
+            let mut v = vec![0.0; dim];
+            v[idx] = 1.0;
+            v
+        };
+        let updates = vec![
+            embedding_set
+                .new_vector_with_node(ids[0], make_basis(0))
+                .into_cozo_datavalue(),
+            embedding_set
+                .new_vector_with_node(ids[1], make_basis(1))
+                .into_cozo_datavalue(),
+            embedding_set
+                .new_vector_with_node(ids[2], make_basis(2))
+                .into_cozo_datavalue(),
+        ];
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates));
+        let put_vectors = embedding_set.script_put_vector_with_param_batch();
+        db.run_script(&put_vectors, params, ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+
+        // Query close to ids[0] so it should rank first.
+        let query = vec![1.0f32]
+            .into_iter()
+            .chain(std::iter::repeat(0.0f32).take(dim - 1))
+            .collect::<Vec<_>>();
+        let res = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            query,
+            3,
+            16,
+            3,
+            None,
+        )?;
+
+        assert_eq!(res.typed_data.ty, NodeType::Function);
+        assert_eq!(res.typed_data.v.len(), 3, "should return all seeded ids");
+        assert_eq!(res.dist.len(), res.typed_data.v.len());
+        assert_eq!(
+            res.typed_data.v[0].id, ids[0],
+            "closest vector should be id seeded along first basis axis"
+        );
+
+        // With a tight radius away from any seed, expect empty results.
+        let off_axis_query = vec![0.5f32, 0.5f32]
+            .into_iter()
+            .chain(std::iter::repeat(0.0f32).take(dim - 2))
+            .collect::<Vec<_>>();
+        let res_radius = db.search_similar_for_set(
+            &embedding_set,
+            NodeType::Function,
+            off_axis_query,
+            3,
+            16,
+            3,
+            Some(0.1),
+        )?;
+        assert!(
+            res_radius.typed_data.v.is_empty(),
+            "radius filtering should drop all candidates"
+        );
+        assert!(
+            res_radius.dist.is_empty(),
+            "distance vector should track filtered results"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_relation_and_index_creation_idempotent() -> Result<(), Error> {
+        let cozo_db = setup_empty_db()?;
+        let db = Database::new(cozo_db);
+        let embedding_set = EmbeddingSet::default();
+
+        // Relation should start absent, then be created and remain present.
+        let rel_name = embedding_set.rel_name.clone();
+        let before_rel = db.is_relation_registered(&rel_name)?;
+        assert!(!before_rel, "expected embedding relation to be absent in empty fixture");
+
+        db.ensure_embedding_relation(&embedding_set)?;
+        let after_rel = db.is_relation_registered(&rel_name)?;
+        assert!(after_rel, "embedding relation should exist after ensure_embedding_relation");
+
+        // Index should start absent, then be created and remain present across multiple calls.
+        assert!(
+            !db.is_hnsw_index_registered(&embedding_set)?,
+            "hnsw index should be absent before creation"
+        );
+
+        db.create_embedding_index(&embedding_set)?;
+        assert!(
+            db.is_hnsw_index_registered(&embedding_set)?,
+            "hnsw index should exist after creation"
+        );
+
+        // Idempotency: creating again should be a no-op.
+        db.create_embedding_index(&embedding_set)?;
+        assert!(
+            db.is_hnsw_index_registered(&embedding_set)?,
+            "hnsw index should remain registered after repeated creation"
         );
 
         Ok(())
