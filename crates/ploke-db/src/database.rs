@@ -14,7 +14,7 @@ use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
+use tracing::{debug, instrument};
 use uuid::Uuid;
 
 // cfg items
@@ -219,16 +219,16 @@ impl Database {
         file_mod: Uuid,
         ty: NodeType,
     ) -> Result<QueryResult, PlokeError> {
-        let rel_name = ty.relation_str();
-        let keys = ty.keys().join(", ");
-        let vals = ty.vals().join(", ");
         let script = if cfg!(feature = "multi_embedding_db") {
-            {
-                let embedding_set = &self.active_embedding_set;
-                let set_id = embedding_set.hash_id;
-                let vector_set_name = embedding_set.vector_relation_name();
-                format!(
-                    "parent_of[child, parent] := *syntax_edge{{
+            let rel_name = ty.relation_str();
+            let keys = ty.keys().join(", ");
+            let vals = ty.vals().join(", ");
+            debug!(%rel_name, %keys, %vals);
+            let embedding_set = &self.active_embedding_set;
+            let set_id = embedding_set.hash_id;
+            let vector_set_name = embedding_set.vector_relation_name();
+            format!(
+                "parent_of[child, parent] := *syntax_edge{{
                 source_id: parent, 
                 target_id: child, 
                 relation_kind: \"Contains\"
@@ -249,12 +249,14 @@ impl Database {
                 :put {rel_name} {{ {keys}, at => {vals} }}
                 :returning
             "
-                )
-            }
+            )
         } else {
-            {
-                format!(
-                    "parent_of[child, parent] := *syntax_edge{{
+            let rel_name = ty.relation_str();
+            let keys = ty.keys().join(", ");
+            let vals = ty.vals().join(", ");
+            debug!(%rel_name, %keys, %vals);
+            format!(
+                "parent_of[child, parent] := *syntax_edge{{
                 source_id: parent, 
                 target_id: child, 
                 relation_kind: \"Contains\"
@@ -274,8 +276,7 @@ impl Database {
                 :put {rel_name} {{ {keys}, at => {vals} }}
                 :returning
             "
-                )
-            }
+            )
         };
 
         self.raw_query_mut(&script)
