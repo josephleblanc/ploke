@@ -46,6 +46,8 @@ use crate::read::tests::tracking_hash;
 
 use super::*;
 use ploke_common::{fixtures_crates_dir, workspace_root};
+#[cfg(feature = "multi_embedding_io")]
+use ploke_test_utils::setup_db_full_multi_embedding;
 use ploke_test_utils::{setup_db_full, setup_db_full_embeddings};
 use std::fs;
 use syn_parser::discovery::run_discovery_phase;
@@ -217,7 +219,7 @@ async fn test_send_during_shutdown() {
 
 #[tokio::test]
 async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
-    // init_test_tracing(tracing::Level::TRACE);
+    init_test_tracing(tracing::Level::ERROR);
 
     let fixture_name = "fixture_nodes";
     let crate_path = fixtures_crates_dir().join(fixture_name);
@@ -228,6 +230,9 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
     tracing::info!("🚀 Starting test");
     tracing::debug!("Initializing test database");
 
+    #[cfg(feature = "multi_embedding_io")]
+    let embedding_data = setup_db_full_embeddings(fixture_name)?;
+    #[cfg(not( feature = "multi_embedding_io" ))]
     let embedding_data = setup_db_full_embeddings(fixture_name)?;
     let flat_nodes: Vec<_> = embedding_data
         .iter()

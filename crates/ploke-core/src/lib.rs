@@ -17,18 +17,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod io_types;
 pub use io_types::{
-    ChangedFileData,
-    EmbeddingData,
-    FileData,
-    WriteResult,
-    WriteSnippetData,
-    CreateFileData,
-    CreateFileResult,
-    OnExists,
+    ChangedFileData, CreateFileData, CreateFileResult, EmbeddingData, FileData, OnExists,
+    WriteResult, WriteSnippetData,
 };
-pub mod rag_types;
 mod arc_str;
+pub mod rag_types;
 pub use arc_str::ArcStr;
+pub mod embeddings;
 
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {

@@ -1,4 +1,9 @@
-use crate::{macro_traits::CommonFields, schema::primary_nodes::MacroNodeSchema};
+#[cfg(not(feature = "multi_embedding_schema"))]
+use crate::schema::primary_nodes::MacroNodeSchema;
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::MacroNodeSchema;
+
+use crate::macro_traits::CommonFields;
 
 use super::*;
 

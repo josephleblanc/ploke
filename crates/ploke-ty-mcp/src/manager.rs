@@ -440,7 +440,8 @@ impl McpManager {
             spec.env.len()
         );
         // Preflight: if command is not a path, ensure it exists on PATH for clearer errors
-        if !spec.command.contains(std::path::MAIN_SEPARATOR) && which::which(&spec.command).is_err() {
+        if !spec.command.contains(std::path::MAIN_SEPARATOR) && which::which(&spec.command).is_err()
+        {
             return Err(McpError::Spawn(format!(
                 "Command '{}' not found on PATH",
                 spec.command

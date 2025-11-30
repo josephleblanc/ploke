@@ -5,7 +5,12 @@ edition = "2021"
 
 [dependencies]
 cozo = { workspace = true }
-ploke-transform = { path = "../ingest/ploke-transform" }
+# ploke-transform = { path = "../ingest/ploke-transform" }
+# Making this not use default flag multi_embedding_schema, which is in
+# ploke-transform's default flags so I can get easier access to the linting of
+# rust-analyzer for the new feature
+ploke-transform = { path = "../ingest/ploke-transform", default-features = false, features = [
+] }
 ploke-core = { path = "../ploke-core" }
 syn_parser = { path = "../ingest/syn_parser" }
 serde = { workspace = true }
@@ -33,11 +38,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # bm 25
 bm25 = "2.3.1"
 
+# possibly temporary, handling loading of db
+dirs = "6.0"
+
 [dev-dependencies]
 ploke-test-utils = { path = "../test-utils" }
+ploke-embed = { path = "../ingest/ploke-embed" }
 tokio-test = "0.4.4"
 criterion = "0.7"
 
 [features]
-defaults = []
+default = ["multi_embedding_db"]
 type_bearing_ids = []
+multi_embedding_db = [
+    "ploke-transform/multi_embedding_schema",
+    "ploke-test-utils/multi_embedding_test",
+    "ploke-embed/multi_embedding_embedder",
+]

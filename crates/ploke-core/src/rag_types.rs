@@ -49,7 +49,7 @@ pub enum Modality {
 pub struct RequestCodeContextArgs {
     pub search_term: String,
     #[serde(default)]
-    pub token_budget: Option< u32 >,
+    pub token_budget: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +68,7 @@ pub struct AssembledMeta {
 }
 
 impl RequestCodeContextResult {
-    pub fn from_assembled(parts: Vec< ContextPart >, m: AssembledMeta) -> Self {
+    pub fn from_assembled(parts: Vec<ContextPart>, m: AssembledMeta) -> Self {
         let context: Vec<ConciseContext> = parts.into_iter().map(ConciseContext::from).collect();
         Self {
             ok: true,
@@ -106,7 +106,7 @@ impl NodeFilepath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq,  PartialOrd, Ord, Hash, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 #[serde(transparent)]
 pub struct CanonPath(pub String);
 
@@ -169,7 +169,6 @@ pub struct CreateFileResult {
     /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
     pub auto_confirmed: bool,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadFileResult {

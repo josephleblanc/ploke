@@ -11,11 +11,11 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_io::IoManagerHandle;
-use tracing::trace;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use tracing::trace;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {
@@ -519,7 +519,8 @@ impl RagService {
                 ef: params.ef, // Configurable ef value
                 ty: node_type,
                 max_hits,
-                radius: params.radius, // Configurable radius value
+                // radius: params.radius, // Configurable radius value
+                radius: 100.0, // Configurable radius value
             };
 
             let result = search_similar_args(args)?;

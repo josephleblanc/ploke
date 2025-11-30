@@ -1,9 +1,11 @@
+#[cfg(not(feature = "multi_embedding_schema"))]
+use crate::schema::primary_nodes::EnumNodeSchema;
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::EnumNodeSchema;
+
 use crate::{
     macro_traits::CommonFields,
-    schema::{
-        primary_nodes::EnumNodeSchema,
-        secondary_nodes::{FieldNodeSchema, VariantNodeSchema},
-    },
+    schema::secondary_nodes::{FieldNodeSchema, VariantNodeSchema},
 };
 
 use super::{secondary_nodes::process_fields, *};

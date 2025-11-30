@@ -1,7 +1,11 @@
 use syn_parser::utils::LogStyleDebug;
 
-use crate::macro_traits::HasAnyNodeId;
+#[cfg(not(feature = "multi_embedding_schema"))]
 use crate::schema::primary_nodes::ImportNodeSchema;
+#[cfg(feature = "multi_embedding_schema")]
+use crate::schema::primary_nodes_multi::ImportNodeSchema;
+
+use crate::macro_traits::HasAnyNodeId;
 use crate::utils::log_db_error;
 
 use super::*;
@@ -35,6 +39,7 @@ pub(super) fn transform_imports(
         import_params.insert(schema.import_kind().to_string(), cozo_import_kind.into());
         import_params.insert(schema.original_name().to_string(), cozo_original_name);
         import_params.insert(schema.is_glob().to_string(), import.is_glob.into());
+        #[cfg(not(feature = "multi_embedding_schema"))]
         import_params.insert(schema.embedding().to_string(), DataValue::Null);
 
         import_params.insert(

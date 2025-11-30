@@ -22,6 +22,32 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     )
     .await;
 
+    #[cfg(feature = "multi_embedding_ui")]
+    match create_index_warn(&state.db) {
+        Ok(_) => {
+            tracing::info!(
+                "Database index updated by create_index_warn for rel",
+            );
+        }
+        Err(e) => {
+            // bad habit, saving time, just delete this later, we don't need the NodeType in
+            // replace_index_warn anymore
+            let adapter_type: NodeType = NodeType::Function;
+            match replace_index_warn(&state.db, adapter_type) {
+                Ok(_) => {
+                    tracing::info!(
+                        "Database index updated by replace_index_warn for rel: \nPrevious attempt to create index failed with err msg: {e}",
+                    );
+                }
+                Err(nested_e) => {
+                    tracing::warn!("The attempt to replace the index at the database failed for rel: \nnested_e: {nested_e}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not( feature = "multi_embedding_ui" ))]
     for ty in NodeType::primary_nodes() {
         match create_index_warn(&state.db, ty) {
             Ok(_) => {

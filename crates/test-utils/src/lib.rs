@@ -139,6 +139,125 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     Ok(db)
 }
 
+#[cfg(feature = "multi_embedding_test")]
+fn setup_db_create_multi_embeddings(
+    db: cozo::Db<cozo::MemStorage>,
+) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
+    use ploke_db::multi_embedding::schema::{
+        CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector,
+    };
+    use std::collections::BTreeMap;
+
+    use cozo::ScriptMutability;
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+    use ploke_db::DbError;
+    use syn_parser::utils::LogStyle;
+
+    tracing::info!("{}: create embedding set", "Db".log_step());
+    let create_rel_script = EmbeddingSet::script_create();
+    let relation_name = EmbeddingSet::embedding_set_relation_name();
+    let db_result = db
+        .run_script(
+            create_rel_script,
+            BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+    tracing::info!(?db_result.rows);
+
+    tracing::info!(
+        "{}: New multi_embedding relations created in the database
+(both embedding_set and default embeddings vector for sentence-transformers)",
+        "Setup".log_step()
+    );
+
+    tracing::info!("{}: put default embedding set", "Db".log_step());
+    let embedding_set = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local"),
+        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+        EmbeddingShape::new_dims_default(384),
+    );
+
+    let script_put = embedding_set.script_put();
+    let db_result = db
+        .run_script(&script_put, BTreeMap::new(), ScriptMutability::Mutable)
+        .map_err(DbError::from)?;
+    tracing::info!(put_embedding_set = ?db_result.rows);
+
+    tracing::info!(
+        "{}: create default vector embedding relation",
+        "Db".log_step()
+    );
+    let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
+    let step_msg = format!("create {} relation", embedding_set.rel_name());
+    let db_result = db
+        .run_script(
+            &create_vector_script,
+            BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )
+        .map_err(DbError::from)?;
+    tracing::info!(create_embedding_vector = ?db_result.rows);
+    Ok(db)
+}
+
+#[cfg(feature = "multi_embedding_test")]
+pub fn setup_db_full_multi_embedding(
+    fixture: &'static str,
+) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    use ploke_db::multi_embedding::schema::{
+        CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector,
+    };
+    use std::collections::BTreeMap;
+
+    use cozo::ScriptMutability;
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
+    use ploke_db::DbError;
+    use syn_parser::utils::LogStyle;
+
+    tracing::info!("Settup up database with setup_db_full");
+    // initialize db
+    let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    tracing::info!("{}: Initialize", "Database".log_step());
+    db.initialize().expect("Failed to initialize database");
+    // create and insert schema for all nodes
+    tracing::info!(
+        "{}: Create and Insert Schema",
+        "Transform/Database".log_step()
+    );
+    ploke_transform::schema::create_schema_all(&db)?;
+
+    // run the parse
+    tracing::info!("{}: run the parser", "Parse".log_step());
+    let successful_graphs = test_run_phases_and_collect(fixture);
+    // merge results from all files
+    tracing::info!("{}: merge the graphs", "Parse".log_step());
+    let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+
+    // build module tree
+    tracing::info!("{}: build module tree", "Parse".log_step());
+    let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+        log::error!(target: "transform_function",
+            "Error building tree: {}",
+            e
+        );
+        panic!()
+    });
+
+    tracing::info!("{}: transform graph into db", "Transform".log_step());
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
+
+    setup_db_create_multi_embeddings(db)
+}
+
 #[cfg(feature = "test_setup")]
 /// Uses the crates in the `ploke` workspace itself as the target.
 /// As such, cannot rely on stable inputs over time, but is a more robust example to test against
@@ -148,7 +267,7 @@ pub fn setup_db_full_crate(
 ) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
-    tracing::info!("Settup up database with setup_db_full_crate");
+    tracing::info!("Setup up database with setup_db_full_crate");
     // initialize db
     let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
     tracing::info!("{}: Initialize", "Database".log_step());
@@ -173,6 +292,10 @@ pub fn setup_db_full_crate(
         "{}: Parsing and Database Transform Complete",
         "Setup".log_step()
     );
+    #[cfg(feature = "multi_embedding_test")]
+    {
+        return setup_db_create_multi_embeddings(db);
+    }
     Ok(db)
 }
 
@@ -182,6 +305,9 @@ pub fn setup_db_full_embeddings(
 ) -> std::result::Result<std::vec::Vec<ploke_db::TypedEmbedData>, ploke_error::Error> {
     use ploke_core::EmbeddingData;
 
+    #[cfg(feature = "multi_embedding_test")]
+    let db = ploke_db::Database::new(setup_db_full_multi_embedding(fixture)?);
+    #[cfg( not(feature = "multi_embedding_test") )]
     let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;
@@ -228,7 +354,7 @@ pub fn init_tracing_v2() -> WorkerGuard {
 }
 
 #[cfg(feature = "test_setup")]
-pub fn init_test_tracing(level: tracing::Level) {
+pub fn init_test_tracing_with_target(target: &'static str, level: tracing::Level) {
     use tracing::Level;
 
     let filter = filter::Targets::new()
@@ -243,6 +369,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_target("ploke-embed", level)
         .with_target("ploke-io", level)
         .with_target("ploke-transform", level)
+        .with_target(target, level)
         .with_target("cozo", Level::ERROR);
 
     let layer = tracing_subscriber::fmt::layer()
@@ -258,6 +385,11 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with(layer)
         .with(filter)
         .init();
+}
+
+#[cfg(feature = "test_setup")]
+pub fn init_test_tracing(level: tracing::Level) {
+    init_test_tracing_with_target("", level);
 }
 
 pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<Level>) {

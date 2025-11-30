@@ -11,6 +11,11 @@ use crate::{
     Database, DbError, NodeType, QueryResult,
 };
 
+/// Query rule to find nodes with embeddings.
+/// For the legacy schema, this checks the `embedding` field directly on node relations.
+/// For multi-embedding schema, this simply checks for node existence (embedding presence
+/// is verified separately via embedding set relations).
+#[cfg(not(feature = "multi_embedding_db"))]
 lazy_static! {
     pub static ref COMMON_FIELDS_EMBEDDED: String = NodeType::primary_nodes().iter().map(|ty| {
         let rel = ty.relation_str();
@@ -18,7 +23,19 @@ lazy_static! {
             has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span, embedding @ 'NOW' }}, !is_null(embedding)
             "#)
         }).join("\n");
+}
 
+/// Query rule to find primary nodes (multi-embedding schema version).
+/// In multi-embedding schema, embeddings are stored in separate relations,
+/// so we don't filter by embedding field here.
+#[cfg(feature = "multi_embedding_db")]
+lazy_static! {
+    pub static ref COMMON_FIELDS_EMBEDDED: String = NodeType::primary_nodes().iter().map(|ty| {
+        let rel = ty.relation_str();
+            format!(r#"
+            has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span @ 'NOW'}}
+            "#)
+        }).join("\n");
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,6 +135,7 @@ pub trait GetNodeInfo: ImmutQuery {
     // TODO: Make a batch transaction version of this. Maybe we can abstract the rules `parent_of`,
     // `ancestor`, etc and then just run it all at once for a list of Uuids somehow. Need to figure
     // out better how cozo works.
+    #[cfg(not(feature = "multi_embedding_db"))]
     fn paths_from_id(&self, to_find_node_id: Uuid) -> Result<NamedRows, DbError> {
         let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
         let query: String = format!(
@@ -144,8 +162,38 @@ pub trait GetNodeInfo: ImmutQuery {
         ?[name, canon_path, file_path] := new_data[name, canon_path, file_path]
         "#
         );
-        // let error_query = query.clone().split_off(1653);
-        // eprintln!("Error in query (starting 10 chars back) at:\n{error_query}\n");
+        self.raw_query(&query)
+    }
+
+    /// Gets the file and cannonical paths for the target node id (multi-embedding schema version).
+    /// Uses `@ 'NOW'` time-travel annotations consistent with the multi-embedding schema.
+    #[cfg(feature = "multi_embedding_db")]
+    fn paths_from_id(&self, to_find_node_id: Uuid) -> Result<NamedRows, DbError> {
+        let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
+        let query: String = format!(
+            r#"
+        {common_fields_embedded}
+
+        parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+        ancestor[desc, asc] := parent_of[desc, asc]
+        ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+        is_file_module[id, file_path] := *module{{id @ 'NOW'}}, *file_mod {{ owner_id: id, file_path @ 'NOW'}}
+
+        containing_file[file_path, target_id] := ancestor[target_id, containing_id],
+            is_file_module[containing_id, file_path]
+
+        new_data[name, canon_path, file_path] := 
+            *module{{ id: module_node_id, path: canon_path @ 'NOW' }},
+            parent_of[node_id, module_node_id],
+            has_embedding[node_id, name, hash, span],
+            to_find_node_id = to_uuid("{to_find_node_id}"),
+            to_find_node_id == node_id,
+            containing_file[file_path, to_find_node_id]
+
+        ?[name, canon_path, file_path] := new_data[name, canon_path, file_path]
+        "#
+        );
         self.raw_query(&query)
     }
 }
@@ -161,6 +209,7 @@ mod tests {
     use super::{CommonFields, GetNodeInfo};
 
     #[test]
+    #[cfg(not(feature = "multi_embedding_db"))]
     fn test_canon_path() -> Result<(), Error> {
         let db_arc = TEST_DB_NODES
             .clone()

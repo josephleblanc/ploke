@@ -385,10 +385,14 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
+        #[cfg(not(feature = "multi_embedding_embedder"))]
         for ty in NodeType::primary_nodes() {
             let db_ret = ploke_db::create_index_warn(&db_clone, ty);
             tracing::info!("db_ret = {:?}", db_ret);
         }
+        #[cfg(feature = "multi_embedding_embedder")]
+        let db_ret = ploke_db::create_index_warn(&db_clone)?;
+
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
@@ -606,6 +610,14 @@ impl IndexerTask {
                 node_type.relation_str()
             );
             let nodes = self.db.get_rel_with_cursor(node_type, fetch_size, cursor)?;
+            tracing::debug!(
+                target: "ploke-embed::next_batch",
+                rel = %node_type.relation_str(),
+                fetched = nodes.len(),
+                total_counted,
+                fetch_size,
+                cursor = %cursor,
+            );
 
             if !nodes.is_empty() {
                 tracing::info!("<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>", 
@@ -619,6 +631,12 @@ impl IndexerTask {
                     total_counted += node_count;
                     batch.push(nodes);
                 }
+            } else {
+                tracing::trace!(
+                    target: "ploke-embed::next_batch",
+                    "no nodes returned for {rel}",
+                    rel = node_type.relation_str()
+                );
             }
         }
 

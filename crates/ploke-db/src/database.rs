@@ -3,16 +3,37 @@ use std::{ops::Deref, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
+#[cfg(feature = "multi_embedding_db")]
+use crate::multi_embedding::db_ext::EmbeddingExt;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
+use tracing::{debug, instrument};
 use uuid::Uuid;
+
+// cfg items
+
+#[cfg(feature = "multi_embedding_db")]
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
+
+#[cfg(feature = "multi_embedding_db")]
+lazy_static! {
+    static ref DEFAULT_EMBEDDING_SET: EmbeddingSet = EmbeddingSet::new(
+        EmbeddingProviderSlug::new_from_str("local"),
+        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
+        EmbeddingShape::new_dims_default(384)
+    );
+}
+
+// end cfg items
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
@@ -20,6 +41,8 @@ pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
+    #[cfg(feature = "multi_embedding_db")]
+    pub active_embedding_set: EmbeddingSet,
 }
 
 #[derive(Deserialize)]
@@ -125,12 +148,32 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
-        Self { db }
+        #[cfg(not(feature = "multi_embedding_db"))]
+        {
+            Self { db }
+        }
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            Self {
+                db,
+                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            }
+        }
     }
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self { db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        {
+            Ok(Self { db })
+        }
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            Ok(Self {
+                db,
+                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            })
+        }
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -140,7 +183,17 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        Ok(Self { db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        {
+            Ok(Self { db })
+        }
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            Ok(Self {
+                db,
+                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            })
+        }
     }
 
     /// Gets all the file data in the same namespace as the crate name given as argument.
@@ -166,11 +219,44 @@ impl Database {
         file_mod: Uuid,
         ty: NodeType,
     ) -> Result<QueryResult, PlokeError> {
-        let rel_name = ty.relation_str();
-        let keys = ty.keys().join(", ");
-        let vals = ty.vals().join(", ");
-        let script = format!(
-            "parent_of[child, parent] := *syntax_edge{{
+        let script = if cfg!(feature = "multi_embedding_db") {
+            let rel_name = ty.relation_str();
+            let keys = ty.keys().join(", ");
+            let vals = ty.vals().join(", ");
+            debug!(%rel_name, %keys, %vals);
+            let embedding_set = &self.active_embedding_set;
+            let set_id = embedding_set.hash_id;
+            let vector_set_name = embedding_set.vector_relation_name();
+            format!(
+                "parent_of[child, parent] := *syntax_edge{{
+                source_id: parent, 
+                target_id: child, 
+                relation_kind: \"Contains\"
+            }}
+
+            ancestor[desc, asc] := parent_of[desc, asc]
+            ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+            to_retract[{keys}, at, {vals}] := *{rel_name} {{ {keys}, {vals}  @ 'NOW'}},
+                *file_mod {{ owner_id: file_mod }},
+                ancestor[id, file_mod],
+                file_mod = \"{file_mod}\",
+                set_id = {set_id},
+                ( not *{vector_set_name} {{ node_id: id, embedding_set_id: set_id @ 'NOW' }} ),
+                at = 'RETRACT'
+
+            ?[{keys}, at, {vals}] := to_retract[{keys}, at, {vals}]
+                :put {rel_name} {{ {keys}, at => {vals} }}
+                :returning
+            "
+            )
+        } else {
+            let rel_name = ty.relation_str();
+            let keys = ty.keys().join(", ");
+            let vals = ty.vals().join(", ");
+            debug!(%rel_name, %keys, %vals);
+            format!(
+                "parent_of[child, parent] := *syntax_edge{{
                 source_id: parent, 
                 target_id: child, 
                 relation_kind: \"Contains\"
@@ -190,7 +276,9 @@ impl Database {
                 :put {rel_name} {{ {keys}, at => {vals} }}
                 :returning
             "
-        );
+            )
+        };
+
         self.raw_query_mut(&script)
             .inspect_err(|_| {
                 tracing::error!("using script:\n {}", script);
@@ -455,7 +543,17 @@ impl Database {
     pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        Ok(Self { db: new_db })
+        #[cfg(not(feature = "multi_embedding_db"))]
+        {
+            Ok(Self { db: new_db })
+        }
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            Ok(Self {
+                db: new_db,
+                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            })
+        }
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, PlokeError> {
@@ -499,11 +597,17 @@ impl Database {
         let rel = ty.relation_str();
         let keys: String = ty.keys().join(", ");
         let vals: String = ty.vals().join(", ");
+        #[cfg(not(feature = "multi_embedding_db"))]
         let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
                         *module{{ {keys}, {vals} @ 'NOW' }},
                         target_path = \"{path}\",
                         is_embedding_null = is_null(embedding)
         ");
+        let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        target_path = \"{path}\"
+        ");
+        #[cfg(feature = "multi_embedding_db")]
         tracing::info!(target: "file_hashes", "using script\n{}", &script);
         let res = self.raw_query(&script)?;
         Ok(res)
@@ -565,6 +669,23 @@ impl Database {
         &self,
         updates: Vec<(uuid::Uuid, Vec<f32>)>,
     ) -> Result<(), DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            if updates.is_empty() {
+                return Ok(());
+            }
+            // Use multi-embedding path; active_embedding_set is validated at Database construction.
+            return self
+                .deref()
+                .update_embeddings_batch(
+                    updates
+                        .into_iter()
+                        .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
+                        .collect(),
+                    &self.active_embedding_set,
+                )
+                .await;
+        }
         if updates.is_empty() {
             return Ok(());
         }
@@ -665,6 +786,7 @@ impl Database {
     }
 
     /// Validate that an embedding vector is non-empty
+    // #[cfg( not(feature = "multi_embedding") )]
     fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
         if embedding.is_empty() {
             Err(DbError::QueryExecution(
@@ -684,11 +806,21 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<Vec<TypedEmbedData>, PlokeError> {
+        // #[cfg(feature = "multi_embedding_db")]
+        // self.deref().get
         let mut unembedded_data = Vec::new();
         let mut count = 0;
         // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
+            #[cfg(not(feature = "multi_embedding_db"))]
             let nodes_of_type = self.get_unembed_rel(t, limit.saturating_sub(count), cursor)?;
+            #[cfg(feature = "multi_embedding_db")]
+            let nodes_of_type = self.deref().get_unembed_rel(
+                t,
+                limit.saturating_sub(count),
+                cursor,
+                self.active_embedding_set.clone(),
+            )?;
             count += nodes_of_type.len();
             tracing::info!("=== {count} ===");
             unembedded_data.push(nodes_of_type);
@@ -748,6 +880,7 @@ impl Database {
         Self::into_usize(result)
     }
 
+    #[cfg(not(feature = "multi_embedding_db"))]
     pub fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
         let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
             let rel = ty.relation_str();
@@ -783,6 +916,13 @@ impl Database {
     /// This is useful for retrieving the `EmbeddingData` required to retrieve code snippets from
     /// files after finding the Ids via a search method (dense embedding search, bm25 search)
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            return self
+                .deref()
+                .get_nodes_ordered_for_set(nodes, &self.active_embedding_set);
+        }
+
         let ancestor_rules = Self::ANCESTOR_RULES;
         let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
             let rel = ty.relation_str();
@@ -842,6 +982,13 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
+        #[cfg(feature = "multi_embedding_db")]
+        return self.deref().get_unembed_rel(
+            node_type,
+            limit,
+            cursor,
+            self.active_embedding_set.clone(),
+        );
         let mut base_script = String::new();
         // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
@@ -959,6 +1106,22 @@ impl Database {
         limit: usize,
         cursor: Uuid,
     ) -> Result<TypedEmbedData, PlokeError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            tracing::debug!(
+                target: "ploke-db::database",
+                rel = %node_type.relation_str(),
+                limit,
+                cursor = %cursor,
+                "delegating get_rel_with_cursor to multi_embedding_db impl",
+            );
+            return self.deref().get_rel_with_cursor(
+                node_type,
+                limit,
+                cursor,
+                &self.active_embedding_set,
+            );
+        }
         let mut base_script = String::new();
         // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
@@ -1123,6 +1286,11 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        return self
+            .deref()
+            .count_unembedded_nonfiles(&self.active_embedding_set.clone());
+
         let nodes = self.count_pending_embeddings()?;
         let files = self.count_unembedded_files()?;
         let count = nodes.checked_sub(files).expect(
@@ -1131,6 +1299,8 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         Ok(count)
     }
 
+    // ASDF
+    #[cfg(not(feature = "multi_embedding_db"))]
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
         let lhs = r#"?[count(id)] := 
         "#;
@@ -1156,6 +1326,14 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         Self::into_usize(result)
     }
 
+    #[cfg(feature = "multi_embedding_db")]
+    pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
+        use crate::multi_embedding::db_ext::EmbeddingExt;
+        let embedding_set = self.active_embedding_set.clone();
+        let inner_db = &self.db;
+        inner_db.count_pending_embeddings(&embedding_set)
+    }
+
     pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
         named_rows
             .rows
@@ -1168,6 +1346,29 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            use crate::multi_embedding::db_ext::EmbeddingExt;
+            let mut rows = Vec::new();
+            let limit: usize = 10_000;
+            for node_type in NodeType::primary_nodes() {
+                let typed = self
+                    .deref()
+                    .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
+                    .map_err(|e| DbError::QueryExecution(e.to_string()))?;
+                for emb in typed.v {
+                    rows.push(vec![
+                        DataValue::Uuid(UuidWrapper(emb.id)),
+                        DataValue::Str(emb.name.clone().into()),
+                    ]);
+                }
+            }
+            return Ok(NamedRows {
+                headers: vec!["id".into(), "name".into()],
+                rows,
+                next: None,
+            });
+        }
         let lhs = r#"?[ at, name, id] := 
         "#;
         let mut query2: String = String::new();
@@ -1263,9 +1464,16 @@ mod tests {
     }
 
     #[tokio::test]
+    // ASDF
     async fn test_get_file_data() -> Result<(), PlokeError> {
         // Initialize the logger to see output from Cozo
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
+
         let count1 = db.count_pending_embeddings()?;
         tracing::debug!("Found {} nodes without embeddings", count1);
         assert_ne!(0, count1);
@@ -1302,7 +1510,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_nodes_for_embedding() -> Result<(), PlokeError> {
+        // #[cfg(feature = "multi_embedding_db")]
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
+        // #[cfg(not (feature = "multi_embedding_db") )]
+        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
         let count = db.count_pending_embeddings()?;
         tracing::info!("Found {} nodes without embeddings", count);
         Ok(())
@@ -1310,9 +1527,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_two() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing(Level::INFO);
+        // #[cfg(feature = "multi_embedding_db")]
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
+        // #[cfg(not (feature = "multi_embedding_db") )]
+        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
         // Initialize the logger to see output from Cozo
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
 
         let count1 = db.count_pending_embeddings()?;
         tracing::debug!("Found {} nodes without embeddings", count1);
@@ -1325,7 +1550,12 @@ mod tests {
     async fn test_get_nodes_for_embedding() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::ERROR);
         // Initialize the logger to see output from Cozo
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
         let count1 = db.count_pending_embeddings()?;
         tracing::debug!("Found {} nodes without embeddings", count1);
         assert_ne!(0, count1);
@@ -1353,7 +1583,12 @@ mod tests {
     async fn test_unembedded_counts() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::TRACE);
         // Initialize the logger to see output from Cozo
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
         let all_pending = db.count_pending_embeddings()?;
         assert_ne!(0, all_pending);
 
@@ -1449,10 +1684,16 @@ mod tests {
     async fn test_update_embeddings_batch() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
+        #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        #[cfg(feature = "multi_embedding_db")]
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
 
         // 2. Get initial state
         let initial_count = db.count_unembedded_nonfiles()?;
+        tracing::info!(?initial_count);
         assert!(initial_count > 0, "Fixture should have unembedded nodes");
 
         // 3. Get a batch of nodes to update
@@ -1462,21 +1703,53 @@ mod tests {
             .flat_map(|emb| emb.v.iter())
             .collect_vec();
         let update_count = nodes_to_update.len();
+        tracing::info!(?update_count);
         assert!(update_count > 0, "Should retrieve some nodes to update");
         assert!(update_count <= 10);
 
         // 4. Create mock embeddings for the batch
+        #[cfg(not(feature = "multi_embedding_db"))]
         let updates: Vec<(uuid::Uuid, Vec<f32>)> = nodes_to_update
             .into_iter()
             .map(|node| (node.id, vec![1.0; 384]))
             .collect();
 
+        #[cfg(feature = "multi_embedding_db")]
+        let updates: Vec<(uuid::Uuid, Vec<f64>)> = nodes_to_update
+            .into_iter()
+            .map(|node| (node.id, vec![1.0; 384]))
+            .collect();
+
         // 5. Call the function to update the batch
+
+        #[cfg(feature = "multi_embedding_db")]
+        {
+            let embedding_set = db.active_embedding_set.clone();
+            let relation_name = embedding_set.rel_name.clone();
+            if !db.deref().is_relation_registered(&relation_name)? {
+                use crate::multi_embedding::schema::EmbeddingVector;
+
+                let create_rel_script = EmbeddingVector::script_create_from_set(&embedding_set);
+                db.run_script(
+                    &create_rel_script,
+                    BTreeMap::new(),
+                    ScriptMutability::Mutable,
+                )
+                .map_err(DbError::from)?;
+            }
+            db.deref()
+                .update_embeddings_batch(updates, &embedding_set)
+                .await?;
+        }
+        #[cfg(not(feature = "multi_embedding_db"))]
         db.update_embeddings_batch(updates).await?;
         // assert_eq!(update_count, updated_ct);
 
         // 6. Verify the update
         let final_count = db.count_unembedded_nonfiles()?;
+        tracing::info!(?initial_count);
+        tracing::info!(?update_count);
+        tracing::info!(?final_count);
         assert_eq!(
             final_count,
             initial_count - update_count,

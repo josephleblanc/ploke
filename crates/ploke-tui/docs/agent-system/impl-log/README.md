@@ -1,0 +1,1 @@
+Remote-embedding attempt 002 implementation logs reside under `crates/ploke-tui/docs/plans/remote-embedding/attempt-002/governance/`. Use that directory for any new entries related to this feature; mirror summaries back here only when rolling up across efforts.

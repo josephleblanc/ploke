@@ -1,9 +1,9 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ploke_tui::app::input::keymap::to_action;
 use ploke_tui::app::types::Mode;
 use ploke_tui::user_config::CommandStyle;
+use std::hint::black_box;
 
 fn bench_keymap_to_action(c: &mut Criterion) {
     let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
 use crate::TrackingHash;
 
@@ -88,7 +88,9 @@ pub enum OnExists {
 }
 
 impl Default for OnExists {
-    fn default() -> Self { Self::Error }
+    fn default() -> Self {
+        Self::Error
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

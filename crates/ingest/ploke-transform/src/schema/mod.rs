@@ -14,11 +14,55 @@
 //!     - edges: Relations between nodes, with both syntactic (AST-based) and semantic (logical) layers
 // TODO: add to docs:
 // - types
-pub mod assoc_nodes;
+
+// --- start conditional build items ---
+// TODO: Clean up post-implementation of multi_embedding
+
+#[cfg(feature = "multi_embedding_schema")]
+pub mod primary_nodes_multi;
+#[cfg(not(feature = "multi_embedding_schema"))]
+pub mod primary_nodes_single;
+
+#[cfg(feature = "multi_embedding_schema")]
+use primary_nodes_multi::*;
+#[cfg(not(feature = "multi_embedding_schema"))]
+use primary_nodes_single::*;
+
+// Re-exporting with same module path for consumers, to keep changes in feature flag isolated from
+// the changes.
+pub mod primary_nodes {
+    #[cfg(not(feature = "multi_embedding_schema"))]
+    pub use super::primary_nodes_single::*;
+
+    #[cfg(feature = "multi_embedding_schema")]
+    pub use super::primary_nodes_multi::*;
+}
+
+#[cfg(feature = "multi_embedding_schema")]
+pub mod assoc_nodes_multi;
+#[cfg(not(feature = "multi_embedding_schema"))]
+pub mod assoc_nodes_single;
+
+#[cfg(feature = "multi_embedding_schema")]
+use assoc_nodes_multi::*;
+#[cfg(not(feature = "multi_embedding_schema"))]
+use assoc_nodes_single::*;
+
+// Re-exporting with same module path for consumers, to keep changes in feature flag isolated from
+// the changes.
+pub mod assoc_nodes {
+    #[cfg(not(feature = "multi_embedding_schema"))]
+    pub use super::assoc_nodes_single::*;
+
+    #[cfg(feature = "multi_embedding_schema")]
+    pub use super::assoc_nodes_multi::*;
+}
+
+// --- end conditional build items ---
+
 pub mod crate_node;
 pub mod edges;
 pub mod meta;
-pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
@@ -30,7 +74,6 @@ use crate_node::CrateContextSchema;
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
 use meta::Bm25MetaSchema;
-use primary_nodes::*;
 use secondary_nodes::*;
 use std::collections::BTreeMap;
 use subnode_variants::FileModuleNodeSchema;

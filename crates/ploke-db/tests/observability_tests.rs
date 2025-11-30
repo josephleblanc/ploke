@@ -12,10 +12,10 @@ fn tool_call_requested_idempotent() {
 
     let req = ToolCallReq {
         request_id,
-        call_id: ArcStr::from( "call-1" ),
+        call_id: ArcStr::from("call-1"),
         parent_id,
- 
-        tool_name: ArcStr::from( "test_tool" ),
+
+        tool_name: ArcStr::from("test_tool"),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),
         started_at: Validity {
@@ -50,14 +50,14 @@ fn tool_call_done_idempotent_and_transition_rules() {
     let db = Database::init_with_schema().expect("init db");
     let request_id = uuid::Uuid::new_v4();
     let parent_id = uuid::Uuid::new_v4();
-    let call_id = ArcStr::from( "call-2" );
+    let call_id = ArcStr::from("call-2");
 
     let req = ToolCallReq {
         request_id,
         call_id: call_id.clone(),
         parent_id,
- 
-        tool_name: ArcStr::from( "test_tool" ),
+
+        tool_name: ArcStr::from("test_tool"),
         args_sha256: "abc123".to_string(),
         arguments_json: Some(r#"{"arg":1}"#.to_string()),
         started_at: Validity {

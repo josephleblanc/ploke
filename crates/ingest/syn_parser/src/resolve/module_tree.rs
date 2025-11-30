@@ -1639,6 +1639,21 @@ impl ModuleTree {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
+                // Temporary noisy logging to locate duplicates in CI
+                eprintln!(
+                    "[validate_unique_rels] duplicate relation kind={} src={:?} tgt={:?}",
+                    rel.rel().kind_str(),
+                    rel.rel().source(),
+                    rel.rel().target()
+                );
+                if let Ok(mod_id) = rel.rel().source().try_into() {
+                    if let Some(module) = self.modules.get(&mod_id) {
+                        eprintln!(
+                            "  source module name={} path={:?}",
+                            module.name, module.path
+                        );
+                    }
+                }
                 self.log_relation_verbose(*rel);
             }
             acc

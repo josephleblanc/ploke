@@ -12,15 +12,22 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ploke_core::ArcStr;
+use ploke_tui::EventBus;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
-use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig, SystemState};
+use ploke_tui::app_state::core::{
+    AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
+    SystemState,
+};
 use ploke_tui::event_bus::EventBusCaps;
-use ploke_tui::EventBus;
-use tokio::sync::{mpsc, RwLock};
-use tokio::time::{timeout, Duration};
+use tokio::sync::{RwLock, mpsc};
+use tokio::time::{Duration, timeout};
 
-async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state::StateCommand>, uuid::Uuid) {
+async fn make_app_with_proposals() -> (
+    App,
+    mpsc::Receiver<ploke_tui::app_state::StateCommand>,
+    uuid::Uuid,
+) {
     // Minimal state
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
@@ -51,7 +58,9 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
-        preview: DiffPreview::UnifiedDiff { text: "diff".into() },
+        preview: DiffPreview::UnifiedDiff {
+            text: "diff".into(),
+        },
         status: EditProposalStatus::Pending,
     };
     {
@@ -77,7 +86,13 @@ async fn make_app_with_proposals() -> (App, mpsc::Receiver<ploke_tui::app_state:
     (app, cmd_rx, req_id)
 }
 
-async fn make_app_with_proposals_and_editor(editor: Option<&str>) -> (App, mpsc::Receiver<ploke_tui::app_state::StateCommand>, uuid::Uuid) {
+async fn make_app_with_proposals_and_editor(
+    editor: Option<&str>,
+) -> (
+    App,
+    mpsc::Receiver<ploke_tui::app_state::StateCommand>,
+    uuid::Uuid,
+) {
     // Minimal state
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
@@ -113,7 +128,9 @@ async fn make_app_with_proposals_and_editor(editor: Option<&str>) -> (App, mpsc:
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
-        preview: DiffPreview::UnifiedDiff { text: "diff".into() },
+        preview: DiffPreview::UnifiedDiff {
+            text: "diff".into(),
+        },
         status: EditProposalStatus::Pending,
     };
     {

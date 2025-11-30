@@ -20,9 +20,11 @@
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
-use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig, SystemState};
+use ploke_tui::app_state::core::{
+    AppState, ChatState, ConfigState, EditProposal, EditProposalStatus, RuntimeConfig, SystemState,
+};
 use tokio::sync::RwLock;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn proposals_save_and_load_roundtrip() {
@@ -57,7 +59,9 @@ async fn proposals_save_and_load_roundtrip() {
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
-        preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff { text: "diff".into() },
+        preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
+            text: "diff".into(),
+        },
         status: EditProposalStatus::Pending,
     };
     {
@@ -79,13 +83,19 @@ async fn proposals_save_and_load_roundtrip() {
     }
     timeout(
         Duration::from_secs(30),
-        ploke_tui::app_state::handlers::proposals::load_proposals_from_path(&state, &proposals_path),
+        ploke_tui::app_state::handlers::proposals::load_proposals_from_path(
+            &state,
+            &proposals_path,
+        ),
     )
     .await
     .expect("load_proposals_from_path timed out");
     let guard = state.proposals.read().await;
     assert_eq!(guard.len(), 1, "should reload one proposal");
-    assert!(guard.get(&req_id).is_some(), "reloaded proposal should match id");
+    assert!(
+        guard.get(&req_id).is_some(),
+        "reloaded proposal should match id"
+    );
 }
 
 #[tokio::test]

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
-use ploke_tui::EventBus;
 
 #[tokio::test]
 async fn crate_focus_assigns_absolute_root_from_db() {
@@ -48,8 +48,8 @@ async fn crate_focus_assigns_absolute_root_from_db() {
     params.insert("root_path".to_string(), DataValue::from(root_str.as_str()));
     params.insert("files".to_string(), DataValue::List(vec![]));
 
-    let script = ploke_transform::schema::crate_node::CrateContextSchema::SCHEMA
-        .script_put(&params);
+    let script =
+        ploke_transform::schema::crate_node::CrateContextSchema::SCHEMA.script_put(&params);
     db.run_script(&script, params, ScriptMutability::Mutable)
         .expect("put crate_context");
 

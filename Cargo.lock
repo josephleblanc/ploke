@@ -3627,9 +3627,11 @@ dependencies = [
  "cozo",
  "criterion",
  "crossbeam-channel",
+ "dirs 6.0.0",
  "itertools 0.14.0",
  "lazy_static",
  "ploke-core",
+ "ploke-embed",
  "ploke-error",
  "ploke-test-utils",
  "ploke-transform",
@@ -6647,6 +6649,12 @@ checksum = "ea2f10b9bb0928dfb1b42b65e1f9e36f7f54dbdf08457afefb38afcdec4fa2bb"
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "walkdir",
+]
 
 [[package]]
 name = "yaml-rust2"

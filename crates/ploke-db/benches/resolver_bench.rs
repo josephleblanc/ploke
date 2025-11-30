@@ -1,5 +1,5 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
-use ploke_db::{Database, helpers::resolve_nodes_by_canon_in_file};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use ploke_db::{helpers::resolve_nodes_by_canon_in_file, Database};
 use std::path::{Path, PathBuf};
 
 fn bench_resolve_strict(c: &mut Criterion) {
@@ -11,7 +11,8 @@ fn bench_resolve_strict(c: &mut Criterion) {
     backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
     if backup.exists() {
         let prior = db.relations_vec().expect("relations_vec");
-        db.import_from_backup(&backup, &prior).expect("import_from_backup");
+        db.import_from_backup(&backup, &prior)
+            .expect("import_from_backup");
     } else {
         // No data; avoid benchmarking empty DB
         return;
@@ -40,4 +41,3 @@ fn bench_resolve_strict(c: &mut Criterion) {
 
 criterion_group!(benches, bench_resolve_strict);
 criterion_main!(benches);
-
