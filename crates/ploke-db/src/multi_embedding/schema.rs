@@ -207,6 +207,26 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
         script
     }
 
+    fn script_retract_vector_with_param_batch(&self) -> String {
+        let vector_fields = EmbeddingVector::script_fields();
+
+        let script = format!(
+            r#"
+{{
+    input[node_id, embedding_set_id, vector] <- $updates
+
+    ?[node_id, embedding_set_id, vector, at] := 
+        input[node_id, embedding_set_id, vector],
+        at = 'RETRACT'
+
+    :put {embedding_rel_name} {{ node_id, embedding_set_id, vector, at }}
+}}
+"#,
+            embedding_rel_name = self.rel_name()
+        );
+        script
+    }
+
     fn script_get_vector_rows(&self) -> String {
         let fields = EmbeddingVector::script_fields();
         let vector_rel_name = self.rel_name();

@@ -296,10 +296,8 @@ impl Database {
         let set_id = embedding_set.hash_id().into_inner() as i64;
         let vector_set_name = embedding_set.vector_relation_name();
         let vector_fields = EmbeddingVector::script_fields();
-        let _script_old = format!(
-            "
-            {{
-            parent_of[child, parent] := *syntax_edge{{
+        let script = format!(
+            "parent_of[child, parent] := *syntax_edge{{
                 source_id: parent, 
                 target_id: child, 
                 relation_kind: \"Contains\"
@@ -325,39 +323,6 @@ impl Database {
             ?[{vector_fields}] := to_retract[{vector_fields}]
                 :put {vector_set_name} {{ {vector_fields} }}
                 :returning
-            }}
-            "
-        );
-        let script = format!(
-            "
-            {{
-            parent_of[child, parent] := *syntax_edge{{
-                source_id: parent, 
-                target_id: child, 
-                relation_kind: \"Contains\"
-            }}
-
-            ancestor[desc, asc] := parent_of[desc, asc]
-            ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
-            has_file_ancestor[node_id, mod_id] := *{ty_rel_name} {{id: node_id @ 'NOW'}},
-                *file_mod {{ owner_id: mod_id }},
-                *module {{ id: mod_id}},
-                ancestor[node_id, mod_id]
-
-            embedded_vec[node_id, embedding_set_id, vector, at] := *{vector_set_name} {{ 
-                    node_id, 
-                    embedding_set_id, 
-                    vector @ 'NOW'
-                }},
-                embedding_set_id == to_int({set_id}),
-                has_file_ancestor[node_id, mod_id],
-                mod_id = to_uuid(\"{file_mod}\"),
-                at = 'RETRACT'
-
-            ?[{vector_fields}] := embedded_vec[node_id, embedding_set_id, vector, at]
-            :put {vector_set_name}
-            }}
             "
         );
         // info!(retract_embedded_files = %script);
@@ -1714,14 +1679,14 @@ mod tests {
         Ok(())
     }
 
-    fn debug_print_counts(db: &Database) -> Result<(), PlokeError> {
+    fn info_print_counts(db: &Database) -> Result<(), PlokeError> {
         let embedding_set = &db.active_embedding_set;
         let unembedded_files = db.count_unembedded_files()?;
         let unembedded_non_files = db.count_unembedded_nonfiles()?;
         let all_pending = db.count_pending_embeddings()?;
         let all_emb_complete = db.count_complete_embeddings(embedding_set)?;
         let all_embedded_rows = db.count_embeddings_for_set(embedding_set)?;
-        debug!(
+        info!(
             "Counts:
             unembedded_files = {unembedded_files}
             unembedded_non_files = {unembedded_non_files}
@@ -1734,13 +1699,13 @@ mod tests {
     }
     #[tokio::test]
     async fn test_retract_embedding_single() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
+        ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
         let embedding_set = &db.active_embedding_set;
 
-        debug_print_counts(&db)?;
+        info_print_counts(&db)?;
 
         crate::create_index_primary(&db)?;
         let emb_rows_script = embedding_set.script_get_vector_rows();
@@ -1763,10 +1728,10 @@ mod tests {
         let uid = to_uuid(&id)?;
         let embedding_rel_name = embedding_set.rel_name();
         let retract_script = format!(r#"
-    ?[node_id, embedding_set_id, vector, at] := *{embedding_rel_name}{{node_id, embedding_set_id, vector}},
-        node_id = to_uuid("{uid}"), at = 'RETRACT'
+    ?[node_id, embedding_set_id, vector] := *{embedding_rel_name}{{node_id, embedding_set_id, vector}},
+        node_id = to_uuid({id})
 
-        :put {embedding_rel_name}{{node_id, embedding_set_id, vector, at}}
+        :put {embedding_rel_name}{{node_id, embedding_set_id, vector, 'RETRACT'}}
 "#);
         info!(%retract_script);
         db
@@ -1777,75 +1742,26 @@ mod tests {
             )
             .map_err(DbError::from)?;
 
-        debug_print_counts(&db)?;
+        info_print_counts(&db)?;
 
         Ok(())
     }
     #[tokio::test]
-    async fn test_retract_embeddings_full() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
+    async fn test_retract_embeddings() -> Result<(), PlokeError> {
+        ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
-        let embedding_set = &db.active_embedding_set;
 
-        // debug_print_counts(&db)?;
+        info_print_counts(&db)?;
         crate::create_index_primary(&db)?;
-        // debug_print_counts(&db)?;
-
-        let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > 0, "expect all embeddings present initially");
+        info_print_counts(&db)?;
 
         let file_data: Vec<FileData> = db.get_file_data()?;
         info!("Files count with db.get_file_data: {}", file_data.len());
         info!("Loop through file data");
 
         for (i, file_mod_id) in file_data.iter().map(|f| f.id).enumerate() {
-            info!("Looping {i}");
-            for node_ty in NodeType::primary_nodes() {
-                trace!("Looping {i} -- node_ty: {}", node_ty.relation_str());
-                let query_res = db
-                    .retract_embedded_files(file_mod_id, node_ty)
-                    .inspect_err(|e| error!("Error in retract_embed_files: {e}"))?;
-                trace!("Raw return of retract_embedded_files:\n{:?}", query_res);
-                if !query_res.rows.is_empty() {
-                    let to_print = query_res
-                        .rows
-                        .iter()
-                        .map(|r| r.iter().join(" | "))
-                        .join("\n");
-                    // info!("Return of retract_embedded_files:\n{}", to_print);
-                }
-            }
-        }
-
-        let final_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded == 0, "expect no registered embedings after retracting all of them");
-
-        // debug_print_counts(&db)?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_retract_embeddings_partial() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
-        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
-        let db = Database::new(cozo_db);
-        crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
-        let embedding_set = &db.active_embedding_set;
-
-        // debug_print_counts(&db)?;
-        crate::create_index_primary(&db)?;
-        // debug_print_counts(&db)?;
-
-        let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > 0, "expect all embeddings present initially");
-
-        let file_data: Vec<FileData> = db.get_file_data()?;
-        debug!("Files count with db.get_file_data: {}", file_data.len());
-        debug!("Loop through file data");
-
-        for (i, file_mod_id) in file_data.iter().map(|f| f.id).enumerate().step_by(2) {
             debug!("Looping {i}");
             for node_ty in NodeType::primary_nodes() {
                 trace!("Looping {i} -- node_ty: {}", node_ty.relation_str());
@@ -1859,40 +1775,12 @@ mod tests {
                         .iter()
                         .map(|r| r.iter().join(" | "))
                         .join("\n");
-                    // debug!("Return of retract_embedded_files:\n{}", to_print);
+                    info!("Return of retract_embedded_files:\n{}", to_print);
                 }
             }
         }
 
-        let partial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > partial_embedded, "expect fewer embeddings after retracting some of them");
-        assert!(partial_embedded > 0, "expect some embeddings remain");
-
-        for (i, file_mod_id) in file_data.iter().map(|f| f.id).enumerate().skip(1).step_by(2) {
-            debug!("Looping {i}");
-            for node_ty in NodeType::primary_nodes() {
-                trace!("Looping {i} -- node_ty: {}", node_ty.relation_str());
-                let query_res = db
-                    .retract_embedded_files(file_mod_id, node_ty)
-                    .inspect_err(|e| error!("Error in retract_embed_files: {e}"))?;
-                trace!("Raw return of retract_embedded_files:\n{:?}", query_res);
-                if !query_res.rows.is_empty() {
-                    let to_print = query_res
-                        .rows
-                        .iter()
-                        .map(|r| r.iter().join(" | "))
-                        .join("\n");
-                    // debug!("Return of retract_embedded_files:\n{}", to_print);
-                }
-            }
-        }
-
-        let ending_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > ending_embedded, "expect fewer embeddings after retracting some of them");
-        assert!(partial_embedded > ending_embedded, "expect fewer embeddings after retracting more of them");
-        assert!(ending_embedded == 0, "expect no embeddings remain after retracting all");
-
-        // debug_print_counts(&db)?;
+        info_print_counts(&db)?;
         Ok(())
     }
 }

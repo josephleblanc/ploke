@@ -237,6 +237,10 @@ impl EmbeddingSetId {
     pub fn into_inner(self) -> u64 {
         self.0
     }
+
+    pub fn from_db_raw(n: u64) -> Self {
+        Self(n)
+    }
 }
 
 impl std::fmt::Display for EmbeddingSetId {

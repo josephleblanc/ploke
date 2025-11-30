@@ -7,15 +7,12 @@ use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, FileData, TrackingHash};
+use ploke_core::{embeddings::{EmbeddingSet, EmbeddingSetId}, EmbeddingData, FileData, TrackingHash};
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
 
 use crate::{
-    database::{to_string, to_usize, to_uuid},
-    error::DbError,
-    get_by_id::CommonFields,
-    NodeType,
+    database::{to_string, to_u64, to_usize, to_uuid, to_vector}, error::DbError, get_by_id::CommonFields, multi_embedding::schema::EmbeddingVector, NodeType
 };
 use cozo::NamedRows;
 
@@ -121,6 +118,35 @@ impl QueryResult {
 
         Ok(embeddings)
     }
+
+    // pub fn to_embedding_vector(self, embedding_set: &EmbeddingSet) -> Result<Vec<EmbeddingVector>, ploke_error::Error> {
+    //     let map_err = |e: DbError| {
+    //         ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(e.to_string()))
+    //     };
+    //
+    //     let node_id_index: usize = get_pos(&self.headers, "node_id")?;
+    //     let embedding_set_id_index: usize = get_pos(&self.headers, "embedding_set_id")?;
+    //     let vector_index: usize = get_pos(&self.headers, "vector")?;
+    //
+    //     let embeddings = self
+    //         .rows
+    //         .into_iter()
+    //         .map(
+    //             |row| {
+    //             let node_id = to_uuid(&row[node_id_index]).map_err(map_err)?;
+    //             let embedding_set_id = to_u64(&row[embedding_set_id_index]).map_err(map_err)?;
+    //             let vector = to_vector(&row[vector_index], embedding_set).map_err(map_err)?;
+    //
+    //             Ok(EmbeddingVector {
+    //                 node_id,
+    //                 vector,
+    //                 embedding_set_id: EmbeddingSetId::from_db_raw(embedding_set_id),
+    //             })
+    //         })
+    //         .collect::<Result<Vec<_>, ploke_error::Error>>()?;
+    //
+    //     Ok(embeddings)
+    // }
 }
 
 pub(crate) fn get_byte_offsets(span: &&[cozo::DataValue]) -> (usize, usize) {

@@ -39,8 +39,10 @@ pub trait EmbeddingExt {
     // TODO: Add substitute functions for:
     //  - [ ] ploke-db database.rs
     //      - [ ] get_path_info
-    //  - [ ] ploke-db database.rs
     //      - [ ] retract_embedded_files
+    //  - [ ] change type handling on:
+    //      - [ ] get_unembed_rel_data
+    //      - [ ] get_embedded_node_data
 
     /// Counts the code primary node code items that have not yet been embedded.
     ///
@@ -181,6 +183,12 @@ pub trait EmbeddingExt {
     fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError>;
 
     // fn get_path_info(&self) -> Result<QueryResult, PlokeError>;
+    fn count_complete_embeddings(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
+    fn script_complete_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String;
+
+    fn count_embeddings_for_set(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
+
+    fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -188,7 +196,7 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
         let pending_nodes_rhs = self.script_pending_nodes_rhs(embedding_set);
 
         let query = format!("?[count(id)] := {}", pending_nodes_rhs);
-        tracing::debug!(target: "cozo-script", ?query);
+        debug!(target: "cozo-script", ?query);
 
         let result = self
             .run_script(
@@ -198,7 +206,9 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        Database::into_usize(result)
+        let count = Database::into_usize(result);
+        debug!(?count);
+        count
     }
 
     fn count_unembedded_nonfiles(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
@@ -215,13 +225,15 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
     fn count_unembedded_files(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
         let query = format!(
             r#"
-unembedded_file_mod[id] := *module{{id}}, *file_mod{{owner_id: id}}, 
-not *{embed_rel}{{node_id: id}}
+unembedded_file_mod[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}},
+*{embed_rel}{{node_id @ 'NOW'}},
+node_id == id
 
 ?[count(id)] := unembedded_file_mod[id]
 "#,
             embed_rel = embedding_set.rel_name.to_string().replace('-', "_")
         );
+        debug!(target: "cozo-script", ?query);
 
         let result = self
             .run_script(
@@ -231,7 +243,9 @@ not *{embed_rel}{{node_id: id}}
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        Database::into_usize(result)
+        let count = Database::into_usize(result);
+        debug!(?count);
+        count
     }
 
     fn is_embedding_present(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
@@ -326,16 +340,22 @@ not *{embed_rel}{{node_id: id}}
 
     fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
         let rel_name = &embedding_set.rel_name;
-        NodeType::primary_nodes()
-            .iter()
-            .map(|node_type| {
-                format!(
-                    "(*{node_rel}{{id}}, not *{embed_rel}{{node_id: id}})",
-                    node_rel = node_type.relation_str(),
-                    embed_rel = &rel_name
-                )
-            })
-            .join(" or ")
+        let emb_now_rhs = Self::script_embeddable_nodes_now_rhs();
+        let emb_vec_rel = embedding_set.rel_name();
+        let script =
+            format!(r#"( {emb_now_rhs} ), *{emb_vec_rel} {{node_id, at: 'NOW'}}, id != node_id"#);
+        debug!(script_pending_nodes_rhs = ?script);
+        script
+        // NodeType::primary_nodes()
+        //     .iter()
+        //     .map(|node_type| {
+        //         format!(
+        //             "*{node_rel}{{id}}, not *{embed_rel}{{node_id: id}}",
+        //             node_rel = node_type.relation_str(),
+        //             embed_rel = &rel_name
+        //         )
+        //     })
+        //     .join(" or ")
     }
 
     fn script_embeddable_nodes_now_rhs() -> &'static str {
@@ -646,6 +666,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         }
         Ok(())
     }
+
     fn replace_embedding_set_relation(
         &self,
         embedding_set: EmbeddingSet,
@@ -673,15 +694,6 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map_err(DbError::from)?;
         Ok(())
     }
-
-    fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError> {
-        // Check that the relation "embedding_set" is registered
-        if !self.is_embedding_set_registered()? {
-            return self.create_embedding_set_relation();
-        }
-        Ok(())
-    }
-
     fn put_embedding_set(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError> {
         let script_put = embedding_set.script_put();
         let db_result = self
@@ -726,6 +738,44 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         )
         .map_err(DbError::from)?;
         Ok(())
+    }
+
+    fn ensure_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        // Check that the relation "embedding_set" is registered
+        if !self.is_vector_embedding_registered(embedding_set)? {
+            self.create_vector_embedding_relation(embedding_set)?;
+        }
+        Ok(())
+    }
+
+    fn is_vector_embedding_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, PlokeError> {
+        let set_id = embedding_set.hash_id().into_inner() as i64;
+        let rel_name = embedding_set.rel_name();
+        let get_rel_name_script = format!("?[count( node_id)] := *{rel_name}{{ node_id @ 'NOW'}}");
+        info!(?get_rel_name_script);
+        let result = self
+            .run_script(
+                &get_rel_name_script,
+                BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()));
+
+        info!(get_rel_name_result = ?result);
+        let expected_err_msg = format!(r#"Cannot find requested stored relation '{rel_name}'"#);
+        match result {
+            Ok(count) => Ok(true),
+            Err(e) if e == DbError::Cozo(expected_err_msg) => Ok(false),
+            Err(e) => Err(PlokeError::from(e)),
+        }
+        //
+        // Ok(is_present)
     }
 
     fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
@@ -776,6 +826,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         tracing::info!(create_embedding_vector = ?db_result.rows);
         Ok(())
     }
+
     fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError> {
         let params = BTreeMap::from([(
             "embedding_set_name".into(),
@@ -795,66 +846,141 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(result)
     }
-
-    fn ensure_vector_embedding_relation(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
+    fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError> {
         // Check that the relation "embedding_set" is registered
-        if !self.is_vector_embedding_registered(embedding_set)? {
-            self.create_vector_embedding_relation(embedding_set)?;
+        if !self.is_embedding_set_registered()? {
+            return self.create_embedding_set_relation();
         }
         Ok(())
     }
 
-    fn is_vector_embedding_registered(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<bool, PlokeError> {
-        let set_id = embedding_set.hash_id().into_inner() as i64;
-        let rel_name = embedding_set.rel_name();
-        let get_rel_name_script = format!("?[count( node_id)] := *{rel_name}{{ node_id @ 'NOW'}}");
-        info!(?get_rel_name_script);
+    fn count_complete_embeddings(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        let pending_nodes_rhs = self.script_complete_nodes_rhs(embedding_set);
+
+        let query = format!("?[count(id)] := {}", pending_nodes_rhs);
+        debug!(target: "cozo-script", ?query);
+
         let result = self
             .run_script(
-                &get_rel_name_script,
-                BTreeMap::new(),
+                &query,
+                Default::default(),
                 cozo::ScriptMutability::Immutable,
             )
-            .map_err(|e| DbError::Cozo(e.to_string()));
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        info!(get_rel_name_result = ?result);
-        let expected_err_msg = format!(r#"Cannot find requested stored relation '{rel_name}'"#);
-        match result {
-            Ok(count) => Ok(true),
-            Err(e) if e == DbError::Cozo(expected_err_msg) => Ok(false),
-            Err(e) => Err(PlokeError::from(e)),
-        }
-        //
-        // Ok(is_present)
+        let count = Database::into_usize(result);
+        debug!(?count);
+        count
+    }
+
+    fn script_complete_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        let rel_name = &embedding_set.rel_name;
+        let emb_now_rhs = Self::script_embeddable_nodes_now_rhs();
+        let emb_vec_rel = embedding_set.rel_name();
+        let script = format!(r#"( {emb_now_rhs} ), *{emb_vec_rel} {{node_id: id, at: 'NOW'}}"#);
+        debug!(script_complete_nodes_rhs = ?script);
+        script
+    }
+
+    fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String {
+        let rel_name = embedding_set.rel_name();
+        let set_id = embedding_set.hash_id().into_inner() as i64;
+        format!(
+            "*{rel_name}{{embedding_set_id, node_id @ 'NOW'}},
+    embedding_set_id = {set_id}"
+        )
+    }
+
+    fn count_embeddings_for_set(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        let rel_name = embedding_set.rel_name();
+        let set_id = embedding_set.hash_id().into_inner() as i64;
+        let embedding_rule_head = "embeddings[node_id, embedding_set_id, vector]";
+        let set_embeddings_rule = format!(
+            "{embedding_rule_head} :=
+                *{rel_name}{{
+                    node_id, 
+                    embedding_set_id, 
+                    vector @ 'NOW'
+                }},
+                embedding_set_id == {set_id}"
+        );
+        let query = format!(r#"
+        {set_embeddings_rule}
+
+        ?[count(node_id)] := {embedding_rule_head}"#);
+        //         let query = format!(
+        //             "
+        // ?[count(node_id)] :=
+        //     *{rel_name}{{embedding_set_id, node_id, vector @ 'NOW'}},
+        //     embedding_set_id == {set_id}
+        // "
+        //         );
+        info!(target: "cozo-script", ?query);
+
+        let result = self
+            .run_script(
+                &query,
+                Default::default(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        let count = Database::into_usize(result);
+        debug!(?count);
+        count
     }
 }
 
 /// Trait used to extend the database with embeddings-aware methods
 impl EmbeddingExt for Database {
-    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        self.deref().count_pending_embeddings(embedding_set_id)
+    fn count_complete_embeddings(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_complete_embeddings(embedding_set)
     }
 
-    fn count_unembedded_nonfiles(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
-        self.deref().count_unembedded_nonfiles(embedding_set_id)
+    fn count_embeddings_for_set(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_embeddings_for_set(embedding_set)
+    }
+
+    fn count_pending_embeddings(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_pending_embeddings(embedding_set_id)
     }
 
     fn count_unembedded_files(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
         self.deref().count_unembedded_files(embedding_set_id)
     }
 
-    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError> {
-        self.deref().is_embedding_present(embedding_set_id)
+    fn count_unembedded_nonfiles(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError> {
+        self.deref().count_unembedded_nonfiles(embedding_set_id)
     }
 
-    fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError> {
-        self.deref().is_embedding_id_present(embedding_set_id)
+    fn create_embedding_set_relation(&self) -> Result<(), PlokeError> {
+        self.deref().create_embedding_set_relation()
+    }
+
+    fn create_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        self.deref().create_vector_embedding_relation(embedding_set)
+    }
+
+    fn ensure_default_relation_set(&self) -> Result<(), PlokeError> {
+        self.deref().ensure_default_relation_set()
+    }
+
+    fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError> {
+        self.deref().ensure_embedding_set_relation()
+    }
+
+    fn ensure_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        self.deref().ensure_vector_embedding_relation(embedding_set)
+    }
+
+    fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
+        self.deref().get_common_nodes()
     }
 
     fn get_embedding_rel_name(
@@ -864,39 +990,16 @@ impl EmbeddingExt for Database {
         self.deref().get_embedding_rel_name(embedding_set_id)
     }
 
-    fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
-        self.deref().is_relation_registered(relation_name)
-    }
-
-    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
-        self.deref().is_embedding_set_registered()
-    }
-
-    fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
-        self.deref().script_pending_nodes_rhs(embedding_set)
-    }
-
-    fn script_embeddable_nodes_now_rhs() -> &'static str {
-        // WARNING: This is not really good practice, and is just copied from the above
-        // implementation for cozo::Db.
-        // Revisit this once we are ready to do a better refactor for wrapper databases
-        EMBEDDABLE_NODES_NOW.as_str()
-    }
-
-    fn script_get_common_nodes(&self) -> Result<String, DbError> {
-        self.deref().script_get_common_nodes()
-    }
-
-    fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
-        self.deref().get_common_nodes()
-    }
-
     fn get_nodes_ordered_for_set(
         &self,
         nodes: Vec<Uuid>,
         embedding_set: &EmbeddingSet,
     ) -> Result<Vec<EmbeddingData>, PlokeError> {
         self.deref().get_nodes_ordered_for_set(nodes, embedding_set)
+    }
+
+    fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError> {
+        self.deref().get_rel_name_by_id(embedding_set_id)
     }
 
     fn get_rel_with_cursor(
@@ -910,18 +1013,6 @@ impl EmbeddingExt for Database {
             .get_rel_with_cursor(node_type, limit, cursor, embedding_set)
     }
 
-    // TODO: After we get this to work, try removing the async (I don't know if it really wins us
-    // anything here)
-    async fn update_embeddings_batch(
-        &self,
-        updates: Vec<(Uuid, Vec<f64>)>,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<(), DbError> {
-        self.deref()
-            .update_embeddings_batch(updates, embedding_set)
-            .await
-    }
-
     fn get_unembed_rel(
         &self,
         node_type: NodeType,
@@ -933,47 +1024,24 @@ impl EmbeddingExt for Database {
             .get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
     }
 
-    fn ensure_default_relation_set(&self) -> Result<(), PlokeError> {
-        self.deref().ensure_default_relation_set()
+    fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError> {
+        self.deref().is_embedding_id_present(embedding_set_id)
     }
 
-    fn replace_embedding_set_relation(
-        &self,
-        embedding_set: EmbeddingSet,
-    ) -> Result<(), PlokeError> {
-        self.deref().replace_embedding_set_relation(embedding_set)
+    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError> {
+        self.deref().is_embedding_present(embedding_set_id)
     }
 
-    fn create_embedding_set_relation(&self) -> Result<(), PlokeError> {
-        self.deref().create_embedding_set_relation()
-    }
-
-    fn put_embedding_set(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError> {
-        self.deref().put_embedding_set(embedding_set)
+    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
+        self.deref().is_embedding_set_registered()
     }
 
     fn is_hnsw_relation_registered(&self, relation_name: &HnswRelName) -> Result<bool, DbError> {
         self.deref().is_hnsw_relation_registered(relation_name)
     }
 
-    fn create_vector_embedding_relation(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
-        self.deref().create_vector_embedding_relation(embedding_set)
-    }
-
-    fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
-        self.deref().setup_multi_embedding()?;
-        Ok(())
-    }
-
-    fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError> {
-        self.deref().get_rel_name_by_id(embedding_set_id)
-    }
-
-    fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError> {
-        self.deref().ensure_embedding_set_relation()
+    fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
+        self.deref().is_relation_registered(relation_name)
     }
 
     fn is_vector_embedding_registered(
@@ -983,11 +1051,55 @@ impl EmbeddingExt for Database {
         self.deref().is_vector_embedding_registered(embedding_set)
     }
 
-    fn ensure_vector_embedding_relation(
+    fn put_embedding_set(&self, embedding_set: &EmbeddingSet) -> Result<(), PlokeError> {
+        self.deref().put_embedding_set(embedding_set)
+    }
+
+    fn replace_embedding_set_relation(
         &self,
-        embedding_set: &EmbeddingSet,
+        embedding_set: EmbeddingSet,
     ) -> Result<(), PlokeError> {
-        self.deref().ensure_vector_embedding_relation(embedding_set)
+        self.deref().replace_embedding_set_relation(embedding_set)
+    }
+
+    fn script_complete_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        self.deref().script_complete_nodes_rhs(embedding_set)
+    }
+
+    fn script_embeddable_nodes_now_rhs() -> &'static str {
+        // WARNING: This is not really good practice, and is just copied from the above
+        // implementation for cozo::Db.
+        // Revisit this once we are ready to do a better refactor for wrapper databases
+        EMBEDDABLE_NODES_NOW.as_str()
+    }
+
+    fn script_get_common_nodes(&self) -> Result<String, DbError> {
+        self.deref().script_get_common_nodes()
+    }
+
+    fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
+        self.deref().script_pending_nodes_rhs(embedding_set)
+    }
+
+    fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String {
+        todo!()
+    }
+
+    fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
+        self.deref().setup_multi_embedding()?;
+        Ok(())
+    }
+
+    // TODO: After we get this to work, try removing the async (I don't know if it really wins us
+    // anything here)
+    async fn update_embeddings_batch(
+        &self,
+        updates: Vec<(Uuid, Vec<f64>)>,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), DbError> {
+        self.deref()
+            .update_embeddings_batch(updates, embedding_set)
+            .await
     }
 }
 
@@ -1044,8 +1156,7 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
 
     let prior_rels_vec = db.relations_vec()?;
     debug!("prior rels for import: {:#?}", prior_rels_vec);
-    db
-        .import_from_backup(&valid_file, &prior_rels_vec)
+    db.import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
     crate::create_index_primary(&db)?;
@@ -1079,9 +1190,7 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
             }
             Ok(())
         }
-        Ok(_count) => {
-            Ok(())
-        }
+        Ok(_count) => Ok(()),
         Err(e) => Err(e),
     };
 
@@ -1220,17 +1329,31 @@ mod tests {
     #[tokio::test]
     async fn test_load_backup() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
-        let db = Database::new( setup_db()? );
+        let db = Database::new(setup_db()?);
         let embedding_set = &db.active_embedding_set;
         let vector_rel = &embedding_set.rel_name();
         let hnsw_rel = &embedding_set.hnsw_rel_name();
         info!("count rels = {:?}", db.count_relations().await);
         info!("count pending = {}", db.count_pending_embeddings()?);
         info!("count pending files = {}", db.count_unembedded_files()?);
-        info!("count pending non-files = {}", db.count_unembedded_nonfiles()?);
-        info!("is_embedding_set_registered: {}", db.is_embedding_set_registered()?);
-        info!("is_embedding_present: {} - ({})", db.is_embedding_present(embedding_set)?, vector_rel);
-        info!("is_hnsw_relation: {} - ({})", db.is_hnsw_index_registered(embedding_set)?, hnsw_rel);
+        info!(
+            "count pending non-files = {}",
+            db.count_unembedded_nonfiles()?
+        );
+        info!(
+            "is_embedding_set_registered: {}",
+            db.is_embedding_set_registered()?
+        );
+        info!(
+            "is_embedding_present: {} - ({})",
+            db.is_embedding_present(embedding_set)?,
+            vector_rel
+        );
+        info!(
+            "is_hnsw_relation: {} - ({})",
+            db.is_hnsw_index_registered(embedding_set)?,
+            hnsw_rel
+        );
         // info!("{}", db.is_hnsw_relation_registered(hnsw_rel)?);
         load_db(&db, "fixture_nodes".to_string()).await?;
 
@@ -1238,11 +1361,22 @@ mod tests {
         info!("count pending = {}", db.count_pending_embeddings()?);
         info!("count pending non_files = {}", db.count_unembedded_files()?);
         info!("count pending files = {}", db.count_unembedded_nonfiles()?);
-        info!("is_embedding_set_registered: {}", db.is_embedding_set_registered()?);
-        info!("is_embedding_present: {} - ({})", db.is_embedding_present(embedding_set)?, vector_rel);
-        info!("is_hnsw_relation: {} - ({})", db.is_hnsw_index_registered(embedding_set)?, hnsw_rel);
+        info!(
+            "is_embedding_set_registered: {}",
+            db.is_embedding_set_registered()?
+        );
+        info!(
+            "is_embedding_present: {} - ({})",
+            db.is_embedding_present(embedding_set)?,
+            vector_rel
+        );
+        info!(
+            "is_hnsw_relation: {} - ({})",
+            db.is_hnsw_index_registered(embedding_set)?,
+            hnsw_rel
+        );
 
-        let pp =|script: &str| -> Result<(), DbError> { 
+        let pp = |script: &str| -> Result<(), DbError> {
             let s = script;
             info!("trying basic script:\n\t{}", s.log_magenta());
             // let out = db.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
@@ -1251,7 +1385,9 @@ mod tests {
             Ok(())
         };
 
-        let const_with_embed = format!( r#"?[id, name, vector] := *const {{ name, id }}, *{vector_rel} {{node_id: id, vector }}"# );
+        let const_with_embed = format!(
+            r#"?[id, name, vector] := *const {{ name, id }}, *{vector_rel} {{node_id: id, vector }}"#
+        );
         pp(&const_with_embed)?;
 
         let script_count_vecs = format!("?[id] := *{vector_rel} {{node_id: id }}");
