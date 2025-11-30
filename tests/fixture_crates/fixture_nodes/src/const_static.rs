@@ -66,12 +66,6 @@ const FN_CALL_CONST: i32 = five();
 pub const doc_attr_const: f64 = 3.14;
 
 /// This is a documented static variable.
-/// 
-/// This variable is specifically configured for Linux targets and contains a
-/// string that describes its platform-specific behavior.
-/// 
-/// # Test Edit
-/// This comment was added by the AI assistant for testing purposes.
 #[cfg(target_os = "linux")] // Example attribute
 static DOC_ATTR_STATIC: &str = "Linux specific";
 

@@ -107,6 +107,7 @@ multi_embedding_ui = [
     "ploke-transform/multi_embedding_schema",
     "ploke-test-utils/multi_embedding_test",
     "ploke-db/multi_embedding_db",
+    "ploke-rag/multi_embedding_rag",
 ]
 llm_refactor = []
 live_api_tests = []

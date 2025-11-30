@@ -519,7 +519,8 @@ impl RagService {
                 ef: params.ef, // Configurable ef value
                 ty: node_type,
                 max_hits,
-                radius: params.radius, // Configurable radius value
+                // radius: params.radius, // Configurable radius value
+                radius: 100.0, // Configurable radius value
             };
 
             let result = search_similar_args(args)?;

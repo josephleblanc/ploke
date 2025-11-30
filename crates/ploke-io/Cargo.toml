@@ -26,12 +26,16 @@ dashmap = { workspace = true }
 lazy_static = { workspace = true }
 
 [dev-dependencies]
-ploke-db = { path = "../ploke-db" }
+ploke-db = { path = "../ploke-db", features = ["multi_embedding_db"] }
 ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.10.1"
 mockall = "0.12"
 
 [features]
-default = []
+default = ["multi_embedding_io"]
 watcher = ["notify"]
+multi_embedding_io = [
+    "ploke-db/multi_embedding_db",
+    "ploke-test-utils/multi_embedding_test",
+]
 # testing = ["ploke-test-utils/test_setup"]

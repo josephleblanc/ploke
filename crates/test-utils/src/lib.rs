@@ -305,6 +305,9 @@ pub fn setup_db_full_embeddings(
 ) -> std::result::Result<std::vec::Vec<ploke_db::TypedEmbedData>, ploke_error::Error> {
     use ploke_core::EmbeddingData;
 
+    #[cfg(feature = "multi_embedding_test")]
+    let db = ploke_db::Database::new(setup_db_full_multi_embedding(fixture)?);
+    #[cfg( not(feature = "multi_embedding_test") )]
     let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;

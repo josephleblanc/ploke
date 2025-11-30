@@ -85,7 +85,7 @@ async fn test_next_batch_only() -> Result<(), Error> {
         eprintln!("skipping test_next_batch_only (set PLOKE_EMBED_RUN_TEST_NEXT_BATCH_ONLY=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_nodes").await
 }
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn test_batch_attributes() -> Result<(), Error> {
         eprintln!("skipping test_batch_attributes (set PLOKE_EMBED_RUN_TEST_BATCH_ATTRIBUTES=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_attributes").await
 }
 #[tokio::test]
@@ -116,7 +116,7 @@ async fn test_batch_cyclic_types() -> Result<(), Error> {
         );
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_cyclic_types").await
 }
 #[tokio::test]
@@ -126,7 +126,7 @@ async fn test_batch_edge_cases() -> Result<(), Error> {
         eprintln!("skipping test_batch_edge_cases (set PLOKE_EMBED_RUN_TEST_BATCH_EDGE_CASES=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_edge_cases").await
 }
 #[tokio::test]
@@ -136,7 +136,7 @@ async fn test_batch_generics() -> Result<(), Error> {
         eprintln!("skipping test_batch_generics (set PLOKE_EMBED_RUN_TEST_BATCH_GENERICS=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_generics").await
 }
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn test_batch_macros() -> Result<(), Error> {
         eprintln!("skipping test_batch_macros (set PLOKE_EMBED_RUN_TEST_BATCH_MACROS=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_macros").await
 }
 #[tokio::test]
@@ -156,21 +156,21 @@ async fn test_batch_path_resolution() -> Result<(), Error> {
         eprintln!("skipping test_batch_path_resolution (set PLOKE_EMBED_RUN_TEST_BATCH_PATH_RESOLUTION=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_path_resolution").await
 }
 #[tokio::test]
 #[ignore = "requires further improvement of syn_parser"]
 // WARN: failing (dependent upon other improvements in cfg?)
 async fn test_batch_spp_edge_cases_cfg() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_spp_edge_cases").await
 }
 #[tokio::test]
 #[ignore = "requires further improvement of syn_parser"]
 // WARN: failing (dependent upon other improvements)
 async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_spp_edge_cases_no_cfg").await
 }
 #[tokio::test]
@@ -192,11 +192,11 @@ async fn test_batch_types() -> Result<(), Error> {
         eprintln!("skipping test_batch_types (set PLOKE_EMBED_RUN_TEST_BATCH_TYPES=1)");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch("fixture_types").await
 }
 async fn test_full() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     let start = Instant::now();
     let mut results = Vec::new();
     results.push(test_next_batch("fixture_nodes").await);
@@ -273,7 +273,7 @@ async fn test_local_model_embedding_processor() -> Result<(), ploke_error::Error
 //  9. Spawns the `IndexerTask::run` in a separate tokio task.
 //  10. Then it waits for the indexing to complete by listening to progress updates and the task handle.
 // async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
-// let _guard = init_test_tracing(Level::INFO);
+// let _guard = init_test_tracing(Level::ERROR);
 async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
     tracing::info!("Starting test_next_batch: {fixture}");
 
@@ -793,19 +793,19 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 #[tokio::test]
 #[ignore = "long-running; run periodically to validate BM25 index path"]
 async fn test_index_bm25() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::TRACE);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_nodes").await?;
 
     Ok(())
 }
 
 #[tokio::test]
-// #[ignore = "long-running; run periodically to cover full crate"]
+#[ignore = "long-running; run periodically to cover full crate"]
 async fn test_batch_ss_nodes() -> Result<(), Error> {
     #[cfg(feature = "multi_embedding_embedder")]
-    let _guard = init_test_tracing_with_target("cozo-script", Level::TRACE);
+    let _guard = init_test_tracing_with_target("cozo-script", Level::ERROR);
     #[cfg(not(feature = "multi_embedding_embedder"))]
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_nodes").await
 }
 
@@ -814,9 +814,9 @@ async fn test_batch_ss_nodes() -> Result<(), Error> {
 // INFO  Parse: build module tree
 //    at crates/test-utils/src/lib.rs:65
 #[tokio::test]
-#[ignore = "temporary ignore: failing in current CI/sandbox; focus on feature work"]
+#[ignore = "temporary ignore, need to inverstigate failure further"]
 async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::TRACE);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("file_dir_detection").await
 }
 #[tokio::test]
@@ -826,7 +826,7 @@ async fn test_batch_ss_attributes() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_attributes").await
 }
 #[tokio::test]
@@ -836,7 +836,7 @@ async fn test_batch_ss_cyclic_types() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_cyclic_types").await
 }
 #[tokio::test]
@@ -846,7 +846,7 @@ async fn test_batch_ss_edge_cases() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_edge_cases").await
 }
 #[tokio::test]
@@ -856,7 +856,7 @@ async fn test_batch_ss_generics() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_generics").await
 }
 #[tokio::test]
@@ -866,7 +866,7 @@ async fn test_batch_ss_macros() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_macros").await
 }
 #[tokio::test]
@@ -876,21 +876,21 @@ async fn test_batch_ss_path_resolution() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_path_resolution").await
 }
 #[tokio::test]
 #[ignore = "requires further improvement of syn_parser"]
 // WARN: failing (dependent upon other improvements in cfg?)
 async fn test_batch_ss_spp_edge_cases_cfg() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_spp_edge_cases").await
 }
 #[tokio::test]
 #[ignore = "requires further improvement of syn_parser"]
 // WARN: failing (dependent upon other improvements)
 async fn test_batch_ss_spp_edge_cases_no_cfg() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_spp_edge_cases_no_cfg").await
 }
 #[tokio::test]
@@ -900,7 +900,7 @@ async fn test_batch_ss_tracking_hash() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_tracking_hash").await
 }
 #[tokio::test]
@@ -910,7 +910,7 @@ async fn test_batch_ss_types() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("fixture_types").await
 }
 // ------- test on own crates -------
@@ -921,7 +921,7 @@ async fn test_batch_ss_syn() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ingest/syn_parser").await
 }
 #[tokio::test]
@@ -931,7 +931,7 @@ async fn test_batch_ss_transform() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ingest/ploke-transform").await
 }
 #[tokio::test]
@@ -942,7 +942,7 @@ async fn test_batch_ss_embed() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ingest/ploke-embed").await
 }
 #[tokio::test]
@@ -953,7 +953,7 @@ async fn test_batch_ss_core() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-core").await
 }
 #[tokio::test]
@@ -964,7 +964,7 @@ async fn test_batch_ss_db() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-db").await
 }
 #[tokio::test]
@@ -975,7 +975,7 @@ async fn test_batch_ss_error() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-error").await
 }
 #[tokio::test]
@@ -986,7 +986,7 @@ async fn test_batch_ss_io() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-io").await
 }
 #[tokio::test]
@@ -997,7 +997,7 @@ async fn test_batch_ss_rag() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-rag").await
 }
 #[tokio::test]
@@ -1008,7 +1008,7 @@ async fn test_batch_ss_tui() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-tui").await
 }
 #[tokio::test]
@@ -1019,7 +1019,7 @@ async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/ploke-ty-mcp").await
 }
 #[tokio::test]
@@ -1030,6 +1030,6 @@ async fn test_batch_ss_test_utils() -> Result<(), Error> {
         eprintln!("Skipping long-running test. Set RUN_LONG_TESTS=1 to run.");
         return Ok(());
     }
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::ERROR);
     test_next_batch_ss("crates/test-utils").await
 }

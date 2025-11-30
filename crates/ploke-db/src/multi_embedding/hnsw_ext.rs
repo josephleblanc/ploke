@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, ops::Deref as _};
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
+use syn_parser::utils::LogStyle;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::{
@@ -35,12 +37,23 @@ pub trait HnswExt {
         radius: Option<f64>,
     ) -> Result<EmbedDataVerbose, ploke_error::Error>;
 
+    fn search_similar_for_set_test(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error>;
+
     fn vec_to_param(vector_query: Vec<f32>) -> DataValue {
         let as_list = vector_query
             .into_iter()
             .map(|fl| {
                 if (fl as f64).is_subnormal() {
-                    0.0
+                    1.0
                 } else {
                     fl as f64
                 }
@@ -80,7 +93,8 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         let rel_name = embedding_set.rel_name.as_ref().replace('-', "_");
         let hnsw_suffix = HNSW_SUFFIX;
 
-        let hnsw_index_rel_name = format!("{rel_name}{hnsw_suffix}");
+        let hnsw_index_rel_name = embedding_set.hnsw_rel_name();
+        let dim = embedding_set.dims();
 
         // Only skip creation if the HNSW index relation already exists.
         if self
@@ -90,11 +104,11 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             return Ok(());
         }
         tracing::info!(target: "cozo-script",
-            "create new relation: '{rel_name}{hnsw_suffix}'\nrel_name = '{rel_name}'\nhnsw_suffix = '{hnsw_suffix}'",
+            "create new relation: '{hnsw_index_rel_name}'\nrel_name = '{rel_name}'\nhnsw_suffix = '{hnsw_suffix}'",
         );
         let script = format!(
             r#"
-::hnsw create {rel_name}{hnsw_suffix} {{
+::hnsw create {hnsw_index_rel_name} {{
     fields: [vector],
     dim: {dim},
     dtype: F32,
@@ -102,10 +116,7 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
     ef_construction: 200,
     distance: L2
 }}
-"#,
-            rel_name = rel_name,
-            hnsw_suffix = HNSW_SUFFIX,
-            dim = embedding_set.dims(),
+"#
         );
 
         tracing::debug!(target: "cozo-script", "create_embedding_index script:\n{script}");
@@ -201,6 +212,123 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
         Ok(neighbors)
     }
 
+    // TODO: Delete once this is actually working
+    fn search_similar_for_set_test(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error> {
+        let mut params = BTreeMap::new();
+        params.insert("k".into(), DataValue::from(k as i64));
+        params.insert("ef".into(), DataValue::from(ef as i64));
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("vector_query".into(), Self::vec_to_param(vector_query));
+        params.insert(
+            "embedding_set_id".into(),
+            DataValue::from(embedding_set.hash_id().into_inner() as i64),
+        );
+        if let Some(radius) = radius {
+            params.insert("radius".into(), DataValue::Num(Num::Float(radius)));
+        }
+
+        let rel = node_type.relation_str();
+        let embed_rel = embedding_set.rel_name.as_ref().replace('-', "_");
+        let radius_clause = if radius.is_some() {
+            ",\n        radius: $radius,"
+        } else {
+            ","
+        };
+        let hnsw_rel = embedding_set.hnsw_rel_name();
+        let p =|script: &str| -> Result<(), DbError> { 
+            let s = format!( "::indices {}", script );
+            info!("trying basic script:\n\t{}", s.log_magenta());
+            let out = self.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
+                .map(|r| format!("{r:?}\n"))?;
+            debug!(%out);
+            Ok(())
+        };
+        let pp =|script: &str| -> Result<(), DbError> { 
+            let s = script;
+            info!("trying basic script:\n\t{}", s.log_magenta());
+            let out = self.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
+                .map(|r| format!("{r:?}\n"))?;
+            debug!(%out);
+            Ok(())
+        };
+        p(hnsw_rel.as_ref())?;
+        p(embed_rel.as_ref())?;
+        let const_with_embed = format!( r#"?[id, name, vector] := *const {{ name, id }}, *{embed_rel} {{node_id: id, vector }}"# );
+        pp(&const_with_embed)?;
+        let count_pending = self.count_pending_embeddings(embedding_set)?;
+        info!(?count_pending);
+        let script_count_vecs = format!("?[id] := *{embed_rel} {{node_id: id }}");
+        pp(&script_count_vecs)?;
+        pp("::relations")?;
+        let script = format!(
+            r#"
+from_index[node_id, distance] :=
+    ~{embed_rel}{hnsw_suffix}{{ node_id, embedding_set_id: set_id |
+        query: vec($vector_query),
+        k: $k,
+        ef: $ef{radius_clause}
+        bind_distance: distance
+    }},
+    set_id = $embedding_set_id
+
+has_embedding[id, name, distance] :=
+    from_index[node_id, distance],
+    *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
+    id == node_id
+
+?[id, name, distance] :=
+    has_embedding[id, name, distance]
+:limit $limit
+"#,
+            embed_rel = embed_rel,
+            hnsw_suffix = HNSW_SUFFIX,
+            rel = rel,
+            radius_clause = radius_clause,
+        );
+        debug!(hnsw_script = %script);
+
+        let query_result = match self.run_script(&script, params, ScriptMutability::Immutable) {
+            Ok(rows) => Ok(QueryResult::from(rows)),
+            Err(err) => {
+                if err.to_string().contains("hnsw_idx") {
+                    Err(ploke_error::Error::Warning(
+                        ploke_error::WarningError::PlokeDb(err.to_string()),
+                    ))
+                } else {
+                    Err(DbError::Cozo(err.to_string()).into())
+                }
+            }
+        };
+        debug!(hnsw_query_result = ?query_result);
+        let query_result = query_result?;
+
+        let mut dist_vec = Vec::new();
+        if let Some(dist_idx) = query_result.headers.iter().position(|h| h == "distance") {
+            dist_vec.extend(
+                query_result
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(dist_idx).and_then(|v| v.get_float())),
+            );
+        }
+
+        let v = query_result.to_embedding_nodes()?;
+        let typed_data = TypedEmbedData { v, ty: node_type };
+        Ok(EmbedDataVerbose {
+            typed_data,
+            dist: dist_vec,
+        })
+    }
+
     fn search_similar_for_set(
         &self,
         embedding_set: &EmbeddingSet,
@@ -271,6 +399,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             rel = rel,
             radius_clause = radius_clause,
         );
+        debug!(hnsw_script = %script);
 
         let query_result = match self.run_script(&script, params, ScriptMutability::Immutable) {
             Ok(rows) => Ok(QueryResult::from(rows)),
@@ -283,7 +412,9 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
                     Err(DbError::Cozo(err.to_string()).into())
                 }
             }
-        }?;
+        };
+        debug!(hnsw_query_result = ?query_result);
+        let query_result = query_result?;
 
         let mut dist_vec = Vec::new();
         if let Some(dist_idx) = query_result.headers.iter().position(|h| h == "distance") {
@@ -386,11 +517,27 @@ impl HnswExt for Database {
     fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error> {
         todo!()
     }
+
+    fn search_similar_for_set_test(
+        &self,
+        embedding_set: &EmbeddingSet,
+        node_type: NodeType,
+        vector_query: Vec<f32>,
+        k: usize,
+        ef: usize,
+        limit: usize,
+        radius: Option<f64>,
+    ) -> Result<EmbedDataVerbose, ploke_error::Error> {
+        self.deref().search_similar_for_set_test(embedding_set, node_type, vector_query, k, ef, limit, radius)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, sync::Once};
+    use std::{
+        collections::HashSet,
+        sync::{Arc, Once},
+    };
 
     use super::*;
     use cozo::NamedRows;
@@ -399,12 +546,14 @@ mod tests {
     use tracing::info;
 
     use crate::{
+        database::ImmutQuery,
+        log_script,
         multi_embedding::{
             schema::CozoEmbeddingSetExt,
             test_utils::{eprint_relations, setup_db, setup_empty_db},
         },
         query::builder::EMBEDDABLE_NODES_NOW_LEGACY_RHS,
-        {log_script, run_script_params},
+        run_script_params,
     };
 
     static TEST_TRACING: Once = Once::new();
@@ -508,16 +657,15 @@ mod tests {
                 ScriptMutability::Immutable,
             )
             .map_err(DbError::from);
-        let expected_err = DbError::Cozo("stored relation 'function' does not have field 'embedding'".to_string());
+        let expected_err =
+            DbError::Cozo("stored relation 'function' does not have field 'embedding'".to_string());
         let rows = match rows_result {
             // unexpectedly passing (at time of writing, we do not migrate and use cfg flags to
             // keep the legacy vs multi_embedding schema isolated in different builds)
             Ok(r) => r,
             // expected error, doesn't find legacy "embedding" field with new "multi_embedding"
             // cfg active
-            Err(e) if e == expected_err => {
-                return Ok(())
-            },
+            Err(e) if e == expected_err => return Ok(()),
             // unexpected error
             Err(e) => return Err(Error::from(e)),
         };
@@ -744,13 +892,21 @@ mod tests {
 
     #[test]
     fn search_similar_for_set_returns_expected_neighbors() -> Result<(), Error> {
+        // init_tracing_once("cozo-script", tracing::Level::DEBUG);
         let cozo_db = setup_db()?;
         let db = Database::new(cozo_db);
         let embedding_set = db.active_embedding_set.clone();
 
         db.ensure_embedding_relation(&embedding_set)?;
         let seeded_ids = seed_function_vectors(&db, &embedding_set, 4)?;
+
+        let before_is_index_registered = db.is_hnsw_index_registered(&embedding_set)?;
+        info!(?before_is_index_registered);
+
         db.create_embedding_index(&embedding_set)?;
+
+        let after_is_index_registered = db.is_hnsw_index_registered(&embedding_set)?;
+        info!(?after_is_index_registered);
 
         let dims = embedding_set.dims() as usize;
         let query_vector = vec![0.1f32; dims];
@@ -783,10 +939,7 @@ mod tests {
             result.dist.len(),
             "distance vector should align with returned nodes"
         );
-        assert!(
-            result.dist.len() <= limit,
-            "results should respect limit"
-        );
+        assert!(result.dist.len() <= limit, "results should respect limit");
         assert!(
             result
                 .typed_data
@@ -796,12 +949,7 @@ mod tests {
             "returned ids should come from seeded vectors"
         );
         assert!(
-            result
-                .dist
-                .iter()
-                .copied()
-                .fold(f64::INFINITY, f64::min)
-                < 1e-6,
+            result.dist.iter().copied().fold(f64::INFINITY, f64::min) < 1e-6,
             "closest neighbor should match the query vector"
         );
 
@@ -850,13 +998,11 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
     #[cfg(feature = "multi_embedding_db")]
     #[test]
     fn test_load_db() -> Result<(), Error> {
+        use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use ploke_test_utils::workspace_root;
 
-        use crate::create_index_primary;
-
         let db = Database::init_with_schema()?;
-
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
         let prior_rels_vec = db.relations_vec()?;
@@ -885,6 +1031,96 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
         tracing::info!(create_embedding_index = ?r3);
         r3?;
+
+        Ok(())
+    }
+
+    fn helper_load_db() -> Result<Database, Error> {
+        use crate::create_index_primary;
+        use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+        use ploke_test_utils::workspace_root;
+
+        let db = Database::init_with_schema()?;
+        let mut target_file = workspace_root();
+        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        let prior_rels_vec = db.relations_vec()?;
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .map_err(DbError::from)
+            .map_err(ploke_error::Error::from)?;
+
+        // TODO: put the embeddings setup into create_index_primary, then make create_index_primary
+        // a method on the database (if possible, weird with Arc)
+        create_index_primary(&db)?;
+        Ok(db)
+    }
+
+    #[test]
+    fn test_something() -> Result<(), Error> {
+        // init_tracing_once("cozo-script", tracing::Level::INFO);
+        let db = helper_load_db()?;
+
+        let embedding_set = &db.active_embedding_set;
+        let rel = NodeType::Const.relation_str();
+        let embed_rel = embedding_set.hnsw_rel_name();
+        let run_query_with_count = |script: &str| -> Result<(), Error> {
+            info!(%script);
+            let r = db.raw_query(script)?;
+            let count = r.rows.len();
+            let headers = &r.headers;
+            info!(%count, ?headers);
+            Ok(())
+        };
+
+        let basic_fields = "id, name, hash, span";
+        let basic_batch = format!(
+            "batch[{basic_fields}] := *{rel} {{ id, name, tracking_hash: hash, span @ 'NOW'  }}"
+        );
+        let last_line = format!("?[{basic_fields}] := batch[{basic_fields}]");
+
+        let basic_query = format!(
+            r#"
+    {basic_batch}
+    {last_line}
+    "#
+        );
+        // try basic query
+        run_query_with_count(&basic_query)?;
+
+        let ancestor_script = format!(
+            r#"
+ parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+
+ ancestor[desc, asc] := parent_of[desc, asc]
+ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+    "#
+        );
+        let is_root_module_script = format!(
+            r#"
+ is_root_module[id] := *module{{id @ 'NOW' }}, *file_mod {{owner_id: id @ 'NOW'}}
+    "#
+        );
+        // let basic_with_ancestor = format!();
+
+        let batch_with_ancestor = format!(
+            r#"
+ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
+*{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
+ancestor[id, mod_id],
+is_root_module[mod_id],
+*module{{id: mod_id, tracking_hash: file_hash @ 'NOW'}},
+*file_mod {{ owner_id: mod_id, file_path, namespace @ 'NOW'}}
+    "#
+        );
+
+        let basic_batch_with_anc = format!(
+            r#"
+    {ancestor_script}
+    {is_root_module_script}
+    {basic_batch}
+    {last_line}
+    "#
+        );
+        run_query_with_count(&basic_batch_with_anc)?;
 
         Ok(())
     }

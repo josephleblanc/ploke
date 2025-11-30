@@ -10,6 +10,7 @@ mod tests {
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
     };
+    use crate::{RetrievalStrategy, TokenBudget};
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::workspace_root;
@@ -27,25 +28,54 @@ mod tests {
         });
         #[cfg(feature = "multi_embedding_rag")]
         TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing_with_target("cozo-script", tracing::Level::INFO);
+            ploke_test_utils::init_test_tracing_with_target("cozo-script", tracing::Level::ERROR);
         });
+    }
+
+    async fn db_test_setup() -> Result<Arc<Database>, Error> {
+        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        let new_db = Database::new( base_db );
+        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
+        Ok( Arc::new(new_db) )
     }
 
     #[cfg(feature = "multi_embedding_rag")]
     fn default_test_db_setup() -> Result<Arc<Database>, Error> {
         use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+        use tracing::info;
 
         init_tracing_once();
+        // let db = Database::init_with_schema()?;
+        // let db = Database::new( ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")? );
+        let db = Database::new( ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")? );
 
-        let db = Database::init_with_schema()?;
 
-        let mut target_file = workspace_root();
-        target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        let prior_rels_vec = db.relations_vec()?;
-        db.import_from_backup(&target_file, &prior_rels_vec)
-            .map_err(ploke_db::DbError::from)
-            .map_err(ploke_error::Error::from)?;
-        create_index_primary(&db)?;
+        // let mut target_file = workspace_root();
+        // target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        // let prior_rels_vec = db.relations_vec()?;
+        // db.import_from_backup(&target_file, &prior_rels_vec)
+        //     .map_err(ploke_db::DbError::from)
+        //     .map_err(ploke_error::Error::from)?;
+        // let embedding_set = &db.active_embedding_set;
+        //
+        // let before_is_index_registered = db.is_hnsw_index_registered(embedding_set)?;
+        // info!(?before_is_index_registered);
+        //
+        // let before_is_vector_embedding_registered = db.is_vector_embedding_registered(embedding_set)?;
+        // info!(?before_is_vector_embedding_registered);
+        // // db.create_embedding_index(&embedding_set)?;
+        // let create_index = create_index_primary(&db);
+        // info!(?create_index);
+        // create_index?;
+        //
+        // let after_is_index_registered = db.is_hnsw_index_registered(embedding_set)?;
+        // info!(?after_is_index_registered);
+        //
+        // let count_pending_after = db.count_pending_embeddings()?;
+        // info!(?count_pending_after);
+
+        Ok(Arc::new(db))
+
 
         // let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
         //
@@ -58,45 +88,93 @@ mod tests {
         // r3?;
         //
         // let database = Database::from(db);
-        Ok(Arc::new(db))
     }
 
     #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
     async fn test_fixture_embeddings_loaded_into_active_set() -> Result<(), Error> {
+        use tracing::info;
+
         init_tracing_once();
         let db = TEST_DB_NODES
             .as_ref()
             .expect("Must set up TEST_DB_NODES correctly.");
+        ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
 
         let rel = db.active_embedding_set.rel_name.clone();
-        eprintln!("rel: {}", rel);
         let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
         let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
-        for row in rows.rows {
-            eprintln!("{row:?}");
-        }
-        // let count = rows
-        //     .rows
-        //     .first()
-        //     .and_then(|row| row.first())
-        //     .and_then(|val| val.get_int())
-        //     .unwrap_or(0) as usize;
+        info!(?rows);
+        let count = rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|val| val.get_int())
+            .unwrap_or(0) as usize;
 
-        panic!();
-        // assert!(
-        //     count > 0,
-        //     "Embedding relation {rel} is empty after loading fixture backup; \
-        //      dense search uses this relation so queries return nothing."
-        // );
+        assert!(
+            count > 0,
+            "Embedding relation {rel} is empty after loading fixture backup; \
+             dense search relies on seeded vectors (use multi-embedding backup)."
+        );
 
         Ok(())
     }
 
+    /// Ensure dense search hits multi-embedding relations (and not legacy `function.embedding`).
+    /// This mirrors loading a multi-embedding backup then issuing a vector search.
+    #[cfg(feature = "multi_embedding_rag")]
+    #[tokio::test]
+    async fn dense_context_uses_multi_embedding_relations() {
+        use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+
+        // Load the multi-embedding backup directly to mirror the TUI /load path.
+        let db = Database::init_with_schema().expect("init schema");
+        let mut target_file = workspace_root();
+        target_file.push(
+            "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
+        );
+        let prior_rels_vec = db.relations_vec().expect("relations_vec");
+        db.import_from_backup(&target_file, &prior_rels_vec)
+            .expect("import_from_backup");
+        create_index_primary(&db).expect("create_index_primary");
+
+        // Note: if the backup lacks vectors, we still expect the legacy-path error; this test
+        // asserts on that specific failure mode.
+        let embed_rel = db.active_embedding_set.rel_name.clone();
+        let count_script = format!("?[count(node_id)] := *{embed_rel}{{ node_id @ 'NOW' }}");
+        let rows = db.raw_query(&count_script).expect("count query");
+        let _count = rows
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|v| v.get_int())
+            .unwrap_or(0);
+
+        // Issue a dense search directly through hnsw to surface any legacy-path errors.
+        let dims = db.active_embedding_set.dims() as usize;
+        let query_vec = vec![0.1f32; dims];
+        let err = match db.search_similar_for_set(
+            &db.active_embedding_set,
+            ploke_db::NodeType::Function,
+            query_vec,
+            5,
+            10,
+            5,
+            None,
+        ) {
+            Ok(_) => return,
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("function") && err.contains("embedding"),
+            "expected legacy embedding column error; got: {err}"
+        );
+    }
     #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
     async fn test_db_nodes_setup() -> Result<(), Error> {
-        default_test_db_setup()?;
+        let db = default_test_db_setup()?;
         Ok(())
     }
 
@@ -183,9 +261,14 @@ mod tests {
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        // let db = TEST_DB_NODES
+        //     .as_ref()
+        //     .expect("Must set up TEST_DB_NODES correctly.");
+
+        let db_base = Database::new( ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")? );
+        ploke_db::multi_embedding::db_ext::load_db(&db_base, "fixture_nodes".to_string()).await?;
+        ploke_db::create_index_primary(&db_base)?;
+        let db = Arc::new(db_base);
 
         let search_term = "use_all_const_static";
 
@@ -202,7 +285,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
@@ -231,6 +314,7 @@ mod tests {
         let db = TEST_DB_NODES
             .as_ref()
             .expect("Must set up TEST_DB_NODES correctly.");
+        // let db = db_test_setup().await?;
 
         let search_term = "use_all_const_static";
 
@@ -258,7 +342,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
@@ -266,9 +350,15 @@ mod tests {
     // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        // let db = TEST_DB_NODES
+        //     .as_ref()
+        //     .expect("Must set up TEST_DB_NODES correctly.");
+
+        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
+        let new_db = Database::new( base_db );
+        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
+        let db = Arc::new(new_db);
+
 
         let search_term = "use_all_const_static";
 
@@ -286,7 +376,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 

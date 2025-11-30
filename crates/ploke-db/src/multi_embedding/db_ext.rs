@@ -12,7 +12,8 @@ use ploke_core::embeddings::{
 use ploke_core::EmbeddingData;
 use ploke_error::Error as PlokeError;
 use syn_parser::utils::LogStyle as _;
-use tracing::info;
+use tokio::fs;
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -157,12 +158,19 @@ pub trait EmbeddingExt {
         embedding_set: &EmbeddingSet,
     ) -> Result<(), PlokeError>;
 
+    fn ensure_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError>;
+
+    fn is_vector_embedding_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, PlokeError>;
+
     fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error>;
 
-    fn get_rel_name_by_id(
-        &self,
-        embedding_set_id: EmbeddingSetId,
-    ) -> Result<NamedRows, DbError>;
+    fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError>;
 
     fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError>;
 }
@@ -402,6 +410,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             has_embedding_rule = has_embedding_rule
         );
 
+        debug!(target: "cozo-script", ordered_nodes_script = %script);
         let ids_data: Vec<DataValue> = nodes
             .into_iter()
             .enumerate()
@@ -425,6 +434,10 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map(QueryResult::from)
             .map_err(DbError::from)
             .map_err(PlokeError::from)?;
+        let query_count = query_result.rows.len();
+        let query_headers = &query_result.headers;
+        debug!(?query_headers);
+        debug!(%query_count);
 
         query_result.to_embedding_nodes()
     }
@@ -755,14 +768,11 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         tracing::info!(create_embedding_vector = ?db_result.rows);
         Ok(())
     }
-    fn get_rel_name_by_id(
-        &self,
-        embedding_set_id: EmbeddingSetId,
-    ) -> Result<NamedRows, DbError> {
-        let params = BTreeMap::from([
-            ( "embedding_set_name".into(),
-            cozo::DataValue::from(embedding_set_id.into_inner() as i64), )
-        ]);
+    fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError> {
+        let params = BTreeMap::from([(
+            "embedding_set_name".into(),
+            cozo::DataValue::from(embedding_set_id.into_inner() as i64),
+        )]);
 
         let get_rel_name_script = format!(
             "?[rel_name] := *{embedding_set_rel}{{id: $embedding_set_name, rel_name @ 'NOW'}}",
@@ -777,8 +787,45 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(result)
     }
-}
 
+    fn ensure_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        // Check that the relation "embedding_set" is registered
+        if !self.is_vector_embedding_registered(embedding_set)? {
+            self.create_vector_embedding_relation(embedding_set)?;
+        }
+        Ok(())
+    }
+
+    fn is_vector_embedding_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, PlokeError> {
+        let set_id = embedding_set.hash_id().into_inner() as i64;
+        let rel_name = embedding_set.rel_name();
+        let get_rel_name_script = format!("?[count( node_id)] := *{rel_name}{{ node_id @ 'NOW'}}");
+        info!(?get_rel_name_script);
+        let result = self
+            .run_script(
+                &get_rel_name_script,
+                BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()));
+
+        info!(get_rel_name_result = ?result);
+        let expected_err_msg = format!(r#"Cannot find requested stored relation '{rel_name}'"#);
+        match result {
+            Ok(count) => Ok(true),
+            Err(e) if e == DbError::Cozo(expected_err_msg) => Ok(false),
+            Err(e) => Err(PlokeError::from(e)),
+        }
+        //
+        // Ok(is_present)
+    }
+}
 
 /// Trait used to extend the database with embeddings-aware methods
 impl EmbeddingExt for Database {
@@ -811,6 +858,10 @@ impl EmbeddingExt for Database {
 
     fn is_relation_registered(&self, relation_name: &EmbRelName) -> Result<bool, DbError> {
         self.deref().is_relation_registered(relation_name)
+    }
+
+    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
+        self.deref().is_embedding_set_registered()
     }
 
     fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
@@ -897,10 +948,6 @@ impl EmbeddingExt for Database {
         self.deref().is_hnsw_relation_registered(relation_name)
     }
 
-    fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
-        self.deref().is_embedding_set_registered()
-    }
-
     fn create_vector_embedding_relation(
         &self,
         embedding_set: &EmbeddingSet,
@@ -913,15 +960,26 @@ impl EmbeddingExt for Database {
         Ok(())
     }
 
-    fn get_rel_name_by_id(
-        &self,
-        embedding_set_id: EmbeddingSetId,
-    ) -> Result<NamedRows, DbError> {
+    fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError> {
         self.deref().get_rel_name_by_id(embedding_set_id)
     }
 
     fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError> {
         self.deref().ensure_embedding_set_relation()
+    }
+
+    fn is_vector_embedding_registered(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<bool, PlokeError> {
+        self.deref().is_vector_embedding_registered(embedding_set)
+    }
+
+    fn ensure_vector_embedding_relation(
+        &self,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        self.deref().ensure_vector_embedding_relation(embedding_set)
     }
 }
 
@@ -949,6 +1007,102 @@ pub fn print_all_relations(db: &cozo::Db<cozo::MemStorage>) -> Result<(), DbErro
             let found_relation = value.get_str().unwrap_or("non-string row");
             println!("{found_relation}");
         }
+    }
+    Ok(())
+}
+
+pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_error::Error> {
+    let mut default_dir = dirs::config_local_dir().ok_or_else(|| {
+        let err_msg = "Could not locate default config directory on system";
+        let e =
+            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg });
+        e
+    })?;
+    default_dir.push("ploke/data");
+    let valid_file = match find_file_by_prefix(default_dir.as_path(), &crate_name).await {
+        Ok(Some(path_buf)) => Ok(path_buf),
+        Ok(None) => {
+            let err_msg = "No backup file detected at default configuration location";
+            let error = ploke_error::WarningError::PlokeDb(err_msg.to_string());
+            Err(error)
+        }
+        Err(e) => {
+            // TODO: Improve this error message
+            error!("Failed to load file: {}", e);
+            let err_msg = "Could not find saved file, io error";
+            Err(ploke_error::FatalError::DefaultConfigDir { msg: err_msg })?
+        }
+    }?;
+
+    let prior_rels_vec = db.relations_vec()?;
+    debug!("prior rels for import: {:#?}", prior_rels_vec);
+    db
+        .import_from_backup(&valid_file, &prior_rels_vec)
+        .map_err(crate::DbError::from)
+        .map_err(ploke_error::Error::from)?;
+    crate::create_index_primary(&db)?;
+    // .inspect_err(|e| e.emit_error())?;
+
+    // get count for sanity and user feedback
+    return match db.count_relations().await {
+        Ok(count) if count > 0 => {
+            {
+                let script = format!(
+                    "?[root_path] := *crate_context {{name: crate_name, root_path @ 'NOW' }}, crate_name = \"{crate_name}\""
+                );
+                let db_res = db.raw_query(&script)?;
+                let crate_root_path = db_res
+                    .rows
+                    .first()
+                    .and_then(|c| c.first())
+                    .ok_or_else(|| {
+                        let msg = "Incorrect retrieval of crate context, no first row/column";
+                        error!(msg);
+                        ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                            msg.to_string(),
+                        ))
+                    })
+                    .map(|v| v.get_str().expect("Crate must always be a string"))?;
+                // crate_root_path is expected to be absolute from DB context; use directly
+                let root_path = std::path::PathBuf::from(crate_root_path);
+                let crate_focus = Some(root_path.clone());
+                // Also update IoManager roots for IO-level enforcement
+                debug!(load_db_crate_focus = ?root_path);
+            }
+            Ok(())
+        }
+        Ok(_count) => {
+            Ok(())
+        }
+        Err(e) => Err(e),
+    };
+
+    pub async fn find_file_by_prefix(
+        dir: impl AsRef<std::path::Path>,
+        prefix: &str,
+    ) -> std::io::Result<Option<std::path::PathBuf>> {
+        let mut entries = fs::read_dir(dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            if let Some(name_str) = name.to_str() {
+                tracing::debug!(
+                    "
+checking file to load:                  | {name_str}
+name_str.starts_with(prefix):           | {}
+name_str.len() == prefix.len() + 1 + 36 | {}
+",
+                    name_str.starts_with(prefix),
+                    name_str.len() == prefix.len() + 1 + 36
+                );
+                if name_str.starts_with(prefix) && name_str.len() == prefix.len() + 1 + 36 {
+                    tracing::debug!("passes checks: {}", name_str);
+                    // fixture_tracking_hash_aa1d3812-abb4-5d05-a69f-fe80aa856e3d
+                    // prefix + '_' + 36-char UUID
+                    return Ok(Some(entry.path()));
+                }
+            }
+        }
+        Ok(None)
     }
     Ok(())
 }
@@ -1052,6 +1206,49 @@ mod tests {
         for rel in list_relations {
             eprintln!("{rel:?}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_load_backup() -> Result<(), PlokeError> {
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
+        let db = Database::new( setup_db()? );
+        let embedding_set = &db.active_embedding_set;
+        let vector_rel = &embedding_set.rel_name();
+        let hnsw_rel = &embedding_set.hnsw_rel_name();
+        info!("count rels = {:?}", db.count_relations().await);
+        info!("count pending = {}", db.count_pending_embeddings()?);
+        info!("count pending files = {}", db.count_unembedded_files()?);
+        info!("count pending non-files = {}", db.count_unembedded_nonfiles()?);
+        info!("is_embedding_set_registered: {}", db.is_embedding_set_registered()?);
+        info!("is_embedding_present: {} - ({})", db.is_embedding_present(embedding_set)?, vector_rel);
+        info!("is_hnsw_relation: {} - ({})", db.is_hnsw_index_registered(embedding_set)?, hnsw_rel);
+        // info!("{}", db.is_hnsw_relation_registered(hnsw_rel)?);
+        load_db(&db, "fixture_nodes".to_string()).await?;
+
+        info!("count rels = {:?}", db.count_relations().await);
+        info!("count pending = {}", db.count_pending_embeddings()?);
+        info!("count pending non_files = {}", db.count_unembedded_files()?);
+        info!("count pending files = {}", db.count_unembedded_nonfiles()?);
+        info!("is_embedding_set_registered: {}", db.is_embedding_set_registered()?);
+        info!("is_embedding_present: {} - ({})", db.is_embedding_present(embedding_set)?, vector_rel);
+        info!("is_hnsw_relation: {} - ({})", db.is_hnsw_index_registered(embedding_set)?, hnsw_rel);
+
+        let pp =|script: &str| -> Result<(), DbError> { 
+            let s = script;
+            info!("trying basic script:\n\t{}", s.log_magenta());
+            // let out = db.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
+            //     .map(|r| format!("{r:?}\n"))?;
+            // debug!(%out);
+            Ok(())
+        };
+
+        let const_with_embed = format!( r#"?[id, name, vector] := *const {{ name, id }}, *{vector_rel} {{node_id: id, vector }}"# );
+        pp(&const_with_embed)?;
+
+        let script_count_vecs = format!("?[id] := *{vector_rel} {{node_id: id }}");
+        pp(&script_count_vecs)?;
+
         Ok(())
     }
 

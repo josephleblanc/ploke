@@ -234,6 +234,7 @@ pub fn search_similar(
     }
 }
 
+#[derive(Clone)]
 pub struct SimilarArgs<'a> {
     pub db: &'a Database,
     pub vector_query: &'a Vec<f32>,
@@ -257,6 +258,15 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     } = args;
     #[cfg(feature = "multi_embedding_db")]
     {
+        // return db.search_similar_for_set_test(
+        //     &db.active_embedding_set,
+        //     ty,
+        //     vector_query.clone(),
+        //     k,
+        //     ef,
+        //     max_hits,
+        //     Some(radius),
+        // );
         return db.search_similar_for_set(
             &db.active_embedding_set,
             ty,
@@ -487,9 +497,13 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
         tracing::info!(create_embedding_set_relation = ?r1);
         r1.unwrap_or_else(|_| panic!());
 
-        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone());
+        let r2 = db.ensure_embedding_relation(&db.active_embedding_set);
         tracing::info!(ensure_embedding_relation = ?r2);
         r2.unwrap_or_else(|_| panic!());
+
+        let r3 = db.ensure_vector_embedding_relation(&db.active_embedding_set);
+        tracing::info!(ensure_vector_embedding_relation = ?r3);
+        r3.unwrap_or_else(|_| panic!());
 
         // let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
         // tracing::info!(create_embedding_index = ?r3);

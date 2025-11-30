@@ -227,7 +227,7 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
 
         BTreeMap::from([
             (
-                "embedding_id".to_string(),
+                "embedding_set_id".to_string(),
                 DataValue::from(self.hash_id().into_inner() as i64),
             ),
             ("node_id".to_string(), to_cozo_uuid(node_id)),
@@ -236,6 +236,6 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     }
 
     fn script_vector_identity(&self) -> String {
-        format!("{} {{ node_id, at => vector }}", self.rel_name())
+        format!("{} {{ node_id, at, vector, embedding_set_id }}", self.rel_name())
     }
 }
