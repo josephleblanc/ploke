@@ -267,6 +267,9 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
         //     max_hits,
         //     Some(radius),
         // );
+
+        use tracing::info;
+        info!("running search_similar args");
         return db.search_similar_for_set(
             &db.active_embedding_set,
             ty,

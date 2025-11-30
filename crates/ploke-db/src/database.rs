@@ -222,8 +222,39 @@ impl Database {
         let rel_name = ty.relation_str();
         let keys = ty.keys().join(", ");
         let vals = ty.vals().join(", ");
-        let script = format!(
-            "parent_of[child, parent] := *syntax_edge{{
+        let script = if cfg!(feature = "multi_embedding_db") {
+            {
+                let embedding_set = &self.active_embedding_set;
+                let set_id = embedding_set.hash_id;
+                let vector_set_name = embedding_set.vector_relation_name();
+                format!(
+                    "parent_of[child, parent] := *syntax_edge{{
+                source_id: parent, 
+                target_id: child, 
+                relation_kind: \"Contains\"
+            }}
+
+            ancestor[desc, asc] := parent_of[desc, asc]
+            ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+            to_retract[{keys}, at, {vals}] := *{rel_name} {{ {keys}, {vals}  @ 'NOW'}},
+                *file_mod {{ owner_id: file_mod }},
+                ancestor[id, file_mod],
+                file_mod = \"{file_mod}\",
+                set_id = {set_id},
+                ( not *{vector_set_name} {{ node_id: id, embedding_set_id: set_id @ 'NOW' }} ),
+                at = 'RETRACT'
+
+            ?[{keys}, at, {vals}] := to_retract[{keys}, at, {vals}]
+                :put {rel_name} {{ {keys}, at => {vals} }}
+                :returning
+            "
+                )
+            }
+        } else {
+            {
+                format!(
+                    "parent_of[child, parent] := *syntax_edge{{
                 source_id: parent, 
                 target_id: child, 
                 relation_kind: \"Contains\"
@@ -243,7 +274,10 @@ impl Database {
                 :put {rel_name} {{ {keys}, at => {vals} }}
                 :returning
             "
-        );
+                )
+            }
+        };
+
         self.raw_query_mut(&script)
             .inspect_err(|_| {
                 tracing::error!("using script:\n {}", script);
@@ -562,11 +596,17 @@ impl Database {
         let rel = ty.relation_str();
         let keys: String = ty.keys().join(", ");
         let vals: String = ty.vals().join(", ");
+        #[cfg(not(feature = "multi_embedding_db"))]
         let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
                         *module{{ {keys}, {vals} @ 'NOW' }},
                         target_path = \"{path}\",
                         is_embedding_null = is_null(embedding)
         ");
+        let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        target_path = \"{path}\"
+        ");
+        #[cfg(feature = "multi_embedding_db")]
         tracing::info!(target: "file_hashes", "using script\n{}", &script);
         let res = self.raw_query(&script)?;
         Ok(res)

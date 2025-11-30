@@ -36,6 +36,12 @@ is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
 /// Trait used to extend the database with embeddings-aware methods
 pub trait EmbeddingExt {
+    // TODO: Add substitute functions for:
+    //  - [ ] ploke-db database.rs
+    //      - [ ] get_path_info
+    //  - [ ] ploke-db database.rs
+    //      - [ ] retract_embedded_files
+
     /// Counts the code primary node code items that have not yet been embedded.
     ///
     /// Queries the underlying database to determine which nodes have been embedded or not by the
@@ -173,6 +179,8 @@ pub trait EmbeddingExt {
     fn get_rel_name_by_id(&self, embedding_set_id: EmbeddingSetId) -> Result<NamedRows, DbError>;
 
     fn ensure_embedding_set_relation(&self) -> Result<(), PlokeError>;
+
+    // fn get_path_info(&self) -> Result<QueryResult, PlokeError>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
