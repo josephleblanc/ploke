@@ -89,3 +89,6 @@ docs/dependency_details/cozo/notes/vectors.md
 .serena/
 .scratch*
 crates/ploke-tui/local-target/
+
+# cursor settings
+.cursor/

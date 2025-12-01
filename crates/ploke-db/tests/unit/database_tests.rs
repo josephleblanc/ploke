@@ -63,7 +63,7 @@ fn create_test_db_for_embedding_updates() -> Database {
 #[ignore = "outdated test, needs update"]
 async fn test_update_embeddings_batch_empty() {
     let db = create_test_db_for_embedding_updates();
-    db.update_embeddings_batch(vec![]).await.unwrap();
+    db.update_embeddings_batch(vec![]).unwrap();
 }
 
 #[tokio::test]
@@ -75,7 +75,6 @@ async fn test_update_embeddings_batch_single() {
     let embedding = vec![0.5f32; 384]; 
     
     db.update_embeddings_batch(vec![(id, embedding)])
-        .await
         .unwrap();
 }
 
@@ -83,7 +82,7 @@ async fn test_update_embeddings_batch_single() {
 #[ignore = "outdated test, needs update"]
 async fn test_update_embeddings_invalid_input() {
     let db = create_test_db_for_embedding_updates();
-    let result = db.update_embeddings_batch(vec![(Uuid::new_v4(), vec![])]).await;
+    let result = db.update_embeddings_batch(vec![(Uuid::new_v4(), vec![])]);
     
     assert!(
         result.is_err(),

@@ -8,6 +8,9 @@ pub enum DbError {
     #[error("Conversion Error: {0}")]
     UuidConv(#[from] uuid::Error),
 
+    #[error("Vector Conversion Error")]
+    VectorConv,
+
     #[error("Database error: {0}")]
     Cozo(String),
 

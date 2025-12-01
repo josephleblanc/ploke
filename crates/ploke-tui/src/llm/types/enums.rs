@@ -25,7 +25,17 @@ pub enum SupportedParameters {
     TopLogprobs,
     TopP,
     WebSearchOptions,
+    Verbosity
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Verbosity {
+    Low,
+    Medium,
+    High
+}
+
 
 pub(crate) trait SupportsTools {
     fn supports_tools(&self) -> bool;

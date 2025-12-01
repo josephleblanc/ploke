@@ -15,10 +15,24 @@ pub struct Provider {
     pub terms_of_service_url: Option<Url>,
 }
 
-
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ProviderName {
+    ModelRun,
+    Modular,
+    Clarifai,
+    Cirrascale,
+    FakeProvider,
+    Relace,
+    GoPomelo,
+    #[serde(rename = "Amazon Nova")]
+    AmazonNova,
+    StreamLake,
+    #[serde(rename = "Black Forest Labs")]
+    BlackForestLabs,
+    #[serde(rename = "Arcee AI")]
+    ArceeAI,
+    BytePlus,
     #[serde(rename = "Z.AI")]
     ZdotAI,
     WandB,
@@ -102,6 +116,7 @@ impl Display for ProviderName {
 impl ProviderName {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ProviderName::ModelRun => "ModelRun",
             ProviderName::ZdotAI => "Z.AI",
             ProviderName::WandB => "WandB",
             ProviderName::Kluster => "Kluster",
@@ -164,6 +179,17 @@ impl ProviderName {
             ProviderName::Meta => "Meta",
             ProviderName::Parasail => "Parasail",
             ProviderName::GMICloud => "GMICloud",
+            ProviderName::ArceeAI => "Arcee AI",
+            ProviderName::BytePlus => "BytePlus",
+            ProviderName::BlackForestLabs => "Black Forest Labs",
+            ProviderName::StreamLake => "StreamLake",
+            ProviderName::AmazonNova => "AmazonNova",
+            ProviderName::GoPomelo => "GoPomelo",
+            ProviderName::Relace => "Relace",
+            ProviderName::FakeProvider => "FakeProvider",
+            ProviderName::Cirrascale => "Cirrascale",
+            ProviderName::Clarifai => todo!(),
+            ProviderName::Modular => todo!(),
         }
     }
     pub fn has_slug(self, other: ProviderSlug) -> bool {
@@ -172,6 +198,9 @@ impl ProviderName {
 
     pub fn to_slug(self) -> ProviderSlug {
         match self {
+            ProviderName::Modular => ProviderSlug::modular,
+            ProviderName::Clarifai => ProviderSlug::clarifai,
+            ProviderName::StreamLake => ProviderSlug::streamlake,
             ProviderName::ZdotAI => ProviderSlug::z_ai,
             ProviderName::WandB => ProviderSlug::wandb,
             ProviderName::Kluster => ProviderSlug::klusterai,
@@ -234,6 +263,15 @@ impl ProviderName {
             ProviderName::Parasail => ProviderSlug::parasail,
             ProviderName::GMICloud => ProviderSlug::gmicloud,
             ProviderName::Nvidia => ProviderSlug::nvidia,
+            ProviderName::ArceeAI => ProviderSlug::arceeai,
+            ProviderName::BytePlus => ProviderSlug::byteplus,
+            ProviderName::BlackForestLabs => ProviderSlug::blackforestlabs,
+            ProviderName::AmazonNova => ProviderSlug::amazon_nova,
+            ProviderName::GoPomelo => ProviderSlug::gopomelo,
+            ProviderName::Relace => ProviderSlug::relace,
+            ProviderName::FakeProvider => ProviderSlug::fake_provider,
+            ProviderName::Cirrascale => ProviderSlug::cirrascale,
+            ProviderName::ModelRun => ProviderSlug::model_run,
         }
     }
 }
@@ -241,6 +279,23 @@ impl ProviderName {
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ProviderSlug {
+    #[serde(rename = "modelrun")]
+    model_run,
+    modular,
+    clarifai,
+    cirrascale,
+    #[serde(rename = "fake-provider")]
+    fake_provider,
+    relace,
+    gopomelo,
+    #[serde(rename = "amazon-nova")]
+    amazon_nova,
+    streamlake,
+    #[serde(rename = "black-forest-labs")]
+    blackforestlabs,
+    #[serde(rename = "arcee-ai")]
+    arceeai,
+    byteplus,
     #[serde(rename = "z-ai")]
     z_ai,
     wandb,
@@ -316,7 +371,8 @@ pub enum ProviderSlug {
 impl Display for ProviderSlug {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // We know the enum serializes to a string, so this is cheap.
-        let s = serde_json::to_string(self).expect("ProviderSlug should always serialize to JSON string");
+        let s = serde_json::to_string(self)
+            .expect("ProviderSlug should always serialize to JSON string");
         // Remove the surrounding quotes that JSON adds.
         f.write_str(&s[1..s.len() - 1])
     }
@@ -391,6 +447,18 @@ impl ProviderSlug {
             ProviderSlug::parasail => ProviderName::Parasail,
             ProviderSlug::gmicloud => ProviderName::GMICloud,
             ProviderSlug::nvidia => ProviderName::Nvidia,
+            ProviderSlug::arceeai => ProviderName::ArceeAI,
+            ProviderSlug::byteplus => ProviderName::BytePlus,
+            ProviderSlug::blackforestlabs => ProviderName::BlackForestLabs,
+            ProviderSlug::streamlake => ProviderName::StreamLake,
+            ProviderSlug::amazon_nova => ProviderName::AmazonNova,
+            ProviderSlug::gopomelo => ProviderName::GoPomelo,
+            ProviderSlug::relace => ProviderName::Relace,
+            ProviderSlug::fake_provider => ProviderName::FakeProvider,
+            ProviderSlug::cirrascale => ProviderName::Cirrascale,
+            ProviderSlug::clarifai => ProviderName::Clarifai,
+            ProviderSlug::modular => ProviderName::Modular,
+            ProviderSlug::model_run => ProviderName::ModelRun,
         }
     }
 }
@@ -400,6 +468,14 @@ impl std::str::FromStr for ProviderSlug {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "modelrun" => Ok(ProviderSlug::model_run),
+            "modular" => Ok(ProviderSlug::modular),
+            "clarifai" => Ok(ProviderSlug::clarifai),
+            "cirra-scale" => Ok(ProviderSlug::cirrascale),
+            "fake-provider" => Ok(ProviderSlug::fake_provider),
+            "relace" => Ok(ProviderSlug::relace),
+            "gopomelo" => Ok(ProviderSlug::gopomelo),
+            "black-forest-labs" => Ok(ProviderSlug::blackforestlabs),
             "z-ai" => Ok(ProviderSlug::z_ai),
             "wandb" => Ok(ProviderSlug::wandb),
             "klusterai" => Ok(ProviderSlug::klusterai),
@@ -462,6 +538,8 @@ impl std::str::FromStr for ProviderSlug {
             "parasail" => Ok(ProviderSlug::parasail),
             "gmicloud" => Ok(ProviderSlug::gmicloud),
             "nvidia" => Ok(ProviderSlug::nvidia),
+            "arcee-ai" => Ok(ProviderSlug::arceeai),
+            "byteplus" => Ok(ProviderSlug::byteplus),
             _ => Err(()),
         }
     }
@@ -471,19 +549,17 @@ mod tests {
     use reqwest::Client;
     use std::time::Duration;
 
+    use crate::llm::router_only::openrouter::OpenRouter;
+    use crate::llm::router_only::{Router, openrouter::providers::ProvidersResponse};
     use crate::{
         test_harness::{default_headers, openrouter_env},
         user_config::openrouter_url,
     };
-    use crate::llm::router_only::{openrouter::providers::ProvidersResponse, Router};
-    use crate::llm::router_only::openrouter::OpenRouter;
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     /// Flakey test to help notice when OpenRouter changes their provider list.
     async fn flakey_openrouter_providers() -> color_eyre::Result<()> {
-
-
         let client = Client::builder()
             .timeout(Duration::from_secs(5))
             .default_headers(default_headers())
@@ -506,7 +582,10 @@ mod tests {
             let mut dir = ploke_test_utils::workspace_root();
             dir.push("crates/ploke-tui/data/providers");
             fs::create_dir_all(&dir).ok();
-            let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             let mut path = dir;
             path.push(format!("providers-{}.json", ts));
             let f = fs::File::create(&path)?;
@@ -516,28 +595,28 @@ mod tests {
         let providers_response: ProvidersResponse = serde_json::from_value(body)?;
 
         let count_providers = providers_response.data.len();
-        assert_eq!(62, count_providers);
+        assert_eq!(66, count_providers);
 
         let count_tos = providers_response
             .data
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(55, count_tos);
+        assert_eq!(60, count_tos);
 
         let count_status_page = providers_response
             .data
             .iter()
             .filter(|p| p.status_page_url.is_some())
             .count();
-        assert_eq!(27, count_status_page);
+        assert_eq!(24, count_status_page);
 
         let count_pp = providers_response
             .data
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(55, count_pp);
+        assert_eq!(60, count_pp);
         Ok(())
     }
 }
