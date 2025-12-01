@@ -69,6 +69,9 @@ impl super::Tool for GatCodeEdit {
         Self
     }
 
+    // TODO:refactor
+    // Check if this is actually being used.
+    // Might be smarter to require + implement From<Self::Params<'a>> for Edit or something
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         CodeEditParamsOwned {
             confidence: params.confidence,
@@ -251,7 +254,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod gat_tests {
     use super::*;
@@ -283,7 +285,10 @@ mod gat_tests {
     #[test]
     fn name_desc_and_schema_present() {
         assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
-        assert!(matches!(GatCodeEdit::description(), ToolDescr::ApplyCodeEdit));
+        assert!(matches!(
+            GatCodeEdit::description(),
+            ToolDescr::ApplyCodeEdit
+        ));
         let schema = GatCodeEdit::schema();
         assert!(schema.as_object().unwrap().contains_key("properties"));
     }

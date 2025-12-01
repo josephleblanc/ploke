@@ -1,3 +1,9 @@
+use std::{borrow::Cow, sync::Arc};
+
+use serde::{Deserialize, Serialize};
+
+use crate::tools::ToolResult;
+
 /// Type for non-semantic file patching
 pub struct NsPatch;
 
@@ -47,17 +53,54 @@ lazy_static::lazy_static! {
     });
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct NsPatchParams<'a> {
+    #[serde(borrow)]
+    pub patches: Vec<NsPatchBorrowed<'a>>,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NsPatchBorrowed<'a> {
+    #[serde(borrow)]
+    pub file: Cow<'a, str>,
+    #[serde(borrow)]
+    pub diff: Cow<'a, str>,
+    #[serde(borrow)]
+    pub reasoning: Cow<'a, str>,
+}
+
+// Basically the same as `CodeEditParamsOwned`, might want to use the same type or something
+// - restructure into enum?
 #[derive(Debug, Clone, Serialize)]
-pub struct CodeEditParamsOwned {
-    pub patches: Vec<PatchOwned>,
+pub struct NsPatchParamsOwned {
+    pub patches: Vec<NsPatchOwned>,
     pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PatchOwned {
+pub struct NsPatchOwned {
     pub file: String,
     pub diff: String,
     pub reasoning: String,
+}
+
+// TODO: Consider adding a field to `rag_types::ApplyCodeEditResult`, which is used by GatCodeEdit,
+// and have the same return type so both can be handled in the same diff viewer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyNsPatchResult {
+    pub ok: bool,
+    /// Number of edits staged into an EditProposal
+    pub staged: usize,
+    /// Number of edits applied immediately (0 unless auto-confirm is enabled and synchronous)
+    pub applied: usize,
+    /// Display-friendly file paths included in this proposal
+    pub files: Vec<String>,
+    /// Preview mode used for the summary ("diff" or "codeblock")
+    pub preview_mode: String,
+    /// Whether auto-confirm is enabled in config (application may proceed asynchronously)
+    pub auto_confirmed: bool,
 }
 
 // TODO: 
@@ -65,16 +108,11 @@ pub struct PatchOwned {
 //      - [ ]  verify that NS_PATCH_PARAMETERS serializes into Value correctly.
 
 impl super::Tool for NsPatch {
-    type Params<'de> = NsPatchParams<'de>;
-
     use super::{ ToolName, ToolDescr };
-    type Output;
 
-    type OwnedParams;
-
-    type Params<'de>
-    where
-        Self: 'de;
+    type Output = ApplyNsPatchResult;
+    type OwnedParams = NsPatchParamsOwned;
+    type Params<'de> = NsPatchParams<'de>;
 
     fn name() -> super::ToolName {
         super::ToolName::NsPatch
@@ -95,15 +133,62 @@ impl super::Tool for NsPatch {
         Self
     }
 
+    // TODO:refactor 
+    // consider adding an enum to the `Edit` type in ploke/crates/ploke-tui/src/rag/utils.rs
+    // instead of using NsPatchOwned, depending on how we want to handle the edit
+    // proposal/application, adding a new variant to `Edit` might make it easier to make this new
+    // tool work with our existing types.
     fn into_owned<'de>(params: &Self::Params<'de>) -> Self::OwnedParams {
-        todo!()
+        NsPatchParamsOwned {
+            confidence: params.confidence,
+            patches: params
+                .patches
+                .iter()
+                .cloned()
+                .map(|p| NsPatchOwned {
+                    file: p.file,
+                    diff: p.diff,
+                    reasoning: p.diff,
+                })
+                .collect(),
+        }
     }
 
-    fn execute<'de>(
+    fn execute<'de, T>(
         params: Self::Params<'de>,
         ctx: super::Ctx,
-    ) -> impl std::future::Future<Output = Result<super::ToolResult, ploke_error::Error>> + Send
-    {
-        todo!()
+    ) -> Result<ToolResult, ploke_error::Error> {
+        use crate::rag::tools::apply_code_edit_tool;
+        use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
+
+
+        let typed_req = ApplyCodeEditRequest {
+            confidence: params.confidence,
+            edits: params
+                .patches
+                .iter()
+                .cloned()
+                .map(|p| Edit::Patch {
+                    file: p.file,
+                    diff: p.diff,
+                    reasoning: p.diff,
+                })
+                .collect(),
+        };
+
+        let request_id = ctx.request_id;
+        let call_id = ctx.call_id;
+        let params_env = ToolCallParams {
+            state: Arc::clone(&ctx.state),
+            event_bus: Arc::clone(&ctx.event_bus),
+            request_id,
+            parent_id: ctx.parent_id,
+            name: Self::name(),
+            typed_req,
+            call_id,
+        };
+        todo!("This is where we would handle the result of trying to stage the proposed edit.")
+        // build result from proposal registry
+        let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     }
 }
