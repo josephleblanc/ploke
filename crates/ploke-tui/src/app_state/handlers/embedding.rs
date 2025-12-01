@@ -7,6 +7,21 @@ use uuid::Uuid;
 use crate::{RagEvent, app_state::AppState, chat_history::Message, error::ResultExt as _};
 use ploke_db::{NodeType, search_similar};
 
+/// Handles embedding of a user message and subsequent similarity search.
+///
+/// # Error Handling
+/// This function gracefully handles all errors to prevent panics in spawned tasks,
+/// which would otherwise trigger the global panic hook and corrupt terminal state.
+/// See regression test `test_embed_message_graceful_error_handling` for validation.
+///
+/// # Terminal State Corruption Issue (Fixed)
+/// Previously, `.expect()` calls in this function could panic when:
+/// - Embedding generation failed (e.g., model not available, network error)
+/// - Empty embedding results were returned
+///
+/// These panics would trigger `ratatui::restore()` via the global panic hook,
+/// causing the TUI to exit raw mode while still running, resulting in cargo
+/// warnings and LLM messages being written over each other in the terminal.
 pub async fn handle_embed_message(
     state: &Arc<AppState>,
     context_tx: &mpsc::Sender<RagEvent>,
@@ -21,16 +36,39 @@ pub async fn handle_embed_message(
     match chat_guard.last_user_msg() {
         Ok(Some((_last_usr_msg_id, last_user_msg))) => {
             tracing::info!("Start embedding user message: {}", last_user_msg);
-            let temp_embed = state
+
+            // CRITICAL: Use proper error handling instead of .expect() to prevent panics
+            // that would corrupt terminal state via the global panic hook.
+            let temp_embed = match state
                 .embedder
                 .generate_embeddings(vec![last_user_msg])
                 .await
-                .expect("Error while generating embedding of user message");
+            {
+                Ok(embeddings) => embeddings,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to generate embeddings for user message: {}. \
+                         This may indicate an embedding model configuration issue.",
+                        e
+                    );
+                    // Early return without panicking - terminal state preserved
+                    return;
+                }
+            };
             drop(chat_guard);
-            let embeddings = temp_embed
-                .into_iter()
-                .next()
-                .expect("No results from user message embedding generation");
+
+            // CRITICAL: Handle empty embedding results gracefully
+            let embeddings = match temp_embed.into_iter().next() {
+                Some(emb) => emb,
+                None => {
+                    tracing::error!(
+                        "Embedding generation returned no results. \
+                         Check embedding model configuration."
+                    );
+                    // Early return without panicking - terminal state preserved
+                    return;
+                }
+            };
             tracing::info!("Finish embedding user message");
 
             tracing::info!("Waiting to finish processing updates to files, if any");

@@ -771,7 +771,7 @@ impl IndexerTask {
             .collect();
 
         tracing::info!("Updating database... ");
-        self.db.update_embeddings_batch(updates).await?;
+        self.db.update_embeddings_batch(updates)?;
         tracing::info!("Finished processing batch");
         Ok(())
     }

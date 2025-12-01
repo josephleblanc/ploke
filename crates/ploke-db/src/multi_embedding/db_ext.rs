@@ -136,7 +136,7 @@ pub trait EmbeddingExt {
 
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
-    async fn update_embeddings_batch(
+    fn update_embeddings_batch(
         &self,
         updates: Vec<(Uuid, Vec<f64>)>,
         embedding_set: &EmbeddingSet,
@@ -223,11 +223,12 @@ impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
     }
 
     fn count_unembedded_files(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError> {
+        // Use anti-join to find file modules that do NOT have embeddings yet
+        // Note: Don't include validity constraint in anti-join - just check node_id presence
         let query = format!(
             r#"
 unembedded_file_mod[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}},
-*{embed_rel}{{node_id @ 'NOW'}},
-node_id == id
+not *{embed_rel}{{node_id: id}}
 
 ?[count(id)] := unembedded_file_mod[id]
 "#,
@@ -339,23 +340,13 @@ node_id == id
     }
 
     fn script_pending_nodes_rhs(&self, embedding_set: &EmbeddingSet) -> String {
-        let rel_name = &embedding_set.rel_name;
         let emb_now_rhs = Self::script_embeddable_nodes_now_rhs();
         let emb_vec_rel = embedding_set.rel_name();
-        let script =
-            format!(r#"( {emb_now_rhs} ), *{emb_vec_rel} {{node_id, at: 'NOW'}}, id != node_id"#);
+        // Use anti-join to find nodes that do NOT have embeddings yet
+        // Note: Don't include validity constraint in anti-join - just check node_id presence
+        let script = format!(r#"( {emb_now_rhs} ), not *{emb_vec_rel} {{node_id: id}}"#);
         debug!(script_pending_nodes_rhs = ?script);
         script
-        // NodeType::primary_nodes()
-        //     .iter()
-        //     .map(|node_type| {
-        //         format!(
-        //             "*{node_rel}{{id}}, not *{embed_rel}{{node_id: id}}",
-        //             node_rel = node_type.relation_str(),
-        //             embed_rel = &rel_name
-        //         )
-        //     })
-        //     .join(" or ")
     }
 
     fn script_embeddable_nodes_now_rhs() -> &'static str {
@@ -559,7 +550,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         Ok(TypedEmbedData { v, ty: node_type })
     }
 
-    async fn update_embeddings_batch(
+    fn update_embeddings_batch(
         &self,
         updates: Vec<(Uuid, Vec<f64>)>,
         embedding_set: &EmbeddingSet,
@@ -904,10 +895,12 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
                 }},
                 embedding_set_id == {set_id}"
         );
-        let query = format!(r#"
+        let query = format!(
+            r#"
         {set_embeddings_rule}
 
-        ?[count(node_id)] := {embedding_rule_head}"#);
+        ?[count(node_id)] := {embedding_rule_head}"#
+        );
         //         let query = format!(
         //             "
         // ?[count(node_id)] :=
@@ -1092,14 +1085,13 @@ impl EmbeddingExt for Database {
 
     // TODO: After we get this to work, try removing the async (I don't know if it really wins us
     // anything here)
-    async fn update_embeddings_batch(
+    fn update_embeddings_batch(
         &self,
         updates: Vec<(Uuid, Vec<f64>)>,
         embedding_set: &EmbeddingSet,
     ) -> Result<(), DbError> {
         self.deref()
             .update_embeddings_batch(updates, embedding_set)
-            .await
     }
 }
 

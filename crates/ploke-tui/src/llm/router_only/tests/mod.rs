@@ -260,7 +260,7 @@ async fn test_free_query_endpoints() -> Result<()> {
         url
     );
     assert_eq!(
-        "https://openrouter.ai/api/v1/models/nousresearch/deephermes-3-llama-3-8b-preview:free/endpoints",
+        "https://openrouter.ai/api/v1/models/nousresearch/deephermes-3-llama-3-8b-preview%3Afree/endpoints",
         url
     );
     let key = OpenRouter::resolve_api_key()?;
@@ -295,7 +295,7 @@ async fn test_free_query_endpoints() -> Result<()> {
 }
 
 #[tokio::test]
-#[cfg(feature = "live_api_tests")]
+#[cfg(all(feature = "live_api_tests", feature = "long_test"))]
 async fn test_default_post_completions() -> Result<()> {
     use crate::llm::{ModelId, router_only::cli::COMPLETION_JSON_SIMPLE_DIR};
     use openrouter::OpenRouterModelId;
@@ -348,6 +348,7 @@ async fn test_default_post_completions() -> Result<()> {
 
     // let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
     let response_value: serde_json::Value = response.json().await?;
+    eprintln!("{}", response_value);
 
     if std::env::var("WRITE_MODE").unwrap_or_default() == "1" {
         let response_raw_pretty = serde_json::to_string_pretty(&response_value)?;
@@ -367,8 +368,8 @@ fn test_chat_comp_request_serialization_minimal() {
     use crate::llm::request::ChatCompReqCore;
     use crate::llm::request::endpoint::ToolChoice;
     use crate::llm::router_only::default_model;
-    use crate::tools::{GatCodeEdit, RequestCodeContextGat, Tool};
     use crate::tools::create_file::CreateFile;
+    use crate::tools::{GatCodeEdit, RequestCodeContextGat, Tool};
 
     let messages = vec![
         RequestMessage::new_system("sys".to_string()),

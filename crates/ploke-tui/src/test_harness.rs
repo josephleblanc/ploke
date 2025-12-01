@@ -199,3 +199,7 @@ pub fn openrouter_env() -> Option<OpenRouterEnv> {
     };
     Some(OpenRouterEnv::new(key, openrouter_url()))
 }
+
+// Re-export AppHarness for integration tests in tests/ directory
+#[cfg(feature = "test_harness")]
+pub use crate::test_utils::new_test_harness::AppHarness;

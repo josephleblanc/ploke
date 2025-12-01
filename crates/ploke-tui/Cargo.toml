@@ -101,7 +101,10 @@ arrayvec = "0.7"
 percent-encoding = "2"
 
 [features]
-default = ["test_harness", "multi_embedding_ui"]
+default = ["test_harness", "multi_embedding_ui", "live_api_tests"]
+flakey_test = ["live_api_tests"]
+# tests that wait a few seconds for a reply
+long_test = ["live_api_tests"]
 multi_embedding_ui = [
     "ploke-embed/multi_embedding_embedder",
     "ploke-transform/multi_embedding_schema",

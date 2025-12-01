@@ -748,7 +748,7 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_embeddings_batch(
+    pub fn update_embeddings_batch(
         &self,
         updates: Vec<(uuid::Uuid, Vec<f32>)>,
     ) -> Result<(), DbError> {
@@ -756,7 +756,7 @@ impl Database {
             return Ok(());
         }
         // Use multi-embedding path; active_embedding_set is validated at Database construction.
-        return self
+        self
             .deref()
             .update_embeddings_batch(
                 updates
@@ -765,7 +765,6 @@ impl Database {
                     .collect(),
                 &self.active_embedding_set,
             )
-            .await;
     }
 
     /// Validate that an embedding vector is non-empty
@@ -1253,14 +1252,16 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
                     .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
                     .map_err(|e| DbError::QueryExecution(e.to_string()))?;
                 for emb in typed.v {
+                    // Order: [id, at (placeholder), name] to match the indexer's expectations.
                     rows.push(vec![
                         DataValue::Uuid(UuidWrapper(emb.id)),
+                        DataValue::Str("NOW".into()), // placeholder for 'at' timestamp
                         DataValue::Str(emb.name.clone().into()),
                     ]);
                 }
             }
             return Ok(NamedRows {
-                headers: vec!["id".into(), "name".into()],
+                headers: vec!["id".into(), "at".into(), "name".into()],
                 rows,
                 next: None,
             });
@@ -1355,10 +1356,10 @@ mod tests {
         Database::new(db)
     }
 
-    #[tokio::test]
-    async fn update_embeddings_batch_empty() -> Result<(), DbError> {
+    #[test]
+    fn update_embeddings_batch_empty() -> Result<(), DbError> {
         let db = setup_db();
-        db.update_embeddings_batch(vec![]).await?;
+        db.update_embeddings_batch(vec![])?;
         // Should not panic/error with empty input
         Ok(())
     }
@@ -1536,8 +1537,7 @@ mod tests {
             .run_script(insert_script, params, cozo::ScriptMutability::Mutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        db.update_embeddings_batch(vec![(id, embedding.clone())])
-            .await?;
+        db.update_embeddings_batch(vec![(id, embedding.clone())])?;
 
         // Verify embedding was saved
         let result = db
@@ -1584,9 +1584,6 @@ mod tests {
     async fn test_update_embeddings_batch() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1638,11 +1635,8 @@ mod tests {
                 .map_err(DbError::from)?;
             }
             db.deref()
-                .update_embeddings_batch(updates, &embedding_set)
-                .await?;
+                .update_embeddings_batch(updates, &embedding_set)?;
         }
-        #[cfg(not(feature = "multi_embedding_db"))]
-        db.update_embeddings_batch(updates).await?;
         // assert_eq!(update_count, updated_ct);
 
         // 6. Verify the update
@@ -1762,19 +1756,16 @@ mod tests {
         info!(?id);
         let uid = to_uuid(&id)?;
         let embedding_rel_name = embedding_set.rel_name();
-        let retract_script = format!(r#"
+        let retract_script = format!(
+            r#"
     ?[node_id, embedding_set_id, vector, at] := *{embedding_rel_name}{{node_id, embedding_set_id, vector}},
         node_id = to_uuid("{uid}"), at = 'RETRACT'
 
         :put {embedding_rel_name}{{node_id, embedding_set_id, vector, at}}
-"#);
+"#
+        );
         info!(%retract_script);
-        db
-            .run_script(
-                &retract_script,
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )
+        db.run_script(&retract_script, BTreeMap::new(), ScriptMutability::Mutable)
             .map_err(DbError::from)?;
 
         debug_print_counts(&db)?;
@@ -1794,7 +1785,10 @@ mod tests {
         // debug_print_counts(&db)?;
 
         let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > 0, "expect all embeddings present initially");
+        assert!(
+            initial_embedded > 0,
+            "expect all embeddings present initially"
+        );
 
         let file_data: Vec<FileData> = db.get_file_data()?;
         info!("Files count with db.get_file_data: {}", file_data.len());
@@ -1820,7 +1814,10 @@ mod tests {
         }
 
         let final_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded == 0, "expect no registered embedings after retracting all of them");
+        assert!(
+            final_embedded == 0,
+            "expect no registered embeddings after retracting all of them"
+        );
 
         // debug_print_counts(&db)?;
         Ok(())
@@ -1839,7 +1836,10 @@ mod tests {
         // debug_print_counts(&db)?;
 
         let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > 0, "expect all embeddings present initially");
+        assert!(
+            initial_embedded > 0,
+            "expect all embeddings present initially"
+        );
 
         let file_data: Vec<FileData> = db.get_file_data()?;
         debug!("Files count with db.get_file_data: {}", file_data.len());
@@ -1865,10 +1865,19 @@ mod tests {
         }
 
         let partial_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > partial_embedded, "expect fewer embeddings after retracting some of them");
+        assert!(
+            initial_embedded > partial_embedded,
+            "expect fewer embeddings after retracting some of them"
+        );
         assert!(partial_embedded > 0, "expect some embeddings remain");
 
-        for (i, file_mod_id) in file_data.iter().map(|f| f.id).enumerate().skip(1).step_by(2) {
+        for (i, file_mod_id) in file_data
+            .iter()
+            .map(|f| f.id)
+            .enumerate()
+            .skip(1)
+            .step_by(2)
+        {
             debug!("Looping {i}");
             for node_ty in NodeType::primary_nodes() {
                 trace!("Looping {i} -- node_ty: {}", node_ty.relation_str());
@@ -1888,9 +1897,18 @@ mod tests {
         }
 
         let ending_embedded = db.count_embeddings_for_set(embedding_set)?;
-        assert!(initial_embedded > ending_embedded, "expect fewer embeddings after retracting some of them");
-        assert!(partial_embedded > ending_embedded, "expect fewer embeddings after retracting more of them");
-        assert!(ending_embedded == 0, "expect no embeddings remain after retracting all");
+        assert!(
+            initial_embedded > ending_embedded,
+            "expect fewer embeddings after retracting some of them"
+        );
+        assert!(
+            partial_embedded > ending_embedded,
+            "expect fewer embeddings after retracting more of them"
+        );
+        assert!(
+            ending_embedded == 0,
+            "expect no embeddings remain after retracting all"
+        );
 
         // debug_print_counts(&db)?;
         Ok(())
