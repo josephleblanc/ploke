@@ -4,6 +4,7 @@
 /// graph (configs, docs, or Rust files that failed to index).
 use std::{borrow::Cow, ops::Deref as _, path::PathBuf};
 
+use ploke_core::file_hash::FileHash;
 use serde::{Deserialize, Serialize};
 
 use super::{ToolDescr, ToolName};
@@ -14,8 +15,6 @@ const FILE_DESC: &str = "Absolute or workspace-relative file path.";
 const START_LINE_DESC: &str = "Optional 1-based line from which to start reading.";
 const END_LINE_DESC: &str = "Optional 1-based line at which to stop reading (inclusive).";
 const MAX_BYTES_DESC: &str = "Maximum number of UTF-8 bytes to return. Defaults to editor config.";
-const TRACKING_HASH_DESC: &str =
-    "Optional tracking hash to enforce when reading verified Rust files.";
 /// Default byte cap (32 KiB) applied when callers omit `max_bytes`, keeping NsRead outputs concise.
 const DEFAULT_READ_BYTE_CAP: usize = 32 * 1024;
 
@@ -27,7 +26,6 @@ lazy_static::lazy_static! {
             "start_line": { "type": "integer", "minimum": 1, "description": START_LINE_DESC },
             "end_line": { "type": "integer", "minimum": 1, "description": END_LINE_DESC },
             "max_bytes": { "type": "integer", "minimum": 1, "description": MAX_BYTES_DESC },
-            "tracking_hash": { "type": "string", "description": TRACKING_HASH_DESC }
         },
         "required": ["file"],
         "additionalProperties": false
@@ -55,8 +53,6 @@ pub struct NsReadParams<'a> {
     pub end_line: Option<u32>,
     #[serde(default)]
     pub max_bytes: Option<u32>,
-    #[serde(borrow)]
-    pub tracking_hash: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,7 +61,6 @@ pub struct NsReadParamsOwned {
     pub start_line: Option<u32>,
     pub end_line: Option<u32>,
     pub max_bytes: Option<u32>,
-    pub tracking_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +73,7 @@ pub struct NsReadResult {
     pub end_line: Option<u32>,
     pub truncated: bool,
     pub content: Option<String>,
+    pub file_hash: Option<FileHash>,
 }
 
 impl super::Tool for NsRead {
@@ -110,7 +106,6 @@ impl super::Tool for NsRead {
             start_line: params.start_line,
             end_line: params.end_line,
             max_bytes: params.max_bytes,
-            tracking_hash: params.tracking_hash.clone().map(|hash| hash.into_owned()),
         }
     }
 
@@ -125,15 +120,14 @@ impl super::Tool for NsRead {
             start_line,
             end_line,
             max_bytes,
-            tracking_hash: _,
         } = params;
 
-        if let (Some(start), Some(end)) = (start_line, end_line) {
-            if end < start {
-                return Err(ploke_error::Error::Domain(DomainError::Ui {
-                    message: "end_line must be greater than or equal to start_line".to_string(),
-                }));
-            }
+        if let (Some(start), Some(end)) = (start_line, end_line)
+            && end < start
+        {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "end_line must be greater than or equal to start_line".to_string(),
+            }));
         }
 
         let crate_root = ctx
@@ -194,6 +188,7 @@ impl super::Tool for NsRead {
             byte_len,
             content,
             truncated: io_truncated,
+            file_hash,
         } = read_resp;
 
         let (content, slice_truncated) = match content {
@@ -213,6 +208,7 @@ impl super::Tool for NsRead {
             end_line,
             truncated: io_truncated || slice_truncated,
             content,
+            file_hash,
         };
 
         let content = serde_json::to_string(&result).map_err(|err| {
@@ -327,7 +323,6 @@ mod tests {
                 "start_line": { "type": "integer", "minimum": 1, "description": START_LINE_DESC },
                 "end_line": { "type": "integer", "minimum": 1, "description": END_LINE_DESC },
                 "max_bytes": { "type": "integer", "minimum": 1, "description": MAX_BYTES_DESC },
-                "tracking_hash": { "type": "string", "description": TRACKING_HASH_DESC }
             },
             "required": ["file"],
             "additionalProperties": false
@@ -342,14 +337,12 @@ mod tests {
             start_line: Some(10),
             end_line: Some(20),
             max_bytes: Some(1024),
-            tracking_hash: Some(Cow::Borrowed("abc123")),
         };
         let owned = NsRead::into_owned(&params);
         assert_eq!(owned.file, "src/lib.rs");
         assert_eq!(owned.start_line, Some(10));
         assert_eq!(owned.end_line, Some(20));
         assert_eq!(owned.max_bytes, Some(1024));
-        assert_eq!(owned.tracking_hash.as_deref(), Some("abc123"));
     }
 
     #[test]

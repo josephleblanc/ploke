@@ -158,6 +158,7 @@
 //! - File, parse, range, and path policy violations surface as Fatal variants via mapping.
 //!
 //! See docs/production_plan.md for a full roadmap and design details.
+use ploke_core::file_hash::FileHash;
 use ploke_core::PROJECT_NAMESPACE_UUID;
 mod actor;
 pub use actor::IoManager;
@@ -229,4 +230,5 @@ pub struct ReadFileResponse {
     pub byte_len: Option<u64>,
     pub content: Option<String>,
     pub truncated: bool,
+    pub file_hash: Option<FileHash>,
 }

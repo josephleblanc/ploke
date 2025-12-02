@@ -1,3 +1,6 @@
+use ploke_core::file_hash::HashOutcome;
+use ploke_error::DomainError;
+
 use super::*;
 
 #[derive(Debug, Error, Clone)]
@@ -60,6 +63,36 @@ pub enum IoError {
         start_byte: usize,
         end_byte: usize,
     },
+
+    #[error("File too large to read")]
+    SkippedTooLarge {
+        size_bytes: u64,
+        max_in_memory_bytes: u64,
+    },
+
+    #[error("File metadata indicates this is not a regular file (e.g. to read/write to)")]
+    NotARegularFile,
+
+    #[error("Conversion Error")]
+    Conversion,
+}
+
+impl TryFrom<HashOutcome> for IoError {
+    type Error = IoError;
+
+    fn try_from(value: HashOutcome) -> Result<Self, Self::Error> {
+        match value {
+            HashOutcome::Hashed { size_bytes, hash } => Err(IoError::Conversion),
+            HashOutcome::SkippedTooLarge {
+                size_bytes,
+                max_in_memory_bytes,
+            } => Ok(Self::SkippedTooLarge {
+                size_bytes,
+                max_in_memory_bytes,
+            }),
+            HashOutcome::NotARegularFile => Ok(Self::NotARegularFile),
+        }
+    }
 }
 
 impl From<IoError> for ploke_error::Error {
@@ -79,11 +112,9 @@ impl From<IoError> for ploke_error::Error {
                 namespace,
                 path,
             }),
-
             ParseError { path, message } => ploke_error::Error::Fatal(FatalError::SyntaxError(
                 format!("Parse error in {}: {}", path.display(), message),
             )),
-
             OutOfRange {
                 path,
                 start_byte,
@@ -100,9 +131,7 @@ impl From<IoError> for ploke_error::Error {
                     ),
                 )),
             }),
-
             ShutdownInitiated => ploke_error::Error::Fatal(FatalError::ShutdownInitiated),
-
             FileOperation {
                 operation,
                 path,
@@ -113,7 +142,6 @@ impl From<IoError> for ploke_error::Error {
                 path,
                 source,
             }),
-
             Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { path, source }),
             InvalidCharBoundary {
                 path,
@@ -122,15 +150,27 @@ impl From<IoError> for ploke_error::Error {
             } => {
                 // Create a FromUtf8Error to capture the decoding failure
                 let err_msg = format!(
-                    "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
-                    start_byte, end_byte, path.to_string_lossy()
-                );
+                            "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
+                            start_byte, end_byte, path.to_string_lossy()
+                        );
 
                 ploke_error::Error::Fatal(FatalError::SyntaxError(err_msg))
             }
             Recv(recv_error) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(recv_error.to_string()),
             ),
+            e @ SkippedTooLarge {
+                size_bytes,
+                max_in_memory_bytes,
+            } => ploke_error::Error::Domain(DomainError::Io {
+                message: e.to_string(),
+            }),
+            NotARegularFile => ploke_error::Error::Domain(DomainError::Io {
+                message: "Attempted to read a non-regular file".to_string(),
+            }),
+            Conversion => ploke_error::Error::Domain(DomainError::Io {
+                message: "Error Converting Between types".to_string(),
+            }),
         }
     }
 }

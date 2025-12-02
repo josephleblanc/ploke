@@ -325,7 +325,24 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             create_file::CreateFile::emit_completed(&ctx, content);
             Ok(())
         }
-        ToolName::NsPatch => todo!(),
+        ToolName::NsPatch => {
+            let params = ns_patch::NsPatch::deserialize_params(&args).inspect_err(|err| {
+                ns_patch::NsPatch::emit_err(&ctx, err.to_string());
+            })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } = ns_patch::NsPatch::execute(params, ctx.clone())
+                .await
+                .inspect_err(|e| ns_patch::NsPatch::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            ns_patch::NsPatch::emit_completed(&ctx, content);
+            Ok(())
+        }
         ToolName::NsRead => {
             let params = ns_read::NsRead::deserialize_params(&args).inspect_err(|err| {
                 ns_read::NsRead::emit_err(&ctx, err.to_string());

@@ -10,12 +10,16 @@ use ploke_core::rag_types::{
 };
 use ploke_core::{ArcStr, FileData, PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_db::NodeType;
-use ploke_io::read::{FileHashData, read_and_compute_hash};
+use ploke_error::{DomainError, InternalError};
+use ploke_io::ReadStrategy;
+use ploke_io::read::{FileHashData, read_and_compute_filehash};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
+use tracing::debug;
 
 use crate::tools::ToolName;
 use crate::tools::create_file::CreateFileCtx;
+use crate::utils::path_scoping;
 use crate::{
     app_state::{
         core::{BeforeAfter, CreateProposal, EditProposal, EditProposalStatus, PreviewMode},
@@ -554,7 +558,9 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-pub async fn apply_ns_code_edit_tool(tool_call_params: ToolCallParams) {
+pub async fn apply_ns_code_edit_tool(
+    tool_call_params: ToolCallParams,
+) -> Result<(), ploke_error::Error> {
     let ToolCallParams {
         state,
         event_bus,
@@ -585,61 +591,107 @@ pub async fn apply_ns_code_edit_tool(tool_call_params: ToolCallParams) {
         let state_cfg = state.config.read().await;
         let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);
 
-        let p = PathBuf::from(file);
-        let file_was_relative = !p.is_absolute();
-        let abs_path = if let Some(root) = crate_root.as_ref() {
-            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-                Ok(pb) => pb,
-                Err(err) => {
-                    let msg = format!("invalid path: {}", err);
-                    tool_call_params.tool_call_failed(msg);
-                    return;
-                }
-            }
-        } else if p.is_absolute() {
-            p
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(p)
+        // let p = PathBuf::from(file);
+        // let file_was_relative = !p.is_absolute();
+        // let abs_path = if let Some(root) = crate_root.as_ref() {
+        //     match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+        //         Ok(pb) => pb,
+        //         Err(err) => {
+        //             let msg = format!("invalid path: {}", err);
+        //             tool_call_params.tool_call_failed(msg);
+        //             return;
+        //         }
+        //     }
+        // } else if p.is_absolute() {
+        //     p
+        // } else {
+        //     std::env::current_dir()
+        //         .unwrap_or_else(|_| PathBuf::from("."))
+        //         .join(p)
+        // };
+
+        let crate_root = state
+            .system
+            .read()
+            .await
+            .crate_focus
+            .clone()
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message:
+                        "No crate is currently focused; load a workspace before using read_file."
+                            .to_string(),
+                })
+            })?;
+
+        let requested_path = PathBuf::from(file.as_str());
+        let abs_path =
+            path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
+                ploke_error::Error::Domain(DomainError::Io {
+                    message: format!("invalid path: {err}"),
+                })
+            })?;
+
+        let request = ploke_io::ReadFileRequest {
+            file_path: abs_path.clone(),
+            range: None,
+            max_bytes: None,
+            strategy: ReadStrategy::Plain,
         };
 
+        let read_resp = state.io_handle.read_file(request).await.map_err(|err| {
+            ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                "io channel error: {err}"
+            )))
+        })??;
+
+        let ploke_io::ReadFileResponse {
+            exists,
+            file_path,
+            byte_len,
+            content: maybe_content,
+            truncated: io_truncated,
+            file_hash,
+        } = read_resp;
+        let content = maybe_content.ok_or_else(|| {
+            let msg = format!(
+                "failed to unwrap content for file {:?}",
+                file_path.to_string_lossy()
+            );
+            tool_call_params.tool_call_failed(msg.clone());
+            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
+        })?;
+
+        // let (content, slice_truncated) = match content {
+        //     Some(src) => {
+        //         let (sliced, truncated) = slice_content_lines(src, start_line, end_line);
+        //         (Some(sliced), truncated)
+        //     }
+        //     None => (None, false),
+        // };
+
+        debug!(?abs_path);
+
         use mpatch::{apply_patches_to_dir, parse_auto};
-        let patches = match parse_auto(&diff) {
-            Ok(p) => p,
-            Err(e) => {
-                tool_call_params.tool_call_failed(e.to_string());
-                return;
-            }
-        };
+        let patches = parse_auto(&diff).map_err(|e| {
+            let msg = e.to_string();
+            tool_call_params.tool_call_failed(msg.clone());
+            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
+        })?;
 
         // Pick a namespace. If you really don’t have one yet, re-use your placeholder.
         let namespace = PROJECT_NAMESPACE_UUID;
-
-        // IMPORTANT: you need a way to read the file *without* needing a pre-known tracking hash.
-        // If io_handle lacks this today, add one small helper (recommended) OR use tokio::fs here.
-        let file_data_result = read_and_compute_hash(&abs_path, namespace)
-            .await
-            .map_err(|e| {
-                let msg = format!("failed to read {}: {}", abs_path.display(), e);
-                tool_call_params.tool_call_failed(msg.clone());
-                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
-            });
-        let file_data = match file_data_result {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let FileHashData { hash, contents } = file_data;
 
         let patch_result = mpatch::parse_single_patch(&diff).map_err(|e| {
             let msg = format!("invalid unified diff: {}", e);
             tool_call_params.tool_call_failed(msg.clone());
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         });
-        let patch = match patch_result {
-            Ok(p) => p,
-            Err(_) => return,
-        };
+        let patch = patch_result.map_err(|e| {
+            let msg = format!("failed to patch {}: {}", abs_path.display(), e);
+            tool_call_params.tool_call_failed(msg.clone());
+            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
+        })?;
 
         let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
             String::new(),
@@ -648,11 +700,12 @@ pub async fn apply_ns_code_edit_tool(tool_call_params: ToolCallParams) {
                 acc
             },
         );
+
         let apply_patch_result =
-            mpatch::apply_patch_to_content(&patch, Some(&contents), &apply_options);
+            mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
         let per_file = BeforeAfter {
             file_path: abs_path,
-            before: contents,
+            before: content,
             after: apply_patch_result.new_content,
         };
         let files = Vec::new();
@@ -682,4 +735,5 @@ pub async fn apply_ns_code_edit_tool(tool_call_params: ToolCallParams) {
             },
         );
     }
+    Ok(())
 }

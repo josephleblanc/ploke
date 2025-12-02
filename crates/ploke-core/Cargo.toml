@@ -13,10 +13,17 @@ proc-macro2 = { workspace = true, features = ["span-locations"] }
 thiserror = { workspace = true }
 cozo = { workspace = true }
 lazy_static = { workspace = true }
+blake3 = "1.8"
+rayon = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
 
 [features]
 default = []
 ghost_data_graphs = []
+parallel-hash = ["blake3/rayon"]
+read-tokio = ["tokio/io-util", "tokio/fs"]
+parallel-walk = ["dep:rayon"]              # only if you actually use rayon APIs
 # Feature flag for the UUID refactor
 
 [dev-dependencies]

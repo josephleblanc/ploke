@@ -14,6 +14,7 @@ use crate::llm::router_only::HasModels;
 use crate::tools;
 use crate::tools::create_file::CreateFile;
 use crate::tools::ns_patch::NsPatch;
+use crate::tools::ns_read::NsRead;
 use events::ChatEvt;
 pub(crate) use events::LlmEvent;
 use events::endpoint;
@@ -472,6 +473,7 @@ async fn prepare_and_run_llm_call(
         GatCodeEdit::tool_def(),
         CreateFile::tool_def(),
         NsPatch::tool_def(),
+        NsRead::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)

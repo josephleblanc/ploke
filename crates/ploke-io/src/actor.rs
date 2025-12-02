@@ -5,7 +5,10 @@ use crate::{
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
     write::write_snippets_batch,
 };
-use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{
+    file_hash::{hash_file_blake3_bounded, HashOutcome, LargeFilePolicy},
+    CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData,
+};
 use tracing::error;
 
 use super::*;
@@ -16,6 +19,7 @@ pub struct IoManager {
     semaphore: Arc<Semaphore>,
     roots: Option<Arc<Vec<PathBuf>>>,
     symlink_policy: Option<SymlinkPolicy>,
+    large_file_policy: Option<LargeFilePolicy>,
     #[cfg(feature = "watcher")]
     events_tx: Option<tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>>,
 }
@@ -90,6 +94,7 @@ impl IoManager {
             semaphore: Arc::new(Semaphore::new(limit)),
             roots: None,
             symlink_policy: None,
+            large_file_policy: None,
             #[cfg(feature = "watcher")]
             events_tx: None,
         }
@@ -101,6 +106,7 @@ impl IoManager {
         semaphore_permits: usize,
         roots: Option<Vec<PathBuf>>,
         symlink_policy: Option<SymlinkPolicy>,
+        large_file_policy: Option<LargeFilePolicy>,
         #[cfg(feature = "watcher")] events_tx: Option<
             tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>,
         >,
@@ -110,6 +116,7 @@ impl IoManager {
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
             roots: roots.map(Arc::new),
             symlink_policy,
+            large_file_policy,
             #[cfg(feature = "watcher")]
             events_tx,
         }
@@ -247,6 +254,7 @@ impl IoManager {
             IoRequest::ReadFile { req, responder } => {
                 let roots = self.roots.clone();
                 let symlink_policy = self.symlink_policy;
+                let large_file_policy = self.large_file_policy;
                 tokio::spawn(async move {
                     let ReadFileRequest {
                         file_path,
@@ -277,7 +285,12 @@ impl IoManager {
 
                     let result = match strategy {
                         ReadStrategy::Plain => {
-                            Self::read_plain_file(normalized_path.clone(), max_bytes).await
+                            Self::read_plain_file(
+                                normalized_path.clone(),
+                                max_bytes,
+                                large_file_policy,
+                            )
+                            .await
                         }
                         ReadStrategy::Verified {
                             expected_hash,
@@ -320,10 +333,32 @@ impl IoManager {
         }
     }
 
+    const FILE_BYTES_LIMIT: u64 = u32::MAX as u64;
     async fn read_plain_file(
         path: PathBuf,
         max_bytes: Option<usize>,
+        large_file_policy: Option<LargeFilePolicy>,
     ) -> Result<ReadFileResponse, PlokeError> {
+        let policy = large_file_policy.unwrap_or_default();
+        let max_bytes_hashed = max_bytes
+            .map(|m| m as u64)
+            .unwrap_or(Self::FILE_BYTES_LIMIT);
+        let hashed_result = match hash_file_blake3_bounded(&path, max_bytes_hashed, policy) {
+            Ok(ho) => match ho {
+                HashOutcome::Hashed { hash, .. } => Ok(hash),
+                _ => Err(IoError::try_from(ho)?),
+            },
+            Err(io_error) => {
+                let kind = io_error.kind();
+                Err(IoError::FileOperation {
+                    operation: "read",
+                    path: path.clone(),
+                    source: Arc::new(io_error),
+                    kind,
+                })
+            }
+        };
+        let hash = hashed_result?;
         match read_file_to_string_abs(&path).await {
             Ok(content) => {
                 let byte_len = content.len() as u64;
@@ -334,6 +369,7 @@ impl IoManager {
                     byte_len: Some(byte_len),
                     content: Some(content),
                     truncated,
+                    file_hash: Some(hash),
                 })
             }
             Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
@@ -343,6 +379,7 @@ impl IoManager {
                     byte_len: None,
                     content: None,
                     truncated: false,
+                    file_hash: None,
                 })
             }
             Err(err) => Err(err.into()),
@@ -377,6 +414,10 @@ impl IoManager {
                     byte_len: Some(byte_len),
                     content: Some(content),
                     truncated,
+                    // NOTE: this is using the old TrackingHash approach to dealing with file
+                    // hashes, so I'm leaving it None for now
+                    // TODO: Determine how we should handle the file hashes here
+                    file_hash: None,
                 })
             }
             Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
@@ -386,6 +427,9 @@ impl IoManager {
                     byte_len: None,
                     content: None,
                     truncated: false,
+                    // NOTE: this is using the old TrackingHash approach to dealing with file
+                    // hashes, so I'm leaving it None for now
+                    file_hash: None,
                 })
             }
             Err(err) => Err(err.into()),
