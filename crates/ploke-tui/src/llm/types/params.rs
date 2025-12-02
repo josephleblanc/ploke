@@ -632,7 +632,7 @@ mod tests {
             top_logprobs: Some(5),
             min_p: Some(0.1),
             top_a: Some(0.2),
-            verbosity: Some(Verbosity::Low)
+            verbosity: Some(Verbosity::Low),
         };
         let json = serde_json::to_string(&params)?;
         let deserialized: LLMParameters = serde_json::from_str(&json)?;

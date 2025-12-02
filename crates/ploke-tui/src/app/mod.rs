@@ -442,7 +442,7 @@ impl App {
         let selected_index_opt = self
             .list
             .selected()
-            .map(|i| i.min(path_len.saturating_sub( 1 )));
+            .map(|i| i.min(path_len.saturating_sub(1)));
 
         // Prepare and render conversation via ConversationView
         self.conversation.prepare(
@@ -540,17 +540,18 @@ impl App {
 
         // Flash indicator for model changes
         if let Some((_, timestamp)) = &self.active_model_indicator
-            && timestamp.elapsed().as_secs() < 2 {
-                let flash_indicator = Paragraph::new("✓");
-                frame.render_widget(
-                    flash_indicator,
-                    ratatui::layout::Rect::new(
-                        model_info_area.x.saturating_sub(2),
-                        model_info_area.y,
-                        2,
-                        1,
-                    ),
-                );
+            && timestamp.elapsed().as_secs() < 2
+        {
+            let flash_indicator = Paragraph::new("✓");
+            frame.render_widget(
+                flash_indicator,
+                ratatui::layout::Rect::new(
+                    model_info_area.x.saturating_sub(2),
+                    model_info_area.y,
+                    2,
+                    1,
+                ),
+            );
         }
 
         // Render model browser overlay if visible

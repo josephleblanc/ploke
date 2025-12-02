@@ -3,8 +3,6 @@ mod commands;
 pub(crate) mod events;
 mod session;
 
-use crate::tools::create_file::CreateFile;
-use crate::tools::ns_patch::NsPatch;
 use crate::SystemEvent;
 use crate::app_state::handlers::chat::add_msg_immediate;
 use crate::error::ResultExt as _;
@@ -14,6 +12,8 @@ use crate::llm::router_only::ChatCompRequest;
 use crate::llm::router_only::HasEndpoint;
 use crate::llm::router_only::HasModels;
 use crate::tools;
+use crate::tools::create_file::CreateFile;
+use crate::tools::ns_patch::NsPatch;
 use events::ChatEvt;
 pub(crate) use events::LlmEvent;
 use events::endpoint;
@@ -41,8 +41,8 @@ use crate::rag::utils::ToolCallParams;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
 use crate::tools::{
-    FunctionCall, FunctionMarker, RequestCodeContext, Tool as _, ToolCall,
-    ToolDefinition, ToolFunctionDef, ToolName,
+    FunctionCall, FunctionMarker, RequestCodeContext, Tool as _, ToolCall, ToolDefinition,
+    ToolFunctionDef, ToolName,
 };
 use crate::utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT};
 use crate::{AppEvent, EventBus};
@@ -390,7 +390,7 @@ pub async fn process_llm_request(
         messages,
         event_bus.clone(),
         request_message_id,
-        cmd_tx.clone()
+        cmd_tx.clone(),
     )
     .await;
 
@@ -420,8 +420,8 @@ pub async fn process_llm_request(
                 msg: content,
                 kind: MessageKind::Assistant,
                 new_msg_id: Uuid::new_v4(),
-                }
             }
+        }
         Err(e) => {
             let err_string = e.to_string();
             // Inform the user in-chat so the "Pending..." isn't left hanging without context.
@@ -438,7 +438,7 @@ pub async fn process_llm_request(
                 msg: format!("Request failed: {}", err_string),
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
-                }
+            }
         }
     };
 

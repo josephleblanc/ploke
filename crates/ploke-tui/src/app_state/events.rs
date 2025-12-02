@@ -21,7 +21,10 @@ use ploke_db::TypedEmbedData;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{tools::{Ctx, ToolCall, ToolName}, ArcStr, ModelId, UiError};
+use crate::{
+    ArcStr, ModelId, UiError,
+    tools::{Ctx, ToolCall, ToolName},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SystemEvent {

@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
-use crate::app_state::core::{DiffPreview, EditProposalStatus};
-use crate::app_state::AppState as _; // trait bounds
+use crate::app_state::AppState as _;
+use crate::app_state::core::{DiffPreview, EditProposalStatus}; // trait bounds
 
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalsState {
@@ -19,11 +19,13 @@ pub struct ApprovalsState {
 }
 
 impl ApprovalsState {
-    pub fn select_next(&mut self) { self.selected = self.selected.saturating_add(1); }
+    pub fn select_next(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+    }
     pub fn select_prev(&mut self) {
         self.selected = self.selected.saturating_sub(1);
     }
-    
+
     pub fn increase_view_lines(&mut self) {
         if self.view_lines == 0 {
             self.view_lines = 10; // Start with 10 lines when first enabled
@@ -31,7 +33,7 @@ impl ApprovalsState {
             self.view_lines = (self.view_lines + 10).min(200); // Cap at 200 lines
         }
     }
-    
+
     pub fn decrease_view_lines(&mut self) {
         if self.view_lines <= 10 {
             self.view_lines = 0; // 0 means no truncation
@@ -39,7 +41,7 @@ impl ApprovalsState {
             self.view_lines = self.view_lines.saturating_sub(10);
         }
     }
-    
+
     pub fn toggle_unlimited(&mut self) {
         self.view_lines = if self.view_lines == 0 { 20 } else { 0 };
     }
@@ -161,19 +163,24 @@ pub fn render_approvals_overlay(
                 (p, c)
             })
         });
-        let mut render_preview = |status: &EditProposalStatus, files_len: usize, preview: &DiffPreview| {
+        let mut render_preview = |status: &EditProposalStatus,
+                                  files_len: usize,
+                                  preview: &DiffPreview| {
             detail_lines.push(Line::from(vec![Span::styled(
                 format!("request_id: {}", sel_id),
                 Style::new().fg(Color::Yellow),
             )]));
             detail_lines.push(Line::from(format!(
                 "status: {:?}  files:{}",
-                status,
-                files_len
+                status, files_len
             )));
 
             // Determine line limit for display
-            let line_limit = if ui.view_lines == 0 { usize::MAX } else { ui.view_lines };
+            let line_limit = if ui.view_lines == 0 {
+                usize::MAX
+            } else {
+                ui.view_lines
+            };
 
             match preview {
                 DiffPreview::UnifiedDiff { text } => {
@@ -266,7 +273,7 @@ pub fn render_approvals_overlay(
         } else {
             format!("{} lines", ui.view_lines)
         };
-        
+
         let help_text = format!(
             "Keys: Enter=approve  n=deny  o=open in editor  ↑/↓,j/k=navigate  q/Esc=close\n\
              View: +=more lines  -=fewer lines  u=toggle unlimited (current: {})\n\
@@ -280,7 +287,7 @@ pub fn render_approvals_overlay(
              - q/Esc: Close approvals overlay",
             truncation_status, truncation_status
         );
-        
+
         let help = Paragraph::new(help_text)
             .style(overlay_style)
             .block(Block::bordered().title(" Help ").style(overlay_style));
@@ -291,7 +298,7 @@ pub fn render_approvals_overlay(
         } else {
             format!("{} lines", ui.view_lines)
         };
-        
+
         let hint = Paragraph::new(format!(" ? Help | View: {} ", truncation_info))
             .style(overlay_style)
             .alignment(ratatui::layout::Alignment::Right);

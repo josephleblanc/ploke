@@ -554,9 +554,7 @@ Deny:     edit deny {request_id}{2}"#,
     }
 }
 
-pub async fn apply_ns_code_edit_tool(
-    tool_call_params: ToolCallParams,
-) {
+pub async fn apply_ns_code_edit_tool(tool_call_params: ToolCallParams) {
     let ToolCallParams {
         state,
         event_bus,
@@ -582,7 +580,7 @@ pub async fn apply_ns_code_edit_tool(
     if count > 1 {
         tracing::error!("found multiple patches in apply_ns_code_edit_tool\ncount: {count}");
     }
-    if let Some(( file, diff, reasoning )) = patches.next() {
+    if let Some((file, diff, reasoning)) = patches.next() {
         use mpatch::ApplyOptions;
         let state_cfg = state.config.read().await;
         let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);

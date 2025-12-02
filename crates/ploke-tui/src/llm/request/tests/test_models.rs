@@ -1,4 +1,4 @@
-#![cfg(feature = "live_api_tests")]
+#![cfg(feature = "flakey_test")]
 use std::io::prelude::*;
 use std::{collections::HashSet, fs::File, time::Duration};
 
@@ -32,12 +32,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        REL_MODEL_ALL_DATA, REL_MODEL_NAME_DATA,
-        REL_MODEL_SUPPORTED_PARAMETERS_DATA, REL_MODEL_SUPPORTS_TOOLS_DATA,
+        REL_MODEL_ALL_DATA, REL_MODEL_NAME_DATA, REL_MODEL_SUPPORTED_PARAMETERS_DATA,
+        REL_MODEL_SUPPORTS_TOOLS_DATA,
     };
     use crate::llm::ModelId;
     use crate::llm::request::models;
-    use crate::llm::router_only::{openrouter::OpenRouter, Router};
+    use crate::llm::router_only::{Router, openrouter::OpenRouter};
     use crate::{
         test_harness::{default_headers, openrouter_env},
         user_config::openrouter_url,

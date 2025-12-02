@@ -13,11 +13,11 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 // llm types and router defaults
-use crate::llm::{registry::user_prefs::RegistryPrefs, Router as _};
+use crate::llm::ProviderSlug;
 pub use crate::llm::registry::user_prefs::ModelRegistryStrictness;
 use crate::llm::router_only::default_model;
-use crate::llm::ProviderSlug;
 use crate::llm::router_only::openrouter::OpenRouter;
+use crate::llm::{Router as _, registry::user_prefs::RegistryPrefs};
 
 lazy_static! {
     // Parsed from llm OpenRouter BASE_URL
@@ -66,7 +66,7 @@ pub enum CtxStrategy {
     /// Asks LLM to repin context items after turns to live runs out.
     Ask(u16),
     /// Never unpins context items - only manual command from user clears context.
-    Unlimited
+    Unlimited,
 }
 
 pub const DEFAULT_CONTEXT_TURNS_TO_LIVE: u16 = 15;

@@ -5,7 +5,15 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    app::App, app_state::{self, state_manager, AppState, ChatState, ConfigState, StateCommand, SystemState}, chat_history::ChatHistory, default_model, file_man::FileManager, llm::manager::llm_manager, observability, run_event_bus, user_config::{openrouter_url, UserConfig, OPENROUTER_URL}, AppEvent, EventBus, EventBusCaps, EventPriority
+    AppEvent, EventBus, EventBusCaps, EventPriority,
+    app::App,
+    app_state::{self, AppState, ChatState, ConfigState, StateCommand, SystemState, state_manager},
+    chat_history::ChatHistory,
+    default_model,
+    file_man::FileManager,
+    llm::manager::llm_manager,
+    observability, run_event_bus,
+    user_config::{OPENROUTER_URL, UserConfig, openrouter_url},
 };
 use ploke_db::{bm25_index, create_index_primary};
 use ploke_embed::{cancel_token::CancellationToken, indexer::IndexerTask};

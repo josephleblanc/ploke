@@ -68,10 +68,10 @@ fn test_basic_vector_functionality() {
     let result = db
         .run_script(
             r#"
-        ?[id, dist] := 
-            ~vector_test:vector_idx{id | 
-                query: vec([1.0, 0.0, 0.0]), 
-                k: 2, 
+        ?[id, dist] :=
+            ~vector_test:vector_idx{id |
+                query: vec([1.0, 0.0, 0.0]),
+                k: 2,
                 ef: 10,
                 bind_distance: dist
             }
@@ -135,7 +135,7 @@ fn test_hnsw_graph_walking() {
     let result = db
         .run_script(
             r#"
-        ?[fr_id, to_id, dist] := 
+        ?[fr_id, to_id, dist] :=
             *vector_test:vector_idx{layer: 0, fr_id, to_id, dist}
         :limit 10
         "#,
@@ -195,10 +195,10 @@ fn insert_sample_embeddings(
     // Shadowing relations after print
     let relations = db.run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)?;
     #[allow(unused_variables)]
-    let relation_exists = relations
+    let relation_exists = !relations
         .rows
         .iter()
-        .any(|row| (row[0].get_str() == Some("code_embeddings")));
+        .all(|row| (row[0].get_str() == Some("code_embeddings")));
 
     println!("relation_exists: {}", relation_exists);
     let code_embeddings_def = relations
@@ -242,7 +242,7 @@ fn insert_sample_embeddings(
     let vector_relation_exists = relations
         .rows
         .iter()
-        .any(|row| (row[0].get_str() == Some("code_embeddings:vector")));
+        .any(|row| row[0].get_str() == Some("code_embeddings:vector"));
     println!("vector_relation_exists: {}", relation_exists);
     let code_embeddings_def = relations
         .rows
@@ -255,7 +255,7 @@ fn insert_sample_embeddings(
     // Insert a sample embedding for a function
     let result = db.run_script(
         r#"
-        ?[id, node_id, node_type, embedding, text_snippet] <- 
+        ?[id, node_id, node_type, embedding, text_snippet] <-
             [[$id, $node_id, $node_type, $embedding, $snippet]]
         :put code_embeddings
         "#,
@@ -267,11 +267,11 @@ fn insert_sample_embeddings(
         // Create the HNSW index on the embeddings
         db.run_script(
             r#"::hnsw create code_embeddings:vector {
-                dim: 384, 
-                m: 16, 
-                dtype: F32, 
-                fields: [embedding], 
-                distance: Cosine, 
+                dim: 384,
+                m: 16,
+                dtype: F32,
+                fields: [embedding],
+                distance: Cosine,
                 ef_construction: 50
             }"#,
             BTreeMap::new(),
@@ -307,11 +307,11 @@ fn test_vector_similarity_search_identical() {
 
     // Query to find similar code snippets using HNSW index
     let query = r#"
-        ?[node_id, node_type, text_snippet, dist] := 
+        ?[node_id, node_type, text_snippet, dist] :=
             ~code_embeddings:vector{
-                node_id, node_type, text_snippet | 
-                query: vec($query_vec), 
-                k: 2, 
+                node_id, node_type, text_snippet |
+                query: vec($query_vec),
+                k: 2,
                 ef: 50,
                 bind_distance: dist
             }
@@ -366,11 +366,11 @@ fn test_vector_similarity_search() {
 
     // Query to find similar code snippets using HNSW index
     let query = r#"
-        ?[node_id, node_type, text_snippet, dist] := 
+        ?[node_id, node_type, text_snippet, dist] :=
             ~code_embeddings:vector{
-                node_id, node_type, text_snippet | 
-                query: vec($query_vec), 
-                k: 2, 
+                node_id, node_type, text_snippet |
+                query: vec($query_vec),
+                k: 2,
                 ef: 50,
                 bind_distance: dist
             }
@@ -414,8 +414,8 @@ fn test_code_embeddings_hnsw_graph() {
     insert_sample_embeddings(&db).expect("Failed to insert sample embeddings");
 
     let query = r#"
-        ?[fr_embedding, to_k, dist] := *code_embeddings:vector{ 
-            layer: 0, 
+        ?[fr_embedding, to_k, dist] := *code_embeddings:vector{
+            layer: 0,
             fr_embedding,
             to_embedding,
             dist

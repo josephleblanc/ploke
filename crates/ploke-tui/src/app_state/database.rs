@@ -14,10 +14,13 @@ use syn_parser::{
     resolve::RelationIndexer,
 };
 use tokio::sync::oneshot;
-use tracing::{ debug, error, info, trace };
+use tracing::{debug, error, info, trace};
 
 use crate::{
-    app_state::helpers::{print_module_set, printable_nodes}, parser::{run_parse_no_transform, ParserOutput}, tracing_setup::SCAN_CHANGE, utils::helper::find_file_by_prefix
+    app_state::helpers::{print_module_set, printable_nodes},
+    parser::{ParserOutput, run_parse_no_transform},
+    tracing_setup::SCAN_CHANGE,
+    utils::helper::find_file_by_prefix,
 };
 
 use super::*;
@@ -27,24 +30,24 @@ pub const TUI_DB_TARGET: &str = "tracing_db_target";
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
 pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
-     let dir_res = dirs::config_local_dir().ok_or_else(|| {
-         ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-             msg: "Could not locate default config directory on system",
-         })
-     });
+    let dir_res = dirs::config_local_dir().ok_or_else(|| {
+        ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+            msg: "Could not locate default config directory on system",
+        })
+    });
 
-     let default_dir = match dir_res {
-         Ok(dir) => dir.join("ploke").join("data"),
-         Err(e) => {
-             e.emit_warning();
-             event_bus.send(AppEvent::System(SystemEvent::BackupDb {
-                 file_dir: "<none>".into(),
-                 is_success: false,
-                 error: Some(e.to_string()),
-             }));
-             return;
-         }
-     };
+    let default_dir = match dir_res {
+        Ok(dir) => dir.join("ploke").join("data"),
+        Err(e) => {
+            e.emit_warning();
+            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                file_dir: "<none>".into(),
+                is_success: false,
+                error: Some(e.to_string()),
+            }));
+            return;
+        }
+    };
     if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
         let msg = format!(
             "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}",
@@ -79,15 +82,19 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
             .get_crate_name_id(crate_focus)
             .map_err(ploke_error::Error::from)
         {
-                Ok(db_result) => {
-                db_result
-            }
+            Ok(db_result) => db_result,
             Err(e) => {
                 e.emit_warning();
                 let err_msg = format!("Error loading crate: {}", e);
-                handlers::chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), err_msg, 
-                    chat_history::MessageKind::SysInfo).await;
-            return;
+                handlers::chat::add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    err_msg,
+                    chat_history::MessageKind::SysInfo,
+                )
+                .await;
+                return;
             }
         };
         debug!(save_crate_focus = ?crate_focus);
@@ -346,15 +353,20 @@ pub(super) async fn scan_for_change(
     trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
 
     // 2.5. Check for files that have been removed
-    let (file_data, removed_file_data): ( Vec<_>, Vec<_> ) = file_data.into_iter().partition(|f| f.file_path.exists());
+    let (file_data, removed_file_data): (Vec<_>, Vec<_>) =
+        file_data.into_iter().partition(|f| f.file_path.exists());
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
     //  - Note that this does not do anything for those files which may have been added, which will
     //  be handled in parsing during the IndexFiles event process mentioned in step 5 below.
-    let result = state.io_handle.scan_changes_batch(file_data).await.inspect_err(|e| {
+    let result = state
+        .io_handle
+        .scan_changes_batch(file_data)
+        .await
+        .inspect_err(|e| {
             error!("Error in state.io_handle.scan_changes_batch: {e}");
-    })?;
+        })?;
     let vec_ok = result?;
 
     if !vec_ok.iter().any(|f| f.is_some()) && removed_file_data.is_empty() {
@@ -427,8 +439,7 @@ pub(super) async fn scan_for_change(
             let printable_nodes = printable_nodes(&merged, full_mod_set.iter());
             trace!(
                 "recursive printable nodes for module_id:\n{}\n{}",
-                mod_id,
-                printable_nodes
+                mod_id, printable_nodes
             );
         }
         fn mods_in_file(

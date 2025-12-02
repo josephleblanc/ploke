@@ -1,10 +1,14 @@
+/// NsRead tool wiring for the TUI. Provides a non-semantic read path that enforces crate-root
+/// scoping, respects configured byte caps, and applies optional line slicing before emitting a
+/// `ToolResult`. Prefer this module whenever the agent needs direct file reads outside the semantic
+/// graph (configs, docs, or Rust files that failed to index).
 use std::{borrow::Cow, ops::Deref as _, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::{ToolDescr, ToolName};
 use crate::{tools::ToolResult, utils::path_scoping};
-use ploke_io::{ReadFileRequest, ReadFileResponse, ReadStrategy};
+use ploke_io::{ReadFileRequest, ReadFileResponse, ReadRange, ReadStrategy};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
 const START_LINE_DESC: &str = "Optional 1-based line from which to start reading.";
@@ -12,6 +16,8 @@ const END_LINE_DESC: &str = "Optional 1-based line at which to stop reading (inc
 const MAX_BYTES_DESC: &str = "Maximum number of UTF-8 bytes to return. Defaults to editor config.";
 const TRACKING_HASH_DESC: &str =
     "Optional tracking hash to enforce when reading verified Rust files.";
+/// Default byte cap (32 KiB) applied when callers omit `max_bytes`, keeping NsRead outputs concise.
+const DEFAULT_READ_BYTE_CAP: usize = 32 * 1024;
 
 lazy_static::lazy_static! {
     static ref NS_READ_PARAMETERS: serde_json::Value = serde_json::json!({
@@ -34,6 +40,9 @@ lazy_static::lazy_static! {
 /// latest state of a file that failed to parse into the code graph, or double-checking text before
 /// crafting a non-semantic patch. All reads are scoped through IoManager so path validation and
 /// auditing stay consistent with the write pipeline.
+/// Tool entry point for non-semantic file reads enforced via IoManager. All behavior is documented
+/// in the module doc above so future contributors understand when to prefer NsRead over semantic
+/// context retrieval.
 pub struct NsRead;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,8 +120,14 @@ impl super::Tool for NsRead {
     ) -> Result<ToolResult, ploke_error::Error> {
         use ploke_error::{DomainError, InternalError};
 
-        let start_line = params.start_line;
-        let end_line = params.end_line;
+        let NsReadParams {
+            file,
+            start_line,
+            end_line,
+            max_bytes,
+            tracking_hash: _,
+        } = params;
+
         if let (Some(start), Some(end)) = (start_line, end_line) {
             if end < start {
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
@@ -121,35 +136,48 @@ impl super::Tool for NsRead {
             }
         }
 
-        let requested_path = PathBuf::from(params.file.as_ref());
-        let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
-        let abs_path = if let Some(root) = crate_root.as_ref() {
-            path_scoping::resolve_in_crate_root(&requested_path, root).map_err(|err| {
+        let crate_root = ctx
+            .state
+            .system
+            .read()
+            .await
+            .crate_focus
+            .clone()
+            .ok_or_else(|| {
+                ploke_error::Error::Domain(DomainError::Ui {
+                    message:
+                        "No crate is currently focused; load a workspace before using read_file."
+                            .to_string(),
+                })
+            })?;
+
+        let requested_path = PathBuf::from(file.as_ref());
+        let abs_path =
+            path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
                 ploke_error::Error::Domain(DomainError::Io {
                     message: format!("invalid path: {err}"),
                 })
-            })?
-        } else if requested_path.is_absolute() {
-            requested_path.clone()
-        } else {
-            std::env::current_dir()
-                .map_err(|err| {
-                    ploke_error::Error::Domain(DomainError::Io {
-                        message: format!("failed to resolve current dir: {err}"),
-                    })
-                })?
-                .join(&requested_path)
-        };
+            })?;
 
-        let max_bytes = params.max_bytes.map(|v| v as usize);
+        let byte_cap = max_bytes
+            .map(|v| v as usize)
+            .unwrap_or(DEFAULT_READ_BYTE_CAP);
+
         let request = ReadFileRequest {
             file_path: abs_path,
-            range: None,
-            max_bytes,
+            range: if start_line.is_some() || end_line.is_some() {
+                Some(ReadRange {
+                    start_line,
+                    end_line,
+                })
+            } else {
+                None
+            },
+            max_bytes: Some(byte_cap),
             strategy: ReadStrategy::Plain,
         };
 
-        let io_response = ctx
+        let read_resp = ctx
             .state
             .io_handle
             .read_file(request)
@@ -158,7 +186,7 @@ impl super::Tool for NsRead {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "io channel error: {err}"
                 )))
-            })?;
+            })??;
 
         let ReadFileResponse {
             exists,
@@ -166,16 +194,15 @@ impl super::Tool for NsRead {
             byte_len,
             content,
             truncated: io_truncated,
-        } = io_response?;
+        } = read_resp;
 
-        let (content, line_truncated) = if let Some(content) = content {
-            let (sliced, truncated) = slice_content_lines(content, start_line, end_line);
-            (Some(sliced), truncated)
-        } else {
-            (None, false)
+        let (content, slice_truncated) = match content {
+            Some(src) => {
+                let (sliced, truncated) = slice_content_lines(src, start_line, end_line);
+                (Some(sliced), truncated)
+            }
+            None => (None, false),
         };
-
-        let truncated = io_truncated || line_truncated;
 
         let result = NsReadResult {
             ok: true,
@@ -184,7 +211,7 @@ impl super::Tool for NsRead {
             byte_len,
             start_line,
             end_line,
-            truncated,
+            truncated: io_truncated || slice_truncated,
             content,
         };
 
@@ -198,6 +225,8 @@ impl super::Tool for NsRead {
     }
 }
 
+/// Convert optional 1-based start/end lines into a UTF-8 safe slice, returning whether the slice
+/// was truncated relative to the original IoManager response.
 fn slice_content_lines(
     content: String,
     start_line: Option<u32>,
@@ -207,81 +236,66 @@ fn slice_content_lines(
         return (content, false);
     }
 
-    let start = start_line.unwrap_or(1);
-    let end = end_line.unwrap_or(u32::MAX);
     let total_len = content.len();
+    let (start_byte, end_byte, truncated) = line_byte_window(&content, start_line, end_line);
 
-    let start_byte = byte_offset_for_line(&content, start).min(total_len);
-    let end_byte = if end == u32::MAX {
-        total_len
-    } else {
-        byte_offset_for_line(&content, end.saturating_add(1)).min(total_len)
-    };
-
-    let slice = if start_byte >= end_byte {
-        String::new()
-    } else {
-        content[start_byte..end_byte].to_string()
-    };
-
-    let line_range_applied = start_line.is_some() || end_line.is_some();
-    let truncated = line_range_applied && (start_byte > 0 || end_byte < total_len);
-
-    (slice, truncated)
-}
-
-fn byte_offset_for_line(content: &str, target_line: u32) -> usize {
-    if target_line <= 1 {
-        return 0;
+    if start_byte >= end_byte || start_byte >= total_len {
+        return (String::new(), truncated);
     }
 
-    let mut current_line = 1;
-    for (idx, ch) in content.char_indices() {
-        if ch == '\n' {
-            current_line += 1;
-            if current_line == target_line {
-                return idx + 1;
-            }
-        }
-    }
-    content.len()
+    let end_clamped = end_byte.min(total_len);
+    (content[start_byte..end_clamped].to_string(), truncated)
 }
 
-fn slice_content_lines(
-    content: String,
+/// Compute byte offsets for the requested line window, noting truncation when the requested lines
+/// exceed available content.
+fn line_byte_window(
+    content: &str,
     start_line: Option<u32>,
     end_line: Option<u32>,
-) -> (String, bool) {
-    if start_line.is_none() && end_line.is_none() {
-        return (content, false);
+) -> (usize, usize, bool) {
+    let total_len = content.len();
+    let mut truncated = false;
+
+    let start_line_num = start_line.unwrap_or(1).max(1);
+    let (start_raw, start_missing) = byte_offset_for_line(content, start_line_num);
+    let start_byte = start_raw.min(total_len);
+    if let Some(line) = start_line {
+        if line > 1 && start_byte > 0 {
+            truncated = true;
+        }
+        if start_missing {
+            truncated = true;
+        }
     }
 
-    let start = start_line.unwrap_or(1);
-    let end = end_line.unwrap_or(u32::MAX);
-    let total_len = content.len();
-
-    let start_byte = byte_offset_for_line(&content, start).min(total_len);
-    let end_byte = if end == u32::MAX {
-        total_len
-    } else {
-        byte_offset_for_line(&content, end.saturating_add(1)).min(total_len)
+    let (end_raw, end_missing) = match end_line {
+        Some(end_line_num) => {
+            let (idx, missing) = byte_offset_for_line(content, end_line_num.saturating_add(1));
+            (idx, missing)
+        }
+        None => (total_len, false),
     };
+    let end_byte_raw = end_raw;
+    let end_byte = end_byte_raw.min(total_len).max(start_byte);
 
-    let slice = if start_byte >= end_byte {
-        String::new()
-    } else {
-        content[start_byte..end_byte].to_string()
-    };
+    if end_line.is_some() {
+        if end_byte_raw < total_len {
+            truncated = true;
+        }
+        if end_missing {
+            truncated = true;
+        }
+    }
 
-    let line_range_applied = start_line.is_some() || end_line.is_some();
-    let truncated = line_range_applied && (start_byte > 0 || end_byte < total_len);
-
-    (slice, truncated)
+    (start_byte, end_byte, truncated)
 }
 
-fn byte_offset_for_line(content: &str, target_line: u32) -> usize {
+/// Map a 1-based line number to a byte offset, returning whether the requested line was missing so
+/// callers can detect truncation conditions.
+fn byte_offset_for_line(content: &str, target_line: u32) -> (usize, bool) {
     if target_line <= 1 {
-        return 0;
+        return (0, false);
     }
 
     let mut current_line = 1;
@@ -289,11 +303,11 @@ fn byte_offset_for_line(content: &str, target_line: u32) -> usize {
         if ch == '\n' {
             current_line += 1;
             if current_line == target_line {
-                return idx + 1;
+                return (idx + 1, false);
             }
         }
     }
-    content.len()
+    (content.len(), true)
 }
 
 #[cfg(test)]
@@ -336,5 +350,35 @@ mod tests {
         assert_eq!(owned.end_line, Some(20));
         assert_eq!(owned.max_bytes, Some(1024));
         assert_eq!(owned.tracking_hash.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn slice_content_lines_returns_full_when_no_range() {
+        let input = "line1\nline2\nline3\n".to_string();
+        let (out, truncated) = slice_content_lines(input.clone(), None, None);
+        assert_eq!(out, input);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn slice_content_lines_honors_start_and_end() {
+        let input = "a\nb\nc\nd\n".to_string();
+        let (out, truncated) = slice_content_lines(input, Some(2), Some(3));
+        assert_eq!(out, "b\nc\n");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn slice_content_lines_handles_start_beyond_len() {
+        let input = "only one\n".to_string();
+        let (out, truncated) = slice_content_lines(input, Some(5), None);
+        assert!(out.is_empty());
+        assert!(truncated);
+    }
+
+    #[test]
+    fn byte_offset_for_line_first_line() {
+        let content = "first\nsecond";
+        assert_eq!(byte_offset_for_line(content, 1), (0, false));
     }
 }

@@ -85,7 +85,10 @@ pub async fn process_with_rag(
         let budget = &state.budget;
         let top_k = TOP_K;
         let retrieval_strategy = RETRIEVAL_STRATEGY.deref();
-        match rag.get_context(&user_msg, top_k, budget, retrieval_strategy).await {
+        match rag
+            .get_context(&user_msg, top_k, budget, retrieval_strategy)
+            .await
+        {
             Ok(rag_ctx) => {
                 let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
                 event_bus.send(AppEvent::Llm(augmented_prompt));
@@ -123,10 +126,12 @@ pub async fn process_with_rag(
     ));
     formatted.extend(convo_only.into_iter());
 
-    event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
-        parent_id: msg_id,
-        formatted_prompt: formatted,
-    })));
+    event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(
+        ChatEvt::PromptConstructed {
+            parent_id: msg_id,
+            formatted_prompt: formatted,
+        },
+    )));
 }
 
 /// Reformats the different kinds (in this order) os messages from:

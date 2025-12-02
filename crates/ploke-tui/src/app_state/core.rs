@@ -6,9 +6,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::llm::LLMParameters;
-use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
-use crate::llm::{ModelId, ModelKey};
 use crate::llm::registry::user_prefs::RegistryPrefs;
+use crate::llm::{ModelId, ModelKey};
+use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
@@ -141,18 +141,18 @@ pub struct PatchApplyOptions {
 impl Default for PatchApplyOptions {
     fn default() -> Self {
         let base = mpatch::ApplyOptions::default();
-        Self { 
-            dry_run: base.dry_run, 
-            fuzz_factor: base.fuzz_factor
+        Self {
+            dry_run: base.dry_run,
+            fuzz_factor: base.fuzz_factor,
         }
     }
 }
 
 impl From<PatchApplyOptions> for mpatch::ApplyOptions {
     fn from(value: PatchApplyOptions) -> Self {
-        Self { 
-            dry_run: value.dry_run, 
-            fuzz_factor: value.fuzz_factor
+        Self {
+            dry_run: value.dry_run,
+            fuzz_factor: value.fuzz_factor,
         }
     }
 }
@@ -296,12 +296,12 @@ impl AppState {
             indexing_control: Arc::new(Mutex::new(None)),
             db,
             embedder,
-        io_handle,
-        proposals: RwLock::new(HashMap::new()),
-        create_proposals: RwLock::new(HashMap::new()),
-        rag: Some(rag),
-        budget,
-    }
+            io_handle,
+            proposals: RwLock::new(HashMap::new()),
+            create_proposals: RwLock::new(HashMap::new()),
+            rag: Some(rag),
+            budget,
+        }
     }
 }
 
@@ -313,6 +313,9 @@ pub struct SystemStatus {
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
-        Self { crate_focus, no_workspace_tip_shown: false }
+        Self {
+            crate_focus,
+            no_workspace_tip_shown: false,
+        }
     }
 }

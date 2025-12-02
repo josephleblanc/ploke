@@ -5,12 +5,12 @@ use std::sync::Arc;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::llm::Quant;
+use crate::llm::SupportedParameters;
+use crate::llm::router_only::openrouter::providers::{ProviderName, ProviderSlug};
 use crate::llm::types::model_types::Architecture;
 use crate::llm::types::newtypes::{EndpointTag, ModelName};
-use crate::llm::Quant;
 use crate::llm::*;
-use crate::llm::router_only::openrouter::providers::{ProviderName, ProviderSlug};
-use crate::llm::SupportedParameters;
 use crate::tools::{FunctionMarker, ToolDefinition};
 use crate::utils::se_de::string_or_f64;
 use crate::utils::se_de::string_to_f64_opt_zero;
@@ -315,8 +315,8 @@ pub(crate) struct ToolChoiceFunction {
 mod tests {
     use crate::llm::{
         SupportedParameters,
+        router_only::{Router, openrouter::OpenRouter, openrouter::OpenRouterModelVariant},
         {InstructType, Modality, Tokenizer},
-        router_only::{openrouter::OpenRouter, Router, openrouter::OpenRouterModelVariant},
     };
 
     use super::*;
@@ -448,7 +448,10 @@ mod tests {
 
         let parsed: EndpointsResponse =
             serde_json::from_value(example_json).expect("deserialize example JSON");
-        assert_eq!(parsed.data.id.to_string().as_str(), "deepseek/deepseek-chat-v3.1");
+        assert_eq!(
+            parsed.data.id.to_string().as_str(),
+            "deepseek/deepseek-chat-v3.1"
+        );
         assert_eq!(parsed.data.endpoints.len(), 1);
         let ep = &parsed.data.endpoints[0];
 

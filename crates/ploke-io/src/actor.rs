@@ -597,10 +597,10 @@ impl IoManager {
                     req.idx,
                     Err(IoError::ContentMismatch {
                         path: file_path.clone(),
-                        name: req.request.name.clone(),
-                        id: req.request.id,
-                        file_tracking_hash: req.request.file_tracking_hash.0,
+                        name: Some(req.request.name.clone()),
+                        id: Some(req.request.id),
                         namespace,
+                        file_tracking_hash: req.request.file_tracking_hash.0,
                     }
                     .into()),
                 ));

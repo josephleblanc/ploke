@@ -126,7 +126,10 @@ impl super::Tool for GatCodeEdit {
     }
 }
 
-pub async fn print_code_edit_results(ctx: &Ctx, request_id: Uuid) -> Result<ToolResult, ploke_error::Error> {
+pub async fn print_code_edit_results(
+    ctx: &Ctx,
+    request_id: Uuid,
+) -> Result<ToolResult, ploke_error::Error> {
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
         let crate_root = { ctx.state.system.read().await.crate_focus.clone() };

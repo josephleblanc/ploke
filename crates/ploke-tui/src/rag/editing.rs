@@ -104,7 +104,8 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                 let state = Arc::clone(state);
                 let event_bus = Arc::clone(event_bus);
                 async move {
-                    crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+                    crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx)
+                        .await;
                     // We don't need scan_rx result here; fire-and-forget.
                     let _ = scan_rx;
                 }
@@ -197,11 +198,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
     }
 }
 
-pub async fn approve_creations(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-) {
+pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
@@ -308,7 +305,9 @@ pub async fn approve_creations(
         let event_bus = Arc::clone(event_bus);
         async move {
             crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
-            let _ = scan_rx.await.inspect_err(|e| tracing::error!(scan_error = ?e));
+            let _ = scan_rx
+                .await
+                .inspect_err(|e| tracing::error!(scan_error = ?e));
         }
     });
     chat::add_msg_immediate(
@@ -321,11 +320,7 @@ pub async fn approve_creations(
     .await;
 }
 
-pub async fn deny_creations(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-) {
+pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
@@ -344,7 +339,9 @@ pub async fn deny_creations(
     drop(reg);
 
     match proposal.status {
-        EditProposalStatus::Pending | EditProposalStatus::Approved | EditProposalStatus::Failed(_) => {
+        EditProposalStatus::Pending
+        | EditProposalStatus::Approved
+        | EditProposalStatus::Failed(_) => {
             proposal.status = EditProposalStatus::Denied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();

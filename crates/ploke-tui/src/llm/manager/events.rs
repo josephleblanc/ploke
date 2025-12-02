@@ -80,9 +80,7 @@ pub(crate) mod models {
         /// A request to the `/models` endpoint for a router, which should return a list of models
         /// that contain the model identifier in the form `{author}/{model}:{variant}` where
         /// `:{variant}` is optional.
-        Request {
-            router: RouterVariants,
-        },
+        Request { router: RouterVariants },
         /// Response with the full returned values for the models.
         Response {
             /// The information on all models, can be used to update the cached model info and/or
@@ -106,8 +104,8 @@ pub(crate) mod models {
 pub(crate) enum ChatEvt {
     /// Request to generate content from an LLM
     Request {
-        request_msg_id: Uuid,          // Unique tracking ID
-        parent_id: Uuid,           // Message this responds to
+        request_msg_id: Uuid, // Unique tracking ID
+        parent_id: Uuid,      // Message this responds to
     },
 
     /// Successful LLM response
@@ -186,7 +184,6 @@ pub enum ToolEvent {
         error: String,
     },
 }
-
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct UsageMetrics {
