@@ -1,8 +1,8 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops::Deref as _, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::tools::ToolResult;
+use crate::{rag::tools::apply_ns_code_edit_tool, tools::ToolResult};
 
 /// Type for non-semantic file patching
 pub struct NsPatch;
@@ -107,8 +107,8 @@ pub struct ApplyNsPatchResult {
 //  - [ ] add tests
 //      - [ ]  verify that NS_PATCH_PARAMETERS serializes into Value correctly.
 
+use super::{ ToolName, ToolDescr };
 impl super::Tool for NsPatch {
-    use super::{ ToolName, ToolDescr };
 
     type Output = ApplyNsPatchResult;
     type OwnedParams = NsPatchParamsOwned;
@@ -144,17 +144,16 @@ impl super::Tool for NsPatch {
             patches: params
                 .patches
                 .iter()
-                .cloned()
                 .map(|p| NsPatchOwned {
-                    file: p.file,
-                    diff: p.diff,
-                    reasoning: p.diff,
+                    file: p.file.clone().into_owned(),
+                    diff: p.diff.clone().into_owned(),
+                    reasoning: p.diff.clone().into_owned(),
                 })
                 .collect(),
         }
     }
 
-    fn execute<'de, T>(
+    async fn execute<'de>(
         params: Self::Params<'de>,
         ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
@@ -169,9 +168,9 @@ impl super::Tool for NsPatch {
                 .iter()
                 .cloned()
                 .map(|p| Edit::Patch {
-                    file: p.file,
-                    diff: p.diff,
-                    reasoning: p.diff,
+                    file: p.file.clone().into_owned(),
+                    diff: p.diff.clone().into_owned(),
+                    reasoning: p.diff.clone().into_owned(),
                 })
                 .collect(),
         };
@@ -187,8 +186,12 @@ impl super::Tool for NsPatch {
             typed_req,
             call_id,
         };
-        todo!("This is where we would handle the result of trying to stage the proposed edit.")
         // build result from proposal registry
-        let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
+        let proposal_opt = { 
+            ctx.state.proposals.read().await
+                .get(&request_id).cloned() };
+        todo!("This is where we would handle the result of trying to stage the proposed edit.");
+        apply_ns_code_edit_tool(params_env);
+        crate::tools::code_edit::print_code_edit_results(&ctx, request_id).await
     }
 }

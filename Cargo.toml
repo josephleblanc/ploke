@@ -97,3 +97,6 @@ fixtures_dir = "tests/fixtures"
 debug = false
 lto = "thin"
 codegen-units = 1
+
+[patch.crates-io]
+graph_builder = { git = "https://github.com/josephleblanc/graph", package = "graph_builder" }

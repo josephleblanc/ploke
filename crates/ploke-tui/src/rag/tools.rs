@@ -8,8 +8,9 @@ crate, when we will have a real namespace uuid. */
 use ploke_core::rag_types::{
     ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
 };
-use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
+use ploke_core::{ArcStr, FileData, PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_db::NodeType;
+use ploke_io::read::{FileHashData, read_and_compute_hash};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 
@@ -131,8 +132,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
 
-    for e in typed_req.edits.iter() {
-        match e {
+    for edit in typed_req.edits.iter() {
+        match edit {
             Edit::Splice {
                 file_path,
                 expected_file_hash,
@@ -188,6 +189,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     tool_call_params.tool_call_failed(err);
                     return;
                 }
+                // TODO: Clean up the next 20 lines or so
                 let p = PathBuf::from(file);
                 let file_was_relative = !p.is_absolute();
                 let abs_path = if let Some(root) = crate_root.as_ref() {
@@ -332,6 +334,9 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 };
                 files_set.insert(ed.file_path.clone());
                 edits.push(ws);
+            }
+            Edit::Patch { .. } => {
+                tracing::trace!("Patch found in apply_code_edit_tool call");
             }
         }
     }
@@ -546,5 +551,137 @@ Deny:     edit deny {request_id}{2}"#,
         tokio::spawn(async move {
             approve_edits(&state2, &event_bus2, request_id).await;
         });
+    }
+}
+
+pub async fn apply_ns_code_edit_tool(
+    tool_call_params: ToolCallParams,
+) {
+    let ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name,
+        typed_req,
+        call_id,
+    } = tool_call_params.clone();
+    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let editing_cfg = { state.config.read().await.editing.clone() };
+    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
+    let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let count = typed_req.edits.len();
+    let mut patches = typed_req.edits.into_iter().filter_map(|ed| match ed {
+        Edit::Patch {
+            file,
+            diff,
+            reasoning,
+        } => Some((file, diff, reasoning)),
+        _ => None,
+    });
+    if count > 1 {
+        tracing::error!("found multiple patches in apply_ns_code_edit_tool\ncount: {count}");
+    }
+    if let Some(( file, diff, reasoning )) = patches.next() {
+        use mpatch::ApplyOptions;
+        let state_cfg = state.config.read().await;
+        let apply_options = ApplyOptions::from(state_cfg.editing.patch_cfg);
+
+        let p = PathBuf::from(file);
+        let file_was_relative = !p.is_absolute();
+        let abs_path = if let Some(root) = crate_root.as_ref() {
+            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
+                Ok(pb) => pb,
+                Err(err) => {
+                    let msg = format!("invalid path: {}", err);
+                    tool_call_params.tool_call_failed(msg);
+                    return;
+                }
+            }
+        } else if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(p)
+        };
+
+        use mpatch::{apply_patches_to_dir, parse_auto};
+        let patches = match parse_auto(&diff) {
+            Ok(p) => p,
+            Err(e) => {
+                tool_call_params.tool_call_failed(e.to_string());
+                return;
+            }
+        };
+
+        // Pick a namespace. If you really don’t have one yet, re-use your placeholder.
+        let namespace = PROJECT_NAMESPACE_UUID;
+
+        // IMPORTANT: you need a way to read the file *without* needing a pre-known tracking hash.
+        // If io_handle lacks this today, add one small helper (recommended) OR use tokio::fs here.
+        let file_data_result = read_and_compute_hash(&abs_path, namespace)
+            .await
+            .map_err(|e| {
+                let msg = format!("failed to read {}: {}", abs_path.display(), e);
+                tool_call_params.tool_call_failed(msg.clone());
+                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
+            });
+        let file_data = match file_data_result {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let FileHashData { hash, contents } = file_data;
+
+        let patch_result = mpatch::parse_single_patch(&diff).map_err(|e| {
+            let msg = format!("invalid unified diff: {}", e);
+            tool_call_params.tool_call_failed(msg.clone());
+            ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
+        });
+        let patch = match patch_result {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
+            String::new(),
+            |mut acc, s| {
+                acc.push_str(&s);
+                acc
+            },
+        );
+        let apply_patch_result =
+            mpatch::apply_patch_to_content(&patch, Some(&contents), &apply_options);
+        let per_file = BeforeAfter {
+            file_path: abs_path,
+            before: contents,
+            after: apply_patch_result.new_content,
+        };
+        let files = Vec::new();
+        let mut reg = state.proposals.write().await;
+        reg.insert(
+            request_id,
+            EditProposal {
+                request_id,
+                parent_id,
+                call_id: call_id.clone(),
+                proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                edits,
+                files: files.clone(),
+                preview: if matches!(
+                    editing_cfg.preview_mode,
+                    crate::app_state::core::PreviewMode::Diff
+                ) {
+                    crate::app_state::core::DiffPreview::UnifiedDiff {
+                        text: unified_diff.clone(),
+                    }
+                } else {
+                    crate::app_state::core::DiffPreview::CodeBlocks {
+                        per_file: vec![per_file.clone()],
+                    }
+                },
+                status: EditProposalStatus::Pending,
+            },
+        );
     }
 }

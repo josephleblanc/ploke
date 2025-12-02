@@ -129,6 +129,32 @@ pub struct EditingConfig {
     pub preview_mode: PreviewMode,
     pub auto_confirm_edits: bool,
     pub max_preview_lines: usize,
+    pub patch_cfg: PatchApplyOptions,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PatchApplyOptions {
+    pub dry_run: bool,
+    pub fuzz_factor: f32,
+}
+
+impl Default for PatchApplyOptions {
+    fn default() -> Self {
+        let base = mpatch::ApplyOptions::default();
+        Self { 
+            dry_run: base.dry_run, 
+            fuzz_factor: base.fuzz_factor
+        }
+    }
+}
+
+impl From<PatchApplyOptions> for mpatch::ApplyOptions {
+    fn from(value: PatchApplyOptions) -> Self {
+        Self { 
+            dry_run: value.dry_run, 
+            fuzz_factor: value.fuzz_factor
+        }
+    }
 }
 
 impl Default for EditingConfig {
@@ -137,6 +163,7 @@ impl Default for EditingConfig {
             preview_mode: PreviewMode::CodeBlock,
             auto_confirm_edits: false,
             max_preview_lines: 300,
+            patch_cfg: Default::default(),
         }
     }
 }
@@ -171,6 +198,7 @@ impl From<UserConfig> for RuntimeConfig {
             preview_mode: PreviewMode::CodeBlock,
             auto_confirm_edits: uc.editing.auto_confirm_edits,
             max_preview_lines: 300,
+            ..Default::default()
         };
 
         RuntimeConfig {

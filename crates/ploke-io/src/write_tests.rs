@@ -7,7 +7,7 @@ use std::path::Path;
 use tempfile::tempdir;
 use uuid::Uuid;
 
-fn compute_hash(content: &str, file_path: &Path, namespace: Uuid) -> TrackingHash {
+pub(crate) fn compute_hash(content: &str, file_path: &Path, namespace: Uuid) -> TrackingHash {
     let file = syn::parse_file(content).expect("Failed to parse content");
     let tokens = file.into_token_stream();
     TrackingHash::generate(namespace, file_path, &tokens)

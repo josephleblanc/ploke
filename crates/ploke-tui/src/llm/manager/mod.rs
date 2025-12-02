@@ -4,6 +4,7 @@ pub(crate) mod events;
 mod session;
 
 use crate::tools::create_file::CreateFile;
+use crate::tools::ns_patch::NsPatch;
 use crate::SystemEvent;
 use crate::app_state::handlers::chat::add_msg_immediate;
 use crate::error::ResultExt as _;
@@ -470,6 +471,7 @@ async fn prepare_and_run_llm_call(
         RequestCodeContextGat::tool_def(),
         GatCodeEdit::tool_def(),
         CreateFile::tool_def(),
+        NsPatch::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)

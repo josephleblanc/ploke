@@ -2109,8 +2109,7 @@ dependencies = [
 [[package]]
 name = "graph_builder"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24f006b0c4bba033c1a7fc7644612c6ec53894c353956d94820a28fc6e8a571f"
+source = "git+https://github.com/josephleblanc/graph#dc834b1786ca09690ae8f6c669fa28a22be35609"
 dependencies = [
  "atoi",
  "atomic 0.5.3",
