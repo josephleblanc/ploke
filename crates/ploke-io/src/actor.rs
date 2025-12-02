@@ -9,6 +9,7 @@ use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, Wr
 use tracing::error;
 
 use super::*;
+use std::io::ErrorKind;
 
 pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
@@ -52,6 +53,10 @@ pub enum IoRequest {
         expected_hash: TrackingHash,
         namespace: uuid::Uuid,
         responder: oneshot::Sender<Result<String, PlokeError>>,
+    },
+    ReadFile {
+        req: ReadFileRequest,
+        responder: oneshot::Sender<Result<ReadFileResponse, PlokeError>>,
     },
     CreateFile {
         request: CreateFileData,
@@ -225,8 +230,8 @@ impl IoManager {
                         if actual != expected_hash {
                             return Err(IoError::ContentMismatch {
                                 path: path.clone(),
-                                name: String::from("<full_file>"),
-                                id: uuid::Uuid::nil(),
+                                name: None,
+                                id: None,
                                 file_tracking_hash: expected_hash.0,
                                 namespace,
                             }
@@ -237,6 +242,58 @@ impl IoManager {
                     .await;
 
                     let _ = responder.send(res);
+                });
+            }
+            IoRequest::ReadFile { req, responder } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                tokio::spawn(async move {
+                    let ReadFileRequest {
+                        file_path,
+                        range,
+                        max_bytes,
+                        strategy,
+                    } = req;
+
+                    // TODO: implement server-side slicing; suppress unused warning for now.
+                    let _ = range;
+
+                    let normalized_path = if let Some(roots) = roots.as_ref() {
+                        let norm = if let Some(policy) = symlink_policy {
+                            normalize_against_roots_with_policy(&file_path, roots, policy)
+                        } else {
+                            normalize_against_roots(&file_path, roots)
+                        };
+                        match norm {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let _ = responder.send(Err(e.into()));
+                                return;
+                            }
+                        }
+                    } else {
+                        file_path
+                    };
+
+                    let result = match strategy {
+                        ReadStrategy::Plain => {
+                            Self::read_plain_file(normalized_path.clone(), max_bytes).await
+                        }
+                        ReadStrategy::Verified {
+                            expected_hash,
+                            namespace,
+                        } => {
+                            Self::read_verified_file(
+                                normalized_path.clone(),
+                                max_bytes,
+                                expected_hash,
+                                namespace,
+                            )
+                            .await
+                        }
+                    };
+
+                    let _ = responder.send(result);
                 });
             }
             IoRequest::CreateFile { request, responder } => {
@@ -261,6 +318,92 @@ impl IoManager {
                 });
             }
         }
+    }
+
+    async fn read_plain_file(
+        path: PathBuf,
+        max_bytes: Option<usize>,
+    ) -> Result<ReadFileResponse, PlokeError> {
+        match read_file_to_string_abs(&path).await {
+            Ok(content) => {
+                let byte_len = content.len() as u64;
+                let (content, truncated) = Self::truncate_to_limit(content, max_bytes);
+                Ok(ReadFileResponse {
+                    exists: true,
+                    file_path: path,
+                    byte_len: Some(byte_len),
+                    content: Some(content),
+                    truncated,
+                })
+            }
+            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+                Ok(ReadFileResponse {
+                    exists: false,
+                    file_path: path,
+                    byte_len: None,
+                    content: None,
+                    truncated: false,
+                })
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn read_verified_file(
+        path: PathBuf,
+        max_bytes: Option<usize>,
+        expected_hash: TrackingHash,
+        namespace: uuid::Uuid,
+    ) -> Result<ReadFileResponse, PlokeError> {
+        match read_file_to_string_abs(&path).await {
+            Ok(content) => {
+                let tokens = parse_tokens_from_str(&content, &path)?;
+                let actual = TrackingHash::generate(namespace, &path, &tokens);
+                if actual != expected_hash {
+                    return Err(IoError::ContentMismatch {
+                        path: path.clone(),
+                        name: None,
+                        id: None,
+                        file_tracking_hash: expected_hash.0,
+                        namespace,
+                    }
+                    .into());
+                }
+                let byte_len = content.len() as u64;
+                let (content, truncated) = Self::truncate_to_limit(content, max_bytes);
+                Ok(ReadFileResponse {
+                    exists: true,
+                    file_path: path,
+                    byte_len: Some(byte_len),
+                    content: Some(content),
+                    truncated,
+                })
+            }
+            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+                Ok(ReadFileResponse {
+                    exists: false,
+                    file_path: path,
+                    byte_len: None,
+                    content: None,
+                    truncated: false,
+                })
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn truncate_to_limit(mut content: String, max_bytes: Option<usize>) -> (String, bool) {
+        if let Some(limit) = max_bytes {
+            if limit > 0 && content.len() > limit {
+                let mut cut = limit.min(content.len());
+                while cut > 0 && !content.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                content.truncate(cut);
+                return (content, true);
+            }
+        }
+        (content, false)
     }
 
     /// Groups requests by file path and processes each file concurrently.

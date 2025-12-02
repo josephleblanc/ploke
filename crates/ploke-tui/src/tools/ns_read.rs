@@ -1,9 +1,10 @@
-use std::{borrow::Cow, ops::Deref as _};
+use std::{borrow::Cow, ops::Deref as _, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::{ToolDescr, ToolName};
-use crate::tools::ToolResult;
+use crate::{tools::ToolResult, utils::path_scoping};
+use ploke_io::{ReadFileRequest, ReadFileResponse, ReadStrategy};
 
 const FILE_DESC: &str = "Absolute or workspace-relative file path.";
 const START_LINE_DESC: &str = "Optional 1-based line from which to start reading.";
@@ -105,15 +106,194 @@ impl super::Tool for NsRead {
     }
 
     async fn execute<'de>(
-        _params: Self::Params<'de>,
-        _ctx: super::Ctx,
+        params: Self::Params<'de>,
+        ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
-        Err(ploke_error::Error::Internal(
-            ploke_error::InternalError::NotImplemented(
-                "NsRead::execute pending implementation".to_string(),
-            ),
-        ))
+        use ploke_error::{DomainError, InternalError};
+
+        let start_line = params.start_line;
+        let end_line = params.end_line;
+        if let (Some(start), Some(end)) = (start_line, end_line) {
+            if end < start {
+                return Err(ploke_error::Error::Domain(DomainError::Ui {
+                    message: "end_line must be greater than or equal to start_line".to_string(),
+                }));
+            }
+        }
+
+        let requested_path = PathBuf::from(params.file.as_ref());
+        let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
+        let abs_path = if let Some(root) = crate_root.as_ref() {
+            path_scoping::resolve_in_crate_root(&requested_path, root).map_err(|err| {
+                ploke_error::Error::Domain(DomainError::Io {
+                    message: format!("invalid path: {err}"),
+                })
+            })?
+        } else if requested_path.is_absolute() {
+            requested_path.clone()
+        } else {
+            std::env::current_dir()
+                .map_err(|err| {
+                    ploke_error::Error::Domain(DomainError::Io {
+                        message: format!("failed to resolve current dir: {err}"),
+                    })
+                })?
+                .join(&requested_path)
+        };
+
+        let max_bytes = params.max_bytes.map(|v| v as usize);
+        let request = ReadFileRequest {
+            file_path: abs_path,
+            range: None,
+            max_bytes,
+            strategy: ReadStrategy::Plain,
+        };
+
+        let io_response = ctx
+            .state
+            .io_handle
+            .read_file(request)
+            .await
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "io channel error: {err}"
+                )))
+            })?;
+
+        let ReadFileResponse {
+            exists,
+            file_path,
+            byte_len,
+            content,
+            truncated: io_truncated,
+        } = io_response?;
+
+        let (content, line_truncated) = if let Some(content) = content {
+            let (sliced, truncated) = slice_content_lines(content, start_line, end_line);
+            (Some(sliced), truncated)
+        } else {
+            (None, false)
+        };
+
+        let truncated = io_truncated || line_truncated;
+
+        let result = NsReadResult {
+            ok: true,
+            file_path: file_path.display().to_string(),
+            exists,
+            byte_len,
+            start_line,
+            end_line,
+            truncated,
+            content,
+        };
+
+        let content = serde_json::to_string(&result).map_err(|err| {
+            ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                "failed to serialize NsReadResult: {err}"
+            )))
+        })?;
+
+        Ok(ToolResult { content })
     }
+}
+
+fn slice_content_lines(
+    content: String,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+) -> (String, bool) {
+    if start_line.is_none() && end_line.is_none() {
+        return (content, false);
+    }
+
+    let start = start_line.unwrap_or(1);
+    let end = end_line.unwrap_or(u32::MAX);
+    let total_len = content.len();
+
+    let start_byte = byte_offset_for_line(&content, start).min(total_len);
+    let end_byte = if end == u32::MAX {
+        total_len
+    } else {
+        byte_offset_for_line(&content, end.saturating_add(1)).min(total_len)
+    };
+
+    let slice = if start_byte >= end_byte {
+        String::new()
+    } else {
+        content[start_byte..end_byte].to_string()
+    };
+
+    let line_range_applied = start_line.is_some() || end_line.is_some();
+    let truncated = line_range_applied && (start_byte > 0 || end_byte < total_len);
+
+    (slice, truncated)
+}
+
+fn byte_offset_for_line(content: &str, target_line: u32) -> usize {
+    if target_line <= 1 {
+        return 0;
+    }
+
+    let mut current_line = 1;
+    for (idx, ch) in content.char_indices() {
+        if ch == '\n' {
+            current_line += 1;
+            if current_line == target_line {
+                return idx + 1;
+            }
+        }
+    }
+    content.len()
+}
+
+fn slice_content_lines(
+    content: String,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+) -> (String, bool) {
+    if start_line.is_none() && end_line.is_none() {
+        return (content, false);
+    }
+
+    let start = start_line.unwrap_or(1);
+    let end = end_line.unwrap_or(u32::MAX);
+    let total_len = content.len();
+
+    let start_byte = byte_offset_for_line(&content, start).min(total_len);
+    let end_byte = if end == u32::MAX {
+        total_len
+    } else {
+        byte_offset_for_line(&content, end.saturating_add(1)).min(total_len)
+    };
+
+    let slice = if start_byte >= end_byte {
+        String::new()
+    } else {
+        content[start_byte..end_byte].to_string()
+    };
+
+    let line_range_applied = start_line.is_some() || end_line.is_some();
+    let truncated = line_range_applied && (start_byte > 0 || end_byte < total_len);
+
+    (slice, truncated)
+}
+
+fn byte_offset_for_line(content: &str, target_line: u32) -> usize {
+    if target_line <= 1 {
+        return 0;
+    }
+
+    let mut current_line = 1;
+    for (idx, ch) in content.char_indices() {
+        if ch == '\n' {
+            current_line += 1;
+            if current_line == target_line {
+                return idx + 1;
+            }
+        }
+    }
+    content.len()
 }
 
 #[cfg(test)]

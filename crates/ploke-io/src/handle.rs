@@ -198,6 +198,23 @@ impl IoManagerHandle {
         response_rx.await.map_err(|_| RecvError::RecvError)
     }
 
+    /// Read a workspace file through the IoManager, enforcing root policy and truncation limits.
+    pub async fn read_file(
+        &self,
+        request: ReadFileRequest,
+    ) -> Result<Result<ReadFileResponse, PlokeError>, errors::RecvError> {
+        let (responder, response_rx) = oneshot::channel();
+        let io_request = IoRequest::ReadFile {
+            req: request,
+            responder,
+        };
+        self.request_sender
+            .send(IoManagerMessage::Request(io_request))
+            .await
+            .map_err(|_| RecvError::SendError)?;
+        response_rx.await.map_err(|_| RecvError::RecvError)
+    }
+
     /// Scan a batch of files for content changes (tracking-hash mismatch).
     ///
     /// Returns `Ok(Ok(Vec<Option<ChangedFileData>>))` on success; the inner vector preserves

@@ -108,8 +108,8 @@ async fn process_one_write(
     if actual_hash != req.expected_file_hash {
         return Err(IoError::ContentMismatch {
             path: file_path.clone(),
-            name: req.name.clone(),
-            id: req.id,
+            name: Some(req.name.clone()),
+            id: Some(req.id),
             file_tracking_hash: req.expected_file_hash.0,
             namespace: req.namespace,
         });

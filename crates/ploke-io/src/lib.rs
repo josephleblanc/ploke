@@ -197,3 +197,36 @@ use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Semaphore};
+use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct ReadFileRequest {
+    pub file_path: PathBuf,
+    pub range: Option<ReadRange>,
+    pub max_bytes: Option<usize>,
+    pub strategy: ReadStrategy,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadRange {
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ReadStrategy {
+    Plain,
+    Verified {
+        expected_hash: TrackingHash,
+        namespace: Uuid,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadFileResponse {
+    pub exists: bool,
+    pub file_path: PathBuf,
+    pub byte_len: Option<u64>,
+    pub content: Option<String>,
+    pub truncated: bool,
+}

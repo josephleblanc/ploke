@@ -16,8 +16,8 @@ pub enum IoError {
 
     #[error("File content changed since indexing: {path}")]
     ContentMismatch {
-        name: String,
-        id: uuid::Uuid,
+        name: Option<String>,
+        id: Option<uuid::Uuid>,
         file_tracking_hash: uuid::Uuid,
         namespace: uuid::Uuid,
         path: PathBuf,
@@ -73,8 +73,8 @@ impl From<IoError> for ploke_error::Error {
                 namespace,
                 path,
             } => ploke_error::Error::Fatal(FatalError::ContentMismatch {
-                name,
-                id,
+                name: name.unwrap_or_else(|| "<unknown>".to_string()),
+                id: id.unwrap_or_else(uuid::Uuid::nil),
                 file_tracking_hash,
                 namespace,
                 path,
