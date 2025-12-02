@@ -9,7 +9,7 @@ pub struct NsPatch;
 
 // Simple description of the diff format, since the mpath crate will handle the parsing for us.
 //
-// NOTE: 
+// NOTE:
 // If we run into issues with the kind of input we are getting from LLMs, this is one place we
 // could try to improve/iterate.
 //
@@ -33,9 +33,9 @@ lazy_static::lazy_static! {
                     "properties": {
                         "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
                         "diff": { "type": "string", "description": DIFF_DESCR },
-                        "reasoning": { 
-                            "type": "string", 
-                            "description": "One-sentence description of why these changes are being made" 
+                        "reasoning": {
+                            "type": "string",
+                            "description": "One-sentence description of why these changes are being made"
                         },
                     },
                     "required": ["file", "diff", "reasoning"],
@@ -103,13 +103,12 @@ pub struct ApplyNsPatchResult {
     pub auto_confirmed: bool,
 }
 
-// TODO: 
+// TODO:
 //  - [ ] add tests
 //      - [ ]  verify that NS_PATCH_PARAMETERS serializes into Value correctly.
 
-use super::{ ToolName, ToolDescr };
+use super::{ToolDescr, ToolName};
 impl super::Tool for NsPatch {
-
     type Output = ApplyNsPatchResult;
     type OwnedParams = NsPatchParamsOwned;
     type Params<'de> = NsPatchParams<'de>;
@@ -133,7 +132,7 @@ impl super::Tool for NsPatch {
         Self
     }
 
-    // TODO:refactor 
+    // TODO:refactor
     // consider adding an enum to the `Edit` type in ploke/crates/ploke-tui/src/rag/utils.rs
     // instead of using NsPatchOwned, depending on how we want to handle the edit
     // proposal/application, adding a new variant to `Edit` might make it easier to make this new
@@ -147,7 +146,7 @@ impl super::Tool for NsPatch {
                 .map(|p| NsPatchOwned {
                     file: p.file.clone().into_owned(),
                     diff: p.diff.clone().into_owned(),
-                    reasoning: p.diff.clone().into_owned(),
+                    reasoning: p.reasoning.clone().into_owned(),
                 })
                 .collect(),
         }
@@ -157,9 +156,7 @@ impl super::Tool for NsPatch {
         params: Self::Params<'de>,
         ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
-        use crate::rag::tools::apply_code_edit_tool;
         use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
-
 
         let typed_req = ApplyCodeEditRequest {
             confidence: params.confidence,
@@ -170,13 +167,13 @@ impl super::Tool for NsPatch {
                 .map(|p| Edit::Patch {
                     file: p.file.clone().into_owned(),
                     diff: p.diff.clone().into_owned(),
-                    reasoning: p.diff.clone().into_owned(),
+                    reasoning: p.reasoning.clone().into_owned(),
                 })
                 .collect(),
         };
 
         let request_id = ctx.request_id;
-        let call_id = ctx.call_id;
+        let call_id = ctx.call_id.clone();
         let params_env = ToolCallParams {
             state: Arc::clone(&ctx.state),
             event_bus: Arc::clone(&ctx.event_bus),
@@ -186,12 +183,65 @@ impl super::Tool for NsPatch {
             typed_req,
             call_id,
         };
-        // build result from proposal registry
-        let proposal_opt = { 
-            ctx.state.proposals.read().await
-                .get(&request_id).cloned() };
-        todo!("This is where we would handle the result of trying to stage the proposed edit.");
-        apply_ns_code_edit_tool(params_env);
+        apply_ns_code_edit_tool(params_env).await;
         crate::tools::code_edit::print_code_edit_results(&ctx, request_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::Tool;
+    use serde_json::json;
+    use std::borrow::Cow;
+
+    #[test]
+    fn schema_matches_expected() {
+        let schema = NsPatch::schema();
+        let value = schema.clone();
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "patches": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
+                            "diff": { "type": "string", "description": DIFF_DESCR },
+                            "reasoning": {
+                                "type": "string",
+                                "description": "One-sentence description of why these changes are being made"
+                            }
+                        },
+                        "required": ["file", "diff", "reasoning"],
+                        "additionalProperties": false
+                    }
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Optional confidence indicator for the edit proposal."
+                }
+            },
+            "required": ["patches"],
+        });
+        assert_eq!(expected, value);
+    }
+
+    #[test]
+    fn into_owned_preserves_reasoning() {
+        let params = NsPatchParams {
+            patches: vec![NsPatchBorrowed {
+                file: Cow::Borrowed("src/lib.rs"),
+                diff: Cow::Borrowed("--- a\\n+++ b\\n"),
+                reasoning: Cow::Borrowed("update formatting"),
+            }],
+            confidence: Some(0.9),
+        };
+        let owned = NsPatch::into_owned(&params);
+        assert_eq!(owned.patches.len(), 1);
+        assert_eq!(owned.patches[0].reasoning, "update formatting");
     }
 }

@@ -64,3 +64,23 @@ lazy_static::lazy_static! {
 ```
 
 - ensure tests are added for the json value translation, and that the output contains the expected descriptions.
+
+## C. Register the tool with the runtime
+
+1. Add the new type to `pub mod ...` in `ploke/crates/ploke-tui/src/tools/mod.rs`.
+2. Extend `ToolName` and `ToolDescr` enums with the new entry and description.
+3. Update `process_tool` to deserialize, execute, and emit events for the new tool.
+4. If the tool needs other crates, wire their contexts inside `Tool::build` or `execute`.
+
+## D. Execution + tests
+
+1. Implement `Tool::execute` with the correct ctx wiring before sending work to other crates.
+2. Emit `emit_err` on any deserialization/validation failures.
+3. Add unit tests covering schema, `into_owned`, and at least one execution path (mock dependencies when possible).
+4. Run the relevant `cargo test -p <crate>` targets before submitting changes.
+
+## E. Cross-crate work
+
+- When adding supporting APIs (e.g., new IoManager requests), document the data flow in the same PR.
+- Keep typed responses in `ploke-core` when they are shared between tools.
+- Update any helper docs or diagrams so future tool authors can follow the new pattern.
