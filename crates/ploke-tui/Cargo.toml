@@ -56,7 +56,7 @@ dotenvy = "0.15"
 # file io
 tempfile = "3.8"
 # file io + llm code edits
-mpatch = "1.3"
+mpatch = { workspace = true }
 
 # user-facing error handling
 color-eyre = "0.6"

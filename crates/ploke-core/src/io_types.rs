@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::{fmt::Display, ops::Deref, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::TrackingHash;
+use crate::{file_hash::FileHash, TrackingHash};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingData {

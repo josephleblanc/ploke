@@ -19,11 +19,13 @@ fn create_simple_test_proposal() -> EditProposal {
         call_id: "test-proposal".into(),
         proposed_at_ms: 1234567890,
         edits: vec![],
+        edits_ns: vec![],
         files: vec![std::path::PathBuf::from("test.rs")],
         preview: DiffPreview::UnifiedDiff {
             text: "--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,4 @@\n fn main() {\n+    println!(\"test\");\n }".to_string(),
         },
         status: EditProposalStatus::Pending,
+        is_semantic: true
     }
 }
 
@@ -139,6 +141,7 @@ mod simple_ui_tests {
                     call_id: format!("perf-test-{}", i).into(),
                     proposed_at_ms: 1234567890 + i,
                     edits: vec![],
+                    edits_ns: vec![],
                     files: vec![std::path::PathBuf::from(format!("test_{}.rs", i))],
                     preview: DiffPreview::UnifiedDiff {
                         text: "test diff".to_string(),
@@ -148,6 +151,7 @@ mod simple_ui_tests {
                     } else {
                         EditProposalStatus::Applied
                     },
+                    is_semantic: true,
                 };
                 guard.insert(proposal.request_id, proposal);
             }

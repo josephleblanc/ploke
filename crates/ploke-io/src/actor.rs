@@ -3,7 +3,7 @@ use crate::scan::test_instrumentation;
 use crate::{
     path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
-    write::write_snippets_batch,
+    write::{write_snippets_batch, write_snippets_batch_ns, NsWriteResult},
 };
 use ploke_core::{
     file_hash::{hash_file_blake3_bounded, HashOutcome, LargeFilePolicy},
@@ -51,6 +51,10 @@ pub enum IoRequest {
     WriteSnippetBatch {
         requests: Vec<WriteSnippetData>,
         responder: oneshot::Sender<Vec<Result<WriteResult, PlokeError>>>,
+    },
+    NsWriteSnippetBatch {
+        requests: Vec<NsWriteSnippetData>,
+        responder: oneshot::Sender<Vec<Result<NsWriteResult, PlokeError>>>,
     },
     ReadFullVerified {
         file_path: PathBuf,
@@ -183,9 +187,38 @@ impl IoManager {
                 let symlink_policy = self.symlink_policy;
                 #[cfg(feature = "watcher")]
                 let events_tx = self.events_tx.clone();
+                let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
                 tokio::spawn(async move {
                     let results =
-                        write_snippets_batch(requests.clone(), roots, symlink_policy).await;
+                        write_snippets_batch(requests.clone(), roots, symlink_policy, max_bytes).await;
+                    #[cfg(feature = "watcher")]
+                    if let Some(tx) = events_tx {
+                        for (req, res) in requests.into_iter().zip(results.iter()) {
+                            if res.is_ok() {
+                                let _ = tx.send(crate::watcher::FileChangeEvent {
+                                    path: req.file_path.clone(),
+                                    kind: crate::watcher::FileEventKind::Modified,
+                                    old_path: None,
+                                    origin: None,
+                                });
+                            }
+                        }
+                    }
+                    let _ = responder.send(results);
+                });
+            }
+            IoRequest::NsWriteSnippetBatch {
+                requests,
+                responder,
+            } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                #[cfg(feature = "watcher")]
+                let events_tx = self.events_tx.clone();
+                let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
+                tokio::spawn(async move {
+                    let results =
+                        write_snippets_batch_ns(requests.clone(), roots, symlink_policy, max_bytes).await;
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {
@@ -343,21 +376,7 @@ impl IoManager {
         let max_bytes_hashed = max_bytes
             .map(|m| m as u64)
             .unwrap_or(Self::FILE_BYTES_LIMIT);
-        let hashed_result = match hash_file_blake3_bounded(&path, max_bytes_hashed, policy) {
-            Ok(ho) => match ho {
-                HashOutcome::Hashed { hash, .. } => Ok(hash),
-                _ => Err(IoError::try_from(ho)?),
-            },
-            Err(io_error) => {
-                let kind = io_error.kind();
-                Err(IoError::FileOperation {
-                    operation: "read",
-                    path: path.clone(),
-                    source: Arc::new(io_error),
-                    kind,
-                })
-            }
-        };
+        let hashed_result = read_and_compute_hash(&path, policy, max_bytes_hashed)?;
         let hash = hashed_result?;
         match read_file_to_string_abs(&path).await {
             Ok(content) => {
@@ -855,4 +874,23 @@ impl IoManager {
 
         Self::check_file_hash(normalized_file_data, semaphore).await
     }
+}
+
+pub(crate) fn read_and_compute_hash(path: &PathBuf, policy: LargeFilePolicy, max_bytes_hashed: u64) -> Result<Result<FileHash, IoError>, PlokeError> {
+    let hashed_result = match hash_file_blake3_bounded(path, max_bytes_hashed, policy) {
+        Ok(ho) => match ho {
+            HashOutcome::Hashed { hash, .. } => Ok(hash),
+            _ => Err(IoError::try_from(ho)?),
+        },
+        Err(io_error) => {
+            let kind = io_error.kind();
+            Err(IoError::FileOperation {
+                operation: "read",
+                path: path.clone(),
+                source: Arc::new(io_error),
+                kind,
+            })
+        }
+    };
+    Ok(hashed_result)
 }

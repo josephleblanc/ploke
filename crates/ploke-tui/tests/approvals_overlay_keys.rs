@@ -57,6 +57,7 @@ async fn make_app_with_proposals() -> (
         call_id: ArcStr::from("example_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
+        edits_ns: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
         preview: DiffPreview::UnifiedDiff {
             text: "diff".into(),
@@ -127,6 +128,7 @@ async fn make_app_with_proposals_and_editor(
         call_id: ArcStr::from("example_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
+        edits_ns: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
         preview: DiffPreview::UnifiedDiff {
             text: "diff".into(),

@@ -1,3 +1,4 @@
+use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{ArcStr, TrackingHash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
-use ploke_io::IoManagerHandle;
+use ploke_io::{ IoManagerHandle, NsWriteSnippetData, PatchApplyOptions };
 use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -130,32 +131,10 @@ pub struct EditingConfig {
     pub auto_confirm_edits: bool,
     pub max_preview_lines: usize,
     pub patch_cfg: PatchApplyOptions,
+    pub large_file_policy: LargeFilePolicy
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct PatchApplyOptions {
-    pub dry_run: bool,
-    pub fuzz_factor: f32,
-}
 
-impl Default for PatchApplyOptions {
-    fn default() -> Self {
-        let base = mpatch::ApplyOptions::default();
-        Self {
-            dry_run: base.dry_run,
-            fuzz_factor: base.fuzz_factor,
-        }
-    }
-}
-
-impl From<PatchApplyOptions> for mpatch::ApplyOptions {
-    fn from(value: PatchApplyOptions) -> Self {
-        Self {
-            dry_run: value.dry_run,
-            fuzz_factor: value.fuzz_factor,
-        }
-    }
-}
 
 impl Default for EditingConfig {
     fn default() -> Self {
@@ -163,6 +142,7 @@ impl Default for EditingConfig {
             preview_mode: PreviewMode::CodeBlock,
             auto_confirm_edits: false,
             max_preview_lines: 300,
+            large_file_policy: Default::default(),
             patch_cfg: Default::default(),
         }
     }
@@ -262,8 +242,11 @@ pub struct EditProposal {
     pub proposed_at_ms: i64,
     pub edits: Vec<ploke_core::WriteSnippetData>,
     pub files: Vec<PathBuf>,
+    pub edits_ns: Vec<NsWriteSnippetData>,
     pub preview: DiffPreview,
     pub status: EditProposalStatus,
+    /// Whether or not the proposal is for a semantic edit.
+    pub is_semantic: bool
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -54,9 +54,11 @@ fn create_bulk_test_proposals(count: usize) -> HashMap<Uuid, EditProposal> {
             call_id: format!("perf-test-{}", i).into(),
             proposed_at_ms: 1234567890 + i as i64,
             edits: vec![],
+            edits_ns: vec![],
             files: vec![std::path::PathBuf::from(format!("test_{}.rs", i))],
             preview,
             status,
+            is_semantic: true,
         };
 
         proposals.insert(id, proposal);
@@ -231,11 +233,13 @@ mod performance_tests {
                         call_id: format!("mutation-{}", i).into(),
                         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                         edits: vec![],
+                        edits_ns: vec![],
                         files: vec![std::path::PathBuf::from(format!("mutation_{}.rs", i))],
                         preview: DiffPreview::UnifiedDiff {
                             text: format!("mutation diff {}", i),
                         },
                         status: EditProposalStatus::Pending,
+                        is_semantic: true,
                     };
                     proposals.insert(new_id, proposal);
 
@@ -308,9 +312,11 @@ mod performance_tests {
             call_id: "large-diff-test".into(),
             proposed_at_ms: chrono::Utc::now().timestamp_millis(),
             edits: vec![],
+            edits_ns: vec![],
             files: vec![std::path::PathBuf::from("large_file.rs")],
             preview: DiffPreview::UnifiedDiff { text: large_diff },
             status: EditProposalStatus::Pending,
+            is_semantic: true,
         };
         proposals.insert(id, proposal);
 

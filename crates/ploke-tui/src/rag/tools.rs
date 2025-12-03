@@ -11,7 +11,7 @@ use ploke_core::rag_types::{
 use ploke_core::{ArcStr, FileData, PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_db::NodeType;
 use ploke_error::{DomainError, InternalError};
-use ploke_io::ReadStrategy;
+use ploke_io::{Diff, NsWriteSnippetData, ReadStrategy};
 use ploke_io::read::{FileHashData, read_and_compute_filehash};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
@@ -475,6 +475,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                 call_id: call_id.clone(),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits,
+                // TODO: Change edits_ns to a None or otherwise handle better
+                edits_ns: Vec::new(),
                 files: files.clone(),
                 preview: if matches!(
                     editing_cfg.preview_mode,
@@ -489,6 +491,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                     }
                 },
                 status: EditProposalStatus::Pending,
+                is_semantic: true,
             },
         );
     }
@@ -708,6 +711,18 @@ pub async fn apply_ns_code_edit_tool(
             before: content,
             after: apply_patch_result.new_content,
         };
+        let options = editing_cfg.patch_cfg;
+        let large_file_policy = editing_cfg.large_file_policy;
+        let sn_write_data = NsWriteSnippetData {
+            id: request_id,
+            file_path,
+            expected_file_hash: file_hash,
+            namespace,
+            diff: Diff::from(diff),
+            options,
+            large_file_policy
+        };
+        let edits_ns: Vec<NsWriteSnippetData> = vec![sn_write_data];
         let files = Vec::new();
         let mut reg = state.proposals.write().await;
         reg.insert(
@@ -718,6 +733,7 @@ pub async fn apply_ns_code_edit_tool(
                 call_id: call_id.clone(),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits,
+                edits_ns,
                 files: files.clone(),
                 preview: if matches!(
                     editing_cfg.preview_mode,
@@ -732,6 +748,7 @@ pub async fn apply_ns_code_edit_tool(
                     }
                 },
                 status: EditProposalStatus::Pending,
+                is_semantic: false,
             },
         );
     }

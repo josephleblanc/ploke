@@ -21,12 +21,16 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-error = "0.2"
 notify = { version = "6", optional = true }
+serde = { workspace = true }
 
 ploke-common = { path = "../common" }
 syn_parser = { path = "../ingest/syn_parser" }
 itertools = { workspace = true }
 dashmap = { workspace = true }
 lazy_static = { workspace = true }
+
+# for easier patching
+mpatch = { workspace = true }
 
 # file hashes
 blake3 = { version = "1", default-features = false, features = ["std"] }

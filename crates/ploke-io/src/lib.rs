@@ -181,6 +181,7 @@ pub use watcher::{FileChangeEvent, FileEventKind};
 mod create;
 mod tests_skeleton;
 mod write;
+pub use write::{NsWriteSnippetData, PatchApplyOptions, Diff};
 #[cfg(test)]
 mod write_tests;
 use futures::future::join_all;

@@ -4,10 +4,12 @@ use std::{
     path::Path,
 };
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FileHash(pub [u8; 32]);
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum LargeFilePolicy {
     #[default]
     Skip,

@@ -27,6 +27,7 @@ pub(crate) fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
         .any(|root| path_canon.starts_with(canonicalize_best_effort(root)))
 }
 
+#[tracing::instrument]
 pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<PathBuf, IoError> {
     if !path.is_absolute() {
         return Err(IoError::FileOperation {
@@ -61,6 +62,7 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
 ///
 /// Note: Until full policy is implemented, this defers to `path_within_roots_with_policy` which
 /// currently delegates to `path_within_roots`.
+#[tracing::instrument]
 pub(crate) fn normalize_against_roots_with_policy(
     path: &Path,
     roots: &[PathBuf],

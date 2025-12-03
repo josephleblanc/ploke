@@ -21,11 +21,13 @@ async fn test_truncation_controls_no_panic() {
         call_id: "test-truncation".into(),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
+        edits_ns: vec![],
         files: vec![std::path::PathBuf::from("test.rs")],
         preview: DiffPreview::UnifiedDiff {
             text: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_string(),
         },
         status: EditProposalStatus::Pending,
+        is_semantic: true
     };
     proposals.insert(id, proposal);
 

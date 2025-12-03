@@ -14,12 +14,18 @@ Notes:
 */
 
 use super::*;
+use crate::actor::read_and_compute_hash;
 use crate::path_policy::{
     normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy,
 };
 use dashmap::DashMap;
 use lazy_static::lazy_static;
+use mpatch::ApplyOptions;
+use ploke_core::file_hash::{hash_file_blake3_bounded, LargeFilePolicy};
 use ploke_core::{WriteResult, WriteSnippetData};
+use serde::{Deserialize, Serialize};
+use tracing::debug;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -60,6 +66,151 @@ fn get_file_lock(path: &Path) -> Arc<Mutex<()>> {
         .entry(path.to_path_buf())
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone()
+}
+
+/// Placeholder structures to be replaced by shared types in ploke-core.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsWriteSnippetData {
+    pub id: uuid::Uuid,
+    pub file_path: PathBuf,
+    pub expected_file_hash: Option<FileHash>,
+    pub namespace: uuid::Uuid,
+    pub diff: Diff,
+    pub options: PatchApplyOptions,
+    pub large_file_policy: LargeFilePolicy
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NsWriteResult {
+    pub new_file_hash: FileHash,
+}
+
+impl NsWriteResult {
+    fn new(new_file_hash: FileHash) -> Self {
+        Self { new_file_hash }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PatchApplyOptions {
+    pub dry_run: bool,
+    pub fuzz_factor: f32,
+}
+
+impl Default for PatchApplyOptions {
+    fn default() -> Self {
+        Self {
+            dry_run: false,
+            fuzz_factor: 0.7,
+        }
+    }
+}
+
+impl From<PatchApplyOptions> for ApplyOptions {
+    fn from(value: PatchApplyOptions) -> Self {
+        Self {
+            dry_run: value.dry_run,
+            fuzz_factor: value.fuzz_factor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Diff(String);
+
+impl AsRef<str> for Diff {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl Display for Diff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for Diff {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[tracing::instrument]
+async fn process_one_write_ns(
+    req: NsWriteSnippetData,
+    roots: Option<Arc<Vec<PathBuf>>>,
+    symlink_policy: Option<SymlinkPolicy>,
+    max_bytes: u64,
+) -> Result<NsWriteResult, PlokeError> {
+    let file_path = if let Some(roots) = roots.as_ref() {
+        let roots_ref: &[PathBuf] = roots.as_ref();
+        if let Some(policy) = symlink_policy {
+            normalize_against_roots_with_policy(&req.file_path, roots_ref, policy)?
+        } else {
+            normalize_against_roots(&req.file_path, roots_ref)?
+        }
+    } else {
+        if !req.file_path.is_absolute() {
+            return Err(PlokeError::from(IoError::FileOperation {
+                operation: "write",
+                path: req.file_path.clone(),
+                kind: std::io::ErrorKind::InvalidInput,
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "path must be absolute",
+                )),
+            }));
+        }
+        req.file_path.clone()
+    };
+
+    // TODO: finish setting up with locks correctly
+    // let lock = get_file_lock(&file_path);
+    // let _write_lock_guard = lock.lock().await;
+
+    let large_file_policy = req.large_file_policy;
+    let hashed_result = read_and_compute_hash(&file_path, large_file_policy, max_bytes)?;
+    let new_hash = hashed_result?;
+    debug!("new_hash calculated: {:?}", new_hash);
+
+    let NsWriteSnippetData {
+        id,
+        file_path,
+        expected_file_hash,
+        namespace,
+        diff,
+        options,
+        ..
+    } = req;
+    if req.expected_file_hash.is_some_and(|h| h != new_hash) {
+        return Err(PlokeError::from(IoError::NsContentMismatch {
+            id,
+            file_path,
+            expected_file_hash,
+            namespace,
+            diff,
+            options,
+        }));
+    };
+    let parsed_patch = mpatch::parse_single_patch(diff.as_ref())
+        .map_err(|e| { 
+            tracing::error!("Error in parse_single_patch: {}", e.to_string());
+            PlokeError::from(IoError::NsPatchError(e.to_string())) 
+        })?;
+    let patch_options = mpatch::ApplyOptions {
+        dry_run: options.dry_run,
+        fuzz_factor: options.fuzz_factor,
+    };
+
+    // TODO: Add a similar lock/read/write with atomic edits, similar to below `process_one_write`
+    mpatch::apply_patch_to_file(&parsed_patch, &file_path, patch_options)
+        .map_err(|e| { 
+            tracing::error!("Error in parse_single_patch: {}", e.to_string());
+            PlokeError::from(IoError::NsPatchError(e.to_string())) 
+        })?;
+
+    Ok(NsWriteResult::new(new_hash))
 }
 
 async fn process_one_write(
@@ -205,7 +356,14 @@ async fn process_one_write(
         let parent_clone = parent.clone();
         let _ = tokio::task::spawn_blocking(move || {
             if let Ok(dir) = std::fs::File::open(&parent_clone) {
-                let _ = dir.sync_all();
+                match dir.sync_all() {
+                    Ok(()) => {tracing::trace!(target: "file-edit", "Write successful for file: {}",
+                        file_path.to_string_lossy())},
+                    Err(e) => {tracing::error!(target: "file-edit", "Write failed for file {file_error} with error: {err}",
+                        err = e.to_string(),
+                        file_error = file_path.to_string_lossy(),
+                    )},
+                }
             }
         })
         .await;
@@ -219,12 +377,32 @@ pub(crate) async fn write_snippets_batch(
     requests: Vec<WriteSnippetData>,
     roots: Option<Arc<Vec<PathBuf>>>,
     symlink_policy: Option<SymlinkPolicy>,
+    max_bytes: u64,
 ) -> Vec<Result<WriteResult, PlokeError>> {
     let mut out = Vec::with_capacity(requests.len());
     for req in requests {
         let res = process_one_write(req, roots.clone(), symlink_policy)
             .await
             .map_err(ploke_error::Error::from);
+        out.push(res);
+    }
+    out
+}
+
+pub(crate) async fn write_snippets_batch_ns(
+    requests: Vec<NsWriteSnippetData>,
+    roots: Option<Arc<Vec<PathBuf>>>,
+    symlink_policy: Option<SymlinkPolicy>,
+    max_bytes: u64,
+) -> Vec<Result<NsWriteResult, PlokeError>> {
+    let mut out = Vec::with_capacity(requests.len());
+    for req in requests {
+        let res = process_one_write_ns(
+            req, 
+            roots.clone(), 
+            symlink_policy,
+            max_bytes
+        ).await;
         out.push(res);
     }
     out

@@ -1,3 +1,5 @@
+use crate::write::NsWriteResult;
+
 use super::*;
 use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
 
@@ -325,6 +327,26 @@ impl IoManagerHandle {
     ) -> Result<Vec<Result<WriteResult, PlokeError>>, IoError> {
         let (responder, response_rx) = oneshot::channel();
         let request = IoRequest::WriteSnippetBatch {
+            requests,
+            responder,
+        };
+        self.request_sender
+            .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError)
+            .map_err(IoError::from)?;
+        response_rx
+            .await
+            .map_err(|_| RecvError::RecvError)
+            .map_err(IoError::from)
+    }
+
+    pub async fn write_batch_ns(
+        &self,
+        requests: Vec<NsWriteSnippetData>,
+    ) -> Result<Vec<Result<NsWriteResult, PlokeError>>, IoError> {
+        let (responder, response_rx) = oneshot::channel();
+        let request = IoRequest::NsWriteSnippetBatch {
             requests,
             responder,
         };

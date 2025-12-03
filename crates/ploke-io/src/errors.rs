@@ -1,6 +1,8 @@
 use ploke_core::file_hash::HashOutcome;
 use ploke_error::DomainError;
 
+use crate::write::{Diff, PatchApplyOptions};
+
 use super::*;
 
 #[derive(Debug, Error, Clone)]
@@ -24,6 +26,18 @@ pub enum IoError {
         file_tracking_hash: uuid::Uuid,
         namespace: uuid::Uuid,
         path: PathBuf,
+    },
+
+    #[error(
+        "File content changed since indexing: {file_path} with request id {id}, using diff {diff}"
+    )]
+    NsContentMismatch {
+        id: uuid::Uuid,
+        file_path: PathBuf,
+        expected_file_hash: Option<FileHash>,
+        namespace: uuid::Uuid,
+        diff: Diff,
+        options: PatchApplyOptions,
     },
 
     #[error("Parse error in {path}: {message}")]
@@ -75,6 +89,9 @@ pub enum IoError {
 
     #[error("Conversion Error")]
     Conversion,
+
+    #[error("NsPatchError: {0}")]
+    NsPatchError(String),
 }
 
 impl TryFrom<HashOutcome> for IoError {
@@ -150,9 +167,9 @@ impl From<IoError> for ploke_error::Error {
             } => {
                 // Create a FromUtf8Error to capture the decoding failure
                 let err_msg = format!(
-                            "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
-                            start_byte, end_byte, path.to_string_lossy()
-                        );
+                                            "InvalidCharacterBoundary: Byte range {}-{} splits multi-byte Unicode character in file {}",
+                                            start_byte, end_byte, path.to_string_lossy()
+                                        );
 
                 ploke_error::Error::Fatal(FatalError::SyntaxError(err_msg))
             }
@@ -170,6 +187,12 @@ impl From<IoError> for ploke_error::Error {
             }),
             Conversion => ploke_error::Error::Domain(DomainError::Io {
                 message: "Error Converting Between types".to_string(),
+            }),
+            ns_err @ NsContentMismatch { .. } => ploke_error::Error::Domain(DomainError::Io {
+                message: ns_err.to_string(),
+            }),
+            ns_patch_err @ NsPatchError(_) => ploke_error::Error::Domain(DomainError::Io {
+                message: ns_patch_err.to_string(),
             }),
         }
     }
