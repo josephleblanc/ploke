@@ -190,7 +190,8 @@ impl IoManager {
                 let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
                 tokio::spawn(async move {
                     let results =
-                        write_snippets_batch(requests.clone(), roots, symlink_policy, max_bytes).await;
+                        write_snippets_batch(requests.clone(), roots, symlink_policy, max_bytes)
+                            .await;
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {
@@ -218,7 +219,8 @@ impl IoManager {
                 let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
                 tokio::spawn(async move {
                     let results =
-                        write_snippets_batch_ns(requests.clone(), roots, symlink_policy, max_bytes).await;
+                        write_snippets_batch_ns(requests.clone(), roots, symlink_policy, max_bytes)
+                            .await;
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {
@@ -765,6 +767,8 @@ impl IoManager {
         }
     }
 
+    // TODO: needs docs, esp. since it's connected to ploke-tui's scan_for_change via IoHandle's
+    // `scan_for_change_batch` method.
     pub async fn handle_scan_batch_with_roots(
         requests: Vec<FileData>,
         semaphore: Arc<Semaphore>,
@@ -876,7 +880,11 @@ impl IoManager {
     }
 }
 
-pub(crate) fn read_and_compute_hash(path: &PathBuf, policy: LargeFilePolicy, max_bytes_hashed: u64) -> Result<Result<FileHash, IoError>, PlokeError> {
+pub(crate) fn read_and_compute_hash(
+    path: &PathBuf,
+    policy: LargeFilePolicy,
+    max_bytes_hashed: u64,
+) -> Result<Result<FileHash, IoError>, PlokeError> {
     let hashed_result = match hash_file_blake3_bounded(path, max_bytes_hashed, policy) {
         Ok(ho) => match ho {
             HashOutcome::Hashed { hash, .. } => Ok(hash),

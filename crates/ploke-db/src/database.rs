@@ -222,9 +222,29 @@ impl Database {
         }
     }
 
-    /// Gets all the file data in the same namespace as the crate name given as argument.
-    /// This is useful when you want to compare which files have changed since the database was
-    /// last updated.
+    // Gets all the file data in the same namespace as the crate name given as argument.
+    // This is useful when you want to compare which files have changed since the database was
+    // last updated.
+    //
+    // The query is essentially starting with the given crate name and then:
+    //
+    // 1. from crate name get crate contex
+    //     - WARN: Assumes that the crate names are unique.
+    //     - TODO: Add a test that checks what happens when we have two items with the same crate
+    //         name. my guess is that this query will return all files in both namespaces, but it
+    //         will be possible to distinguish between the two items by namespace.
+    //
+    // 2. use the crate namespace to find file-mod node.
+    //
+    // 3. use file-mod node (via owner_id) to get module (for tracking_hash)
+    //
+    // So ultimately, this is returning all the information on the file, and then the tracking hash
+    // of the node.
+    //
+    // NOTE:refactor:file_hash 2025-12-03
+    //  What we could do instead of matching on the TrackngHash here is add a field to the the
+    //  file_mod node in the database, which is the same FileHash type we have started adopting in
+    //  ploke-io and ploke-core for a faster hash of the entire module.
     pub fn get_crate_files(&self, crate_name: &str) -> Result<Vec<FileData>, PlokeError> {
         let script = format!(
             "{} \"{}\"",
@@ -756,15 +776,13 @@ impl Database {
             return Ok(());
         }
         // Use multi-embedding path; active_embedding_set is validated at Database construction.
-        self
-            .deref()
-            .update_embeddings_batch(
-                updates
-                    .into_iter()
-                    .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
-                    .collect(),
-                &self.active_embedding_set,
-            )
+        self.deref().update_embeddings_batch(
+            updates
+                .into_iter()
+                .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
+                .collect(),
+            &self.active_embedding_set,
+        )
     }
 
     /// Validate that an embedding vector is non-empty

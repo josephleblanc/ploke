@@ -13,7 +13,7 @@ use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
-use ploke_io::{ IoManagerHandle, NsWriteSnippetData, PatchApplyOptions };
+use ploke_io::{IoManagerHandle, NsWriteSnippetData, PatchApplyOptions};
 use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -131,10 +131,8 @@ pub struct EditingConfig {
     pub auto_confirm_edits: bool,
     pub max_preview_lines: usize,
     pub patch_cfg: PatchApplyOptions,
-    pub large_file_policy: LargeFilePolicy
+    pub large_file_policy: LargeFilePolicy,
 }
-
-
 
 impl Default for EditingConfig {
     fn default() -> Self {
@@ -221,6 +219,18 @@ pub enum EditProposalStatus {
     Failed(String),
 }
 
+impl EditProposalStatus {
+    pub(crate) fn as_str_outer(&self) -> &'static str {
+        match &self {
+            EditProposalStatus::Pending => "Pending",
+            EditProposalStatus::Approved => "Approved",
+            EditProposalStatus::Denied => "Denied",
+            EditProposalStatus::Applied => "Applied",
+            EditProposalStatus::Failed(_) => "Failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeforeAfter {
     pub file_path: PathBuf,
@@ -246,7 +256,7 @@ pub struct EditProposal {
     pub preview: DiffPreview,
     pub status: EditProposalStatus,
     /// Whether or not the proposal is for a semantic edit.
-    pub is_semantic: bool
+    pub is_semantic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

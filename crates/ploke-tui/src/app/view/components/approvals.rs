@@ -70,39 +70,27 @@ pub fn unified_items(
     let mut items: Vec<(ProposalKind, uuid::Uuid, String)> = Vec::new();
 
     for (id, p) in proposals_guard.iter() {
-        let status = match &p.status {
-            EditProposalStatus::Pending => "Pending",
-            EditProposalStatus::Approved => "Approved",
-            EditProposalStatus::Denied => "Denied",
-            EditProposalStatus::Applied => "Applied",
-            EditProposalStatus::Failed(_) => "Failed",
-        };
+        // e.g.
+        // EditProposalStatus::Pending => "Pending",
         items.push((
             ProposalKind::Edit,
             *id,
             format!(
                 "[E] {}  {:<7}  files:{}",
                 crate::app::utils::truncate_uuid(*id),
-                status,
+                &p.status.as_str_outer(),
                 p.files.len()
             ),
         ));
     }
     for (id, p) in create_guard.iter() {
-        let status = match &p.status {
-            EditProposalStatus::Pending => "Pending",
-            EditProposalStatus::Approved => "Approved",
-            EditProposalStatus::Denied => "Denied",
-            EditProposalStatus::Applied => "Applied",
-            EditProposalStatus::Failed(_) => "Failed",
-        };
         items.push((
             ProposalKind::Create,
             *id,
             format!(
                 "[C] {}  {:<7}  files:{}",
                 crate::app::utils::truncate_uuid(*id),
-                status,
+                &p.status.as_str_outer(),
                 p.files.len()
             ),
         ));
@@ -148,7 +136,8 @@ pub fn render_approvals_overlay(
         .collect();
     let list = List::new(list_items)
         .block(Block::bordered().title(" Pending Proposals "))
-        .highlight_style(Style::new().fg(Color::Cyan));
+        .highlight_style(Style::new().fg(Color::Cyan))
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
     frame.render_widget(list, cols[0]);
 
     // Details
