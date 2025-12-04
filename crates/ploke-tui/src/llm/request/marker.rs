@@ -38,23 +38,24 @@ impl<'de> Deserialize<'de> for JsonObjMarker {
                 A: MapAccess<'de>,
             {
                 let mut found_type = false;
-                
+
                 while let Some(key) = map.next_key::<String>()? {
                     if key == "type" {
                         let value: String = map.next_value()?;
                         if value == "json_object" {
                             found_type = true;
                         } else {
-                            return Err(de::Error::custom(
-                                format!("expected 'json_object', got '{}'", value)
-                            ));
+                            return Err(de::Error::custom(format!(
+                                "expected 'json_object', got '{}'",
+                                value
+                            )));
                         }
                     } else {
                         // Skip any other keys
                         let _: serde::de::IgnoredAny = map.next_value()?;
                     }
                 }
-                
+
                 if found_type {
                     Ok(JsonObjMarker)
                 } else {

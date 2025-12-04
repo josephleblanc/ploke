@@ -56,7 +56,7 @@ pub enum StateCommand {
         msg: String,
         kind: MessageKind,
         new_msg_id: Uuid,
-        tool_call_id: ArcStr
+        tool_call_id: ArcStr,
     },
     AddUserMessage {
         content: String,

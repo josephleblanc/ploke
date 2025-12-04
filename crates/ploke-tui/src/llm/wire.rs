@@ -17,18 +17,22 @@ pub struct WireRequest {
 
 pub fn build_openrouter_request(
     kimi: &OpenRouterModelId,
-    prov: &ProviderConfig,                  // must be Transport::OpenRouter
+    prov: &ProviderConfig, // must be Transport::OpenRouter
     messages: Vec<RequestMessage>,
     prompt: Option<String>,
     llm_params: &LLMParameters,
 ) -> Result<WireRequest, IdError> {
-    let Transport::OpenRouter { base, allow, api_key_env } = &prov.transport else {
+    let Transport::OpenRouter {
+        base,
+        allow,
+        api_key_env,
+    } = &prov.transport
+    else {
         return Err(IdError::Invalid("expected OpenRouter transport"));
     };
 
-
     // Build your existing CompReq<'a>
-    let comp = ChatCompRequest::< OpenRouter > {
+    let comp = ChatCompRequest::<OpenRouter> {
         // route only within this model; also set provider allowlist via ProviderPreferences
         // map parameters
         llm_params: llm_params.clone(),
@@ -36,7 +40,10 @@ pub fn build_openrouter_request(
         ..Default::default()
     };
 
-    let url = base.as_url().join("chat/completions").map_err(|_| IdError::Invalid("openrouter path"))?;
+    let url = base
+        .as_url()
+        .join("chat/completions")
+        .map_err(|_| IdError::Invalid("openrouter path"))?;
     let body = serde_json::to_value(comp).expect("CompReq to JSON");
 
     Ok(WireRequest {
@@ -49,7 +56,7 @@ pub fn build_openrouter_request(
 
 pub fn build_direct_oai_request(
     kimi: &ModelKey,
-    prov: &ProviderConfig,                 // must be Transport::DirectOAI
+    prov: &ProviderConfig, // must be Transport::DirectOAI
     messages: Vec<RequestMessage>,
     params: &LLMParameters,
 ) -> Result<WireRequest, IdError> {

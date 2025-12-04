@@ -25,6 +25,8 @@ pub mod rag_types;
 pub use arc_str::ArcStr;
 pub mod embeddings;
 
+pub mod file_hash;
+
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
     use std::hash::Hasher;

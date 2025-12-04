@@ -9,7 +9,10 @@ thiserror = { workspace = true }
 futures = "0.3"
 rlimit = "0.10"
 ploke-error = { path = "../ploke-error" }
-ploke-core = { path = "../ploke-core" }
+ploke-core = { path = "../ploke-core", features = [
+    "read-tokio",
+    "parallel-hash",
+] }
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
@@ -18,12 +21,19 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-error = "0.2"
 notify = { version = "6", optional = true }
+serde = { workspace = true }
 
 ploke-common = { path = "../common" }
 syn_parser = { path = "../ingest/syn_parser" }
 itertools = { workspace = true }
 dashmap = { workspace = true }
 lazy_static = { workspace = true }
+
+# for easier patching
+mpatch = { workspace = true }
+
+# file hashes
+blake3 = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 ploke-db = { path = "../ploke-db", features = ["multi_embedding_db"] }
@@ -33,6 +43,7 @@ mockall = "0.12"
 
 [features]
 default = ["multi_embedding_io"]
+parallel-hash = ["blake3/rayon"]
 watcher = ["notify"]
 multi_embedding_io = [
     "ploke-db/multi_embedding_db",

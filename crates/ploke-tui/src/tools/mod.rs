@@ -2,7 +2,10 @@
 
 // For any db-related issues, check cross-crate contract with db in:
 //  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
-use crate::utils::{consts::DEBUG_TOOLS, se_de::{ de_arc_str, se_arc_str }};
+use crate::utils::{
+    consts::DEBUG_TOOLS,
+    se_de::{de_arc_str, se_arc_str},
+};
 use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{
@@ -30,6 +33,8 @@ pub use request_code_context::{
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod create_file;
+pub mod ns_patch;
+pub mod ns_read;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +42,8 @@ pub enum ToolName {
     RequestCodeContext,
     ApplyCodeEdit,
     CreateFile,
+    NsPatch,
+    NsRead,
 }
 
 impl ToolName {
@@ -46,6 +53,8 @@ impl ToolName {
             RequestCodeContext => "request_code_context",
             ApplyCodeEdit => "apply_code_edit",
             CreateFile => "create_file",
+            NsPatch => "non_semantic_patch",
+            NsRead => "read_file",
         }
     }
 }
@@ -62,6 +71,24 @@ pub enum ToolDescr {
         rename = "Create a new Rust source file atomically within the workspace, staging for approval."
     )]
     CreateFile,
+    #[serde(
+        rename = r#"Apply a non-semantic code edit. This tool is most useful in two cases:
+
+1. You need to read/edit non-rust files
+    - While this application as a whole is focused on Rust code, the user may ask you to read or even edit non-Rust files.
+    - This `non_semantic_patch` tool can be used to patch non-Rust files.
+
+2. The parser that allows for semantic edits fails on the target directory
+    - usually because there is an error in the target crate (e.g. a missing closing bracket).
+    - In this case, this `non_semantic_patch tool can be used to apply a code edit.
+    - DO NOT use this tool on Rust files (*.rs) before trying to use the semantic code edit tool first.
+"#
+    )]
+    NsPatch,
+    #[serde(
+        rename = "Read workspace files before editing. Supports optional line ranges and truncation limits to keep responses concise."
+    )]
+    NsRead,
 }
 
 #[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq)]
@@ -173,7 +200,11 @@ pub struct ToolCallRecord {
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]
 pub struct ToolCall {
-    #[serde(deserialize_with = "de_arc_str", serialize_with="se_arc_str", rename = "id")]
+    #[serde(
+        deserialize_with = "de_arc_str",
+        serialize_with = "se_arc_str",
+        rename = "id"
+    )]
     pub call_id: ArcStr,
 
     #[serde(rename = "type")]
@@ -239,13 +270,11 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
-            let params =
-                request_code_context::RequestCodeContextGat::deserialize_params(&args).inspect_err(
-                    |err| {
-                        request_code_context::RequestCodeContextGat::emit_err(&ctx, err.to_string());
-                    },
-                )?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+            let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
+                .inspect_err(|err| {
+                    request_code_context::RequestCodeContextGat::emit_err(&ctx, err.to_string());
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
@@ -253,7 +282,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
                     .await
                     .inspect_err(|e| RequestCodeContextGat::emit_err(&ctx, e.to_string()))?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+            tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
@@ -264,14 +293,14 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = code_edit::GatCodeEdit::deserialize_params(&args).inspect_err(|err| {
                 code_edit::GatCodeEdit::emit_err(&ctx, err.to_string());
             })?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+            tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
             let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
                 .inspect_err(|e| GatCodeEdit::emit_err(&ctx, e.to_string()))?;
-            tracing::debug!(target: DEBUG_TOOLS, 
+            tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
@@ -286,15 +315,50 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } =
-                create_file::CreateFile::execute(params, ctx.clone())
-                    .await
-                    .inspect_err(|e| create_file::CreateFile::emit_err(&ctx, e.to_string()))?;
+            let ToolResult { content } = create_file::CreateFile::execute(params, ctx.clone())
+                .await
+                .inspect_err(|e| create_file::CreateFile::emit_err(&ctx, e.to_string()))?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
             create_file::CreateFile::emit_completed(&ctx, content);
+            Ok(())
+        }
+        ToolName::NsPatch => {
+            let params = ns_patch::NsPatch::deserialize_params(&args).inspect_err(|err| {
+                ns_patch::NsPatch::emit_err(&ctx, err.to_string());
+            })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } = ns_patch::NsPatch::execute(params, ctx.clone())
+                .await
+                .inspect_err(|e| ns_patch::NsPatch::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            ns_patch::NsPatch::emit_completed(&ctx, content);
+            Ok(())
+        }
+        ToolName::NsRead => {
+            let params = ns_read::NsRead::deserialize_params(&args).inspect_err(|err| {
+                ns_read::NsRead::emit_err(&ctx, err.to_string());
+            })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } = ns_read::NsRead::execute(params, ctx.clone())
+                .await
+                .inspect_err(|e| ns_read::NsRead::emit_err(&ctx, e.to_string()))?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            ns_read::NsRead::emit_completed(&ctx, content);
             Ok(())
         }
     }

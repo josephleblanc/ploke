@@ -69,6 +69,9 @@ impl super::Tool for GatCodeEdit {
         Self
     }
 
+    // TODO:refactor
+    // Check if this is actually being used.
+    // Might be smarter to require + implement From<Self::Params<'a>> for Edit or something
     fn into_owned<'a>(params: &Self::Params<'a>) -> Self::OwnedParams {
         CodeEditParamsOwned {
             confidence: params.confidence,
@@ -107,7 +110,7 @@ impl super::Tool for GatCodeEdit {
         };
         // Execute legacy staging path; rely on proposal store for result
         let request_id = ctx.request_id;
-        let call_id = ctx.call_id;
+        let call_id = ctx.call_id.clone();
         let params_env = ToolCallParams {
             state: Arc::clone(&ctx.state),
             event_bus: Arc::clone(&ctx.event_bus),
@@ -119,47 +122,54 @@ impl super::Tool for GatCodeEdit {
         };
         apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
-        if let Some(prop) = proposal_opt {
-            let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
-            let display_files: Vec<String> = prop
-                .files
-                .iter()
-                .map(|p| {
-                    if let Some(root) = crate_root.as_ref() {
-                        p.strip_prefix(root)
-                            .map(|rp| rp.display().to_string())
-                            .unwrap_or_else(|_| p.display().to_string())
-                    } else {
-                        p.display().to_string()
-                    }
-                })
-                .collect();
-            let editing_cfg = { ctx.state.config.read().await.editing.clone() };
-            let preview_mode = match editing_cfg.preview_mode {
-                PreviewMode::Diff => "diff".to_string(),
-                PreviewMode::CodeBlock => "codeblock".to_string(),
-            };
-            let structured_result = ApplyCodeEditResult {
-                ok: true,
-                staged: prop.edits.len(),
-                applied: 0,
-                files: display_files,
-                preview_mode,
-                auto_confirmed: editing_cfg.auto_confirm_edits,
-            };
-            let serialized_str =
-                serde_json::to_string(&structured_result).expect("Incorrect deserialization");
-            Ok(ToolResult {
-                content: serialized_str,
+        print_code_edit_results(&ctx, request_id).await
+    }
+}
+
+pub async fn print_code_edit_results(
+    ctx: &Ctx,
+    request_id: Uuid,
+) -> Result<ToolResult, ploke_error::Error> {
+    let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
+    if let Some(prop) = proposal_opt {
+        let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
+        let display_files: Vec<String> = prop
+            .files
+            .iter()
+            .map(|p| {
+                if let Some(root) = crate_root.as_ref() {
+                    p.strip_prefix(root)
+                        .map(|rp| rp.display().to_string())
+                        .unwrap_or_else(|_| p.display().to_string())
+                } else {
+                    p.display().to_string()
+                }
             })
-        } else {
-            Err(ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(
-                    "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
-                ),
-            ))
-        }
+            .collect();
+        let editing_cfg = { ctx.state.config.read().await.editing.clone() };
+        let preview_mode = match editing_cfg.preview_mode {
+            PreviewMode::Diff => "diff".to_string(),
+            PreviewMode::CodeBlock => "codeblock".to_string(),
+        };
+        let structured_result = ApplyCodeEditResult {
+            ok: true,
+            staged: prop.edits.len(),
+            applied: 0,
+            files: display_files,
+            preview_mode,
+            auto_confirmed: editing_cfg.auto_confirm_edits,
+        };
+        let serialized_str =
+            serde_json::to_string(&structured_result).expect("Incorrect deserialization");
+        Ok(ToolResult {
+            content: serialized_str,
+        })
+    } else {
+        Err(ploke_error::Error::Internal(
+            ploke_error::InternalError::CompilerError(
+                "apply_code_edit failed to stage proposal (see ToolCallFailed)".to_string(),
+            ),
+        ))
     }
 }
 
@@ -251,7 +261,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod gat_tests {
     use super::*;
@@ -283,7 +292,10 @@ mod gat_tests {
     #[test]
     fn name_desc_and_schema_present() {
         assert!(matches!(GatCodeEdit::name(), ToolName::ApplyCodeEdit));
-        assert!(matches!(GatCodeEdit::description(), ToolDescr::ApplyCodeEdit));
+        assert!(matches!(
+            GatCodeEdit::description(),
+            ToolDescr::ApplyCodeEdit
+        ));
         let schema = GatCodeEdit::schema();
         assert!(schema.as_object().unwrap().contains_key("properties"));
     }

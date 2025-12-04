@@ -1,15 +1,14 @@
-use crate::llm::types::model_types::serialize_model_id_as_request_string;
 use crate::llm::manager::RequestMessage;
-pub(crate) use crate::llm::router_only::default_model;
 pub(crate) use crate::llm::router_only::default_messages;
+pub(crate) use crate::llm::router_only::default_model;
+use crate::llm::types::model_types::serialize_model_id_as_request_string;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     llm::{
-        LLMParameters,
-        ModelId,
+        LLMParameters, ModelId,
         router_only::{
             ApiRoute,
             openrouter::{self, ProviderPreferences, Transform},
@@ -44,7 +43,7 @@ pub(crate) struct ChatCompReqCore {
     ///    to no models being available for the requests we send.
     ///
     /// corresponding json: `model?: string;`
-    /// canonical endpoint name `{ author }/{slug}:{variant}`, e.g. 
+    /// canonical endpoint name `{ author }/{slug}:{variant}`, e.g.
     /// - deepseek/deepseek-chat-v3.1
     /// - can also have variant, deepseek/deepseek-chat-v3.1:free
     #[serde(default, serialize_with = "serialize_model_id_as_request_string")]
@@ -148,7 +147,7 @@ impl ChatCompReqCore {
 }
 
 mod tests {
-    use crate::llm::{manager::RequestMessage, request::JsonObjMarker, ModelId};
+    use crate::llm::{ModelId, manager::RequestMessage, request::JsonObjMarker};
 
     use super::ChatCompReqCore;
     use color_eyre::Result;
@@ -174,15 +173,16 @@ mod tests {
         let core = ChatCompReqCore::default();
 
         let msg = String::from("test use message");
-        let req_msg = vec![ RequestMessage::new_user(msg) ];
+        let req_msg = vec![RequestMessage::new_user(msg)];
 
         let model_str = "moonshotai/kimi-k2:free";
         let model = ModelId::from_str(model_str)?;
 
-        let stop_token = String::from( "<|im_end|>" );
-        let stop= vec![ stop_token ];
+        let stop_token = String::from("<|im_end|>");
+        let stop = vec![stop_token];
 
-        let full_msg = core.with_messages(req_msg)
+        let full_msg = core
+            .with_messages(req_msg)
             .with_model(model)
             .with_json_response()
             .with_streaming(true)

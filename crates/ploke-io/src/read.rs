@@ -33,6 +33,7 @@ pub(crate) async fn read_file_to_string_abs(path: &Path) -> Result<String, IoErr
     })?;
     Ok(content)
 }
+
 pub(crate) fn parse_tokens_from_str(
     content: &str,
     path: &Path,
@@ -79,6 +80,44 @@ pub(crate) fn extract_snippet_str(
 // Related path policy helper (or via path_policy module):
 fn path_within_roots(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| path.starts_with(root))
+}
+
+pub async fn generate_hash_for_file(
+    abs_path: &Path,
+    namespace: uuid::Uuid,
+) -> Result<TrackingHash, IoError> {
+    let contents = read_file_to_string_abs(abs_path).await?;
+    let tokens = parse_tokens_from_str(&contents, abs_path)?;
+
+    let new_hash = TrackingHash::generate(namespace, abs_path, &tokens);
+    Ok(new_hash)
+}
+
+pub async fn read_and_compute_filehash(
+    abs_path: &Path,
+    namespace: uuid::Uuid,
+) -> Result<FileHashData, IoError> {
+    let contents = read_file_to_string_abs(abs_path).await?;
+    let tokens = parse_tokens_from_str(&contents, abs_path)?;
+
+    let new_hash = TrackingHash::generate(namespace, abs_path, &tokens);
+    let file_data = FileHashData::from((new_hash, contents));
+    Ok(file_data)
+}
+
+#[derive(Clone, Debug)]
+pub struct FileHashData {
+    pub hash: TrackingHash,
+    pub contents: String,
+}
+
+impl From<(TrackingHash, String)> for FileHashData {
+    fn from(value: (TrackingHash, String)) -> Self {
+        Self {
+            hash: value.0,
+            contents: value.1,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -90,6 +90,8 @@ lazy_static = "1.5.0"
 # Ploke Core Types
 ploke-core = { path = "crates/ploke-core", version = "0.1.0" }
 
+mpatch = "1.3"
+
 [workspace.metadata]
 fixtures_dir = "tests/fixtures"
 
@@ -97,3 +99,6 @@ fixtures_dir = "tests/fixtures"
 debug = false
 lto = "thin"
 codegen-units = 1
+
+[patch.crates-io]
+graph_builder = { git = "https://github.com/josephleblanc/graph", package = "graph_builder" }

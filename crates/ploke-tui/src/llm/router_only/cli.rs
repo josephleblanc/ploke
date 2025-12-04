@@ -1,9 +1,7 @@
-
-
 use std::time::Duration;
 
-use reqwest::Client;
 use color_eyre::Result;
+use reqwest::Client;
 
 use crate::llm::{error::LlmError, router_only::openrouter::OpenRouter};
 
@@ -15,7 +13,8 @@ pub(crate) const MODELS_TXT_CANON: &str = "crates/ploke-tui/data/models/all_cano
 pub(crate) const MODELS_JSON_ARCH: &str = "crates/ploke-tui/data/models/all_arch_parsed.json";
 pub(crate) const MODELS_JSON_TOP: &str = "crates/ploke-tui/data/models/all_top_parsed.json";
 pub(crate) const MODELS_JSON_PRICING: &str = "crates/ploke-tui/data/models/all_pricing_parsed.json";
-pub(crate) const MODELS_JSON_SUPPORTED: &str = "crates/ploke-tui/data/models/all_supported_parsed.json";
+pub(crate) const MODELS_JSON_SUPPORTED: &str =
+    "crates/ploke-tui/data/models/all_supported_parsed.json";
 pub(crate) const MODELS_JSON_ID_NOT_NAME: &str = "crates/ploke-tui/data/models/id_not_name.json";
 pub(crate) const ENDPOINTS_JSON_DIR: &str = "crates/ploke-tui/data/endpoints/";
 pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_completions/";
@@ -53,7 +52,7 @@ pub(crate) mod test_data {
 
     use ploke_test_utils::workspace_root;
 
-    use super::{MODELS_JSON_ARCH, MODELS_TXT_IDS, MODELS_JSON_PRICING};
+    use super::{MODELS_JSON_ARCH, MODELS_JSON_PRICING, MODELS_TXT_IDS};
 
     pub(crate) static MODELS_IDS_TEXT_LAZY: Lazy<String> = Lazy::new(|| {
         let mut p = workspace_root();
@@ -76,4 +75,3 @@ pub(crate) mod test_data {
             .unwrap_or_else(|e| panic!("failed to read {}: {}", p.display(), e))
     });
 }
-

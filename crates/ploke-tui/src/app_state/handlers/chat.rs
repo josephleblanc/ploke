@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use ploke_core::ArcStr;
 use tokio::sync::oneshot;
-use tracing::{instrument, trace, debug};
+use tracing::{debug, instrument, trace};
 use uuid::Uuid;
 
+use crate::EventBus;
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
-use crate::llm::manager::events::ChatEvt;
 use crate::llm::LlmEvent;
+use crate::llm::manager::events::ChatEvt;
 use crate::tracing_setup::CHAT_TARGET;
 use crate::utils::helper::truncate_string;
-use crate::EventBus;
 
 use crate::{AppEvent, AppState, MessageUpdatedEvent};
 
@@ -108,7 +108,9 @@ pub async fn add_message(
         MessageStatus::Completed
     };
 
-    if let Ok(new_message_id) = chat_guard.add_child(parent_id, child_id, &content, status, kind, None) {
+    if let Ok(new_message_id) =
+        chat_guard.add_child(parent_id, child_id, &content, status, kind, None)
+    {
         chat_guard.current = new_message_id;
         event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
     }
@@ -135,7 +137,14 @@ pub async fn create_assistant_message(
     let status = MessageStatus::Generating;
     let kind = crate::chat_history::MessageKind::Assistant;
 
-    if let Ok(new_id) = chat_guard.add_child(parent_id, new_assistant_msg_id, "Pending...", status, kind, None) {
+    if let Ok(new_id) = chat_guard.add_child(
+        parent_id,
+        new_assistant_msg_id,
+        "Pending...",
+        status,
+        kind,
+        None,
+    ) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
         event_bus.send(MessageUpdatedEvent::new(new_id).into());
@@ -151,13 +160,19 @@ pub async fn add_tool_msg_immediate(
     event_bus: &Arc<EventBus>,
     new_msg_id: Uuid,
     content: String,
-    tool_call_id: ArcStr
+    tool_call_id: ArcStr,
 ) {
     trace!(target: CHAT_TARGET, "Starting add_msg_immediate");
     let mut chat_guard = state.chat.0.write().await;
     let parent_id = chat_guard.current;
 
-    let _ = chat_guard.add_message_tool(parent_id, new_msg_id, MessageKind::Tool, content.clone(), Some( tool_call_id ));
+    let _ = chat_guard.add_message_tool(
+        parent_id,
+        new_msg_id,
+        MessageKind::Tool,
+        content.clone(),
+        Some(tool_call_id),
+    );
 }
 #[instrument(skip(state), level = "trace")]
 pub async fn add_msg_immediate(
@@ -175,13 +190,13 @@ pub async fn add_msg_immediate(
         MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
         MessageKind::System => {
             chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
-        },
+        }
         MessageKind::Assistant => {
             chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
         }
         MessageKind::Tool => {
             panic!("Use add_tool_msg_immediate to add tool messages");
-        },
+        }
         MessageKind::SysInfo => {
             chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
         }
@@ -198,10 +213,10 @@ pub async fn add_msg_immediate(
             let llm_request = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
                 parent_id: message_id,
                 request_msg_id: Uuid::new_v4(),
-                }));
+            }));
             trace!(
                 target: CHAT_TARGET,
-                "sending llm_request wrapped in an AppEvent::Llm of kind {kind} with ids 
+                "sending llm_request wrapped in an AppEvent::Llm of kind {kind} with ids
                 new_msg_id (not sent): {new_msg_id},
                 parent_id: {parent_id}
                 message_id: {message_id},",
@@ -226,10 +241,16 @@ pub async fn add_msg_immediate_nofocus(
 
     let message_wrapper = match kind {
         MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
-        MessageKind::System => chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone()),
-        MessageKind::Assistant => chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::System => {
+            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
+        }
+        MessageKind::Assistant => {
+            chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
+        }
         MessageKind::Tool => panic!("Use add_tool_msg_immediate to add tool messages"),
-        MessageKind::SysInfo => chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone()),
+        MessageKind::SysInfo => {
+            chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
+        }
     };
     drop(chat_guard);
 

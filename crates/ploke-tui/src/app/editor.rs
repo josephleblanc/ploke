@@ -6,10 +6,13 @@ use crate::app_state::core::RuntimeConfig;
 /// Precedence: RuntimeConfig.ploke_editor -> PLOKE_EDITOR env -> None.
 pub fn resolve_editor_command(cfg: &RuntimeConfig) -> Option<String> {
     if let Some(cmd) = cfg.ploke_editor.clone()
-        && !cmd.trim().is_empty() {
-            return Some(cmd);
-        }
-    std::env::var("PLOKE_EDITOR").ok().filter(|s| !s.trim().is_empty())
+        && !cmd.trim().is_empty()
+    {
+        return Some(cmd);
+    }
+    std::env::var("PLOKE_EDITOR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
 }
 
 /// Build editor CLI args for a given path and optional line number.
@@ -22,4 +25,3 @@ pub fn build_editor_args(path: &Path, line: Option<u32>) -> Vec<String> {
     }
     vec![target]
 }
-

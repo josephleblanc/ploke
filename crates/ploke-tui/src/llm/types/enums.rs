@@ -25,7 +25,7 @@ pub enum SupportedParameters {
     TopLogprobs,
     TopP,
     WebSearchOptions,
-    Verbosity
+    Verbosity,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Hash)]
@@ -33,9 +33,8 @@ pub enum SupportedParameters {
 pub enum Verbosity {
     Low,
     Medium,
-    High
+    High,
 }
-
 
 pub(crate) trait SupportsTools {
     fn supports_tools(&self) -> bool;

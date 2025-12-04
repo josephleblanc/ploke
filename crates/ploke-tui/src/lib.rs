@@ -50,7 +50,10 @@ use app_state::{
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use parser::run_parse;
-use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd, Bm25Indexer}, multi_embedding::db_ext::EmbeddingExt};
+use ploke_db::{
+    bm25_index::{self, Bm25Indexer, bm25_service::Bm25Cmd},
+    multi_embedding::db_ext::EmbeddingExt,
+};
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},

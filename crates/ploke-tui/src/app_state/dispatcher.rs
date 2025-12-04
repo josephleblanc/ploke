@@ -83,8 +83,20 @@ pub async fn state_manager(
             } => {
                 handlers::chat::add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
-            StateCommand::AddMessageTool { msg, kind, new_msg_id, tool_call_id } => {
-                handlers::chat::add_tool_msg_immediate(&state, &event_bus, new_msg_id, msg, tool_call_id ).await;
+            StateCommand::AddMessageTool {
+                msg,
+                kind,
+                new_msg_id,
+                tool_call_id,
+            } => {
+                handlers::chat::add_tool_msg_immediate(
+                    &state,
+                    &event_bus,
+                    new_msg_id,
+                    msg,
+                    tool_call_id,
+                )
+                .await;
             }
             StateCommand::PruneHistory { max_messages: _ } => {
                 handlers::chat::prune_history().await;
@@ -293,9 +305,12 @@ pub async fn state_manager(
                 let model_id = match ModelId::from_str(&model_id_string) {
                     Ok(m) => m,
                     Err(e) => {
-                        let msg = format!( "Invalid model id: {}, expected `{{auther}}/{{model}}:{{variant}}` where `:{{variant}}` is optional", model_id_string );
+                        let msg = format!(
+                            "Invalid model id: {}, expected `{{auther}}/{{model}}:{{variant}}` where `:{{variant}}` is optional",
+                            model_id_string
+                        );
                         add_msg_shortcut(&msg).await;
-                        continue
+                        continue;
                     }
                 };
 
@@ -336,10 +351,14 @@ pub async fn state_manager(
                     // otherwise selected model without provider, which is fine.
                     format!(
                         "Switched active model to {} via provider {}",
-                        model_id, provider.slug.as_str() 
+                        model_id,
+                        provider.slug.as_str()
                     )
                 } else {
-                    format!("Switched active model to {} with auto provider selection", model_id)
+                    format!(
+                        "Switched active model to {} with auto provider selection",
+                        model_id
+                    )
                 };
 
                 // Inform the user and update the UI via events

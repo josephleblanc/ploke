@@ -225,4 +225,3 @@ mod gat_tests {
         Ok(())
     }
 }
-

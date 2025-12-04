@@ -1,15 +1,14 @@
-
-use std::sync::Arc;
 use chrono::Utc;
 use ploke_core::ArcStr;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tokio::select;
-use uuid::Uuid;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
-use crate::app_state::events::SystemEvent;
 use crate::app_state::MessageUpdatedEvent;
+use crate::app_state::events::SystemEvent;
 use crate::chat_history::{Message, MessageKind};
 use crate::tools::ToolName;
 use crate::{AppEvent, EventBus, EventPriority};
@@ -111,7 +110,10 @@ fn init_tool_persist_worker(state: &Arc<AppState>) {
                 call_id: rec.call_id.clone(),
             };
             if let Err(e) = persist_tool_requested(&state, &req_params).await {
-                tracing::warn!("observability: mpsc record_tool_call_requested failed: {}", e);
+                tracing::warn!(
+                    "observability: mpsc record_tool_call_requested failed: {}",
+                    e
+                );
             }
             let done_params = ToolDonePersistParams {
                 request_id: rec.request_id,

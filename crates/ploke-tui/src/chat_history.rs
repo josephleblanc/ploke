@@ -352,8 +352,10 @@ impl Message {
 pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
     let context_status = ContextStatus::Pinned {
         turns_to_live: TurnsToLive::Unlimited,
-        reason: Some( ArcStr::from("Base system prompt should be pinned for entire conversation.") ),
-        pinned_by: Some( Role::System )
+        reason: Some(ArcStr::from(
+            "Base system prompt should be pinned for entire conversation.",
+        )),
+        pinned_by: Some(Role::System),
     };
     Message {
         id: Uuid::new_v4(),
@@ -368,7 +370,6 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
         context_status,
     }
 });
-
 
 /// Manages the complete branching conversation history using a tree structure.
 ///
@@ -1069,8 +1070,7 @@ pub(crate) async fn atomic_write(
     let mut temp = NamedTempFile::new_in(dir)?;
     temp.write_all(content.as_bytes())?;
     // Map PersistError into a plain io::Error to satisfy the return type
-    temp.persist(path)
-        .map_err(std::io::Error::other)?;
+    temp.persist(path).map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -1514,10 +1514,13 @@ mod tests {
         // Include the root system prompt when non-empty
         let msgs = ch.current_path_as_llm_request_messages();
         // Expect: [System(non-empty), User, Assistant]
-        let printable = format!("messages:
+        let printable = format!(
+            "messages:
 
 {:#?}
-", msgs);
+",
+            msgs
+        );
         eprintln!("{}", &printable);
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, LlmRole::System);

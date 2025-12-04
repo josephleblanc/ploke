@@ -1,15 +1,15 @@
-use ploke_test_utils::workspace_root;
 use fmt::format::FmtSpan;
+use ploke_test_utils::workspace_root;
 
 use tracing::Level;
 use tracing::info;
 use tracing_appender::non_blocking::WorkerGuard;
 
+use tracing_subscriber::filter;
 use tracing_subscriber::filter::FilterExt;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::filter;
 
 pub const SCAN_CHANGE: &str = "scan_change";
 /// A tracing target for items related to tracking messages in the conversation history, present
@@ -65,23 +65,28 @@ pub fn init_tracing() -> LoggingGuards {
         .without_time();
 
     // Filter so this layer only receives events you tag with target="api_json"
-    let only_api_json = filter::filter_fn(|meta| meta.target() == "api_json")
-        .and(LevelFilter::INFO); // optional: cap level if you want
+    let only_api_json =
+        filter::filter_fn(|meta| meta.target() == "api_json").and(LevelFilter::INFO); // optional: cap level if you want
 
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
-        .with(filter)                // env filter for the main layer
-        .with(main_layer)            // normal app logs -> ploke.log
+        .with(filter) // env filter for the main layer
+        .with(main_layer) // normal app logs -> ploke.log
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .try_init();
 
-    LoggingGuards { main: main_guard, api: api_guard }
+    LoggingGuards {
+        main: main_guard,
+        api: api_guard,
+    }
 }
 
 pub fn init_tracing_tests(level: Level) -> WorkerGuard {
-    let env_filter = format!("{},ploke_db=error,cozo=error,tokenizer=error,candle_transformers=error,hyper_util=error", level);
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&env_filter)); // Default to 'info' level
+    let env_filter = format!(
+        "{},ploke_db=error,cozo=error,tokenizer=error,candle_transformers=error,hyper_util=error",
+        level
+    );
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&env_filter)); // Default to 'info' level
 
     // File appender with custom timestamp format
     let log_dir = "test-logs";

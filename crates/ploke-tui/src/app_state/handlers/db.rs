@@ -25,9 +25,7 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     #[cfg(feature = "multi_embedding_ui")]
     match create_index_warn(&state.db) {
         Ok(_) => {
-            tracing::info!(
-                "Database index updated by create_index_warn for rel",
-            );
+            tracing::info!("Database index updated by create_index_warn for rel",);
         }
         Err(e) => {
             // bad habit, saving time, just delete this later, we don't need the NodeType in
@@ -40,14 +38,15 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                     );
                 }
                 Err(nested_e) => {
-                    tracing::warn!("The attempt to replace the index at the database failed for rel: \nnested_e: {nested_e}",
+                    tracing::warn!(
+                        "The attempt to replace the index at the database failed for rel: \nnested_e: {nested_e}",
                     );
                 }
             }
         }
     }
 
-    #[cfg(not( feature = "multi_embedding_ui" ))]
+    #[cfg(not(feature = "multi_embedding_ui"))]
     for ty in NodeType::primary_nodes() {
         match create_index_warn(&state.db, ty) {
             Ok(_) => {
@@ -56,25 +55,27 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                     ty.relation_str()
                 );
             }
-            Err(e) => {
-                match replace_index_warn(&state.db, ty) {
-                    Ok(_) => {
-                        tracing::info!(
-                            "Database index updated by replace_index_warn for rel: {}\nPrevious attempt to create index failed with err msg: {e}",
-                            ty.relation_str()
-                        );
-                    }
-                    Err(nested_e) => {
-                        tracing::warn!("The attempt to replace the index at the database failed for rel: {}\nnested_e: {nested_e}",
-                            ty.relation_str()
-                        );
-                    }
+            Err(e) => match replace_index_warn(&state.db, ty) {
+                Ok(_) => {
+                    tracing::info!(
+                        "Database index updated by replace_index_warn for rel: {}\nPrevious attempt to create index failed with err msg: {e}",
+                        ty.relation_str()
+                    );
                 }
-            }
+                Err(nested_e) => {
+                    tracing::warn!(
+                        "The attempt to replace the index at the database failed for rel: {}\nnested_e: {nested_e}",
+                        ty.relation_str()
+                    );
+                }
+            },
         }
     }
     let after = time::Instant::now();
-    let msg = format!("..finished in {} millis", after.duration_since(start).as_millis());
+    let msg = format!(
+        "..finished in {} millis",
+        after.duration_since(start).as_millis()
+    );
 
     super::chat::add_msg_immediate(
         state,

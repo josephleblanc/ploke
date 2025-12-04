@@ -3,18 +3,23 @@ use crate::scan::test_instrumentation;
 use crate::{
     path_policy::{normalize_against_roots, normalize_against_roots_with_policy, SymlinkPolicy},
     read::{extract_snippet_str, parse_tokens_from_str, read_file_to_string_abs},
-    write::write_snippets_batch,
+    write::{write_snippets_batch, write_snippets_batch_ns, NsWriteResult},
 };
-use ploke_core::{CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData};
+use ploke_core::{
+    file_hash::{hash_file_blake3_bounded, HashOutcome, LargeFilePolicy},
+    CreateFileData, CreateFileResult, TrackingHash, WriteResult, WriteSnippetData,
+};
 use tracing::error;
 
 use super::*;
+use std::io::ErrorKind;
 
 pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
     roots: Option<Arc<Vec<PathBuf>>>,
     symlink_policy: Option<SymlinkPolicy>,
+    large_file_policy: Option<LargeFilePolicy>,
     #[cfg(feature = "watcher")]
     events_tx: Option<tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>>,
 }
@@ -47,11 +52,19 @@ pub enum IoRequest {
         requests: Vec<WriteSnippetData>,
         responder: oneshot::Sender<Vec<Result<WriteResult, PlokeError>>>,
     },
+    NsWriteSnippetBatch {
+        requests: Vec<NsWriteSnippetData>,
+        responder: oneshot::Sender<Vec<Result<NsWriteResult, PlokeError>>>,
+    },
     ReadFullVerified {
         file_path: PathBuf,
         expected_hash: TrackingHash,
         namespace: uuid::Uuid,
         responder: oneshot::Sender<Result<String, PlokeError>>,
+    },
+    ReadFile {
+        req: ReadFileRequest,
+        responder: oneshot::Sender<Result<ReadFileResponse, PlokeError>>,
     },
     CreateFile {
         request: CreateFileData,
@@ -85,6 +98,7 @@ impl IoManager {
             semaphore: Arc::new(Semaphore::new(limit)),
             roots: None,
             symlink_policy: None,
+            large_file_policy: None,
             #[cfg(feature = "watcher")]
             events_tx: None,
         }
@@ -96,6 +110,7 @@ impl IoManager {
         semaphore_permits: usize,
         roots: Option<Vec<PathBuf>>,
         symlink_policy: Option<SymlinkPolicy>,
+        large_file_policy: Option<LargeFilePolicy>,
         #[cfg(feature = "watcher")] events_tx: Option<
             tokio::sync::broadcast::Sender<crate::watcher::FileChangeEvent>,
         >,
@@ -105,6 +120,7 @@ impl IoManager {
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
             roots: roots.map(Arc::new),
             symlink_policy,
+            large_file_policy,
             #[cfg(feature = "watcher")]
             events_tx,
         }
@@ -171,9 +187,40 @@ impl IoManager {
                 let symlink_policy = self.symlink_policy;
                 #[cfg(feature = "watcher")]
                 let events_tx = self.events_tx.clone();
+                let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
                 tokio::spawn(async move {
                     let results =
-                        write_snippets_batch(requests.clone(), roots, symlink_policy).await;
+                        write_snippets_batch(requests.clone(), roots, symlink_policy, max_bytes)
+                            .await;
+                    #[cfg(feature = "watcher")]
+                    if let Some(tx) = events_tx {
+                        for (req, res) in requests.into_iter().zip(results.iter()) {
+                            if res.is_ok() {
+                                let _ = tx.send(crate::watcher::FileChangeEvent {
+                                    path: req.file_path.clone(),
+                                    kind: crate::watcher::FileEventKind::Modified,
+                                    old_path: None,
+                                    origin: None,
+                                });
+                            }
+                        }
+                    }
+                    let _ = responder.send(results);
+                });
+            }
+            IoRequest::NsWriteSnippetBatch {
+                requests,
+                responder,
+            } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                #[cfg(feature = "watcher")]
+                let events_tx = self.events_tx.clone();
+                let max_bytes: u64 = Self::FILE_BYTES_LIMIT;
+                tokio::spawn(async move {
+                    let results =
+                        write_snippets_batch_ns(requests.clone(), roots, symlink_policy, max_bytes)
+                            .await;
                     #[cfg(feature = "watcher")]
                     if let Some(tx) = events_tx {
                         for (req, res) in requests.into_iter().zip(results.iter()) {
@@ -225,8 +272,8 @@ impl IoManager {
                         if actual != expected_hash {
                             return Err(IoError::ContentMismatch {
                                 path: path.clone(),
-                                name: String::from("<full_file>"),
-                                id: uuid::Uuid::nil(),
+                                name: None,
+                                id: None,
                                 file_tracking_hash: expected_hash.0,
                                 namespace,
                             }
@@ -237,6 +284,64 @@ impl IoManager {
                     .await;
 
                     let _ = responder.send(res);
+                });
+            }
+            IoRequest::ReadFile { req, responder } => {
+                let roots = self.roots.clone();
+                let symlink_policy = self.symlink_policy;
+                let large_file_policy = self.large_file_policy;
+                tokio::spawn(async move {
+                    let ReadFileRequest {
+                        file_path,
+                        range,
+                        max_bytes,
+                        strategy,
+                    } = req;
+
+                    // TODO: implement server-side slicing; suppress unused warning for now.
+                    let _ = range;
+
+                    let normalized_path = if let Some(roots) = roots.as_ref() {
+                        let norm = if let Some(policy) = symlink_policy {
+                            normalize_against_roots_with_policy(&file_path, roots, policy)
+                        } else {
+                            normalize_against_roots(&file_path, roots)
+                        };
+                        match norm {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let _ = responder.send(Err(e.into()));
+                                return;
+                            }
+                        }
+                    } else {
+                        file_path
+                    };
+
+                    let result = match strategy {
+                        ReadStrategy::Plain => {
+                            Self::read_plain_file(
+                                normalized_path.clone(),
+                                max_bytes,
+                                large_file_policy,
+                            )
+                            .await
+                        }
+                        ReadStrategy::Verified {
+                            expected_hash,
+                            namespace,
+                        } => {
+                            Self::read_verified_file(
+                                normalized_path.clone(),
+                                max_bytes,
+                                expected_hash,
+                                namespace,
+                            )
+                            .await
+                        }
+                    };
+
+                    let _ = responder.send(result);
                 });
             }
             IoRequest::CreateFile { request, responder } => {
@@ -261,6 +366,109 @@ impl IoManager {
                 });
             }
         }
+    }
+
+    const FILE_BYTES_LIMIT: u64 = u32::MAX as u64;
+    async fn read_plain_file(
+        path: PathBuf,
+        max_bytes: Option<usize>,
+        large_file_policy: Option<LargeFilePolicy>,
+    ) -> Result<ReadFileResponse, PlokeError> {
+        let policy = large_file_policy.unwrap_or_default();
+        let max_bytes_hashed = max_bytes
+            .map(|m| m as u64)
+            .unwrap_or(Self::FILE_BYTES_LIMIT);
+        let hashed_result = read_and_compute_hash(&path, policy, max_bytes_hashed)?;
+        let hash = hashed_result?;
+        match read_file_to_string_abs(&path).await {
+            Ok(content) => {
+                let byte_len = content.len() as u64;
+                let (content, truncated) = Self::truncate_to_limit(content, max_bytes);
+                Ok(ReadFileResponse {
+                    exists: true,
+                    file_path: path,
+                    byte_len: Some(byte_len),
+                    content: Some(content),
+                    truncated,
+                    file_hash: Some(hash),
+                })
+            }
+            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+                Ok(ReadFileResponse {
+                    exists: false,
+                    file_path: path,
+                    byte_len: None,
+                    content: None,
+                    truncated: false,
+                    file_hash: None,
+                })
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn read_verified_file(
+        path: PathBuf,
+        max_bytes: Option<usize>,
+        expected_hash: TrackingHash,
+        namespace: uuid::Uuid,
+    ) -> Result<ReadFileResponse, PlokeError> {
+        match read_file_to_string_abs(&path).await {
+            Ok(content) => {
+                let tokens = parse_tokens_from_str(&content, &path)?;
+                let actual = TrackingHash::generate(namespace, &path, &tokens);
+                if actual != expected_hash {
+                    return Err(IoError::ContentMismatch {
+                        path: path.clone(),
+                        name: None,
+                        id: None,
+                        file_tracking_hash: expected_hash.0,
+                        namespace,
+                    }
+                    .into());
+                }
+                let byte_len = content.len() as u64;
+                let (content, truncated) = Self::truncate_to_limit(content, max_bytes);
+                Ok(ReadFileResponse {
+                    exists: true,
+                    file_path: path,
+                    byte_len: Some(byte_len),
+                    content: Some(content),
+                    truncated,
+                    // NOTE: this is using the old TrackingHash approach to dealing with file
+                    // hashes, so I'm leaving it None for now
+                    // TODO: Determine how we should handle the file hashes here
+                    file_hash: None,
+                })
+            }
+            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+                Ok(ReadFileResponse {
+                    exists: false,
+                    file_path: path,
+                    byte_len: None,
+                    content: None,
+                    truncated: false,
+                    // NOTE: this is using the old TrackingHash approach to dealing with file
+                    // hashes, so I'm leaving it None for now
+                    file_hash: None,
+                })
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn truncate_to_limit(mut content: String, max_bytes: Option<usize>) -> (String, bool) {
+        if let Some(limit) = max_bytes {
+            if limit > 0 && content.len() > limit {
+                let mut cut = limit.min(content.len());
+                while cut > 0 && !content.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                content.truncate(cut);
+                return (content, true);
+            }
+        }
+        (content, false)
     }
 
     /// Groups requests by file path and processes each file concurrently.
@@ -454,10 +662,10 @@ impl IoManager {
                     req.idx,
                     Err(IoError::ContentMismatch {
                         path: file_path.clone(),
-                        name: req.request.name.clone(),
-                        id: req.request.id,
-                        file_tracking_hash: req.request.file_tracking_hash.0,
+                        name: Some(req.request.name.clone()),
+                        id: Some(req.request.id),
                         namespace,
+                        file_tracking_hash: req.request.file_tracking_hash.0,
                     }
                     .into()),
                 ));
@@ -559,6 +767,8 @@ impl IoManager {
         }
     }
 
+    // TODO: needs docs, esp. since it's connected to ploke-tui's scan_for_change via IoHandle's
+    // `scan_for_change_batch` method.
     pub async fn handle_scan_batch_with_roots(
         requests: Vec<FileData>,
         semaphore: Arc<Semaphore>,
@@ -668,4 +878,27 @@ impl IoManager {
 
         Self::check_file_hash(normalized_file_data, semaphore).await
     }
+}
+
+pub(crate) fn read_and_compute_hash(
+    path: &PathBuf,
+    policy: LargeFilePolicy,
+    max_bytes_hashed: u64,
+) -> Result<Result<FileHash, IoError>, PlokeError> {
+    let hashed_result = match hash_file_blake3_bounded(path, max_bytes_hashed, policy) {
+        Ok(ho) => match ho {
+            HashOutcome::Hashed { hash, .. } => Ok(hash),
+            _ => Err(IoError::try_from(ho)?),
+        },
+        Err(io_error) => {
+            let kind = io_error.kind();
+            Err(IoError::FileOperation {
+                operation: "read",
+                path: path.clone(),
+                source: Arc::new(io_error),
+                kind,
+            })
+        }
+    };
+    Ok(hashed_result)
 }

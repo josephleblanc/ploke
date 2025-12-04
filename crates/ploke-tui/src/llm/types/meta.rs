@@ -33,4 +33,3 @@ pub(crate) struct PerformanceMetrics {
     pub(crate) time_to_first_token: Duration,
     pub(crate) queue_time: Duration,
 }
-

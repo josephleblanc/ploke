@@ -1,4 +1,4 @@
-use crate::{tools::ToolName, TOKEN_LIMIT};
+use crate::{TOKEN_LIMIT, tools::ToolName};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
@@ -21,12 +21,15 @@ pub struct ApplyCodeEditRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Edit {
+    // edit applied internally
     Canonical {
         file: String,
         canon: String,
         node_type: NodeType,
         code: String,
     },
+    // edit applied internally
+    // TODO:cleanup verify we still do/don't use this
     Splice {
         file_path: String,
         expected_file_hash: ploke_core::TrackingHash,
@@ -35,6 +38,15 @@ pub enum Edit {
         replacement: String,
         #[serde(default = "default_namespace")]
         namespace: uuid::Uuid,
+    },
+    // arguments passed to mpatch::parse eventually
+    // TODO:refactor
+    // Try making these ArcStr instead maybe?
+    // Or possibly leave them as Cow, depending on how we handle them re: threads
+    Patch {
+        file: String,
+        diff: String,
+        reasoning: String,
     },
 }
 
@@ -74,7 +86,9 @@ impl NodeKind {
     }
 }
 
-fn default_namespace() -> uuid::Uuid { PROJECT_NAMESPACE_UUID }
+fn default_namespace() -> uuid::Uuid {
+    PROJECT_NAMESPACE_UUID
+}
 
 // Temporary migration shim to accept legacy direct splice payloads without the tagged enum.
 // This is used to map tests and older callers into the typed Edit::Splice variant.

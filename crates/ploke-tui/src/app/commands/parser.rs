@@ -7,7 +7,7 @@
 //! - The executor consumes these variants and dispatches `StateCommand`s,
 //!   keeping the UI thread non-blocking.
 
-// TODO: Add defaults 
+// TODO: Add defaults
 // - `/model providers` to use currently selected model by default
 // - `/model providers <model_id>` should also work for aliases
 use crate::app::App;

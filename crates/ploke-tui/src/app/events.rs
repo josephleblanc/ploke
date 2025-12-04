@@ -4,12 +4,12 @@ use crate::app_state::events::SystemEvent;
 use crate::llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
-use std::sync::Arc;
-use std::time::Instant;
 use itertools::Itertools;
 use ploke_core::ArcStr;
+use std::sync::Arc;
+use std::time::Instant;
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
-use tracing::{warn, info, trace, error, debug};
 
 // Bring AppEvent and SystemEvent into scope from the parent module tree
 use super::AppEvent;
@@ -27,7 +27,6 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         }
 
         // LLM events routed into llm match arm below
-
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }
@@ -35,19 +34,17 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.indexing_state = Some(state);
         }
         AppEvent::Ui(_ui_event) => {}
-        AppEvent::Llm(event) => {
-            match event {
-                LlmEvent::Models(resp @ models::Event::Response { .. }) => {
-                    handle_llm_models_response(app, resp)
-                }
-                LlmEvent::Endpoint(ep_evt) => handle_llm_endpoints_response(app, ep_evt),
-                LlmEvent::ChatCompletion(_) => {}
-                LlmEvent::Completion(_) => {}
-                LlmEvent::Tool(_) => {}
-                LlmEvent::Status(_) => {}
-                _ => {}
+        AppEvent::Llm(event) => match event {
+            LlmEvent::Models(resp @ models::Event::Response { .. }) => {
+                handle_llm_models_response(app, resp)
             }
-        }
+            LlmEvent::Endpoint(ep_evt) => handle_llm_endpoints_response(app, ep_evt),
+            LlmEvent::ChatCompletion(_) => {}
+            LlmEvent::Completion(_) => {}
+            LlmEvent::Tool(_) => {}
+            LlmEvent::Status(_) => {}
+            _ => {}
+        },
         AppEvent::LlmTool(_event) => {}
         AppEvent::EventBusStarted => {}
         AppEvent::Rag(_rag_event) => {}
@@ -93,7 +90,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });
-                    app.active_model_indicator = Some((new_model.clone().to_string(), Instant::now()));
+                    app.active_model_indicator =
+                        Some((new_model.clone().to_string(), Instant::now()));
                     app.active_model_id = new_model.to_string();
                 }
                 SystemEvent::ReadQuery {
@@ -157,8 +155,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 } if !is_success => {
                     debug!(
                         "App receives BackupDb unsuccessful event: {}\nwith error: {:?}",
-                        &file_dir,
-                        &error
+                        &file_dir, &error
                     );
                     if let Some(error_str) = error {
                         app.send_cmd(StateCommand::AddMessageImmediate {
@@ -239,16 +236,20 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
 // that specific model (along with other info like the prices for that provider or other
 // variations), we only see a "(loading...)", which never resolves.
 fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
-    let models::Event::Response { models, search_keyword } = models_event else {
+    let models::Event::Response {
+        models,
+        search_keyword,
+    } = models_event
+    else {
         debug!("Unexpected event type");
         return;
     };
 
-    let Some( models_payload ) = models else {
+    let Some(models_payload) = models else {
         send_warning(app, "Model search response missing payload.");
         return;
     };
-    
+
     let Some(mb) = app.model_browser.as_ref() else {
         debug!("Received model list response without open browser");
         return;
@@ -260,13 +261,19 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
     };
 
     if let Some(kw) = search_keyword.as_deref().filter(|k| *k != mb.keyword) {
-        debug!("Dropping stale results, expected '{}', got '{}')", mb.keyword, kw);
+        debug!(
+            "Dropping stale results, expected '{}', got '{}')",
+            mb.keyword, kw
+        );
         return;
     }
 
     let filtered = filter_models_for_keyword(models_payload.as_ref(), &mb.keyword);
     if filtered.is_empty() {
-        let warning = format!("No models matched '{}'. Try a broader search.", keyword_snapshot);
+        let warning = format!(
+            "No models matched '{}'. Try a broader search.",
+            keyword_snapshot
+        );
         send_warning(app, &warning);
     }
 
@@ -275,8 +282,7 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
         if mb.keyword != keyword_snapshot {
             debug!(
                 "Model browser keyword changed from '{}' → '{}' while request was pending",
-                keyword_snapshot,
-                mb.keyword,
+                keyword_snapshot, mb.keyword,
             );
             return;
         }
@@ -314,19 +320,23 @@ fn filter_models_for_keyword(
 }
 
 fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event) {
-    if let endpoint::Event::Response { model_key: _, endpoints } = endpoints_event {
+    if let endpoint::Event::Response {
+        model_key: _,
+        endpoints,
+    } = endpoints_event
+    {
         let eps = match endpoints {
             Some(epoints) => epoints,
             None => {
                 send_warning(app, "No endpoints found for model.");
-                return
-            },
+                return;
+            }
         };
         let mb = match app.model_browser.as_mut() {
             Some(m_browser) => m_browser,
-            None => { 
-                send_warning(app, "Querying model endpoints outside of model browser"); 
-                return 
+            None => {
+                send_warning(app, "Querying model endpoints outside of model browser");
+                return;
             }
         };
 
@@ -336,11 +346,10 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
             Some(b) => b,
             None => {
                 send_error(app, "No matching item for returned model endopints");
-                return
+                return;
             }
-
         };
-        
+
         let model_id = &eps.data.id;
         // Map ProviderEntry -> ModelProviderRow
         let rows = eps
@@ -348,7 +357,9 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
             .endpoints
             .iter()
             .map(|ep| {
-                let key = ProviderKey { slug: ep.tag.provider_name.clone() };
+                let key = ProviderKey {
+                    slug: ep.tag.provider_name.clone(),
+                };
                 ModelProviderRow::from_id_endpoint(model_id.clone(), &key, ep.clone())
             })
             .collect::<Vec<_>>();
@@ -383,13 +394,21 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
 fn send_warning(app: &mut App, message: &str) {
     let msg = String::from(message);
     warn!(msg);
-    app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg,
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
 }
 
 fn send_error(app: &mut App, message: &str) {
     let msg = String::from(message);
     warn!(msg);
-    app.send_cmd(StateCommand::AddMessageImmediate { msg, kind: MessageKind::SysInfo, new_msg_id: Uuid::new_v4() });
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg,
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
 }
 
 #[cfg(test)]

@@ -1,11 +1,11 @@
 #![cfg(test)]
 
+use crate::EndpointsResponse;
+use crate::llm::HasModels as _;
 use crate::llm::request::endpoint::Endpoint;
 use crate::llm::request::models;
-use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::router_only::HasEndpoint as _;
-use crate::llm::HasModels as _;
-use crate::EndpointsResponse;
+use crate::llm::router_only::openrouter::OpenRouter;
 use lazy_static::lazy_static;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
@@ -154,7 +154,9 @@ async fn choose_tools_endpoint_for_model(
         return None;
     }
     candidates.sort_by(|a, b| {
-        a.pricing.prompt.partial_cmp(&b.pricing.prompt)
+        a.pricing
+            .prompt
+            .partial_cmp(&b.pricing.prompt)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 

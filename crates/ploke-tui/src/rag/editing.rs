@@ -1,6 +1,10 @@
-use crate::{app_state::handlers::chat, chat_history::MessageKind};
+use crate::{
+    app_state::{core::EditProposalStatus, handlers::chat},
+    chat_history::MessageKind,
+};
 
 use super::*;
+#[tracing::instrument(skip(state, event_bus))]
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
@@ -18,9 +22,13 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
     };
     drop(reg);
 
+    let is_semantic = proposal.is_semantic;
     // Idempotency checks (without holding lock)
     match proposal.status {
-        EditProposalStatus::Pending => { /* ok */ }
+        EditProposalStatus::Pending => {
+            let msg = format!("Applying patch for request_id {}", request_id);
+            add_msg_imm(msg).await;
+        }
         EditProposalStatus::Applied => {
             let msg = format!("Edits already applied for request_id {}", request_id);
             add_msg_imm(msg).await;
@@ -41,6 +49,126 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
 
     // Apply edits via IoManagerHandle
     let file_paths = proposal.files.clone();
+    if proposal.is_semantic {
+        apply_semantic_edit(state, event_bus, request_id, proposal, file_paths).await;
+    } else {
+        apply_ns_edit(state, event_bus, request_id, proposal, file_paths).await;
+    }
+}
+
+#[tracing::instrument(skip(state, event_bus))]
+async fn apply_ns_edit(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    request_id: Uuid,
+    mut proposal: crate::app_state::core::EditProposal,
+    file_paths: Vec<PathBuf>,
+) {
+    let add_msg_imm = async move |msg: String| {
+        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await;
+    };
+
+    match state
+        .io_handle
+        .write_batch_ns(proposal.edits_ns.clone())
+        .await
+    {
+        Ok(results) => {
+            let applied = results
+                .iter()
+                .inspect(|r| {
+                    if r.is_err() {
+                        tracing::error!("Error while applying patch: {r:?}");
+                    }
+                })
+                .filter(|r| r.is_ok())
+                .count();
+            let results_json: Vec<serde_json::Value> = results
+                .into_iter()
+                .zip(file_paths.into_iter())
+                .map(|(res, path)| match res {
+                    Ok(write_res) => serde_json::json!({
+                        "file_path": path.display().to_string(),
+                        "new_file_hash": format!("{:?}", write_res.new_file_hash ),
+                    }),
+                    Err(err) => serde_json::json!({
+                        "file_path": path.display().to_string(),
+                        "error": err.to_string(),
+                    }),
+                })
+                .collect();
+
+            let content = serde_json::json!({
+                "ok": applied > 0,
+                "applied": applied,
+                "results": results_json
+            })
+            .to_string();
+
+            // Update state: mark applied
+            proposal.status = EditProposalStatus::Applied;
+            let parent_id_val = proposal.parent_id;
+            let call_id_val = proposal.call_id.clone();
+            let mut reg = state.proposals.write().await;
+            let is_semantic = proposal.is_semantic;
+            reg.insert(request_id, proposal);
+            drop(reg);
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    parent_id: parent_id_val,
+                    call_id: call_id_val.clone(),
+                    content: content.clone(),
+                }));
+
+            let msg = format!("Applied edits for request_id {}", request_id);
+            add_msg_imm(msg).await;
+
+            // Persist proposals (best-effort)
+            crate::app_state::handlers::proposals::save_proposals(state).await;
+
+            // Surface a brief SysInfo so users see that a rescan has been scheduled
+
+            let msg = "Scheduled rescan of workspace after applying edits".to_string();
+            add_msg_imm(msg).await;
+        }
+        Err(e) => {
+            proposal.status = EditProposalStatus::Failed(e.to_string());
+            let parent_id_val = proposal.parent_id;
+            let call_id_val = proposal.call_id.clone();
+            let mut reg = state.proposals.write().await;
+            reg.insert(request_id, proposal);
+            drop(reg);
+            let err_str = format!("Failed to apply edits: {}", e);
+            let _ = event_bus
+                .realtime_tx
+                .send(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    parent_id: parent_id_val,
+                    call_id: call_id_val.clone(),
+                    error: err_str.clone(),
+                }));
+
+            let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
+            add_msg_imm(msg).await;
+            crate::app_state::handlers::proposals::save_proposals(state).await;
+        }
+    }
+}
+
+#[tracing::instrument(skip(state, event_bus))]
+async fn apply_semantic_edit(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    request_id: Uuid,
+    mut proposal: crate::app_state::core::EditProposal,
+    file_paths: Vec<PathBuf>,
+) {
+    let add_msg_imm = async move |msg: String| {
+        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await;
+    };
+
     match state
         .io_handle
         .write_snippets_batch(proposal.edits.clone())
@@ -75,6 +203,7 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
             let mut reg = state.proposals.write().await;
+            let is_semantic = proposal.is_semantic;
             reg.insert(request_id, proposal);
             drop(reg);
             let _ = event_bus
@@ -86,38 +215,19 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
                     content: content.clone(),
                 }));
 
-            chat::add_msg_immediate(
-                state,
-                event_bus,
-                Uuid::new_v4(),
-                format!("Applied edits for request_id {}", request_id),
-                MessageKind::SysInfo,
-            )
-            .await;
+            let msg = format!("Applied edits for request_id {}", request_id);
+            add_msg_imm(msg).await;
 
             // Persist proposals (best-effort)
             crate::app_state::handlers::proposals::save_proposals(state).await;
 
-            // Post-apply: trigger a rescan to refresh indexes
-            let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
-            tokio::spawn({
-                let state = Arc::clone(state);
-                let event_bus = Arc::clone(event_bus);
-                async move {
-                    crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
-                    // We don't need scan_rx result here; fire-and-forget.
-                    let _ = scan_rx;
-                }
-            });
+            // Post-apply: trigger a rescan to refresh indexes after semantic edits only,
+            // e.g. not after `NsPatch`
+            rescan_for_changes(state, event_bus, request_id);
             // Surface a brief SysInfo so users see that a rescan has been scheduled
-            chat::add_msg_immediate(
-                state,
-                event_bus,
-                Uuid::new_v4(),
-                "Scheduled rescan of workspace after applying edits".to_string(),
-                MessageKind::SysInfo,
-            )
-            .await;
+
+            let msg = "Scheduled rescan of workspace after applying edits".to_string();
+            add_msg_imm(msg).await;
         }
         Err(e) => {
             proposal.status = EditProposalStatus::Failed(e.to_string());
@@ -141,6 +251,54 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
             crate::app_state::handlers::proposals::save_proposals(state).await;
         }
     }
+}
+
+fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+    let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn({
+        let state = Arc::clone(state);
+        let event_bus = Arc::clone(event_bus);
+        async move {
+            crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+            let add_chat_message = |msg: String| {
+                chat::add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    Uuid::new_v4(),
+                    msg.to_string(),
+                    MessageKind::SysInfo,
+                )
+            };
+            match scan_rx.await {
+                Ok(Some(files_changed)) => {
+                    let changed_string = files_changed.iter().map(|f| f.to_string_lossy()).fold(
+                        String::new(),
+                        |mut acc, s| {
+                            acc.push_str(&s);
+                            acc.push('\n');
+                            acc
+                        },
+                    );
+                    let msg = format!("Files noted as having changed:\n{:?}", changed_string);
+                    tracing::info!(target: "edit-proposals", msg);
+                    add_chat_message(msg).await;
+                }
+                Ok(None) => {
+                    let msg = "No changed files detected".to_string();
+                    tracing::info!(target: "edit-proposals", msg);
+                    add_chat_message(msg).await;
+                }
+                Err(e) => {
+                    let msg = format!(
+                        "Error scanning workspace for changes in request id {}\nError: {}",
+                        request_id, e
+                    );
+                    tracing::error!(target: "edit-proposals", msg);
+                    add_chat_message(msg).await;
+                }
+            }
+        }
+    });
 }
 
 pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
@@ -197,11 +355,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
     }
 }
 
-pub async fn approve_creations(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-) {
+pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
@@ -219,22 +373,26 @@ pub async fn approve_creations(
     drop(reg);
 
     match proposal.status {
-        EditProposalStatus::Pending => {}
+        EditProposalStatus::Pending => {
+            tracing::debug!("Creations has pending proposal for request_id {request_id}");
+        }
         EditProposalStatus::Applied => {
-            let msg = format!("Creations already applied for request_id {}", request_id);
+            let msg = format!("Creations already applied for request_id {request_id}");
             add_msg_imm(msg).await;
             return;
         }
         EditProposalStatus::Denied => {
-            let msg = format!("Creations already denied for request_id {}", request_id);
+            let msg = format!("Creations already denied for request_id {request_id}");
             add_msg_imm(msg).await;
             return;
         }
         EditProposalStatus::Approved => {
-            tracing::debug!("Create-file proposal approved, applying");
+            tracing::debug!("Create-file proposal approved, applying for request_id {request_id}");
         }
-        EditProposalStatus::Failed(_) => {
-            tracing::debug!("Create-file proposal previously failed; retrying apply");
+        EditProposalStatus::Failed(e) => {
+            tracing::debug!(
+                "Create-file proposal for request_id {request_id} previously failed with error: {e};\nRetrying apply..."
+            );
         }
     }
 
@@ -308,7 +466,9 @@ pub async fn approve_creations(
         let event_bus = Arc::clone(event_bus);
         async move {
             crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
-            let _ = scan_rx.await.inspect_err(|e| tracing::error!(scan_error = ?e));
+            let _ = scan_rx
+                .await
+                .inspect_err(|e| tracing::error!(scan_error = ?e));
         }
     });
     chat::add_msg_immediate(
@@ -321,11 +481,7 @@ pub async fn approve_creations(
     .await;
 }
 
-pub async fn deny_creations(
-    state: &Arc<AppState>,
-    event_bus: &Arc<EventBus>,
-    request_id: Uuid,
-) {
+pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
@@ -344,7 +500,9 @@ pub async fn deny_creations(
     drop(reg);
 
     match proposal.status {
-        EditProposalStatus::Pending | EditProposalStatus::Approved | EditProposalStatus::Failed(_) => {
+        EditProposalStatus::Pending
+        | EditProposalStatus::Approved
+        | EditProposalStatus::Failed(_) => {
             proposal.status = EditProposalStatus::Denied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();

@@ -1,3 +1,5 @@
+use ploke_core::file_hash::LargeFilePolicy;
+
 use super::*;
 
 /// The `IoManager` is a central actor responsible for handling all file I/O operations
@@ -49,6 +51,7 @@ pub struct IoManagerBuilder {
     fd_limit: Option<usize>,
     roots: Vec<PathBuf>,
     symlink_policy: Option<path_policy::SymlinkPolicy>,
+    large_file_policy: Option<LargeFilePolicy>,
     #[cfg(feature = "watcher")]
     enable_watcher: bool,
     #[cfg(feature = "watcher")]
@@ -90,6 +93,12 @@ impl IoManagerBuilder {
     /// Configure symlink handling policy for root normalization (Phase 7).
     pub fn with_symlink_policy(mut self, policy: path_policy::SymlinkPolicy) -> Self {
         self.symlink_policy = Some(policy);
+        self
+    }
+
+    /// Configure symlink handling policy for root normalization (Phase 7).
+    pub fn with_large_file_policy(mut self, policy: LargeFilePolicy) -> Self {
+        self.large_file_policy = Some(policy);
         self
     }
 
@@ -177,6 +186,7 @@ impl IoManagerBuilder {
                     effective_permits,
                     roots_opt,
                     symlink_policy_opt,
+                    self.large_file_policy,
                     #[cfg(feature = "watcher")]
                     Some(events_tx.clone()),
                 );

@@ -107,6 +107,7 @@ async fn make_state_with_ids(
                     call_id: ArcStr::from(format!("call-{i}")),
                     proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                     edits: vec![],
+                    edits_ns: vec![],
                     files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
                     preview,
                     status: EditProposalStatus::Pending,

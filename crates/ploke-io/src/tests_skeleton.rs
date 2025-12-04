@@ -232,7 +232,7 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
 
     #[cfg(feature = "multi_embedding_io")]
     let embedding_data = setup_db_full_embeddings(fixture_name)?;
-    #[cfg(not( feature = "multi_embedding_io" ))]
+    #[cfg(not(feature = "multi_embedding_io"))]
     let embedding_data = setup_db_full_embeddings(fixture_name)?;
     let flat_nodes: Vec<_> = embedding_data
         .iter()
@@ -284,7 +284,7 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
                     tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);
                     contains_name += 1;
                 } else {
-                    tracing::error!(target: "handle", 
+                    tracing::error!(target: "handle",
                             "Name Not Found: \n{}{}",
                             "snippet: ", snip);
                 }
@@ -336,6 +336,79 @@ async fn test_handle_request() -> Result<(), ploke_error::Error> {
     let handle = io_manager.run();
 
     Ok(())
+}
+
+#[tokio::test]
+async fn test_read_file_plain_success() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("read_me.txt");
+    let contents = "hello ns_read\nsecond line";
+    fs::write(&file_path, contents).unwrap();
+
+    let handle = IoManagerHandle::new();
+    let req = ReadFileRequest {
+        file_path: file_path.clone(),
+        range: None,
+        max_bytes: Some(1024),
+        strategy: ReadStrategy::Plain,
+    };
+
+    let resp = handle.read_file(req).await.unwrap().unwrap();
+    assert!(resp.exists);
+    assert_eq!(resp.file_path, file_path);
+    assert_eq!(resp.byte_len, Some(contents.len() as u64));
+    assert_eq!(resp.truncated, false);
+    assert_eq!(resp.content.as_deref(), Some(contents));
+
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_read_file_missing_returns_exists_false() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("nope.md");
+
+    let handle = IoManagerHandle::new();
+    let req = ReadFileRequest {
+        file_path: file_path.clone(),
+        range: None,
+        max_bytes: Some(256),
+        strategy: ReadStrategy::Plain,
+    };
+
+    let resp = handle.read_file(req).await.unwrap().unwrap();
+    assert!(!resp.exists);
+    assert_eq!(resp.file_path, file_path);
+    assert!(resp.byte_len.is_none());
+    assert!(resp.content.is_none());
+    assert!(!resp.truncated);
+
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_read_file_truncates_when_limit_set() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("truncate.txt");
+    let contents = "line one\nline two\nline three";
+    fs::write(&file_path, contents).unwrap();
+
+    let handle = IoManagerHandle::new();
+    let req = ReadFileRequest {
+        file_path: file_path.clone(),
+        range: None,
+        max_bytes: Some(8),
+        strategy: ReadStrategy::Plain,
+    };
+
+    let resp = handle.read_file(req).await.unwrap().unwrap();
+    assert!(resp.exists);
+    assert_eq!(resp.file_path, file_path);
+    assert_eq!(resp.byte_len, Some(contents.len() as u64));
+    assert!(resp.truncated);
+    assert_eq!(resp.content.as_deref(), Some("line one"));
+
+    handle.shutdown().await;
 }
 
 fn percent(i: usize, t: usize) -> f32 {

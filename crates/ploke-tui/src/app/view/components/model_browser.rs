@@ -228,7 +228,7 @@ pub fn render_model_browser<'a>(
     (body_area, footer_area, overlay_style, lines)
 }
 
-/// Provider item height: 
+/// Provider item height:
 ///     context_length + supports_tools + pricing
 const PROVIDER_DETAILS_HEIGHT: usize = 3;
 
@@ -278,7 +278,9 @@ pub fn model_browser_focus_line(mb: &ModelBrowserState) -> usize {
 
     let sel = &mb.items[sel_idx];
     if mb.provider_select_active && sel.expanded && !sel.providers.is_empty() {
-        let prov_idx = mb.provider_selected.min(sel.providers.len().saturating_sub(1));
+        let prov_idx = mb
+            .provider_selected
+            .min(sel.providers.len().saturating_sub(1));
         line + 1 + PROVIDER_DETAILS_HEIGHT + 1 + prov_idx
     } else {
         line

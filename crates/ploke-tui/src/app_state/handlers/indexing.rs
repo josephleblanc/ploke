@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use ploke_io::path_policy::SymlinkPolicy;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use ploke_io::path_policy::SymlinkPolicy;
 
 use crate::app_state::AppState;
 use crate::parser::run_parse;
@@ -20,19 +20,17 @@ pub async fn index_workspace(
     let target_dir = {
         match state.system.read().await.crate_focus.clone() {
             Some(path) => path,
-            None => {
-                match std::env::current_dir() {
-                    Ok(current_dir) => {
-                        let mut pwd = current_dir;
-                        pwd.push(&workspace);
-                        pwd
-                    }
-                    Err(e) => {
-                        tracing::error!("Error resolving current dir: {e}");
-                        return;
-                    }
+            None => match std::env::current_dir() {
+                Ok(current_dir) => {
+                    let mut pwd = current_dir;
+                    pwd.push(&workspace);
+                    pwd
                 }
-            }
+                Err(e) => {
+                    tracing::error!("Error resolving current dir: {e}");
+                    return;
+                }
+            },
         }
     };
 

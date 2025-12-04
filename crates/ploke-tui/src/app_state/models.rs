@@ -20,9 +20,7 @@ pub(super) async fn switch_model(
                     .entry(mid.key.clone())
                     .or_default();
             }
-            event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
-                mid,
-            )));
+            event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(mid)));
         }
         Err(_) => {
             tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);

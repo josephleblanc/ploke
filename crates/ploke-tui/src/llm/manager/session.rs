@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
 
 use chrono::DateTime;
 use ploke_test_utils::workspace_root;
@@ -10,21 +10,21 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::AppEvent;
+use crate::EventBus;
 use crate::app_state::StateCommand;
+use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::llm::response::FinishReason;
-use crate::llm::response::OpenAiResponse;
-use crate::utils::consts::TOOL_CALL_TIMEOUT;
-use crate::AppEvent;
-use crate::EventBus;
-use crate::app_state::events::SystemEvent;
 use crate::llm::manager::RequestMessage;
 use crate::llm::request::endpoint::ToolChoice;
+use crate::llm::response::FinishReason;
+use crate::llm::response::OpenAiResponse;
 use crate::llm::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
 use crate::tools::ToolName;
+use crate::utils::consts::TOOL_CALL_TIMEOUT;
 
 use super::LlmError;
 
@@ -32,22 +32,28 @@ const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parse
 
 #[derive(Debug, PartialEq)]
 enum ParseOutcome {
-    ToolCalls { calls: Vec<crate::tools::ToolCall>, content: Option<String>, finish_reason: FinishReason },
+    ToolCalls {
+        calls: Vec<crate::tools::ToolCall>,
+        content: Option<String>,
+        finish_reason: FinishReason,
+    },
     Content(String),
 }
 
 fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
     // First, detect provider-embedded errors inside a 200 body
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text) && let Some(err) = v.get("error") {
-            let msg = err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown provider error");
-            let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-            return Err(LlmError::Api {
-                status: code as u16,
-                message: msg.to_string(),
-            });
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text)
+        && let Some(err) = v.get("error")
+    {
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown provider error");
+        let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+        return Err(LlmError::Api {
+            status: code as u16,
+            message: msg.to_string(),
+        });
     }
 
     // Parse into normalized response
@@ -62,8 +68,11 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
             // if there is a tool call, return with tool call info
             let content = msg.content;
             if let Some(tc) = msg.tool_calls {
-                return Ok(ParseOutcome::ToolCalls { calls: tc, content,
-                finish_reason});
+                return Ok(ParseOutcome::ToolCalls {
+                    calls: tc,
+                    content,
+                    finish_reason,
+                });
             } else if let Some(text_content) = content {
                 return Ok(ParseOutcome::Content(text_content));
             }
@@ -75,11 +84,14 @@ fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
                 "Unexpected streaming delta".into(),
             ));
         } else {
-            return Err(LlmError::Deserialization("Empty `choice` in LLM respnse".into()));
+            return Err(LlmError::Deserialization(
+                "Empty `choice` in LLM respnse".into(),
+            ));
         }
     }
-    Err(LlmError::Deserialization("No `choice` in llm response".into()))
-
+    Err(LlmError::Deserialization(
+        "No `choice` in llm response".into(),
+    ))
 }
 
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
@@ -163,7 +175,6 @@ where
 
         let mut initial_message_updated = false;
         for _attempt in 0..=self.attempts {
-
             if !use_tools {
                 self.req.tools = None;
                 self.req.tool_choice = None;
@@ -212,7 +223,10 @@ where
                     tools_fallback_attempted = true;
                     continue;
                 }
-                return Err(LlmError::Api { status, message: text });
+                return Err(LlmError::Api {
+                    status,
+                    message: text,
+                });
             }
 
             let log_url = response.url().to_string();
@@ -232,24 +246,34 @@ where
             }
 
             match parse_outcome(&body_text)? {
-                ParseOutcome::ToolCalls { calls: tool_calls, content, finish_reason } => {
+                ParseOutcome::ToolCalls {
+                    calls: tool_calls,
+                    content,
+                    finish_reason,
+                } => {
                     tracing::debug!(calls = ?tool_calls, ?content);
                     let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
 
                     if !initial_message_updated {
-                        state_cmd_tx.send(StateCommand::UpdateMessage { 
-                            id: self.parent_id, 
-                            update: MessageUpdate { 
-                                content: Some( assistant_update), 
-                                status: Some( MessageStatus::Completed ),
-                                ..Default::default() 
-                            }
-                        }).await.expect("state command must be running");
+                        state_cmd_tx
+                            .send(StateCommand::UpdateMessage {
+                                id: self.parent_id,
+                                update: MessageUpdate {
+                                    content: Some(assistant_update),
+                                    status: Some(MessageStatus::Completed),
+                                    ..Default::default()
+                                },
+                            })
+                            .await
+                            .expect("state command must be running");
                         initial_message_updated = true;
                     }
 
                     let mut task_set = tokio::task::JoinSet::new();
-                    let mut call_feedback: HashMap<ploke_core::ArcStr, (uuid::Uuid, Option<(String, String)>)> = HashMap::new();
+                    let mut call_feedback: HashMap<
+                        ploke_core::ArcStr,
+                        (uuid::Uuid, Option<(String, String)>),
+                    > = HashMap::new();
                     for call in tool_calls.into_iter() {
                         let tool_name = call.function.name;
                         let args_json = call.function.arguments.clone();
@@ -259,14 +283,22 @@ where
                         let call_id = call.call_id.clone();
 
                         let summary = if matches!(tool_name, ToolName::ApplyCodeEdit) {
-                            if let Ok(parsed) = serde_json::from_str::<CodeEditArgsMinimal>(&args_json) {
+                            if let Ok(parsed) =
+                                serde_json::from_str::<CodeEditArgsMinimal>(&args_json)
+                            {
                                 if let Some(first) = parsed.edits.first() {
                                     let file = first.file.clone();
                                     let snippet: String = first.code.chars().take(100).collect();
                                     Some((file, snippet))
-                                } else { None }
-                            } else { None }
-                        } else { None };
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
 
                         call_feedback.insert(call_id.clone(), (request_id, summary));
 
@@ -323,10 +355,15 @@ where
                         match res {
                             Ok((cid, Ok(content))) => {
                                 // Append the tool's raw JSON result for the next request
-                                self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
+                                self.req
+                                    .core
+                                    .messages
+                                    .push(RequestMessage::new_tool(content, cid.clone()));
 
                                 // If this was an apply_code_edit call, also append a concise System summary
-                                if let Some((rid, Some((file, snippet)))) = call_feedback.get(&cid).cloned() {
+                                if let Some((rid, Some((file, snippet)))) =
+                                    call_feedback.get(&cid).cloned()
+                                {
                                     let sys_msg = format!(
                                         "Staged code edit recorded.
 request_id: {}
@@ -338,41 +375,57 @@ snippet (first 100 chars):
 If you are ready to return control to the user, respond with finish_reason 'stop'.",
                                         rid, file, snippet
                                     );
-                                    self.req.core.messages.push(RequestMessage::new_system(sys_msg));
+                                    self.req
+                                        .core
+                                        .messages
+                                        .push(RequestMessage::new_system(sys_msg));
                                 }
                             }
                             Ok((cid, Err(err_string))) => {
                                 tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
                                 let content = json!({"ok": false, "error": err_string}).to_string();
-                                self.req.core.messages.push(RequestMessage::new_tool(content, cid.clone()));
+                                self.req
+                                    .core
+                                    .messages
+                                    .push(RequestMessage::new_tool(content, cid.clone()));
                                 let err_msg = format!("tool failed\n\t{cid:?}\n\t{err_string:?}");
-                                state_cmd_tx.send(StateCommand::AddMessageTool {
-                                    new_msg_id: Uuid::new_v4(),
-                                    msg: err_msg.clone(),
-                                    // TODO: Change to 'Tool'
-                                    kind: MessageKind::Tool,
-                                    tool_call_id: cid,
-
-                                }).await.expect("state manager must be running");
+                                state_cmd_tx
+                                    .send(StateCommand::AddMessageTool {
+                                        new_msg_id: Uuid::new_v4(),
+                                        msg: err_msg.clone(),
+                                        // TODO: Change to 'Tool'
+                                        kind: MessageKind::Tool,
+                                        tool_call_id: cid,
+                                    })
+                                    .await
+                                    .expect("state manager must be running");
                                 continue;
                                 // return Err(LlmError::ToolCall(err_msg));
                             }
                             Err(join_err) => {
-                                return Err(LlmError::ToolCall(format!("join error: {}", join_err)));
+                                return Err(LlmError::ToolCall(format!(
+                                    "join error: {}",
+                                    join_err
+                                )));
                             }
                         }
                     }
                     if finish_reason == FinishReason::ToolCalls {
                         let remember_stop = "Tool Call completed. Remember to end with a 'stop' finish reason to return conversation control to the user.";
-                        state_cmd_tx.send(StateCommand::AddMessageImmediate { 
-                            msg: remember_stop.to_string(), 
-                            kind: MessageKind::System, 
-                            new_msg_id: Uuid::new_v4() 
-                        }).await.expect("state manager must be running");
+                        state_cmd_tx
+                            .send(StateCommand::AddMessageImmediate {
+                                msg: remember_stop.to_string(),
+                                kind: MessageKind::System,
+                                new_msg_id: Uuid::new_v4(),
+                            })
+                            .await
+                            .expect("state manager must be running");
                         continue;
                     } else {
-                        if assistant_intro.is_empty() {assistant_intro.push_str("Calling tools")}
-                        return Ok( assistant_intro );
+                        if assistant_intro.is_empty() {
+                            assistant_intro.push_str("Calling tools")
+                        }
+                        return Ok(assistant_intro);
                     }
                 }
                 ParseOutcome::Content(content) => {
@@ -387,34 +440,45 @@ If you are ready to return control to the user, respond with finish_reason 'stop
         )))
     }
 
-    async fn log_request(&self
-    ) -> color_eyre::Result<()> 
-    {
+    async fn log_request(&self) -> color_eyre::Result<()> {
         let payload: String = serde_json::to_string_pretty(&self.req)?;
         info!(target: "api_json", "{}", payload);
         Ok(())
     }
-
 }
 
 #[tracing::instrument]
-async fn add_sysinfo_message(call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
-    let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
-    cmd_tx.send(StateCommand::AddMessageImmediate {
-        msg: completed_msg,
-        kind: MessageKind::SysInfo,
-        new_msg_id: Uuid::new_v4()
-    }).await.expect("state manager must be running");
+async fn add_sysinfo_message(
+    call_id: &ploke_core::ArcStr,
+    cmd_tx: &mpsc::Sender<StateCommand>,
+    status_msg: &str,
+) {
+    let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
+    cmd_tx
+        .send(StateCommand::AddMessageImmediate {
+            msg: completed_msg,
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        })
+        .await
+        .expect("state manager must be running");
 }
 
 #[tracing::instrument]
-async fn add_tool_failed_message(call_id: &ploke_core::ArcStr, cmd_tx: &mpsc::Sender<StateCommand>, status_msg: &str) {
-    let completed_msg = format!( "Tool call {}: {}", status_msg, call_id.as_ref() );
-    cmd_tx.send(StateCommand::AddMessageImmediate {
-        msg: completed_msg,
-        kind: MessageKind::System,
-        new_msg_id: Uuid::new_v4()
-    }).await.expect("state manager must be running");
+async fn add_tool_failed_message(
+    call_id: &ploke_core::ArcStr,
+    cmd_tx: &mpsc::Sender<StateCommand>,
+    status_msg: &str,
+) {
+    let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
+    cmd_tx
+        .send(StateCommand::AddMessageImmediate {
+            msg: completed_msg,
+            kind: MessageKind::System,
+            new_msg_id: Uuid::new_v4(),
+        })
+        .await
+        .expect("state manager must be running");
 }
 
 #[cfg(test)]

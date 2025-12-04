@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{
+    EndpointsResponse, ModelId, ModelKey,
     request::{
         endpoint::{Endpoint, EndpointData},
         models,
-    }, router_only::{HasEndpoint, HasModelId, HasModels, Router}, EndpointsResponse, ModelId, ModelKey
+    },
+    router_only::{HasEndpoint, HasModelId, HasModels, Router},
 };
 
 /// Cache for items from OpenRouter's `{author}/{slug}:{variant}/endpoints` API
@@ -44,9 +46,7 @@ impl Serialize for EndpointCache {
             cache: self
                 .cache
                 .iter()
-                .map(|(key, value)| {
-                    (key, value.iter().map(|arc| arc.as_ref()).collect())
-                })
+                .map(|(key, value)| (key, value.iter().map(|arc| arc.as_ref()).collect()))
                 .collect(),
             ttl: self.ttl,
             last_update: self.last_update,
@@ -73,9 +73,7 @@ impl<'de> Deserialize<'de> for EndpointCache {
             cache: helper
                 .cache
                 .into_iter()
-                .map(|(key, value)| {
-                    (key, value.into_iter().map(Arc::new).collect())
-                })
+                .map(|(key, value)| (key, value.into_iter().map(Arc::new).collect()))
                 .collect(),
             ttl: helper.ttl,
             last_update: helper.last_update,
@@ -102,8 +100,6 @@ impl EndpointCache {
         }
     }
 }
-
-
 
 /// Cache for items from OpenRouter's `/models` endpoint
 // - Later will add other endpoints and make a generic set of items that should be included across

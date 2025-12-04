@@ -33,7 +33,6 @@ pub enum ResponseFormat {
     JsonObject,
 }
 
-
 /// Token usage statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TokenUsage {
@@ -148,25 +147,23 @@ mod tests {
     fn test_openai_response_serialization_deserialization() {
         let response = OpenAiResponse {
             id: "test-id".to_string(),
-            choices: vec![
-                Choices {
+            choices: vec![Choices {
+                logprobs: None,
+                finish_reason: Some(FinishReason::Stop),
+                native_finish_reason: Some("stop".to_string()),
+                index: Some(0),
+                message: Some(ResponseMessage {
+                    role: Some(Role::Assistant),
+                    content: Some("Hello, world!".to_string()),
+                    tool_calls: None,
                     logprobs: None,
-                    finish_reason: Some(FinishReason::Stop),
-                    native_finish_reason: Some("stop".to_string()),
-                    index: Some(0),
-                    message: Some(ResponseMessage {
-                        role: Some(Role::Assistant),
-                        content: Some("Hello, world!".to_string()),
-                        tool_calls: None,
-                        logprobs: None,
-                        refusal: None,
-                        reasoning: None,
-                    }),
-                    error: None,
-                    text: None,
-                    delta: None,
-                }
-            ],
+                    refusal: None,
+                    reasoning: None,
+                }),
+                error: None,
+                text: None,
+                delta: None,
+            }],
             created: 1234567890,
             model: "gpt-4".to_string(),
             object: "chat.completion".to_string(),
@@ -183,10 +180,10 @@ mod tests {
         let serialized = serde_json::to_string(&response).unwrap();
         let pretty = serde_json::to_string_pretty(&response).unwrap();
         println!("serialized pretty:\n{}", &pretty);
-        
+
         // Test deserialization
         let deserialized: OpenAiResponse = serde_json::from_str(&serialized).unwrap();
-        
+
         // Verify fields
         assert_eq!(deserialized.id, response.id);
         assert_eq!(deserialized.choices.len(), response.choices.len());
