@@ -63,6 +63,7 @@ async fn make_app_with_proposals() -> (
             text: "diff".into(),
         },
         status: EditProposalStatus::Pending,
+        is_semantic: true,
     };
     {
         let mut guard = state.proposals.write().await;
@@ -134,6 +135,7 @@ async fn make_app_with_proposals_and_editor(
             text: "diff".into(),
         },
         status: EditProposalStatus::Pending,
+        is_semantic: true,
     };
     {
         let mut guard = state.proposals.write().await;

@@ -63,10 +63,7 @@ pub trait HnswExt {
         DataValue::List(as_list)
     }
 
-    fn is_hnsw_index_registered(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<bool, ploke_error::Error>;
+    fn is_hnsw_index_registered(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError>;
 
     fn create_index_warn(&self, enbedding_set: &EmbeddingSet) -> Result<(), ploke_error::Error>;
 }
@@ -244,25 +241,31 @@ impl HnswExt for cozo::Db<cozo::MemStorage> {
             ","
         };
         let hnsw_rel = embedding_set.hnsw_rel_name();
-        let p =|script: &str| -> Result<(), DbError> { 
-            let s = format!( "::indices {}", script );
+        let p = |script: &str| -> Result<(), DbError> {
+            let s = format!("::indices {}", script);
             info!("trying basic script:\n\t{}", s.log_magenta());
-            let out = self.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
+            let out = self
+                .run_script(&s, BTreeMap::new(), ScriptMutability::Immutable)
+                .map_err(DbError::from)
                 .map(|r| format!("{r:?}\n"))?;
             debug!(%out);
             Ok(())
         };
-        let pp =|script: &str| -> Result<(), DbError> { 
+        let pp = |script: &str| -> Result<(), DbError> {
             let s = script;
             info!("trying basic script:\n\t{}", s.log_magenta());
-            let out = self.run_script(&s, BTreeMap::new(), ScriptMutability::Immutable).map_err(DbError::from)
+            let out = self
+                .run_script(&s, BTreeMap::new(), ScriptMutability::Immutable)
+                .map_err(DbError::from)
                 .map(|r| format!("{r:?}\n"))?;
             debug!(%out);
             Ok(())
         };
         p(hnsw_rel.as_ref())?;
         p(embed_rel.as_ref())?;
-        let const_with_embed = format!( r#"?[id, name, vector] := *const {{ name, id }}, *{embed_rel} {{node_id: id, vector }}"# );
+        let const_with_embed = format!(
+            r#"?[id, name, vector] := *const {{ name, id }}, *{embed_rel} {{node_id: id, vector }}"#
+        );
         pp(&const_with_embed)?;
         let count_pending = self.count_pending_embeddings(embedding_set)?;
         info!(?count_pending);
@@ -434,10 +437,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         })
     }
 
-    fn is_hnsw_index_registered(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<bool, ploke_error::Error> {
+    fn is_hnsw_index_registered(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
         // TODO: introspect ::indices output to avoid repeated creation; currently we
         // always attempt to create the index, but we still run the query to ensure the
         // script is valid under the current embedding schema.
@@ -457,7 +457,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             // the script fails, with a message that the item is not found in the database
             Err(e) if e == DbError::Cozo(expect_err_msg) => Ok(false),
             // the script fails for some other reason
-            Err(e) => Err(ploke_error::Error::from(e)),
+            Err(e) => Err(e),
         }
     }
 
@@ -507,10 +507,7 @@ impl HnswExt for Database {
         )
     }
 
-    fn is_hnsw_index_registered(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<bool, ploke_error::Error> {
+    fn is_hnsw_index_registered(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
         self.deref().is_hnsw_index_registered(embedding_set)
     }
 
@@ -528,7 +525,15 @@ impl HnswExt for Database {
         limit: usize,
         radius: Option<f64>,
     ) -> Result<EmbedDataVerbose, ploke_error::Error> {
-        self.deref().search_similar_for_set_test(embedding_set, node_type, vector_query, k, ef, limit, radius)
+        self.deref().search_similar_for_set_test(
+            embedding_set,
+            node_type,
+            vector_query,
+            k,
+            ef,
+            limit,
+            radius,
+        )
     }
 }
 

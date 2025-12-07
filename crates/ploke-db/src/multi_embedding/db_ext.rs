@@ -70,7 +70,10 @@ pub trait EmbeddingExt {
     fn count_unembedded_files(&self, embedding_set_id: &EmbeddingSet) -> Result<usize, DbError>;
 
     /// Checks for the presence of the embedding info for a given embedding set.
-    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError>;
+    fn is_embedding_set_row_present(
+        &self,
+        embedding_set_id: &EmbeddingSet,
+    ) -> Result<bool, DbError>;
 
     fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError>;
 
@@ -161,20 +164,14 @@ pub trait EmbeddingExt {
 
     fn is_hnsw_relation_registered(&self, relation_name: &HnswRelName) -> Result<bool, DbError>;
 
-    fn create_vector_embedding_relation(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError>;
+    fn create_vector_embedding_relation(&self, embedding_set: &EmbeddingSet)
+        -> Result<(), DbError>;
 
-    fn ensure_vector_embedding_relation(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError>;
+    fn ensure_vector_embedding_relation(&self, embedding_set: &EmbeddingSet)
+        -> Result<(), DbError>;
 
-    fn is_vector_embedding_registered(
-        &self,
-        embedding_set: &EmbeddingSet,
-    ) -> Result<bool, PlokeError>;
+    fn is_vector_embedding_registered(&self, embedding_set: &EmbeddingSet)
+        -> Result<bool, DbError>;
 
     fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error>;
 
@@ -189,6 +186,8 @@ pub trait EmbeddingExt {
     fn count_embeddings_for_set(&self, embedding_set: &EmbeddingSet) -> Result<usize, DbError>;
 
     fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String;
+
+    fn count_common_nodes(&self) -> Result<usize, PlokeError>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -249,7 +248,7 @@ not *{embed_rel}{{node_id: id}}
         count
     }
 
-    fn is_embedding_present(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
+    fn is_embedding_set_row_present(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
         let mut params = BTreeMap::new();
         params.insert(
             "embedding_set_id".into(),
@@ -321,6 +320,16 @@ not *{embed_rel}{{node_id: id}}
         Ok(is_found)
     }
 
+    /// Checks if the relation for `embedding_set`, which contains the embedding set metadata for
+    /// each embedding that may have been used in the database, is registered.
+    ///
+    /// To be clear, this is not to check if any given embedding set has been registered, but
+    /// rather to check if the relation for the metadata relation itself, called `embedding_set`,
+    /// has been registered.
+    // TODO: Change this function to match on error, and then if the error is exactly the error  we
+    // get when we query a relation that does not exist, return false, or if it returns Ok from the
+    // database, then return true, otherwise propogate the error.
+    //  - matching on strings is bad
     fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
         let rows = self
             .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
@@ -378,6 +387,26 @@ not *{embed_rel}{{node_id: id}}
             .map(QueryResult::from)
             .map_err(DbError::from)
             .map_err(PlokeError::from)
+    }
+
+    fn count_common_nodes(&self) -> Result<usize, PlokeError> {
+        let common_nodes_result = self.get_common_nodes()?;
+        info!(target: "cozo-script",
+            "{} {}\n{}",
+            "Testing Script:".log_step(),
+            "get_common_nodes".log_name(),
+            format_args!("Running script:\n{}", self.script_get_common_nodes()?)
+        );
+        let script_get_common_nodes = self.script_get_common_nodes()?;
+        let db_result = self
+            .run_script(
+                &script_get_common_nodes,
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .map_err(DbError::from)?;
+        // eprintln!("db_result.rows: {:#?}", db_result.rows);
+        Ok(common_nodes_result.rows.len())
     }
 
     fn get_nodes_ordered_for_set(
@@ -645,7 +674,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
 
         // Check that the given relation for the spectific "embedding_set" relation has already
         // been "put" into the database
-        if !self.is_embedding_present(&embedding_set)? {
+        if !self.is_embedding_set_row_present(&embedding_set)? {
             self.put_embedding_set(&embedding_set)?;
             tracing::info!("{}: put default embedding set", "Db".log_step());
         }
@@ -720,7 +749,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     fn create_vector_embedding_relation(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
+    ) -> Result<(), DbError> {
         let script_create_vector_rel = EmbeddingVector::script_create_from_set(embedding_set);
         self.run_script(
             &script_create_vector_rel,
@@ -734,7 +763,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     fn ensure_vector_embedding_relation(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
+    ) -> Result<(), DbError> {
         // Check that the relation "embedding_set" is registered
         if !self.is_vector_embedding_registered(embedding_set)? {
             self.create_vector_embedding_relation(embedding_set)?;
@@ -745,7 +774,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     fn is_vector_embedding_registered(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<bool, PlokeError> {
+    ) -> Result<bool, DbError> {
         let set_id = embedding_set.hash_id().into_inner() as i64;
         let rel_name = embedding_set.rel_name();
         let get_rel_name_script = format!("?[count( node_id)] := *{rel_name}{{ node_id @ 'NOW'}}");
@@ -763,7 +792,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         match result {
             Ok(count) => Ok(true),
             Err(e) if e == DbError::Cozo(expected_err_msg) => Ok(false),
-            Err(e) => Err(PlokeError::from(e)),
+            Err(e) => Err(DbError::from(e)),
         }
         //
         // Ok(is_present)
@@ -953,7 +982,7 @@ impl EmbeddingExt for Database {
     fn create_vector_embedding_relation(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
+    ) -> Result<(), DbError> {
         self.deref().create_vector_embedding_relation(embedding_set)
     }
 
@@ -968,7 +997,7 @@ impl EmbeddingExt for Database {
     fn ensure_vector_embedding_relation(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<(), PlokeError> {
+    ) -> Result<(), DbError> {
         self.deref().ensure_vector_embedding_relation(embedding_set)
     }
 
@@ -1021,8 +1050,11 @@ impl EmbeddingExt for Database {
         self.deref().is_embedding_id_present(embedding_set_id)
     }
 
-    fn is_embedding_present(&self, embedding_set_id: &EmbeddingSet) -> Result<bool, DbError> {
-        self.deref().is_embedding_present(embedding_set_id)
+    fn is_embedding_set_row_present(
+        &self,
+        embedding_set_id: &EmbeddingSet,
+    ) -> Result<bool, DbError> {
+        self.deref().is_embedding_set_row_present(embedding_set_id)
     }
 
     fn is_embedding_set_registered(&self) -> Result<bool, DbError> {
@@ -1040,7 +1072,7 @@ impl EmbeddingExt for Database {
     fn is_vector_embedding_registered(
         &self,
         embedding_set: &EmbeddingSet,
-    ) -> Result<bool, PlokeError> {
+    ) -> Result<bool, DbError> {
         self.deref().is_vector_embedding_registered(embedding_set)
     }
 
@@ -1090,8 +1122,11 @@ impl EmbeddingExt for Database {
         updates: Vec<(Uuid, Vec<f64>)>,
         embedding_set: &EmbeddingSet,
     ) -> Result<(), DbError> {
-        self.deref()
-            .update_embeddings_batch(updates, embedding_set)
+        self.deref().update_embeddings_batch(updates, embedding_set)
+    }
+
+    fn count_common_nodes(&self) -> Result<usize, PlokeError> {
+        self.deref().count_common_nodes()
     }
 }
 
@@ -1300,6 +1335,42 @@ mod tests {
         }};
     }
 
+    async fn print_embedding_info(
+        db: &Database,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), PlokeError> {
+        let vector_rel = embedding_set.vector_relation_name();
+        let hnsw_rel = embedding_set.hnsw_rel_name();
+        info!("count rels = {:?}", db.count_relations().await);
+        info!(
+            "count pending (no embedding) = {}",
+            db.count_pending_embeddings()?
+        );
+        info!(
+            "count pending (no embedding) non_files = {}",
+            db.count_unembedded_files()?
+        );
+        info!(
+            "count pending (no embedding) files = {}",
+            db.count_unembedded_nonfiles()?
+        );
+        info!(
+            "is_embedding_set_registered: {}",
+            db.is_embedding_set_registered()?
+        );
+        info!(
+            "is_embedding_set_row_present: {} - ({})",
+            db.is_embedding_set_row_present(embedding_set)?,
+            vector_rel
+        );
+        info!(
+            "is_hnsw_relation: {} - ({})",
+            db.is_hnsw_index_registered(embedding_set)?,
+            hnsw_rel
+        );
+        Ok(())
+    }
+
     fn setup_db() -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
         ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
     }
@@ -1337,8 +1408,8 @@ mod tests {
             db.is_embedding_set_registered()?
         );
         info!(
-            "is_embedding_present: {} - ({})",
-            db.is_embedding_present(embedding_set)?,
+            "is_embedding_set_row_present: {} - ({})",
+            db.is_embedding_set_row_present(embedding_set)?,
             vector_rel
         );
         info!(
@@ -1350,7 +1421,10 @@ mod tests {
         load_db(&db, "fixture_nodes".to_string()).await?;
 
         info!("count rels = {:?}", db.count_relations().await);
-        info!("count pending = {}", db.count_pending_embeddings()?);
+        info!(
+            "count pending (no embedding) = {}",
+            db.count_pending_embeddings()?
+        );
         info!("count pending non_files = {}", db.count_unembedded_files()?);
         info!("count pending files = {}", db.count_unembedded_nonfiles()?);
         info!(
@@ -1358,8 +1432,8 @@ mod tests {
             db.is_embedding_set_registered()?
         );
         info!(
-            "is_embedding_present: {} - ({})",
-            db.is_embedding_present(embedding_set)?,
+            "is_embedding_set_row_present: {} - ({})",
+            db.is_embedding_set_row_present(embedding_set)?,
             vector_rel
         );
         info!(

@@ -111,6 +111,7 @@ async fn make_state_with_ids(
                     files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
                     preview,
                     status: EditProposalStatus::Pending,
+                    is_semantic: true,
                 },
             );
         }

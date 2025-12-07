@@ -39,6 +39,13 @@ lazy_static! {
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
 /// Main database connection and query interface
+// TODO:refactor:database improve state handling for active_embedding_set
+// JL, 2025-12-06
+// - [ ] Change the active_embedding_set to an option, and when we add ways to remove embeddings,
+// ensure the active_embedding_set is changed to None.
+// - [ ] Add an error type for when an embedding set is not found
+// - [ ] Add convenience methods to map the option onto an error when we expect the
+// active_embedding_set to be Some but find None, so we can ergonomically handle unwraps.
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
@@ -1347,6 +1354,41 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Print counts of various information relevent to a given embedding set.
+    ///
+    /// The printed information shows the debug print, and will not error if the relation is not
+    /// found in the database.
+    ///
+    /// There is also a helper function `debug_print_counts_active` to for convencience to instead
+    /// print the database's currently active embedding set.
+    pub fn debug_print_counts(&self, embedding_set: &EmbeddingSet) {
+        let unembedded_files = self.count_unembedded_files();
+        let unembedded_non_files = self.count_unembedded_nonfiles();
+        let all_common_nodes = self.count_common_nodes();
+        let all_pending = self.count_pending_embeddings();
+        let all_emb_complete = self.count_complete_embeddings(embedding_set);
+        let all_embedded_rows = self.count_embeddings_for_set(embedding_set);
+        debug!(
+            r#"Counts:
+    unembedded_files = {unembedded_files:?}
+    unembedded_non_files = {unembedded_non_files:?}
+    all_common_nodes = {all_common_nodes:?}
+    all_pending = {all_pending:?}
+    all_emb_complete = {all_emb_complete:?}
+    all_embedded_rows = {all_embedded_rows:?}
+
+    embedded (all) / non-embedded (common) = {all_embedded_rows:?}/{all_common_nodes:?}"#
+        );
+    }
+
+    /// Helper function `debug_print_counts_active` to for convencience to instead print the
+    /// database's currently active embedding set.
+    ///
+    /// See `debug_print_counts` for the more general version that accepts a given embedding set.
+    pub fn debug_print_counts_active(&self) {
+        self.debug_print_counts(&self.active_embedding_set);
     }
 }
 

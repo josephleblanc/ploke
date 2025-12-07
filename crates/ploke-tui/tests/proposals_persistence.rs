@@ -58,11 +58,13 @@ async fn proposals_save_and_load_roundtrip() {
         call_id: ArcStr::from("test_tool_call:0"),
         proposed_at_ms: chrono::Utc::now().timestamp_millis(),
         edits: vec![],
+        edits_ns: vec![],
         files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
         preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
             text: "diff".into(),
         },
         status: EditProposalStatus::Pending,
+        is_semantic: true,
     };
     {
         let mut guard = state.proposals.write().await;

@@ -54,11 +54,13 @@ async fn approve_emits_rescan_sysinfo() {
                 call_id: ArcStr::from("test_tool_call:0"),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
+                edits_ns: vec![],
                 files: vec![],
                 preview: ploke_tui::app_state::core::DiffPreview::UnifiedDiff {
                     text: String::new(),
                 },
                 status: EditProposalStatus::Pending,
+                is_semantic: true,
             },
         );
     }

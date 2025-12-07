@@ -48,11 +48,13 @@ async fn overlay_renders_with_fixture_app_state() {
                 call_id: "call-fixture".into(),
                 proposed_at_ms: chrono::Utc::now().timestamp_millis(),
                 edits: vec![],
+                edits_ns: vec![],
                 files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
                 preview: DiffPreview::UnifiedDiff {
                     text: "sample diff".into(),
                 },
                 status: EditProposalStatus::Pending,
+                is_semantic: true,
             },
         );
     }
