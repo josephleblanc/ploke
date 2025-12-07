@@ -143,8 +143,9 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 fn setup_db_create_multi_embeddings(
     db: cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
-    use ploke_db::multi_embedding::schema::{
-        CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector,
+    use ploke_db::multi_embedding::{
+        hnsw_ext::HnswExt,
+        schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
     };
     use std::collections::BTreeMap;
 
@@ -200,6 +201,8 @@ fn setup_db_create_multi_embeddings(
         )
         .map_err(DbError::from)?;
     tracing::info!(create_embedding_vector = ?db_result.rows);
+    db.create_embedding_index(&embedding_set)?;
+
     Ok(db)
 }
 
@@ -307,7 +310,7 @@ pub fn setup_db_full_embeddings(
 
     #[cfg(feature = "multi_embedding_test")]
     let db = ploke_db::Database::new(setup_db_full_multi_embedding(fixture)?);
-    #[cfg( not(feature = "multi_embedding_test") )]
+    #[cfg(not(feature = "multi_embedding_test"))]
     let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;

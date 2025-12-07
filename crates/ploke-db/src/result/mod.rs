@@ -7,14 +7,21 @@ use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
 use itertools::Itertools;
-use ploke_core::{embeddings::{EmbeddingSet, EmbeddingSetId}, EmbeddingData, FileData, TrackingHash};
+use ploke_core::{
+    embeddings::{EmbeddingSet, EmbeddingSetId},
+    EmbeddingData, FileData, TrackingHash,
+};
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
 
 use crate::{
-    database::{to_string, to_u64, to_usize, to_uuid, to_vector}, error::DbError, get_by_id::CommonFields, multi_embedding::schema::EmbeddingVector, NodeType
+    database::{to_string, to_u64, to_usize, to_uuid, to_vector},
+    error::DbError,
+    get_by_id::CommonFields,
+    multi_embedding::schema::EmbeddingVector,
+    NodeType,
 };
-use cozo::NamedRows;
+use cozo::{DataValue, NamedRows};
 
 /// Result of a database query
 #[derive(Debug, Clone)]
@@ -147,6 +154,33 @@ impl QueryResult {
     //
     //     Ok(embeddings)
     // }
+
+    pub fn iter_col<'a>(&'a self, col_title: &str) -> Option<impl Iterator<Item = &'a DataValue>> {
+        use std::ops::Index;
+        let col_idx = self
+            .headers
+            .iter()
+            .enumerate()
+            .find(|(idx, col)| col.as_str() == col_title)
+            .map(|(idx, col)| idx)?;
+        Some(self.rows.iter().map(move |r| r.index(col_idx)))
+    }
+
+    /// Converts the headers and row to debug string format.
+    ///
+    /// All the headers are in debug format, then each row on a new line following the debug
+    /// header.
+    pub fn debug_string_all(&self) -> String {
+        let header = &self.headers;
+        let mut s = format!("{:?}", header);
+
+        for row in &self.rows {
+            s.push('\n');
+            let row_debug_str = format!("{row:?}");
+            s.push_str(&row_debug_str);
+        }
+        s
+    }
 }
 
 pub(crate) fn get_byte_offsets(span: &&[cozo::DataValue]) -> (usize, usize) {

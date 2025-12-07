@@ -188,6 +188,8 @@ pub trait EmbeddingExt {
     fn set_embeddings_rule(&self, embedding_set: &EmbeddingSet) -> String;
 
     fn count_common_nodes(&self) -> Result<usize, PlokeError>;
+
+    // fn get_node_info<T: From<NamedRows>>(&self, rel_name: &str) -> Result<T, DbError>;
 }
 
 impl EmbeddingExt for cozo::Db<cozo::MemStorage> {
@@ -951,6 +953,28 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         debug!(?count);
         count
     }
+
+    // fn get_node_info<T: From<NamedRows>>(&self, rel_name: &str) -> Result<T, DbError> {
+    //     let script = format!("::columns {rel_name}");
+    //     let result = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    //     let first_row = result.into_iter().next().ok_or(DbError::NotFound)?;
+    //
+    //     // starting with the query to eventally look like:
+    //     // ?[field_one, field_two, <more>] := *rel_name { field_one, field_two, <more> }
+    //     //
+    //     // Where
+    //     //  `fields` will be: field_one, field_two, <more>
+    //     let mut fields: Vec<&str> = Vec::new();
+    //     for cell in first_row {
+    //         // TODO: add better error type with call site info + contextual info (which relation,
+    //         // which column index + name is causing error)
+    //         let rel_field = cell.get_str().ok_or(DbError::NotFound)?;
+    //         fields.push(rel_field);
+    //     }
+    //     let fields_string = fields.join(", ");
+    //     let script_info = format!("?[{fields_string}] := *{rel_name} {{ {fields_string} }}");
+    //     let result = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    // }
 }
 
 /// Trait used to extend the database with embeddings-aware methods
@@ -1128,6 +1152,10 @@ impl EmbeddingExt for Database {
     fn count_common_nodes(&self) -> Result<usize, PlokeError> {
         self.deref().count_common_nodes()
     }
+
+    // fn get_node_info(&self) -> Result<QueryResult, DbError> {
+    //     todo!()
+    // }
 }
 
 pub fn into_usize(named_rows: QueryResult) -> Result<usize, DbError> {

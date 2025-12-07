@@ -15,6 +15,7 @@ use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
+use syn_parser::parser::nodes::{AnyNodeId, ToCozoUuid};
 use tracing::{debug, info, instrument, trace};
 use uuid::Uuid;
 
@@ -24,6 +25,8 @@ use uuid::Uuid;
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
+
+pub(crate) const TRACKING_HASH_TARGET: &str = "tracking-hash";
 
 #[cfg(feature = "multi_embedding_db")]
 lazy_static! {
@@ -160,6 +163,100 @@ pub struct FileInfo {
 }
 
 impl Database {
+    pub fn rel_names_with_tracking_hash<'a>(&'a self) -> Result<Vec<String>, DbError> {
+        fn filter_is_th(db: &Database, rel_name: &str) -> Result<bool, DbError> {
+            let script_th_col = format!("::columns {rel_name}");
+            let is_th = db
+                .raw_query(&script_th_col)
+                .inspect(|qr| tracing::debug!(target: TRACKING_HASH_TARGET, relation_name = %rel_name, dbg_string = %qr.debug_string_all()))?
+                .rows
+                .into_iter()
+                .flat_map(|r| r.into_iter())
+                .any(|cell| cell.get_str() == Some("tracking_hash"));
+            Ok(is_th)
+        }
+
+        let script_rels = "::relations";
+        let v: Vec<String> = self
+            .raw_query(script_rels)
+            .inspect(|qr| tracing::debug!(target: TRACKING_HASH_TARGET, dbg_string = %qr.debug_string_all()))?
+            .iter_col("name")
+            .ok_or(DbError::NotFound)?
+            .map(to_string)
+            .filter_ok(|maybe_name| {
+                let x = filter_is_th(self, maybe_name.as_str());
+                x == Ok(true)
+            })
+            .try_collect()?;
+        tracing::debug!(target: TRACKING_HASH_TARGET, rels_with_th = %format_args!("{v:#?}"));
+        Ok(v)
+    }
+
+    pub fn get_anynode_th(&self, node_id: Uuid) -> Option<Uuid> {
+        fn to_script(script_rhs: &str, vec_rel: &str, node_id: Uuid) {
+            let script = format!(
+                r#"?[tracking_hash] := ({script_rhs}),
+                *{vec_rel} {{ node_id @ 'NOW' }},
+                node_id = to_uuid("{node_id}")"#
+            );
+        }
+        let vec_rel = self.active_embedding_set.vector_relation_name();
+        let mut debug_rel_rhs: Vec<(String, String)> = Vec::new();
+        let rels_with_th_rhs = self
+            .rel_names_with_tracking_hash()
+            .inspect(|rel_names| tracing::debug!(target: TRACKING_HASH_TARGET,  relation_names_with_th = ?rel_names ))
+            .ok()?
+            .iter_mut()
+            .map(|node_rel| {
+                (
+                    node_rel.clone(),
+                    format!(r#"*{node_rel} {{ id: node_id, tracking_hash @ 'NOW' }}"#),
+                )
+            })
+            .inspect(|(node_rel, script)| {
+                tracing::debug!(target: TRACKING_HASH_TARGET,  script_adding_or_statement = %script, %node_rel);
+                debug_rel_rhs.push((node_rel.clone(), script.clone()));
+            })
+            .map(|(_node_rel, script)| script)
+            .join(" or ");
+
+        let rels_with_th = self.rel_names_with_tracking_hash().ok()?;
+        for (node_rel, script_rhs) in debug_rel_rhs {
+            let script_cols = format!("::columns {node_rel}");
+            let cols = self
+                .raw_query(&script_cols)
+                .inspect(|qr| {
+                    tracing::debug!(target: TRACKING_HASH_TARGET,
+                        relation_name = %node_rel,
+                        dbg_string = %qr.debug_string_all()
+                    )
+                })
+                .ok()?;
+
+            let script = format!(
+                r#"?[tracking_hash] := ({script_rhs}),
+                node_id == to_uuid("{node_id}")"#
+            );
+            let script_result = self
+                .raw_query(&script)
+                .inspect(|th_expected| tracing::debug!(target: "tracking-hash", maybe_th_row = ?th_expected))
+                .ok()?;
+        }
+        let script = format!(
+            r#"?[tracking_hash] := ({rels_with_th_rhs}),
+            node_id = to_uuid("{node_id}")"#
+        );
+        tracing::debug!(target: TRACKING_HASH_TARGET, script_find_tracking_hashes = %script);
+        let node_info = self;
+        let query_result = self
+            .raw_query(&script)
+            .inspect(|qr| tracing::debug!(target: TRACKING_HASH_TARGET, dbg_string = %qr.debug_string_all()))
+            .inspect_err(|e| tracing::error!("{e:?}"))
+            .ok()?;
+        let tracking_hash_uuid: &DataValue = query_result.iter_col("tracking_hash")?.next()?;
+        to_uuid(tracking_hash_uuid).ok()
+    }
+
     const ANCESTOR_RULES: &str = r#"
     parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
 
@@ -1394,6 +1491,8 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::bm25_index::DocData;
     use crate::multi_embedding::schema::CozoEmbeddingSetExt;
@@ -1537,6 +1636,51 @@ mod tests {
         assert_ne!(0, count2);
         tracing::debug!("Retrieved {} nodes without embeddings", count2);
         assert!(count1 > count2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    /// Test the presence of tracking hashes for different groups of nodes.
+    ///
+    /// Expects all common node items to individually have tracking hashes
+    async fn test_get_anynode_th() -> Result<(), PlokeError> {
+        use crate::multi_embedding::debug::DebugAll;
+        ploke_test_utils::init_test_tracing(Level::INFO);
+
+        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?);
+        let emb_set = db.active_embedding_set.clone();
+        db.is_embedding_info_all(&emb_set)?;
+        let common_query_result = db.get_common_nodes()?;
+        let common_nodes_count = common_query_result.rows.len();
+        let tracking_hashes: Vec<Uuid> = common_query_result
+            .iter_col("tracking_hash")
+            .expect("expect nodes have tracking hash")
+            .map(to_uuid)
+            .try_collect()?;
+        let node_ids: Vec<Uuid> = common_query_result
+            .iter_col("id")
+            .expect("expect common nodes to have a node id (id)")
+            .map(to_uuid)
+            .try_collect()?;
+        let mut unique_common_hashes: HashSet<Uuid> = HashSet::new();
+        for node_id in node_ids {
+            let anynode_th = db
+                .get_anynode_th(node_id)
+                .expect("all common nodes should have a tracking hash");
+            let is_unique = unique_common_hashes.insert(anynode_th);
+            assert!(is_unique, "expect all common hashes to be unique");
+        }
+        let unique_common_count = unique_common_hashes.len();
+        assert_eq!(
+            common_nodes_count, unique_common_count,
+            "Expect common items to all have tracking hashes"
+        );
+        info!(target: TRACKING_HASH_TARGET, "All {unique_common_count}/{common_nodes_count} common nodes are unique and have tracking_hash as expected");
+
+        let rels_with_th_rhs = db.rel_names_with_tracking_hash()?;
+        info!(target: TRACKING_HASH_TARGET, "relations with tracking_hash: {rels_with_th_rhs:#?}");
         Ok(())
     }
 

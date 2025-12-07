@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ops::ControlFlow,
 };
 
@@ -9,9 +9,7 @@ use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
-    ModuleTree, TestIds,
-    parser::nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId},
-    resolve::RelationIndexer,
+    parser::{nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId}, relations::SyntacticRelation}, resolve::{RelationIndexer, TreeRelation}, ModuleTree, TestIds
 };
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace};
@@ -477,6 +475,40 @@ pub(super) async fn scan_for_change(
             .filter_map(|m| m.items())
             .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
             .collect();
+        use SyntacticRelation::*;
+        let is_parent_filter = |tr: &TreeRelation| {
+            let r = tr.rel();
+            matches!(r, Contains { .. } 
+                | ModuleImports { .. } 
+                | ReExports { .. } 
+                | StructField { .. } 
+                | UnionField { .. } 
+                | VariantField { .. } 
+                | EnumVariant { .. } 
+                | ImplAssociatedItem { .. } 
+                | TraitAssociatedItem { .. })
+        };
+        let mut new_item_set_deq: VecDeque<AnyNodeId> = module_set
+            .iter().map(|m_id| m_id.as_any())
+            .collect();
+        let mut items_in_file: HashSet<AnyNodeId> = HashSet::new();
+        while let Some(source_id) = new_item_set_deq.pop_front() {
+            let is_unique = items_in_file.insert(source_id);
+            if !is_unique {
+                tracing::warn!("Non-unique node id: {source_id}");
+            }
+            let next_items = tree.get_relations_from(&source_id, is_parent_filter)
+                .into_iter()
+                .flat_map(|v| v.into_iter())
+                .map(|tr| tr.rel().target());
+            new_item_set_deq.extend(next_items);
+        }
+        for item in items_in_file {
+            // let is_db_tracking_hash = state.db;
+        }
+        // let new_item_set: HashSet<AnyNodeId> = module_set
+        //     .iter()
+        //     .filter_map();
         let union = full_mod_set
             .iter()
             .copied()
