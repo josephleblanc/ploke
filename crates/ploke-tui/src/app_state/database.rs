@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ops::ControlFlow,
 };
 
@@ -9,9 +9,7 @@ use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
-    ModuleTree, TestIds,
-    parser::nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId},
-    resolve::RelationIndexer,
+    parser::{nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId}, relations::SyntacticRelation}, resolve::{RelationIndexer, TreeRelation}, ModuleTree, TestIds
 };
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace};
@@ -26,6 +24,7 @@ use crate::{
 use super::*;
 
 pub const TUI_DB_TARGET: &str = "tracing_db_target";
+pub const TUI_SCAN_TARGET: &str = "scan-for-change";
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
@@ -391,7 +390,7 @@ pub(super) async fn scan_for_change(
         let ParserOutput { mut merged, tree } =
             run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
 
-        // get the filenames to send through the oneshot
+        // get the changed (altered or removed) filenames to send through the oneshot
         let changed_filenames = vec_ok
             .iter()
             .filter_map(|opt| opt.as_ref().map(|f| f.file_path.clone()))
@@ -476,6 +475,40 @@ pub(super) async fn scan_for_change(
             .filter_map(|m| m.items())
             .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
             .collect();
+        use SyntacticRelation::*;
+        let is_parent_filter = |tr: &TreeRelation| {
+            let r = tr.rel();
+            matches!(r, Contains { .. } 
+                | ModuleImports { .. } 
+                | ReExports { .. } 
+                | StructField { .. } 
+                | UnionField { .. } 
+                | VariantField { .. } 
+                | EnumVariant { .. } 
+                | ImplAssociatedItem { .. } 
+                | TraitAssociatedItem { .. })
+        };
+        let mut new_item_set_deq: VecDeque<AnyNodeId> = module_set
+            .iter().map(|m_id| m_id.as_any())
+            .collect();
+        let mut items_in_file: HashSet<AnyNodeId> = HashSet::new();
+        while let Some(source_id) = new_item_set_deq.pop_front() {
+            let is_unique = items_in_file.insert(source_id);
+            if !is_unique {
+                tracing::warn!("Non-unique node id: {source_id}");
+            }
+            let next_items = tree.get_relations_from(&source_id, is_parent_filter)
+                .into_iter()
+                .flat_map(|v| v.into_iter())
+                .map(|tr| tr.rel().target());
+            new_item_set_deq.extend(next_items);
+        }
+        for item in items_in_file {
+            // let is_db_tracking_hash = state.db;
+        }
+        // let new_item_set: HashSet<AnyNodeId> = module_set
+        //     .iter()
+        //     .filter_map();
         let union = full_mod_set
             .iter()
             .copied()
@@ -782,7 +815,8 @@ mod test {
     use std::{ops::Index, path::PathBuf};
 
     use cozo::DataValue;
-    use ploke_db::{Database, QueryResult};
+    use ploke_core::embeddings::EmbeddingSet;
+    use ploke_db::{multi_embedding::debug::DebugAll, Database, QueryResult};
     use ploke_embed::local::EmbeddingConfig;
     use ploke_rag::RagService;
     use syn_parser::parser::nodes::ToCozoUuid;
@@ -801,16 +835,113 @@ mod test {
     use super::error::{ErrorExt, ErrorSeverity, ResultExt};
     use color_eyre::Result;
     use futures::{FutureExt, StreamExt};
-    use ploke_test_utils::{init_test_tracing, setup_db_full, setup_db_full_crate, workspace_root};
+    use ploke_test_utils::{init_test_tracing, init_test_tracing_with_target, setup_db_full, setup_db_full_crate, workspace_root};
     use thiserror::Error;
+
+    fn iter_col<'a>(
+        query_result: &'a QueryResult,
+        col_title: &str,
+    ) -> Option<impl Iterator<Item = &'a DataValue>> {
+        let col_idx = query_result
+            .headers
+            .iter()
+            .enumerate()
+            .find(|(idx, col)| col.as_str() == col_title)
+            .map(|(idx, col)| idx)?;
+        Some(query_result.rows.iter().map(move |r| r.index(col_idx)))
+    }
+
+    fn is_id_embed_null(db_handle: &Database, ty: NodeType, id: AnyNodeId, embedding_set: EmbeddingSet) -> Result<bool> {
+        let rel_name = ty.relation_str();
+        let cozo_id = id.to_cozo_uuid();
+        let vec_rel = embedding_set.rel_name;
+        let one_script = format!(
+            "?[name, item_id] := *{rel_name}{{ name, id: item_id @ 'NOW' }},
+                *{vec_rel}{{ node_id: item_id @ 'NOW'}},
+                item_id = {cozo_id}"
+        );
+        let query = db_handle.raw_query(&one_script)?;
+        let count = query.rows.len();
+
+        if count != 1 { 
+            let mut msg = format!("Expect node_id to be unique for item id: {id:?}");
+            for (i, row ) in query.rows.clone().into_iter().enumerate() {
+                msg.push('\n');
+                let i_num = format!("{i}: ");
+                msg.push_str(&i_num);
+                let mut cols = row.into_iter();
+                let name_borrowed = cols.next().expect("cell not found");
+                let name = name_borrowed
+                    .get_str().expect("col name should be type &str");
+                msg.push_str(name);
+                let id_raw_cozo = cols.next().expect("cell not found");
+                let id = ploke_db::to_uuid(&id_raw_cozo)?;
+                let id_string_dbg = format!("{id:?}");
+                msg.push_str(&id_string_dbg);
+                tracing::error!(msg);
+            } 
+        }
+        assert_eq!(1, count, "expect node_id to be unique");
+        let is_embedding_null_now = iter_col(&query, "name")
+            .expect("column not found")
+            .next()
+            .is_some();
+            // .expect("row not found")
+            // .get_str()
+            // .expect("cell not expected datatype (&str)");
+        Ok(is_embedding_null_now)
+    }
+
+    fn is_name_embed_null(db_handle: &Database, ty: NodeType, name: &str, embedding_set: &EmbeddingSet) -> Result<bool> {
+        let rel_name = ty.relation_str();
+        let vec_rel = embedding_set.rel_name.clone();
+        // Checks if the target relation with the specified name has a corresponding vector
+        // embedding in the vector relation for the given embedding set.
+        let one_script = format!(
+            "?[item_name, id] := *{rel_name}{{ name: item_name, id @ 'NOW' }},
+                *{vec_rel}{{ node_id: id @ 'NOW'}},
+                item_name = \"{name}\""
+        );
+        tracing::debug!(%one_script);
+        let query = db_handle.raw_query(&one_script)?;
+        let count = query.rows.len();
+
+        if count >= 1 { 
+            let mut msg = format!("Expect node_id to be unique for item name: {name:?}");
+            for (i, row ) in query.rows.clone().into_iter().enumerate() {
+                msg.push('\n');
+                let i_num = format!("{i}: ");
+                msg.push_str(&i_num);
+                let mut cols = row.into_iter();
+                let name_borrowed = cols.next().expect("cell not found");
+                let name = name_borrowed
+                    .get_str().expect("col name should be type &str");
+                msg.push_str(name);
+                let id_raw_cozo = cols.next().expect("cell not found");
+                let id = ploke_db::to_uuid(&id_raw_cozo)?;
+                let id_string_dbg = format!("{id:?}");
+                msg.push_str(&id_string_dbg);
+                tracing::info!(msg);
+            } 
+            assert_eq!(1, count, "expect node_id to be unique");
+            let is_embedding_set_row_present_now = iter_col(&query, "item_name")
+                .expect("column not found")
+                .next()
+                .is_some();
+            Ok(!is_embedding_set_row_present_now)
+        } else {
+            tracing::info!("No embedding found for \nname: {name}\nrelation node: {rel_name}\nvec_rel: {vec_rel}");
+            Ok(true)
+        }
+    }
 
     #[tokio::test]
     async fn test_update_embed() -> color_eyre::Result<()> {
-        if std::env::var("PLOKE_RUN_UPDATE_EMBED").ok().as_deref() != Some("1") {
-            eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
-            return Ok(());
-        }
-        // init_test_tracing(Level::DEBUG);
+        // if std::env::var("PLOKE_RUN_UPDATE_EMBED").ok().as_deref() != Some("1") {
+        //     eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
+        //     return Ok(());
+        // }
+        init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::TRACE);
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";
         let workspace = "tests/fixture_crates/fixture_update_embed";
@@ -821,13 +952,14 @@ mod test {
             workspace_root.display(),
             workspace
         ));
-        trace!("reading from backup files: {}", backup_file.display());
+        trace!(target: TUI_SCAN_TARGET, "reading from backup files: {}", backup_file.display());
         let backup_contents = std::fs::read(&backup_file)?;
         let target_main = backup_file.with_file_name("main.rs");
         std::fs::write(&target_main, backup_contents)?;
 
         let cozo_db = if target_crate.starts_with("fixture") {
-            setup_db_full(target_crate)
+            ploke_test_utils::setup_db_full_multi_embedding(target_crate)
+            // setup_db_full(target_crate)
         } else if target_crate.starts_with("crates") {
             let crate_name = target_crate.trim_start_matches("crates/");
             setup_db_full_crate(crate_name)
@@ -901,7 +1033,7 @@ mod test {
             let mut system_guard = state.system.write().await;
             let path = workspace_root.join(workspace);
             system_guard.crate_focus = Some(path);
-            trace!("system_guard.crate_focus: {:?}", system_guard.crate_focus);
+            trace!(target: TUI_SCAN_TARGET, "system_guard.crate_focus: {:?}", system_guard.crate_focus);
         }
 
         // Create command channel with backpressure
@@ -934,23 +1066,26 @@ mod test {
         // Set global event bus for error handling
         set_global_event_bus(event_bus.clone()).await;
 
+        let embedding_set = db_handle.active_embedding_set.clone();
+        let vec_rel = embedding_set.rel_name.clone();
         // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
-        let script = r#"?[name, time, is_assert, maybe_null, id] := *function{ id, at, name, embedding }
-                                or *struct{ id, at, name, embedding } 
-                                or *module{ id, at, name, embedding } 
-                                or *static{ id, at, name, embedding } 
-                                or *const{ id, at, name, embedding }, 
+        let script = format!(r#"?[name, time, is_assert, maybe_null, id] := *function{{ id, at, name }}
+                                or *struct{{ id, at, name }} 
+                                or *module{{ id, at, name }} 
+                                or *static{{ id, at, name }} 
+                                or *const{{ id, at, name }}, 
                                   time = format_timestamp(at),
-                                  is_assert = to_bool(at),
-                                  maybe_null = !is_null(embedding)
-        "#;
-        let query_result = db_handle.raw_query(script)?;
+                                  *{vec_rel} {{ node_id @ 'NOW' }},
+                                  maybe_null = ( node_id == id ),
+                                  is_assert = to_bool(at)
+        "#);
+        let query_result = db_handle.raw_query(&script)?;
         let printable_rows = query_result
             .rows
             .iter()
             .map(|r| r.iter().join(", "))
             .join("\n");
-        trace!("rows from db:\n{printable_rows}");
+        trace!(target: TUI_SCAN_TARGET, "rows from db:\n{printable_rows}");
 
         // Spawn subsystems with backpressure-aware command sender
         let command_style = config.command_style;
@@ -977,13 +1112,13 @@ mod test {
                     status: IndexStatus::Running,
                     ..
                 } => {
-                    trace!("IndexStatus Running");
+                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
                 }
                 IndexingStatus {
                     status: IndexStatus::Completed,
                     ..
                 } => {
-                    trace!("IndexStatus Completed, breaking loop");
+                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
                     break;
                 }
                 _ => {}
@@ -992,116 +1127,94 @@ mod test {
 
         // print database output after indexing
         // or *struct{name, id, embedding & 'NOW'}
-        let query_result = db_handle.raw_query(script)?;
+        let query_result = db_handle.raw_query(&script)?;
         let printable_rows = query_result
             .rows
             .iter()
             .map(|r| r.iter().join(", "))
             .join("\n");
-        trace!("rows from db:\n{printable_rows}");
+        trace!(target: TUI_SCAN_TARGET, "rows from db:\n{printable_rows}");
 
-        fn iter_col<'a>(
-            query_result: &'a QueryResult,
-            col_title: &str,
-        ) -> Option<impl Iterator<Item = &'a DataValue>> {
-            let col_idx = query_result
-                .headers
-                .iter()
-                .enumerate()
-                .find(|(idx, col)| col.as_str() == col_title)
-                .map(|(idx, col)| idx)?;
-            Some(query_result.rows.iter().map(move |r| r.index(col_idx)))
-        }
-        fn is_id_embed_null(db_handle: &Database, ty: NodeType, id: AnyNodeId) -> Result<bool> {
-            let rel_name = ty.relation_str();
-            let cozo_id = id.to_cozo_uuid();
-            let one_script = format!(
-                "?[name, item_id, is_embedding_null] := *{rel_name}{{ name, id: item_id, embedding @ 'NOW' }},
-                    is_embedding_null = is_null(embedding),
-                    item_id = {cozo_id}"
-            );
-            let query = db_handle.raw_query(&one_script)?;
-            let is_embedding_null_now = iter_col(&query, "is_embedding_null")
-                .expect("column not found")
-                .next()
-                .expect("row not found")
-                .get_bool()
-                .expect("cell not expected datatype (bool)");
-            Ok(is_embedding_null_now)
-        }
-        fn is_name_embed_null(db_handle: &Database, ty: NodeType, name: &str) -> Result<bool> {
-            let rel_name = ty.relation_str();
-            let one_script = format!(
-                "?[item_name, id, is_embedding_null] := *{rel_name}{{ name: item_name, id, embedding @ 'NOW' }},
-                    is_embedding_null = is_null(embedding),
-                    item_name = {name:?}"
-            );
-            let query = db_handle.raw_query(&one_script)?;
-            let is_embedding_null_now = iter_col(&query, "is_embedding_null")
-                .expect("column not found")
-                .next()
-                .expect("row not found")
-                .get_bool()
-                .expect("cell not expected datatype (bool)");
-            Ok(is_embedding_null_now)
-        }
-        let one_script = r#"
-            ?[name, id, is_embedding_null] := *const{ name, id, embedding @ 'NOW' },
-                is_embedding_null = is_null(embedding)
-        "#;
-        let query_one = db_handle.raw_query(one_script)?;
-        let is_const_embedding_null_now = iter_col(&query_one, "is_embedding_null")
-            .expect("column not found")
-            .next()
-            .expect("row not found")
-            .get_bool()
-            .expect("cell not expected datatype (bool)");
-        assert!(!is_const_embedding_null_now);
+        // These items are defined in the backup file as:
 
-        // items in as-yet unchanged file, expect to be embedded initially (before scan sets them to null
-        // again)
+        // --- items in as-yet unchanged file, ---
+        // expect to be embedded initially
+        // (before scan sets them to null again)
+
+        // is in backup at
+        // crate::inner_test_mod::double_inner_mod
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "double_inner_mod"
+            "double_inner_mod",
+            &embedding_set
         )?);
+        // is in backup at
+        // crate::inner_test_mod::NUMBER_ONE
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Const,
-            "NUMBER_ONE"
+            "NUMBER_ONE",
+            &embedding_set
         )?);
+        // is in backup at
+        // crate::inner_test_mod::double_inner_mod::STR_TWO
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Static,
-            "STR_TWO"
+            "STR_TWO",
+&embedding_set,
         )?);
+        // is in backup at
+        // crate::TestStruct
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "TestStruct"
+            "TestStruct",
+&embedding_set,
         )?);
+        // is in backup at
+        // crate::inner_test_mod
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "inner_test_mod"
+            "inner_test_mod",
+&embedding_set,
         )?);
+        // is in backup at
+        // crate::func_with_params
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "func_with_params"
+            "func_with_params",
+&embedding_set,
         )?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
-        // items not in changed file, expect to be remain embedded
+        // is in backup at
+        // crate::main
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main", &embedding_set)?);
+
+        // ---
+
+        // --- items not in changed file, expect to be remain embedded ---
+
+        // is in backup at 
+        // crate::other_mod::simple_four
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "simple_four"
+            "simple_four",
+&embedding_set,
         )?);
+        // is in backup at 
+        // crate::other_mod::OtherStruct
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "OtherStruct"
+            "OtherStruct",
+&embedding_set,
         )?);
+
+        // ---
 
         let mut target_file = {
             let mut system_guard = state.system.write().await;
@@ -1111,82 +1224,90 @@ mod test {
                 .clone()
                 .expect("Crate focus not set")
         };
-        trace!("target_file before pushes:\n{}", target_file.display());
+        trace!(target: TUI_SCAN_TARGET, "target_file before pushes:\n{}", target_file.display());
         target_file.push("src");
         target_file.push("main.rs");
-        trace!("target_file after pushes:\n{}", target_file.display());
+        trace!(target: TUI_SCAN_TARGET, "target_file after pushes:\n{}", target_file.display());
 
         // ----- start test function ------
         let (scan_tx, scan_rx) = oneshot::channel();
         let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
-        trace!("result of scan_for_change: {:?}", result);
+        trace!(target: TUI_SCAN_TARGET, "result of scan_for_change: {:?}", result);
         // ----- end test start test ------
 
-        trace!("waiting for scan_rx");
+        trace!(target: TUI_SCAN_TARGET, "waiting for scan_rx");
 
         // ----- await on end of test function `scan_for_change` -----
         match scan_rx.await {
-            Ok(_) => trace!("scan_rx received for end of scan_for_change"),
-            Err(_) => trace!("error in scan_rx awaiting on end of scan_for_change"),
+            Ok(_) => trace!(target: TUI_SCAN_TARGET, "scan_rx received for end of scan_for_change"),
+            Err(_) => trace!(target: TUI_SCAN_TARGET, "error in scan_rx awaiting on end of scan_for_change"),
         };
 
         // print database output after scan
-        let query_result = db_handle.raw_query(script)?;
+        let query_result = db_handle.raw_query(&script)?;
         let printable_rows = query_result
             .rows
             .iter()
             .map(|r| r.iter().join(", "))
             .join("\n");
-        trace!("rows from db:\n{printable_rows}");
+        trace!(target: TUI_SCAN_TARGET, "rows from db:\n{printable_rows}");
 
         // Nothing should have changed after running scan on the target when the target has not
         // changed.
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Const,
-            "NUMBER_ONE"
+            "NUMBER_ONE",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Static,
-            "STR_TWO"
+            "STR_TWO",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "TestStruct"
+            "TestStruct",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "double_inner_mod"
+            "double_inner_mod",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "inner_test_mod"
+            "inner_test_mod",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "func_with_params"
+            "func_with_params",
+&embedding_set,
         )?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main", &embedding_set)?);
         // Same here
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "simple_four"
+            "simple_four",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "OtherStruct"
+            "OtherStruct",
+&embedding_set,
         )?);
 
         // ----- make change to target file -----
         let contents = std::fs::read_to_string(&target_file)?;
-        trace!("reading file:\n{}", &contents);
+        trace!(target: TUI_SCAN_TARGET, "reading file:\n{}", &contents);
         let changed = contents
             .lines()
             .map(|l| {
@@ -1197,62 +1318,64 @@ mod test {
                 }
             })
             .join("\n");
-        trace!("writing changed file:\n{}", &changed);
+        trace!(target: TUI_SCAN_TARGET, "writing changed file:\n{}", &changed);
         std::fs::write(&target_file, changed)?;
 
         // ----- start second scan -----
         let (scan_tx, scan_rx) = oneshot::channel();
         let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
-        trace!("result of after second scan_for_change: {:?}", result);
+        trace!(target: TUI_SCAN_TARGET, "result of after second scan_for_change: {:?}", result);
         // ----- end second scan -----
 
         // print database output after second scan
-        let query_result = db_handle.raw_query(script)?;
+        let query_result = db_handle.raw_query(&script)?;
         let printable_rows = query_result
             .rows
             .iter()
             .map(|r| r.iter().join(", "))
             .join("\n");
-        trace!("rows from db:\n{printable_rows}");
+        trace!(target: TUI_SCAN_TARGET, "rows from db:\n{printable_rows}");
 
         // items in changed file, expect to have null embeddings after scan
         assert!(is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "double_inner_mod"
+            "double_inner_mod", &embedding_set
         )?);
         assert!(is_name_embed_null(
             &db_handle,
             NodeType::Const,
-            "NUMBER_ONE"
+            "NUMBER_ONE", &embedding_set
         )?);
-        assert!(is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO", &embedding_set)?);
         assert!(is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "TestStruct"
+            "TestStruct", &embedding_set
         )?);
         assert!(is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "inner_test_mod"
+            "inner_test_mod", &embedding_set
         )?);
         assert!(is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "func_with_params"
+            "func_with_params", &embedding_set
         )?);
-        assert!(is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "main", &embedding_set )?);
         // items not in changed file, expect to be remain embedded
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "simple_four"
+            "simple_four",
+&embedding_set,
         )?);
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "OtherStruct"
+            "OtherStruct",
+&embedding_set,
         )?);
 
         // -- simulating sending response from app back to index --
@@ -1261,6 +1384,10 @@ mod test {
         // message to index the unembedded items in the database, which should currently only be
         // the items detected as having changed through `scan_for_change`.
 
+        let is_embedding_info_before = db_handle.is_embedding_info_all(&embedding_set)?;
+        use tracing::Level;
+        is_embedding_info_before.tracing_print_all(Level::DEBUG);
+        db_handle.debug_print_counts_active();
         cmd_tx
             .send(StateCommand::IndexWorkspace {
                 workspace: workspace.to_string(),
@@ -1274,75 +1401,100 @@ mod test {
                     status: IndexStatus::Running,
                     ..
                 } => {
-                    trace!("IndexStatus Running");
+                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Running");
                 }
                 IndexingStatus {
                     status: IndexStatus::Completed,
                     ..
                 } => {
-                    trace!("IndexStatus Completed, breaking loop");
+                    trace!(target: TUI_SCAN_TARGET, "IndexStatus Completed, breaking loop");
                     break;
                 }
                 _ => {}
             }
         }
+        let is_embedding_info_after = db_handle.is_embedding_info_all(&embedding_set)?;
+        is_embedding_info_after.tracing_print_all(Level::DEBUG);
 
         // print database output after reindex following the second scan
-        let query_result = db_handle.raw_query(script)?;
+        let query_result = db_handle.raw_query(&script)?;
+        let printable_headers = query_result.headers.join(", ");
         let printable_rows = query_result
             .rows
             .iter()
             .map(|r| r.iter().join(", "))
             .join("\n");
-        debug!("rows from db:\n{printable_rows}");
+        debug!("rows from db:\n{printable_headers}\n{printable_rows}");
 
-        // items in changed file, expect to have embeddings again after scan
-        assert!(!is_name_embed_null(
+        // (possibly old info) items in changed file, expect to have embeddings again after scan
+        
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(
             &db_handle,
             NodeType::Const,
-            "NUMBER_ONE"
+            "NUMBER_ONE",
+            &embedding_set,
         )?);
-        assert!(!is_name_embed_null(
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(
             &db_handle,
             NodeType::Static,
-            "STR_TWO"
+            "STR_TWO",
+            &embedding_set,
         )?);
-        assert!(!is_name_embed_null(
+        // item has changed,
+        // and in changed file
+        // before:  pub struct TestStruct(pub i32);
+        // after:   struct TestStruct(pub i32);
+        assert!(is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "TestStruct"
+            "TestStruct",
+            &embedding_set,
         )?);
-        assert!(!is_name_embed_null(
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "double_inner_mod"
+            "double_inner_mod",
+            &embedding_set,
         )?);
-        assert!(!is_name_embed_null(
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(
             &db_handle,
             NodeType::Module,
-            "inner_test_mod"
+            "inner_test_mod",
+            &embedding_set,
         )?);
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(
+            &db_handle,
+            NodeType::Function,
+            "func_with_params",
+            &embedding_set,
+        )?);
+        // item not itself changed, only in changed file
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "main", &embedding_set)?);
+        // neither file nor item changed 
+        // - expect to remain embedded
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Function,
-            "func_with_params"
+            "simple_four",
+            &embedding_set,
         )?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
-        // items not in changed file, expect to be remain embedded
-        assert!(!is_name_embed_null(
-            &db_handle,
-            NodeType::Function,
-            "simple_four"
-        )?);
+        // neither file nor item changed 
+        // - expect to remain embedded
         assert!(!is_name_embed_null(
             &db_handle,
             NodeType::Struct,
-            "OtherStruct"
+            "OtherStruct",
+            &embedding_set,
         )?);
 
-        trace!("changing back:\n{}", target_file.display());
+        trace!(target: TUI_SCAN_TARGET, "changing back:\n{}", target_file.display());
         let contents = std::fs::read_to_string(&target_file)?;
-        trace!("reading file:\n{}", &contents);
+        trace!(target: TUI_SCAN_TARGET, "reading file:\n{}", &contents);
         let changed = contents
             .lines()
             .map(|l| {
@@ -1353,7 +1505,7 @@ mod test {
                 }
             })
             .join("\n");
-        trace!("writing changed file:\n{}", &changed);
+        trace!(target: TUI_SCAN_TARGET, "writing changed file:\n{}", &changed);
         std::fs::write(&target_file, changed)?;
         Ok(())
     }

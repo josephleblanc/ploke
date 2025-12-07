@@ -1,4 +1,5 @@
 pub mod db_ext;
+pub mod debug;
 pub mod hnsw_ext;
 pub mod schema;
 
