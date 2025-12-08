@@ -1570,10 +1570,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_nodes_for_embedding() -> Result<(), PlokeError> {
-        // #[cfg(feature = "multi_embedding_db")]
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
-        // #[cfg(not (feature = "multi_embedding_db") )]
-        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
         #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         #[cfg(feature = "multi_embedding_db")]
@@ -1587,11 +1584,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_two() -> Result<(), PlokeError> {
-        // #[cfg(feature = "multi_embedding_db")]
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
-        // #[cfg(not (feature = "multi_embedding_db") )]
-        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
         // Initialize the logger to see output from Cozo
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
         #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         #[cfg(feature = "multi_embedding_db")]
@@ -1645,7 +1639,7 @@ mod tests {
     /// Expects all common node items to individually have tracking hashes
     async fn test_get_anynode_th() -> Result<(), PlokeError> {
         use crate::multi_embedding::debug::DebugAll;
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        // ploke_test_utils::init_test_tracing(Level::INFO);
 
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+use ploke_core::embeddings::EmbeddingSet;
 pub use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
@@ -143,9 +144,8 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 fn setup_db_create_multi_embeddings(
     db: cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
-    use ploke_db::multi_embedding::{
-        hnsw_ext::HnswExt,
-        schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
+    use ploke_db::multi_embedding::schema::{
+        CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector,
     };
     use std::collections::BTreeMap;
 
@@ -201,8 +201,18 @@ fn setup_db_create_multi_embeddings(
         )
         .map_err(DbError::from)?;
     tracing::info!(create_embedding_vector = ?db_result.rows);
-    db.create_embedding_index(&embedding_set)?;
 
+    Ok(db)
+}
+
+#[cfg(feature = "multi_embedding_test")]
+fn setup_db_create_multi_embeddings_with_hnsw(
+    db: cozo::Db<cozo::MemStorage>,
+) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
+    use ploke_db::multi_embedding::hnsw_ext::HnswExt;
+
+    let embedding_set = EmbeddingSet::default();
+    db.create_embedding_index(&embedding_set)?;
     Ok(db)
 }
 

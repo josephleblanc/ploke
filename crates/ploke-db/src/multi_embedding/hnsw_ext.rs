@@ -1010,7 +1010,7 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use ploke_test_utils::workspace_root;
         use tracing::{error, Level};
 
-        init_tracing_once(HNSW_TARGET, Level::TRACE);
+        // init_tracing_once(HNSW_TARGET, Level::TRACE);
         info!(target: HNSW_TARGET, "starting test: test_load_db");
 
         let db = Database::init_with_schema()?;
@@ -1022,9 +1022,21 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         let hnsw_rel = embedding_set.hnsw_rel_name();
         let script_clear_hnsw = format!("::hnsw drop {hnsw_rel}");
 
-        let remove_hnsw_result = db.raw_query(&script_clear_hnsw);
+        let remove_hnsw_result = db.raw_query_mut(&script_clear_hnsw);
         info!(target: HNSW_TARGET, ?remove_hnsw_result);
-        remove_hnsw_result?;
+        if let Err(err) = remove_hnsw_result {
+            let err_msg = err.to_string();
+            let expected_missing = err_msg.contains("Cannot find requested stored relation");
+            let expected_read_only = err_msg.contains("Cannot remove index in read-only mode");
+            if expected_missing || expected_read_only {
+                info!(
+                    target: HNSW_TARGET,
+                    "skipping drop failure, expected condition: {err_msg}"
+                );
+            } else {
+                return Err(err.into());
+            }
+        }
 
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
