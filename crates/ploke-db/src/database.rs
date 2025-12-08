@@ -639,14 +639,17 @@ impl Database {
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| n.ends_with(":hnsw_idx"));
+            .filter(|n| n.ends_with(HNSW_SUFFIX));
 
         for index in rels {
-            let mut script = String::from("::index drop ");
+            tracing::debug!(?index);
+            let mut script = String::from("::hnsw drop ");
             script.extend(index.chars().filter(|c| *c == '\"'));
-            self.db
+            let dropped_hnsw = self
+                .db
                 .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
                 .map_err(DbError::from)?;
+            tracing::debug!(?dropped_hnsw);
         }
         Ok(())
     }
@@ -774,6 +777,15 @@ impl Database {
     }
     pub fn relations_vec(&self) -> Result<Vec<String>, PlokeError> {
         let vector = Vec::from_iter(self.iter_relations()?);
+        Ok(vector)
+    }
+
+    pub fn relations_vec_no_hnsw(&self) -> Result<Vec<String>, PlokeError> {
+        let filtered_rels = self
+            .iter_relations()?
+            .into_iter()
+            .filter(|s| s.ends_with(HNSW_SUFFIX));
+        let vector = Vec::from_iter(filtered_rels);
         Ok(vector)
     }
     pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
@@ -2023,15 +2035,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_retract_embeddings_partial() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
+        // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
         let embedding_set = &db.active_embedding_set;
 
-        // debug_print_counts(&db)?;
-        crate::create_index_primary(&db)?;
-        // debug_print_counts(&db)?;
+        debug_print_counts(&db)?;
+        db.clear_hnsw_idx().await?;
+        debug_print_counts(&db)?;
+        crate::create_index_primary_with_index(&db)?;
+        debug_print_counts(&db)?;
 
         let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
         assert!(

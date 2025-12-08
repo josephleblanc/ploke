@@ -939,7 +939,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         //     embedding_set_id == {set_id}
         // "
         //         );
-        info!(target: "cozo-script", ?query);
+        info!(target: "cozo-script", %query);
 
         let result = self
             .run_script(
@@ -1209,16 +1209,18 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
         }
     }?;
 
+    // // need to drop hnsw indices before loading backup
+    // db.clear_hnsw_idx().await?;
+
     let prior_rels_vec = db.relations_vec()?;
     debug!("prior rels for import: {:#?}", prior_rels_vec);
     db.import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    crate::create_index_primary(&db)?;
-    // .inspect_err(|e| e.emit_error())?;
+    crate::create_index_primary_with_index(db)?;
 
     // get count for sanity and user feedback
-    return match db.count_relations().await {
+    match db.count_relations().await {
         Ok(count) if count > 0 => {
             {
                 let script = format!(
@@ -1247,7 +1249,7 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
         }
         Ok(_count) => Ok(()),
         Err(e) => Err(e),
-    };
+    }?;
 
     pub async fn find_file_by_prefix(
         dir: impl AsRef<std::path::Path>,
@@ -1419,7 +1421,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_backup() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
+        // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
+
         let db = Database::new(setup_db()?);
         let embedding_set = &db.active_embedding_set;
         let vector_rel = &embedding_set.rel_name();

@@ -452,6 +452,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
                 cozo::ScriptMutability::Immutable,
             )
             .map_err(DbError::from);
+        debug!(%script_check_indices);
+        debug!(?db_res);
         let expect_err_msg = format!("Cannot find requested stored relation '{hnsw_rel_name}'");
         match db_res {
             // the script succeeds, finding the item in the database
@@ -540,6 +542,9 @@ impl HnswExt for Database {
 }
 
 #[cfg(test)]
+pub(crate) use tests::init_tracing_once;
+
+#[cfg(test)]
 mod tests {
     use std::{
         collections::HashSet,
@@ -564,7 +569,7 @@ mod tests {
     };
 
     static TEST_TRACING: Once = Once::new();
-    fn init_tracing_once(target: &'static str, level: tracing::Level) {
+    pub(crate) fn init_tracing_once(target: &'static str, level: tracing::Level) {
         TEST_TRACING.call_once(|| {
             ploke_test_utils::init_test_tracing_with_target(target, level);
         });

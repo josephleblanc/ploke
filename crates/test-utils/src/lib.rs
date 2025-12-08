@@ -175,11 +175,7 @@ fn setup_db_create_multi_embeddings(
     );
 
     tracing::info!("{}: put default embedding set", "Db".log_step());
-    let embedding_set = EmbeddingSet::new(
-        EmbeddingProviderSlug::new_from_str("local"),
-        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
-        EmbeddingShape::new_dims_default(384),
-    );
+    let embedding_set = EmbeddingSet::default();
 
     let script_put = embedding_set.script_put();
     let db_result = db
@@ -206,12 +202,13 @@ fn setup_db_create_multi_embeddings(
 }
 
 #[cfg(feature = "multi_embedding_test")]
-fn setup_db_create_multi_embeddings_with_hnsw(
-    db: cozo::Db<cozo::MemStorage>,
+pub fn setup_db_create_multi_embeddings_with_hnsw(
+    fixture: &'static str,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
     use ploke_db::multi_embedding::hnsw_ext::HnswExt;
 
     let embedding_set = EmbeddingSet::default();
+    let db = setup_db_full_multi_embedding(fixture)?;
     db.create_embedding_index(&embedding_set)?;
     Ok(db)
 }
