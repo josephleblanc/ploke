@@ -16,6 +16,8 @@ use crate::{
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
 
+pub(crate) const HNSW_TARGET: &str = "hnsw-index";
+
 pub trait HnswExt {
     fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
     fn create_embedding_index(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
@@ -1006,14 +1008,35 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use ploke_test_utils::workspace_root;
+        use tracing::{error, Level};
+
+        init_tracing_once(HNSW_TARGET, Level::TRACE);
+        info!(target: HNSW_TARGET, "starting test: test_load_db");
 
         let db = Database::init_with_schema()?;
+        // use default active embedding set of sentence-transformers...
+        let embedding_set = db.active_embedding_set.clone();
+
+        // clear hnsw relations before importing from backup (as specified by cozo docs)
+        // TODO: needs citation for cozo docs
+        let hnsw_rel = embedding_set.hnsw_rel_name();
+        let script_clear_hnsw = format!("::hnsw drop {hnsw_rel}");
+
+        let remove_hnsw_result = db.raw_query(&script_clear_hnsw);
+        info!(target: HNSW_TARGET, ?remove_hnsw_result);
+        remove_hnsw_result?;
+
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        let prior_rels_vec = db.relations_vec()?;
+        let prior_rels_vec = db
+            .relations_vec()
+            .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
+        let prior_rels_string = format!("{prior_rels_vec:#?}");
+        info!(target: HNSW_TARGET, %prior_rels_string);
         db.import_from_backup(&target_file, &prior_rels_vec)
-            .map_err(DbError::from)
-            .map_err(ploke_error::Error::from)?;
+            .expect("the database to be imported without errors");
+        // .map_err(DbError::from)
+        // .map_err(ploke_error::Error::from)?;
 
         // TODO: put the embeddings setup into create_index_primary, then make create_index_primary
         // a method on the database (if possible, weird with Arc)

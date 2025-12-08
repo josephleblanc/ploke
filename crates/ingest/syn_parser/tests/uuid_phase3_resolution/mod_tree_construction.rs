@@ -25,10 +25,13 @@ use itertools::Itertools;
 use log::debug;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess as _;
-use syn_parser::parser::nodes::{ModuleNode, ModuleNodeId};
+use syn_parser::parser::nodes::{
+    AsAnyNodeId, ModuleNode, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait,
+};
 use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
+use syn_parser::resolve::{RelationIndexer, TreeRelation};
 use syn_parser::utils::{LogStyle, LOG_TARGET_MOD_TREE_BUILD};
 
 use crate::common::build_tree_for_tests;
@@ -46,8 +49,10 @@ use crate::common::build_tree_for_tests;
 /// This tests the logic within `ModuleTree::add_module` that inserts modules into the `path_index`.
 #[test]
 #[cfg(test)]
-#[cfg(not(feature = "type_bearing_ids"))]
+// #[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_path_index_correctness() {
+    use syn_parser::parser::nodes::AsAnyNodeId as _;
+
     let _ = env_logger::builder() // Parse RUST_LOG environment variable
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         // Define custom format without timestamp
@@ -117,7 +122,8 @@ fn test_module_tree_path_index_correctness() {
         .get(&["crate".to_string()][..])
         .expect("Path 'crate' not found in index");
     assert_eq!(
-        *crate_lookup, crate_root_id,
+        *crate_lookup,
+        crate_root_id.as_any(),
         "Path 'crate' should map to main.rs module ID"
     );
 
@@ -126,7 +132,8 @@ fn test_module_tree_path_index_correctness() {
         .get(&["crate".to_string(), "top_pub_mod".to_string()][..])
         .expect("Path 'crate::top_pub_mod' not found in index");
     assert_eq!(
-        *top_pub_lookup, top_pub_mod_id,
+        *top_pub_lookup,
+        top_pub_mod_id.as_any(),
         "Path 'crate::top_pub_mod' should map to top_pub_mod.rs module ID"
     );
 
@@ -141,7 +148,8 @@ fn test_module_tree_path_index_correctness() {
         )
         .expect("Path 'crate::top_pub_mod::nested_pub' not found in index");
     assert_eq!(
-        *nested_pub_lookup, nested_pub_id,
+        *nested_pub_lookup,
+        nested_pub_id.as_any(),
         "Path 'crate::top_pub_mod::nested_pub' should map to nested_pub.rs module ID"
     );
 
@@ -150,7 +158,8 @@ fn test_module_tree_path_index_correctness() {
         .get(&["crate".to_string(), "inline_pub_mod".to_string()][..])
         .expect("Path 'crate::inline_pub_mod' not found in index");
     assert_eq!(
-        *inline_pub_lookup, inline_pub_mod_id,
+        *inline_pub_lookup,
+        inline_pub_mod_id.as_any(),
         "Path 'crate::inline_pub_mod' should map to inline_pub_mod module ID"
     );
 }
@@ -162,9 +171,10 @@ fn test_module_tree_path_index_correctness() {
 /// This primarily tests the `ModuleTree::link_mods_syntactic()` method and implicitly
 /// the population of the `decl_index`.
 #[test]
-#[cfg(not(feature = "type_bearing_ids"))]
+// #[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_resolves_to_definition_relation() {
     let fixture_name = "file_dir_detection";
+    eprintln!("starting test with target dir: {fixture_name}");
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
@@ -178,11 +188,25 @@ fn test_module_tree_resolves_to_definition_relation() {
     let crate_root_node = graph
         .find_module_by_path_checked(&["crate".to_string()])
         .expect("Crate root not found");
-    let top_pub_mod_decl_node = graph
-        .get_child_modules_decl(crate_root_node.id) // Assuming this helper still works or is adapted
-        .into_iter()
-        .find(|m| m.name == "top_pub_mod")
-        .expect("Declaration 'mod top_pub_mod;' not found in crate root");
+    let crate_child_mods_count = graph
+        .get_child_modules(crate_root_node.id)
+        .inspect(|m| eprintln!("module node in iter: {}", m.name))
+        .count();
+    eprintln!("Count of mods as items in root module: {crate_child_mods_count}");
+
+    let root_mod_id = crate_root_node.id;
+    let top_pub_mod_decl_node =
+        get_child_mod_decl(&tree, root_mod_id).expect("Should find the module declaration in tree");
+
+    // let top_pub_mod_in_graph = graph
+    //     .get_module_checked(top_pub_mod_decl_node_id)
+    //     .expect("Should find the module declaration in graph");
+
+    // let top_pub_mod_decl_node = graph
+    //     .get_child_modules_decl(crate_root_node.id) // Assuming this helper still works or is adapted
+    //     .inspect(|m| eprintln!("module node in iter: {}", m.name))
+    //     .find(|m| m.name == "top_pub_mod")
+    //     .expect("Declaration 'mod top_pub_mod;' not found in crate root");
     assert!(
         top_pub_mod_decl_node.is_decl(),
         "Expected top_pub_mod node in crate root to be a declaration"
@@ -200,16 +224,15 @@ fn test_module_tree_resolves_to_definition_relation() {
     let defn_id = top_pub_mod_defn_node.id;
 
     // --- Assert Relation Exists in Tree ---
-    let expected_relation = Relation {
-        source: GraphId::Node(decl_id), // Source is the declaration
-        target: GraphId::Node(defn_id), // Target is the definition
-        kind: RelationKind::ResolvesToDefinition,
+    let expected_relation = SyntacticRelation::ResolvesToDefinition {
+        source: decl_id,
+        target: defn_id,
     };
 
     let relation_found = tree
         .tree_relations()
         .iter()
-        .any(|tree_rel| *tree_rel.relation() == expected_relation); // Use the getter
+        .any(|tree_rel| *tree_rel.rel() == expected_relation); // Use the getter
 
     assert!(
         relation_found,
@@ -219,11 +242,15 @@ fn test_module_tree_resolves_to_definition_relation() {
     // --- Repeat for nested declaration `mod nested_pub;` in `top_pub_mod.rs` ---
 
     // 1. Find declaration `mod nested_pub;` in `top_pub_mod.rs`
-    let nested_pub_decl_node = graph
-        .get_child_modules_decl(top_pub_mod_defn_node.id) // Children of the definition node
-        .into_iter()
-        .find(|m| m.name == "nested_pub")
-        .expect("Declaration 'mod nested_pub;' not found in top_pub_mod.rs");
+    let nested_pub_decl_node = get_child_mod_decl(&tree, top_pub_mod_defn_node.id)
+        .expect("Should find the module declaration for nested_pub in tree");
+    // TODO: delete after test passes
+    // - old way, doesn't work,
+    // let nested_pub_decl_node = graph
+    //     .get_child_modules_decl(top_pub_mod_defn_node.id) // Children of the definition node
+    //     .into_iter()
+    //     .find(|m| m.name == "nested_pub")
+    //     .expect("Declaration 'mod nested_pub;' not found in top_pub_mod.rs");
     let nested_decl_id = nested_pub_decl_node.id;
 
     // 2. Find definition `nested_pub.rs`
@@ -237,21 +264,36 @@ fn test_module_tree_resolves_to_definition_relation() {
     let nested_defn_id = nested_pub_defn_node.id;
 
     // --- Assert Relation Exists ---
-    let expected_nested_relation = Relation {
-        source: GraphId::Node(nested_decl_id),
-        target: GraphId::Node(nested_defn_id),
-        kind: RelationKind::ResolvesToDefinition,
+    let expected_nested_relation = SyntacticRelation::ResolvesToDefinition {
+        source: nested_decl_id,
+        target: nested_defn_id,
     };
 
     let nested_relation_found = tree
         .tree_relations()
         .iter()
-        .any(|tree_rel| *tree_rel.relation() == expected_nested_relation); // Use the getter
+        .any(|tree_rel| *tree_rel.rel() == expected_nested_relation); // Use the getter
 
     assert!(
         nested_relation_found,
         "Expected ResolvesToDefinition relation not found for nested_pub"
     );
+}
+
+fn get_child_mod_decl(tree: &ModuleTree, root_mod_id: ModuleNodeId) -> Option<ModuleNode> {
+    let root_id_any = root_mod_id.as_any();
+    let top_pub_mod_decl_node = tree
+        .get_iter_relations_from(&root_id_any)
+        .expect("root module for fixture to have at least one relation")
+        .map(|tr| tr.rel())
+        .filter_map(|r: &SyntacticRelation| -> Option<PrimaryNodeId> {
+            r.contains_target(root_mod_id)
+        })
+        .map(ModuleNodeId::try_from)
+        .filter_map(|result| result.ok())
+        .filter_map(|m_id| tree.get_module_checked(&m_id).ok().cloned())
+        .find(|m| m.name == "top_pub_mod");
+    top_pub_mod_decl_node
 }
 
 /// **Covers:** Correct separation of `ImportNode`s into the `pending_imports` and

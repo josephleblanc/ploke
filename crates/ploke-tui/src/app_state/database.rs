@@ -446,6 +446,48 @@ pub(super) async fn scan_for_change(
             mut mods: HashSet<AnyNodeId>,
             tree: &ModuleTree,
         ) -> HashSet<AnyNodeId> {
+            // start_len is probably unneeded, try running tests and removing
+            let start_len = mods.len();
+            if let Some(tree_rels) = tree
+                .get_iter_relations_from(&current.as_any())
+                .map(|it| it.filter(|r| r.rel().is_contains()))
+            {
+                for tree_rel in tree_rels {
+                    let maybe_next = tree_rel.rel().target();
+                    mods.insert(maybe_next);
+                    if tree
+                        .get_iter_relations_from(&maybe_next)
+                        .is_some_and(|mut trels| trels.any(|tr| tr.rel().is_contains()))
+                    {
+                        let next_mod: ModuleNodeId = maybe_next.try_into()
+                            .expect("Invariant Violated: Contains should only be from ModuleNode -> PrimaryNode, found other");
+                        mods = mods_in_file(next_mod, mods, tree);
+                    }
+                }
+            }
+            mods
+        }
+
+        use SyntacticRelation::*;
+        let is_parent_filter = |tr: &TreeRelation| {
+            let r = tr.rel();
+            matches!(r, Contains { .. } 
+                | ModuleImports { .. } 
+                | ReExports { .. } 
+                | StructField { .. } 
+                | UnionField { .. } 
+                | VariantField { .. } 
+                | EnumVariant { .. } 
+                | ImplAssociatedItem { .. } 
+                | TraitAssociatedItem { .. })
+        };
+
+        fn nodes_in_file(
+            current: ModuleNodeId,
+            mut mods: HashSet<AnyNodeId>,
+            tree: &ModuleTree,
+        ) -> HashSet<AnyNodeId> {
+            // start_len is probably unneeded, try running tests and removing
             let start_len = mods.len();
             if let Some(tree_rels) = tree
                 .get_iter_relations_from(&current.as_any())
@@ -475,23 +517,59 @@ pub(super) async fn scan_for_change(
             .filter_map(|m| m.items())
             .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
             .collect();
-        use SyntacticRelation::*;
-        let is_parent_filter = |tr: &TreeRelation| {
-            let r = tr.rel();
-            matches!(r, Contains { .. } 
-                | ModuleImports { .. } 
-                | ReExports { .. } 
-                | StructField { .. } 
-                | UnionField { .. } 
-                | VariantField { .. } 
-                | EnumVariant { .. } 
-                | ImplAssociatedItem { .. } 
-                | TraitAssociatedItem { .. })
-        };
+
+        // Goal: List all nodes (primary, secondary, all kinds) that have changed.
+        //
+        // 1. For nodes that have a tracking_hash (all primary_node types of relevance for vector
+        // embedding) this means checking the tracking_hash of the recently parsed (present state)
+        // against the last known tracking_hash stored in the db (past state).
+        //  - A) if past state != present state, 
+        //      -> then the node has changed (and needs to be embedded)
+        //  - B) if past state DNE, 
+        //      -> then the item is new (and needs to be embedded)
+        //  - C) if past state exists, but present state DNE, 
+        //      -> then the item needs to be pruned from the database
+        //
+        // For case 1.A, we need to remove the previous item and insert the new item (see notes on
+        // using synthetic node ids in note on 2.A below)
+        // 
+        // 2. For nodes that do not have a tracking_hash:
+        //  - A) if parent past state != present state, 
+        //      -> then the node parent has changed (and the link pointing to the parent can stay)
+        //  - B) if past state DNE, 
+        //      -> then the item is new (and will have been linked already)
+        //  - C) if past state exists, but present state DNE, 
+        //      -> then the item needs to be pruned from the database
+        // 
+        // NOTE: For case 2.C, because there is not a tracking_hash on the node that can be used to
+        // determine whether or not the item has changed, we need to rely on traversing the
+        // relations that indicate a parent-child relationship to find the 2.C items.
+        //
+        // NOTE: For case 2.A, since we do not know whether the item itself has changed or not, we
+        // cannot determine whether or not it needs to be replaced (at least based on the
+        // tracking_hash). Ideally, we would be able to use the NodeId as a heuristic to tell if
+        // the node has changed sufficiently to remove the previous node (and all the previous
+        // node's relations) and add a new one, or to update the previous node (leaving the
+        // identifier and other relations unchanged).
+        // At the time of writing (2025-12-07), we use synthetic nodes everywhere, and they are
+        // constructed from file_path, relative module path, item name, and span start/end.
+        // Therefore even if an item has not changed, but a newline has been added above that item,
+        // then the NodeId will have changed, and so the item must first be removed from the
+        // database before being added and linked again.
+
+
+        // initial set of node ids to iterate over
+        //
+        // module_set is the set of modules node ids that own the files which have changed.
         let mut new_item_set_deq: VecDeque<AnyNodeId> = module_set
             .iter().map(|m_id| m_id.as_any())
             .collect();
+        // hashset to hold unique ids of all node ids in the changed/removed files
         let mut items_in_file: HashSet<AnyNodeId> = HashSet::new();
+
+        // recursively iterate over all items that may have changed in the target files by
+        // traversing all relations which indicate a parent (source) -> child (target) relation
+        // where the nodes in the changed set are the parent/source.
         while let Some(source_id) = new_item_set_deq.pop_front() {
             let is_unique = items_in_file.insert(source_id);
             if !is_unique {
@@ -503,7 +581,19 @@ pub(super) async fn scan_for_change(
                 .map(|tr| tr.rel().target());
             new_item_set_deq.extend(next_items);
         }
+
+        // 1. get all node ids in the database that are in a changed file
+        //  - call them db_nodes
+        // 2. compare db_node ids (previous state) to parsed node ids (present state)
+        //  -> if match, then compare to tracking_hash (aka TH)
+        //      -> if match, then 
+        //          => no embedding, no update
+        //      -> if no TH match, then
+        //          => new embedding, update old node_id (unlikely given byte spans used in synth node id)
+        //  -> if no match, add node_id to a list to be removed from database
+        // 3. 
         for item in items_in_file {
+
             // let is_db_tracking_hash = state.db;
         }
         // let new_item_set: HashSet<AnyNodeId> = module_set
