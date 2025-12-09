@@ -66,7 +66,6 @@ use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
 #[test]
-#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -252,12 +251,12 @@ fn test_spp_item_in_private_mod() {
 // #[test]
 // #[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexported_item() {
-//     let fixture_name = "reexport_fixture"; // Need a fixture with re-exports
-//     let (graph, tree) = build_tree_for_tests(fixture_name);
-//     // ... find original item ID and re-exporting module ID ...
-//     let spp = tree.shortest_public_path(original_item_id, crate_root_id);
-//     // Assert spp matches the shorter, re-exported path
-// }
+    //     let fixture_name = "reexport_fixture"; // Need a fixture with re-exports
+    //     let (graph, tree) = build_tree_for_tests(fixture_name);
+    //     // ... find original item ID and re-exporting module ID ...
+    //     let spp = tree.shortest_public_path(original_item_id, crate_root_id);
+    //     // Assert spp matches the shorter, re-exported path
+}
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
