@@ -20,6 +20,7 @@ exclude = [
     "tests/fixture_crates/fixture_spp_edge_cases",
     "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
     "tests/fixture_crates/fixture_update_embed",
+    "tests/fixture_crates/fixture_impls",
     "fixture_test_crate",
 ]
 resolver = "2"
@@ -40,6 +41,7 @@ members = [
     "crates/ploke-io",
     "crates/ploke-ty-mcp",
     "xtask",
+    "tests/fixture_crates/fixture_impls",
     # Add more modules as needed
 ]
 
