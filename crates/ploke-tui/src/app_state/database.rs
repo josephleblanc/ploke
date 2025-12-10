@@ -226,7 +226,7 @@ pub(super) async fn load_db(
         .import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    ploke_db::create_index_primary(&state.db)?;
+    ploke_db::create_index_primary_with_index(&state.db)?;
     // .inspect_err(|e| e.emit_error())?;
 
     // get count for sanity and user feedback

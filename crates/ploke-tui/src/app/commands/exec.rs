@@ -107,8 +107,8 @@ pub fn execute(app: &mut App, command: Command) {
                         let mut msg = format!("Loaded configuration from {}", path_str);
                         if embedding_changed {
                             msg.push_str(
-                                "\nNote: Embedding backend changed; restart recommended for changes to take effect.",
-                            );
+                                    "\nNote: Embedding backend changed; restart recommended for changes to take effect.",
+                                );
                         }
 
                         let _ = cmd_tx
@@ -192,16 +192,16 @@ pub fn execute(app: &mut App, command: Command) {
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
                 let _ = cmd_tx
-                    .send(StateCommand::AddMessageImmediate {
-                        msg: if enabled {
-                            "Provider tools-only enforcement enabled: model calls will be blocked unless the active model is marked as tool-capable. Use ':provider tools-only off' to disable.".to_string()
-                        } else {
-                            "Provider tools-only enforcement disabled.".to_string()
-                        },
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    })
-                    .await;
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: if enabled {
+                                "Provider tools-only enforcement enabled: model calls will be blocked unless the active model is marked as tool-capable. Use ':provider tools-only off' to disable.".to_string()
+                            } else {
+                                "Provider tools-only enforcement disabled.".to_string()
+                            },
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
             });
         }
         Command::ProviderSelect {
@@ -237,6 +237,12 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::EditSetAutoConfirm(enabled) => {
             app.send_cmd(StateCommand::SetEditingAutoConfirm { enabled });
+        }
+        Command::SearchContext(search_term) => {
+            // Open the overlay immediately to avoid perceived delay
+            app.open_context_search(search_term.clone(), Vec::new());
+            // Fetch results asynchronously and publish to the UI via AppEvent
+            open_context_search(app, &search_term);
         }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
@@ -641,6 +647,52 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     })
                     .await;
             }
+        }
+    });
+}
+
+fn open_context_search(app: &mut App, search_term: &str) {
+    // Open overlay already done by caller; now spawn a non-blocking fetch and emit results.
+    let state = app.state.clone();
+    let cmd_tx = app.cmd_tx.clone();
+    let keyword_str = search_term.to_string();
+
+    tokio::spawn(async move {
+        let span = debug_span!("open_context_search", keyword = keyword_str.as_str());
+        let _guard = span.enter();
+
+        let budget = &state.budget;
+        let top_k = crate::TOP_K;
+        let retrieval_strategy = &crate::RETRIEVAL_STRATEGY;
+        if let Some(rag_service) = &state.rag {
+            match rag_service
+                .get_context(&keyword_str, top_k, budget, retrieval_strategy)
+                .await
+            {
+                Ok(ctx_returned) => {
+                    emit_app_event(AppEvent::ContextSearch(crate::SearchEvent::SearchResults(
+                        ctx_returned,
+                    )))
+                    .await;
+                }
+                Err(e) => {
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: format!("Failed to retrieve code snippets with RAG {}", e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                }
+            }
+        } else {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: "No RAG service detected in open_context_search".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
         }
     });
 }

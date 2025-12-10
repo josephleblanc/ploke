@@ -37,12 +37,47 @@ pub enum ContextPartKind {
     Metadata,
 }
 
+impl From<ContextPartKind> for &'static str {
+    fn from(v: ContextPartKind) -> Self {
+        use ContextPartKind::*;
+        match v {
+            Code => "Code",
+            Doc => "Doc",
+            Signature => "Signature",
+            Metadata => "Metadata",
+        }
+    }
+}
+
+impl ContextPartKind {
+    pub fn to_static_str(self) -> &'static str {
+        self.into()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum Modality {
     Dense,
     Sparse,
     HybridFused,
+}
+
+impl From<Modality> for &'static str {
+    fn from(v: Modality) -> Self {
+        use Modality::*;
+        match v {
+            Dense => "Dense",
+            Sparse => "Sparse",
+            HybridFused => "HybridFused",
+        }
+    }
+}
+
+impl Modality {
+    pub fn to_static_str(self) -> &'static str {
+        self.into()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +96,7 @@ pub struct RequestCodeContextResult {
     pub context: Vec<ConciseContext>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssembledMeta {
     pub search_term: String,
     pub top_k: usize,

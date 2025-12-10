@@ -38,7 +38,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 pub use test_utils::mock;
 
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, rag_types::AssembledContext};
 
 pub mod test_harness;
 
@@ -312,6 +312,11 @@ pub enum RagEvent {
 }
 
 #[derive(Clone, Debug)]
+pub enum SearchEvent {
+    SearchResults(AssembledContext),
+}
+
+#[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
     Llm(llm::LlmEvent),
@@ -327,6 +332,7 @@ pub enum AppEvent {
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
+    ContextSearch(SearchEvent),
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
@@ -350,17 +356,11 @@ impl AppEvent {
         use llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            // NOTE: I'm fairly sure that there should be better handling of AppEvent::Llm beyond
-            // this blanket implementation for Background, but check here first if there is an
-            // error the LLM event handling.
-            // AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
                 ToolEvent::Requested { .. } => EventPriority::Background,
                 ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => EventPriority::Realtime,
             },
             AppEvent::Quit => EventPriority::Realtime,
-            // Make sure the ModelSwitched event is in real-time priority, since it is intended to
-            // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::WriteQuery { .. }) => EventPriority::Realtime,
@@ -389,6 +389,7 @@ impl AppEvent {
                 EventPriority::Realtime
             }
             AppEvent::Llm(llm_event) => EventPriority::Background,
+            AppEvent::ContextSearch(search_event) => EventPriority::Realtime,
         }
     }
     pub fn is_system(&self) -> bool {

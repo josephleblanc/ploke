@@ -3,8 +3,10 @@ use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
 use crate::llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
+use crate::SearchEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
+use ploke_core::rag_types::AssembledContext;
 use ploke_core::ArcStr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,6 +31,17 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         // LLM events routed into llm match arm below
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
+        }
+        AppEvent::ContextSearch(SearchEvent::SearchResults(assembled_context)) => {
+            if let Some(ctx_browser) = app.context_browser.as_mut() {
+                let AssembledContext { parts, stats } = assembled_context;
+                info!(
+                    "ContextSearch event completed with search results.
+                    AssembledContext with stats:
+                    {stats:#?}"
+                );
+                ctx_browser.items = App::build_context_search_items(parts);
+            }
         }
         AppEvent::IndexingProgress(state) => {
             app.indexing_state = Some(state);
