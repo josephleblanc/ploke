@@ -239,10 +239,18 @@ pub fn execute(app: &mut App, command: Command) {
             app.send_cmd(StateCommand::SetEditingAutoConfirm { enabled });
         }
         Command::SearchContext(search_term) => {
+            tracing::debug!(
+                "Command::SearchContext received with search term: {}",
+                search_term
+            );
             // Open the overlay immediately to avoid perceived delay
-            app.open_context_search(search_term.clone(), Vec::new());
+            app.open_context_browser(search_term.clone(), Vec::new());
             // Fetch results asynchronously and publish to the UI via AppEvent
             open_context_search(app, &search_term);
+            tracing::debug!(
+                "Command::SearchContext finished open_context_search with search term: {}",
+                search_term
+            );
         }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
@@ -651,6 +659,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
     });
 }
 
+#[instrument(skip(app), level = "debug")]
 fn open_context_search(app: &mut App, search_term: &str) {
     // Open overlay already done by caller; now spawn a non-blocking fetch and emit results.
     let state = app.state.clone();

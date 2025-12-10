@@ -4,7 +4,7 @@ use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
 use syn_parser::utils::LogStyle;
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -439,6 +439,12 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         })
     }
 
+    #[instrument(
+        skip(self), 
+        fields(?embedding_set, script_check_indices), 
+        level = "debug",
+        ret
+    )]
     fn is_hnsw_index_registered(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
         // TODO: introspect ::indices output to avoid repeated creation; currently we
         // always attempt to create the index, but we still run the query to ensure the

@@ -842,6 +842,11 @@ impl App {
             input::model_browser::handle_model_browser_input(self, key);
             self.needs_redraw = true;
             return;
+        // Intercept keys for context browser overlay when visible
+        } else if self.context_browser.is_some() {
+            input::context_browser::handle_context_browser_input(self, key);
+            self.needs_redraw = true;
+            return;
         }
 
         // Global action mapping (including OpenApprovals)
@@ -1226,7 +1231,19 @@ impl App {
         self.needs_redraw = true;
     }
 
-    fn open_context_search(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
+    #[instrument(skip(self), 
+        level = "debug",
+        fields(
+            search_input, 
+            retrieved_items_len = retrieved_items.len(),
+            self.context_browser
+        )
+    )]
+    #[instrument(
+        skip(self, retrieved_items),
+        fields(search_input, retrieved_items_len = retrieved_items.len())
+    )]
+    fn open_context_browser(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
         let search_items = Self::build_context_search_items(retrieved_items);
         self.context_browser = Some(ContextSearchState {
             visible: true,
@@ -1243,6 +1260,10 @@ impl App {
         self.needs_redraw = true;
     }
 
+    #[instrument( 
+        level = "debug",
+        fields(retrieved_items_len = retrieved_items.len())
+    )]
     fn build_context_search_items(retrieved_items: Vec<ContextPart>) -> Vec<SearchItem> {
         retrieved_items
             .into_iter()

@@ -33,6 +33,8 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.sync_list_selection().await;
         }
         AppEvent::ContextSearch(SearchEvent::SearchResults(assembled_context)) => {
+            tracing::debug!("receieved ContextSearch with assembled_context stats: {:#?}",
+                assembled_context.stats);
             if let Some(ctx_browser) = app.context_browser.as_mut() {
                 let AssembledContext { parts, stats } = assembled_context;
                 info!(

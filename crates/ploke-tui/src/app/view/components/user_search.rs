@@ -86,6 +86,24 @@ pub enum ShowPreview {
     Full,
 }
 
+impl ShowPreview {
+    pub fn next_more_verbose(self) -> Self {
+        match self {
+            ShowPreview::NoPreview => ShowPreview::Small,
+            ShowPreview::Small => ShowPreview::Full,
+            ShowPreview::Full => ShowPreview::Full,
+        }
+    }
+
+    pub fn next_less_verbose(self) -> Self {
+        match self {
+            ShowPreview::NoPreview => ShowPreview::NoPreview,
+            ShowPreview::Small => ShowPreview::NoPreview,
+            ShowPreview::Full => ShowPreview::Small,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 enum SearchItemField {
     Id,
@@ -149,6 +167,54 @@ impl SearchItem {
             }
             Modality => self.context_part.modality.to_static_str().to_string(),
         };
+
+        Line::from(Span::styled(
+            format!("{indent}{field_str}: {val}"),
+            OVERLAY_STYLE.detail,
+        ))
+    }
+
+    fn format_line_field_val_to_width(&self, field: SearchItemField, width: usize) -> Line<'_> {
+        let indent = "    ";
+        let field_str: &'static str = field.into();
+
+        let truncated_len = width
+            .saturating_sub(indent.len())
+            .saturating_sub(field_str.len())
+            // additional 4 subtracted for some additional padding so it isn't right up
+            // against the right border
+            // - also includes the two needed for `: ` in the final format! statement at the end of
+            // this function
+            .saturating_sub(4);
+
+        use SearchItemField::*;
+        let mut val = match field {
+            Id => truncate_uuid(self.id.0),
+            Name => {
+                if let Some(name) = self.name.as_ref() {
+                    name.as_ref().to_string()
+                } else {
+                    "unnamed".to_string()
+                }
+            }
+            FilePath => {
+                let file_path_len = self.context_part.file_path.0.len();
+                let trunc_start_index = file_path_len
+                    .saturating_sub(truncated_len)
+                    // subtract additional 3 for leading ellipses
+                    .saturating_sub(3);
+                format!(
+                    "...{}",
+                    &self.context_part.file_path.0.as_str()[trunc_start_index..]
+                )
+            }
+            CanonPath => self.context_part.canon_path.0.clone(),
+            Kind => self.context_part.kind.to_static_str().to_string(),
+            Text => self.context_part.text.clone(),
+            Score => format!("{:.3}", self.context_part.score),
+            Modality => self.context_part.modality.to_static_str().to_string(),
+        };
+        val.truncate(width);
 
         Line::from(Span::styled(
             format!("{indent}{field_str}: {val}"),
@@ -235,9 +301,6 @@ pub fn render_context_search<'a>(
         .y
         .saturating_add(area.height.saturating_sub(height) / 2);
     let rect = ratatui::layout::Rect::new(x, y, width.max(40), height.max(10));
-
-    // NOTE: I think this will work, double check that it is useful in truncating the lines below.
-    let actual_width = rect.width;
 
     // Clear the underlying content in the overlay area to avoid "bleed-through"
     // TODO: Experiment with this some more.
@@ -331,8 +394,13 @@ pub fn render_context_search<'a>(
                 SearchItemField::Score,
                 SearchItemField::Modality,
             ];
+            let details_width = body_area
+                .width
+                .saturating_sub(indent.len() as u16)
+                // subtract a few cols for the borders + margin on the left and right.
+                .saturating_sub(4);
             for field in displayed_fields {
-                lines.push(it.format_line_field_val(field));
+                lines.push(it.format_line_field_val_to_width(field, details_width as usize));
             }
 
             // Provider breakdown (with loading/empty states)
@@ -342,37 +410,11 @@ pub fn render_context_search<'a>(
                     .context_part
                     .text
                     .chars()
-                    .take(actual_width as usize)
+                    .take(body_area.width as usize)
                     .collect::<String>(),
                 ShowPreview::Full => it.context_part.text.clone(),
             };
             lines.push(Line::from(Span::styled(preview, detail_style)))
-            // if it.loading_providers {
-            //     lines.push(Line::from(Span::styled("      (loading…)", detail_style)));
-            // } else if it.providers.is_empty() {
-            //     lines.push(Line::from(Span::styled("      (none)", detail_style)));
-            // } else {
-            //     for (row_idx, p) in it.providers.iter().enumerate() {
-            //         let indent = "      ";
-            //         let is_sel = mb.provider_select_active
-            //             && i == mb.selected
-            //             && row_idx == mb.provider_selected;
-            //         let row_style = if is_sel { selected_style } else { detail_style };
-            //         let pointer = if is_sel { ">" } else { "-" };
-            //         lines.push(Line::from(Span::styled(
-            //             format!(
-            //                 "{indent}{} {} in=${} out=${} ctx={} tools={}",
-            //                 pointer,
-            //                 p.provider_name,
-            //                 format_args!("{:.3}", p.input_cost),
-            //                 format_args!("{:.3}", p.output_cost),
-            //                 format_args!("{:.0}", p.context_length),
-            //                 p.supports_tools,
-            //             ),
-            //             row_style,
-            //         )));
-            //     }
-            // }
         }
     }
     (body_area, footer_area, overlay_style, lines)
