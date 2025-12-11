@@ -1,4 +1,4 @@
-use crate::app::view::components::user_search::{
+use crate::app::view::components::context_browser::{
     self, ContextSearchState, SearchItem, render_context_search,
 };
 use crate::llm::manager::events::endpoint;

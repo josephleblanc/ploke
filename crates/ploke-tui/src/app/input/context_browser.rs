@@ -7,7 +7,7 @@ use crossterm::event::{
 
 use crate::ModelId;
 use crate::app::App;
-use crate::app::view::components::user_search::{ShowMetaDetails, ShowPreview, StepEnum as _};
+use crate::app::view::components::context_browser::{ShowMetaDetails, ShowPreview, StepEnum as _};
 use crate::llm::manager::events::endpoint;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;

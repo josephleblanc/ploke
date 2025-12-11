@@ -29,7 +29,6 @@ use itertools::Itertools;
 use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
-// use textwrap::wrap; // moved into InputView
 use std::fmt::Display;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -224,9 +223,11 @@ impl From<SearchItemField> for &'static str {
     }
 }
 
+const DETAIL_INDENT: &str = "    ";
+const SMALL_PREVIEW_MAX_LINES: usize = 12;
+
 impl SearchItem {
     fn format_line_field_val(&self, field: SearchItemField) -> Line<'_> {
-        let indent = "    ";
         let field_str: &'static str = field.into();
 
         use SearchItemField::*;
@@ -250,17 +251,16 @@ impl SearchItem {
         };
 
         Line::from(Span::styled(
-            format!("{indent}{field_str}: {val}"),
+            format!("{DETAIL_INDENT}{field_str}: {val}"),
             OVERLAY_STYLE.detail,
         ))
     }
 
     fn format_line_field_val_to_width(&self, field: SearchItemField, width: usize) -> Line<'_> {
-        let indent = "    ";
         let field_str: &'static str = field.into();
 
         let truncated_len = width
-            .saturating_sub(indent.len())
+            .saturating_sub(DETAIL_INDENT.len())
             .saturating_sub(field_str.len())
             // additional 4 subtracted for some additional padding so it isn't right up
             // against the right border
@@ -298,7 +298,7 @@ impl SearchItem {
         val.truncate(width);
 
         Line::from(Span::styled(
-            format!("{indent}{field_str}: {val}"),
+            format!("{DETAIL_INDENT}{field_str}: {val}"),
             OVERLAY_STYLE.detail,
         ))
     }
@@ -379,6 +379,54 @@ impl Default for OverlayStyle {
             detail: Style::new().fg(Color::Blue).dim(),
         }
     }
+}
+
+fn wrap_preview_lines(
+    preview: &str,
+    detail_style: Style,
+    details_width: usize,
+    max_lines: Option<usize>,
+) -> Vec<Line<'static>> {
+    let available_width = details_width
+        .saturating_sub(DETAIL_INDENT.len())
+        .max(1);
+
+    if preview.is_empty() {
+        return vec![Line::from(Span::styled(
+            format!("{DETAIL_INDENT}<no preview>"),
+            detail_style,
+        ))];
+    }
+
+    let mut lines = Vec::new();
+    for raw in preview.lines() {
+        let wrapped = textwrap::wrap(raw, available_width);
+        if wrapped.is_empty() {
+            lines.push(Line::from(Span::styled(
+                DETAIL_INDENT.to_string(),
+                detail_style,
+            )));
+            continue;
+        }
+
+        for segment in wrapped {
+            if let Some(limit) = max_lines {
+                if lines.len() >= limit {
+                    lines.push(Line::from(Span::styled(
+                        format!("{DETAIL_INDENT}…"),
+                        detail_style,
+                    )));
+                    return lines;
+                }
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{DETAIL_INDENT}{segment}"),
+                detail_style,
+            )));
+        }
+    }
+
+    lines
 }
 
 pub fn render_context_search<'a>(
@@ -478,7 +526,7 @@ pub fn render_context_search<'a>(
         lines.push(line);
 
         if it.expanded {
-            let indent = "    ";
+            let indent = DETAIL_INDENT;
             // Indented details for readability while navigating (preserve spaces; do not trim)
 
             let details_width = body_area
@@ -490,18 +538,34 @@ pub fn render_context_search<'a>(
                 lines.push(it.format_line_field_val_to_width(field, details_width as usize));
             }
 
-            // Provider breakdown (with loading/empty states)
-            let preview = match it.show_preview {
-                ShowPreview::NoPreview => "Press `l` or RightArrow to show preview".to_string(),
-                ShowPreview::Small => it
-                    .context_part
-                    .text
-                    .chars()
-                    .take(body_area.width as usize)
-                    .collect::<String>(),
-                ShowPreview::Full => it.context_part.text.clone(),
-            };
-            lines.push(Line::from(Span::styled(preview, detail_style)))
+            lines.push(Line::from(Span::styled(
+                format!("{indent}Preview:"),
+                detail_style,
+            )));
+
+            match it.show_preview {
+                ShowPreview::NoPreview => {
+                    lines.push(Line::from(Span::styled(
+                        format!("{indent}Press `l` or RightArrow to show preview"),
+                        detail_style,
+                    )));
+                }
+                ShowPreview::Small | ShowPreview::Full => {
+                    let max_lines = match it.show_preview {
+                        ShowPreview::Small => Some(SMALL_PREVIEW_MAX_LINES),
+                        ShowPreview::Full => None,
+                        ShowPreview::NoPreview => unreachable!(),
+                    };
+
+                    let preview_lines = wrap_preview_lines(
+                        &it.context_part.text,
+                        detail_style,
+                        details_width as usize,
+                        max_lines,
+                    );
+                    lines.extend(preview_lines);
+                }
+            }
         }
     }
     (body_area, footer_area, overlay_style, lines)
