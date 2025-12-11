@@ -41,25 +41,23 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                 _ => {}
             },
             ContextBrowserMode::Normal => match (key.code, key.modifiers) {
-
-                // Change the following to be in the same format of (keycode, keymodifier) AI!
-                KeyCode::Enter => {
+                (KeyCode::Enter, _) => {
                     cb.mode = ContextBrowserMode::Normal;
                     cb.mark_dirty();
                 }
-                KeyCode::Up | KeyCode::Char('k') => cb.select_prev(),
-                KeyCode::Down | KeyCode::Char('j') => cb.select_next(),
-                KeyCode::Char('q') => {
+                (KeyCode::Up, _) | (KeyCode::Char('k'), _) => cb.select_prev(),
+                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => cb.select_next(),
+                (KeyCode::Char('q'), _) => {
                     app.context_browser = None;
                     return;
                 }
-                KeyCode::Char('i') | KeyCode::Char('/') => {
+                (KeyCode::Char('i'), _) | (KeyCode::Char('/'), _) => {
                     cb.mode = ContextBrowserMode::Insert;
                     return;
                 }
-            KeyCode::Char('?') => {
-                cb.help_visible = !cb.help_visible;
-            }
+                (KeyCode::Char('?'), _) => {
+                    cb.help_visible = !cb.help_visible;
+                }
             // TODO: Add a way to make the item name and/or text snippet the term used for the next
             // search, probably using `s` to search for item name and/or `shift+s` to search using
             // the text snippet of the selected item as the search term.
