@@ -6,9 +6,7 @@ use crate::llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
-use ploke_core::ArcStr;
 use ploke_core::rag_types::AssembledContext;
-use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -32,19 +30,30 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
             app.sync_list_selection().await;
         }
-        AppEvent::ContextSearch(SearchEvent::SearchResults(assembled_context)) => {
+        AppEvent::ContextSearch(SearchEvent::SearchResults {
+            query_id,
+            context: assembled_context,
+        }) => {
             tracing::debug!(
                 "receieved ContextSearch with assembled_context stats: {:#?}",
                 assembled_context.stats
             );
             if let Some(ctx_browser) = app.context_browser.as_mut() {
+                if query_id != ctx_browser.query_id {
+                    trace!(
+                        "Ignoring stale context search results: incoming={} current={}",
+                        query_id,
+                        ctx_browser.query_id
+                    );
+                    return;
+                }
                 let AssembledContext { parts, stats } = assembled_context;
                 info!(
                     "ContextSearch event completed with search results.
                     AssembledContext with stats:
                     {stats:#?}"
                 );
-                ctx_browser.items = App::build_context_search_items(parts);
+                ctx_browser.set_results(App::build_context_search_items(parts));
             }
         }
         AppEvent::IndexingProgress(state) => {

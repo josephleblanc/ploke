@@ -313,7 +313,10 @@ pub enum RagEvent {
 
 #[derive(Clone, Debug)]
 pub enum SearchEvent {
-    SearchResults(AssembledContext),
+    SearchResults {
+        query_id: u64,
+        context: AssembledContext,
+    },
 }
 
 #[derive(Clone, Debug)]

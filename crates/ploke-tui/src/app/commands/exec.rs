@@ -246,9 +246,9 @@ pub fn execute(app: &mut App, command: Command) {
             // Open the overlay immediately to avoid perceived delay
             app.open_context_browser(search_term.clone(), Vec::new());
             // Fetch results asynchronously and publish to the UI via AppEvent
-            open_context_search(app, &search_term);
+            app.dispatch_context_search(&search_term);
             tracing::debug!(
-                "Command::SearchContext finished open_context_search with search term: {}",
+                "Command::SearchContext dispatched context search with search term: {}",
                 search_term
             );
         }
@@ -660,14 +660,18 @@ fn open_model_search(app: &mut App, keyword: &str) {
 }
 
 #[instrument(skip(app), level = "debug")]
-fn open_context_search(app: &mut App, search_term: &str) {
+pub(crate) fn open_context_search(app: &mut App, query_id: u64, search_term: &str) {
     // Open overlay already done by caller; now spawn a non-blocking fetch and emit results.
     let state = app.state.clone();
     let cmd_tx = app.cmd_tx.clone();
     let keyword_str = search_term.to_string();
 
     tokio::spawn(async move {
-        let span = debug_span!("open_context_search", keyword = keyword_str.as_str());
+        let span = debug_span!(
+            "open_context_search",
+            keyword = keyword_str.as_str(),
+            query_id
+        );
         let _guard = span.enter();
 
         let budget = &state.budget;
@@ -679,9 +683,12 @@ fn open_context_search(app: &mut App, search_term: &str) {
                 .await
             {
                 Ok(ctx_returned) => {
-                    emit_app_event(AppEvent::ContextSearch(crate::SearchEvent::SearchResults(
-                        ctx_returned,
-                    )))
+                    emit_app_event(AppEvent::ContextSearch(
+                        crate::SearchEvent::SearchResults {
+                            query_id,
+                            context: ctx_returned,
+                        },
+                    ))
                     .await;
                 }
                 Err(e) => {

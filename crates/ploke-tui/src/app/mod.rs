@@ -37,7 +37,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use itertools::Itertools;
-use ploke_core::rag_types::{AssembledContext, ContextPart};
+use ploke_core::rag_types::ContextPart;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
@@ -45,6 +45,7 @@ use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
 use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
+use tokio::time::Instant as TokioInstant;
 use toml::to_string;
 use tracing::instrument;
 use view::components::approvals::{
@@ -206,6 +207,10 @@ impl App {
         // stop polling it to avoid starving event handling.
         let mut input_done = false;
 
+        // Light tick for overlays that need debounce without touching global UI cadence.
+        let context_tick = tokio::time::sleep(Duration::from_millis(30));
+        tokio::pin!(context_tick);
+
         // let mut frame_counter = 0;
         while self.running {
             if self.needs_redraw {
@@ -355,6 +360,12 @@ impl App {
             Ok(app_event_bg) = self.bg_event_rx.recv() => {
                 events::handle_event(&mut self, app_event_bg).await;
                 self.needs_redraw = true;
+            }
+
+            // Debounced overlay ticks (context browser)
+            _ = &mut context_tick, if self.context_browser_needs_tick() => {
+                self.tick_context_browser();
+                context_tick.as_mut().reset(TokioInstant::now() + Duration::from_millis(30));
             }
 
             }
@@ -608,8 +619,12 @@ impl App {
             let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
 
             let free_width = body_area.width.saturating_sub(43) as usize;
-            let trunc_search_input = cb.search_input.clone();
-            let trunc_search_string: String = trunc_search_input.chars().take(free_width).collect();
+            let trunc_search_string: String = cb
+                .input
+                .as_str()
+                .chars()
+                .take(free_width)
+                .collect();
 
             // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
             // on for better functionality later
@@ -1245,19 +1260,51 @@ impl App {
     )]
     fn open_context_browser(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
         let search_items = Self::build_context_search_items(retrieved_items);
-        self.context_browser = Some(ContextSearchState {
-            visible: true,
-            items: search_items,
-            search_input,
-            selected: 0,
-            help_visible: false,
-            item_selected: 0,
-            vscroll: 0,
-            viewport_height: 0,
-            preview_select_active: false,
-            loading_search: true,
-        });
+        self.context_browser = Some(ContextSearchState::with_items(search_input, search_items));
         self.needs_redraw = true;
+    }
+
+    fn context_browser_needs_tick(&self) -> bool {
+        self.context_browser
+            .as_ref()
+            .map(|cb| cb.pending_dispatch)
+            .unwrap_or(false)
+    }
+
+    fn tick_context_browser(&mut self) {
+        let mut query_to_dispatch: Option<String> = None;
+        if let Some(cb) = self.context_browser.as_mut() {
+            if !cb.pending_dispatch {
+                return;
+            }
+            if cb.last_edit_at.elapsed() < Duration::from_millis(cb.debounce_ms) {
+                return;
+            }
+            let query = cb.input.as_str().trim().to_string();
+            if query == cb.last_sent_query {
+                cb.pending_dispatch = false;
+                cb.loading_search = false;
+                return;
+            }
+            query_to_dispatch = Some(query);
+        }
+
+        if let Some(query) = query_to_dispatch {
+            self.dispatch_context_search(&query);
+            self.needs_redraw = true;
+        }
+    }
+
+    fn dispatch_context_search(&mut self, query: &str) {
+        let query = query.trim();
+        let Some(cb) = self.context_browser.as_mut() else { return };
+        cb.query_id = cb.query_id.saturating_add(1);
+        let query_id = cb.query_id;
+        cb.last_sent_query = query.to_string();
+        cb.pending_dispatch = false;
+        cb.loading_search = true;
+
+        commands::exec::open_context_search(self, query_id, query);
     }
 
     #[instrument(
