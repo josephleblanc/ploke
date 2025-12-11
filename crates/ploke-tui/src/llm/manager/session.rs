@@ -343,7 +343,7 @@ where
                             };
                             match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
                                 Ok(r) => (call_id_clone, r),
-                                Err(_) => { 
+                                Err(_) => {
                                     add_sysinfo_message(&call_id_clone, &cmd_tx_clone, "timeout").await;
                                     ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
                                 }

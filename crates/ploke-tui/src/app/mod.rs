@@ -1231,10 +1231,10 @@ impl App {
         self.needs_redraw = true;
     }
 
-    #[instrument(skip(self), 
+    #[instrument(skip(self),
         level = "debug",
         fields(
-            search_input, 
+            search_input,
             retrieved_items_len = retrieved_items.len(),
             self.context_browser
         )
@@ -1260,7 +1260,7 @@ impl App {
         self.needs_redraw = true;
     }
 
-    #[instrument( 
+    #[instrument(
         level = "debug",
         fields(retrieved_items_len = retrieved_items.len())
     )]

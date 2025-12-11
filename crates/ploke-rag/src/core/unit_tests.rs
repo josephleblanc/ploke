@@ -478,8 +478,7 @@ mod tests {
             let db_ref: &Database = db.as_ref();
             let has_index = db_ref.is_hnsw_index_registered(&db_ref.active_embedding_set)?;
             if !has_index {
-                ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string())
-                    .await?;
+                ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
             }
         }
         // When this test is run in isolation we still need a dense index.

@@ -440,8 +440,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
     }
 
     #[instrument(
-        skip(self), 
-        fields(?embedding_set, script_check_indices), 
+        skip(self),
+        fields(?embedding_set, script_check_indices),
         level = "debug",
         ret
     )]

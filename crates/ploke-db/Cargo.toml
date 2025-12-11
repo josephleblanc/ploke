@@ -20,7 +20,7 @@ uuid = { workspace = true }
 clap = { version = "4.5.17", features = ["derive"] }
 
 # error handling
-ploke-error = { path = "../ploke-error" }
+ploke-error = { path = "../ploke-error", features = ["serde"] }
 thiserror = "1.0"
 
 # pre-caching the schema fields for queries

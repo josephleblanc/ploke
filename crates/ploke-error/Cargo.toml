@@ -7,12 +7,13 @@ edition = "2024"
 thiserror = { workspace = true }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 uuid = { workspace = true }
+serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
 tracing = ["dep:tracing"]
 diagnostic = ["dep:miette"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:serde_json"]
 smartstring = []
 proc-span = []
 backtrace-default = []
@@ -29,3 +30,6 @@ optional = true
 [dependencies.miette]
 version = "5"
 optional = true
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["fmt"] }

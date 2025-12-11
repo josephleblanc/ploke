@@ -1,13 +1,13 @@
 use super::App;
+use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
 use crate::llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
-use crate::SearchEvent;
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
-use ploke_core::rag_types::AssembledContext;
 use ploke_core::ArcStr;
+use ploke_core::rag_types::AssembledContext;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
@@ -33,8 +33,10 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             app.sync_list_selection().await;
         }
         AppEvent::ContextSearch(SearchEvent::SearchResults(assembled_context)) => {
-            tracing::debug!("receieved ContextSearch with assembled_context stats: {:#?}",
-                assembled_context.stats);
+            tracing::debug!(
+                "receieved ContextSearch with assembled_context stats: {:#?}",
+                assembled_context.stats
+            );
             if let Some(ctx_browser) = app.context_browser.as_mut() {
                 let AssembledContext { parts, stats } = assembled_context;
                 info!(
@@ -193,7 +195,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     );
                     app.send_cmd(StateCommand::AddMessageImmediate {
                         msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}\nRoot project path set to: {}", 
-                            display_file_info(file_dir.as_ref()), 
+                            display_file_info(file_dir.as_ref()),
                             display_file_info(root_path.as_ref())
                         ),
                         kind: MessageKind::SysInfo,
@@ -215,7 +217,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     if let Some(error_str) = error {
                         app.send_cmd(StateCommand::AddMessageImmediate {
                             msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", 
-                                display_file_info(file_dir.as_ref()), 
+                                display_file_info(file_dir.as_ref()),
                                 &error_str),
                             kind: MessageKind::SysInfo,
                             new_msg_id: Uuid::new_v4(),

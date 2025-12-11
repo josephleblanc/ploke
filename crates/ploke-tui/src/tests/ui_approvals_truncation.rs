@@ -27,7 +27,7 @@ async fn test_truncation_controls_no_panic() {
             text: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_string(),
         },
         status: EditProposalStatus::Pending,
-        is_semantic: true
+        is_semantic: true,
     };
     proposals.insert(id, proposal);
 

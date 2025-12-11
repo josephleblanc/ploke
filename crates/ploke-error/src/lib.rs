@@ -86,6 +86,8 @@ pub mod domain;
 pub mod fatal;
 pub mod internal;
 pub mod policy;
+#[cfg(feature = "serde")]
+pub mod pretty;
 pub mod result_ext;
 pub mod severity;
 pub mod warning;
@@ -100,6 +102,8 @@ pub use policy::MiettePolicy;
 #[cfg(feature = "tracing")]
 pub use policy::TracingPolicy;
 pub use policy::{CombinedPolicy, ErrorPolicy, NoopPolicy};
+#[cfg(feature = "serde")]
+pub use pretty::PrettyDebug;
 pub use result_ext::{IterResultExt, ResultExt};
 pub use severity::Severity;
 pub use warning::WarningError;

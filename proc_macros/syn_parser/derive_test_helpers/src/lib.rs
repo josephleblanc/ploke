@@ -186,7 +186,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             self.items_count.log_name_debug(), // Use log_*_debug
                             actual_items_count.log_name_debug() // Use log_*_debug
                         );
-                        if !items_count_check { 
+                        if !items_count_check {
                             // Log some extra debugging data for mismatches here:
                             if let Some(node_items) = node.items() {
                                 log::debug!(target: #log_target,
@@ -195,7 +195,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                                     node.items() // Use log_*_debug
                                 );
                             }
-                            overall_check = false; 
+                            overall_check = false;
                         }
 
                         if actual_mod_disc == crate::parser::nodes::ModDisc::FileBased {
@@ -731,7 +731,7 @@ check
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Original Name Match?".to_string().log_step(), check.log_bool(),
-                            self.original_name.log_name_debug(), 
+                            self.original_name.log_name_debug(),
                             actual_original.log_name_debug() // Option<&str>, Option<&str>
                         );
                         check
@@ -754,7 +754,7 @@ check
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Glob Match?".to_string().log_step(), check.log_bool(),
-                            self.is_glob.log_green_debug(), 
+                            self.is_glob.log_green_debug(),
                             node.is_glob.log_green_debug() // bool, bool
                         );
                         check
@@ -777,7 +777,7 @@ check
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Self Import Match?".to_string().log_step(), check.log_bool(),
-                            self.is_self_import.log_bool(), 
+                            self.is_self_import.log_bool(),
                             node.is_self_import.log_bool() // bool, bool
                         );
                         check
@@ -801,7 +801,7 @@ check
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Kind Match?".to_string().log_step(), check.log_bool(),
-                            self.kind.log_vis_debug(), 
+                            self.kind.log_vis_debug(),
                             node.kind.log_vis_debug() // ImportKind, ImportKind
                         );
                         check

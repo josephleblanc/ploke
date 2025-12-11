@@ -123,14 +123,16 @@ fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {
     if !attr.path().is_ident("cfg") {
         return None;
     }
-    let Meta::List(list) = &attr.meta else { return None };
+    let Meta::List(list) = &attr.meta else {
+        return None;
+    };
     parse_cfg_list(list)
 }
 
 fn parse_cfg_list(list: &syn::MetaList) -> Option<CfgExpr> {
-    let mut iter = list.parse_args_with(
-        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-    ).ok()?;
+    let mut iter = list
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+        .ok()?;
 
     if iter.len() == 1 {
         parse_single_meta(iter.pop()?.into_value())
@@ -149,7 +151,10 @@ fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
         Meta::NameValue(nv) => {
             let key = nv.path.get_ident()?.to_string();
             let value = match nv.value {
-                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => s.value(),
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) => s.value(),
                 _ => return None,
             };
             match key.as_str() {

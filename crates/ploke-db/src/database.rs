@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::{ops::Deref, path::Path};
+use std::{ops::Deref, panic::Location, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
@@ -54,6 +54,18 @@ pub struct Database {
     db: Db<MemStorage>,
     #[cfg(feature = "multi_embedding_db")]
     pub active_embedding_set: EmbeddingSet,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct QueryContext {
+    pub name: &'static str,
+    pub script: &'static str,
+}
+
+impl QueryContext {
+    pub const fn new(name: &'static str, script: &'static str) -> Self {
+        Self { name, script }
+    }
 }
 
 #[derive(Deserialize)]
@@ -721,6 +733,26 @@ impl Database {
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))
+    }
+
+    /// Execute a CozoScript query and preserve the Rust callsite + logical query name on errors.
+    #[track_caller]
+    pub fn raw_query_with_context(&self, ctx: QueryContext) -> Result<QueryResult, DbError> {
+        let caller = Location::caller();
+        let result = self.db.run_script(
+            ctx.script,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Immutable,
+        );
+
+        match result {
+            Ok(rows) => Ok(QueryResult::from(rows)),
+            Err(err) => Err(DbError::cozo_with_callsite(
+                ctx.name,
+                err.to_string(),
+                caller,
+            )),
+        }
     }
 
     pub fn raw_query_mut(&self, script: &str) -> Result<QueryResult, DbError> {
