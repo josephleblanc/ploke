@@ -215,6 +215,21 @@ cases, especially at the borders with the RAG search.
   - some of these (at least 3) should have cargo insta snapshots for testing on
   reliable fixture targets, e.g. fixture_nodes.
 
+8. Adding nice things
+
+- Nice code display 
+
+The text for code item nodes is not being displayed very well - it all shows up
+on one line, which wraps but does not take into account newline characters or
+anything. This is probably due to the underlying way the database stores it,
+and I need to look into it and show the code in a better way.
+
+The better way to handle this is by showing one line in a clearly identified
+preview element, and then expand the rest of the code block at different levels
+of verbosity (maybe 5 lines next) and then all the code for that item.
+
+The "goodness" of this feature is also dependent upon having a good way to
+handle scrolling for the overall list as well.
 
 
 9. Notable next steps

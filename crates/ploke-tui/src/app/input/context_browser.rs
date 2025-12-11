@@ -7,7 +7,7 @@ use crossterm::event::{
 
 use crate::ModelId;
 use crate::app::App;
-use crate::app::view::components::user_search::ShowPreview;
+use crate::app::view::components::user_search::{ShowMetaDetails, ShowPreview, StepEnum as _};
 use crate::llm::manager::events::endpoint;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
@@ -47,7 +47,8 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                     if !item.expanded {
                         item.expanded = true;
                     }
-                    item.show_preview = item.show_preview.next_more_verbose();
+                    item.show_preview = item.show_preview.next_clamped();
+                    item.show_meta_details = item.show_meta_details.next_clamped();
                     tracing::debug!(hit_l_show_preview = ?item.show_preview);
                 }
             }
@@ -59,7 +60,8 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                     if item.show_preview == ShowPreview::NoPreview {
                         item.expanded = false;
                     }
-                    item.show_preview = item.show_preview.next_less_verbose();
+                    item.show_preview = item.show_preview.prev_clamped();
+                    item.show_meta_details = item.show_meta_details.prev_clamped();
                     tracing::debug!(hit_h_show_preview = ?item.show_preview);
                 }
             }

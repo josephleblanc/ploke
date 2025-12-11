@@ -75,33 +75,114 @@ pub struct SearchItem {
     pub context_part: ContextPart,
     /// Whether the user sent a command to expand the item for more info.
     pub expanded: bool,
+    /// Whether to show additional metadetail fields, default to short_fields, then show
+    /// long_fields when expanding further.
+    pub show_meta_details: ShowMetaDetails,
     /// Whether the user sent a command to show the preview of the item.
     pub show_preview: ShowPreview,
+    /// Shortened summary of fields to include in the preview shown after initially expanding the
+    /// target item. These should include only the most relevent details at a glance.
+    pub short_fields: [SearchItemField; 3],
+    pub long_fields: [SearchItemField; 7],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub trait StepEnum<const N: usize>: Copy + Eq {
+    /// Declaration of the logical order for stepping.
+    const ORDER: [Self; N];
+
+    /// Map variant -> index in ORDER.
+    fn idx(self) -> usize;
+
+    #[inline]
+    fn next_clamped(self) -> Self {
+        let i = self.idx();
+        Self::ORDER[(i + 1).min(Self::ORDER.len() - 1)]
+    }
+
+    #[inline]
+    fn prev_clamped(self) -> Self {
+        let i = self.idx();
+        Self::ORDER[i.saturating_sub(1)]
+    }
+
+    /// Optional: generic “step by delta”, clamped.
+    #[inline]
+    fn step_clamped(self, delta: isize) -> Self {
+        let i = self.idx() as isize;
+        let max = (Self::ORDER.len() - 1) as isize;
+        let j = (i + delta).clamp(0, max) as usize;
+        Self::ORDER[j]
+    }
+}
+
+impl StepEnum<3> for ShowPreview {
+    const ORDER: [ShowPreview; 3] = [Self::NoPreview, Self::Small, Self::Full];
+
+    fn idx(self) -> usize {
+        match self {
+            Self::NoPreview => 0,
+            Self::Small => 1,
+            Self::Full => 2,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Default,
+)]
+pub enum ShowMetaDetails {
+    #[default]
+    NoDetails,
+    Short,
+    Long,
+}
+
+impl ShowMetaDetails {
+    fn iter_details(self) -> impl IntoIterator<Item = SearchItemField> {
+        match self {
+            ShowMetaDetails::NoDetails => [].iter().copied(),
+            ShowMetaDetails::Short => [
+                SearchItemField::Name,
+                SearchItemField::FilePath,
+                SearchItemField::CanonPath,
+            ]
+            .iter()
+            .copied(),
+            ShowMetaDetails::Long => [
+                SearchItemField::Id,
+                SearchItemField::Name,
+                SearchItemField::FilePath,
+                SearchItemField::CanonPath,
+                SearchItemField::Kind,
+                SearchItemField::Score,
+                SearchItemField::Modality,
+            ]
+            .iter()
+            .copied(),
+        }
+    }
+}
+
+impl StepEnum<3> for ShowMetaDetails {
+    const ORDER: [Self; 3] = [Self::NoDetails, Self::Short, Self::Long];
+
+    fn idx(self) -> usize {
+        match self {
+            Self::NoDetails => 0,
+            Self::Short => 1,
+            Self::Long => 2,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Default,
+)]
 pub enum ShowPreview {
+    #[default]
     NoPreview,
     Small,
     Full,
-}
-
-impl ShowPreview {
-    pub fn next_more_verbose(self) -> Self {
-        match self {
-            ShowPreview::NoPreview => ShowPreview::Small,
-            ShowPreview::Small => ShowPreview::Full,
-            ShowPreview::Full => ShowPreview::Full,
-        }
-    }
-
-    pub fn next_less_verbose(self) -> Self {
-        match self {
-            ShowPreview::NoPreview => ShowPreview::NoPreview,
-            ShowPreview::Small => ShowPreview::NoPreview,
-            ShowPreview::Full => ShowPreview::Small,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -240,6 +321,21 @@ impl From<ContextPart> for SearchItem {
             context_part: value,
             expanded: false,
             show_preview: ShowPreview::NoPreview,
+            show_meta_details: ShowMetaDetails::NoDetails,
+            short_fields: [
+                SearchItemField::Name,
+                SearchItemField::FilePath,
+                SearchItemField::CanonPath,
+            ],
+            long_fields: [
+                SearchItemField::Id,
+                SearchItemField::Name,
+                SearchItemField::FilePath,
+                SearchItemField::CanonPath,
+                SearchItemField::Kind,
+                SearchItemField::Score,
+                SearchItemField::Modality,
+            ],
         }
     }
 }
@@ -385,21 +481,12 @@ pub fn render_context_search<'a>(
             let indent = "    ";
             // Indented details for readability while navigating (preserve spaces; do not trim)
 
-            let displayed_fields = [
-                SearchItemField::Id,
-                SearchItemField::Name,
-                SearchItemField::FilePath,
-                SearchItemField::CanonPath,
-                SearchItemField::Kind,
-                SearchItemField::Score,
-                SearchItemField::Modality,
-            ];
             let details_width = body_area
                 .width
                 .saturating_sub(indent.len() as u16)
                 // subtract a few cols for the borders + margin on the left and right.
                 .saturating_sub(4);
-            for field in displayed_fields {
+            for field in it.show_meta_details.iter_details() {
                 lines.push(it.format_line_field_val_to_width(field, details_width as usize));
             }
 
@@ -454,7 +541,7 @@ pub fn render_context_search<'a>(
 ///     context_length + supports_tools + pricing
 const PROVIDER_DETAILS_HEIGHT: usize = 3;
 
-pub fn model_browser_detail_lines(it: &SearchItem) -> usize {
+pub fn context_browser_detail_lines(it: &SearchItem) -> usize {
     if !it.expanded {
         return 0;
     }
@@ -472,12 +559,12 @@ pub fn model_browser_detail_lines(it: &SearchItem) -> usize {
 }
 
 // Header is not part of scrollable content (it's displayed in the Block title).
-const MODEL_BROWSER_HEADER_HEIGHT: usize = 0;
-pub fn model_browser_total_lines(mb: &ContextSearchState) -> usize {
-    let base = MODEL_BROWSER_HEADER_HEIGHT
+const CONTEXT_BROWSER_HEADER_HEIGHT: usize = 0;
+pub fn context_browser_total_lines(mb: &ContextSearchState) -> usize {
+    let base = CONTEXT_BROWSER_HEADER_HEIGHT
         + mb.items
             .iter()
-            .map(model_browser_detail_lines)
+            .map(context_browser_detail_lines)
             .map(|it| it + 1)
             .sum::<usize>();
     if mb.items.is_empty() {
@@ -487,8 +574,8 @@ pub fn model_browser_total_lines(mb: &ContextSearchState) -> usize {
     }
 }
 
-pub fn model_browser_focus_line(mb: &ContextSearchState) -> usize {
-    let header = MODEL_BROWSER_HEADER_HEIGHT;
+pub fn context_browser_focus_line(mb: &ContextSearchState) -> usize {
+    let header = CONTEXT_BROWSER_HEADER_HEIGHT;
     if mb.items.is_empty() {
         return header;
     }
@@ -499,7 +586,7 @@ pub fn model_browser_focus_line(mb: &ContextSearchState) -> usize {
     for j in 0..sel_idx {
         let it = &mb.items[j];
         line += 1; // title
-        line += model_browser_detail_lines(it);
+        line += context_browser_detail_lines(it);
     }
 
     let sel = &mb.items[sel_idx];
@@ -519,8 +606,8 @@ pub(crate) fn compute_browser_scroll(body_area: Rect, mb: &mut ContextSearchStat
     // Track viewport height for scrolling (inner area excludes the block borders)
     mb.viewport_height = body_area.height.saturating_sub(2);
 
-    let total = model_browser_total_lines(mb);
-    let focus = model_browser_focus_line(mb);
+    let total = context_browser_total_lines(mb);
+    let focus = context_browser_focus_line(mb);
     let vh = mb.viewport_height as usize;
     let max_v = total.saturating_sub(vh);
 
@@ -544,13 +631,13 @@ pub(crate) fn compute_browser_scroll(body_area: Rect, mb: &mut ContextSearchStat
         let sel = &mb.items[sel_idx];
         if sel.expanded {
             // Compute the top line (0-based in content space) of the selected item's title
-            let mut block_top = MODEL_BROWSER_HEADER_HEIGHT;
+            let mut block_top = CONTEXT_BROWSER_HEADER_HEIGHT;
             for j in 0..sel_idx {
                 block_top += 1; // title line
-                block_top += model_browser_detail_lines(&mb.items[j]);
+                block_top += context_browser_detail_lines(&mb.items[j]);
             }
             // Height of the expanded block: title + details
-            let block_height = 1 + model_browser_detail_lines(sel);
+            let block_height = 1 + context_browser_detail_lines(sel);
             let block_bottom_excl = block_top + block_height; // exclusive end
 
             // Only try to fully reveal when it can fit; otherwise prefer keeping the top visible.
