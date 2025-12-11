@@ -1,48 +1,85 @@
-use crossterm::event::KeyEvent;
-use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind,
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::ModelId;
 use crate::app::App;
-use crate::app::view::components::context_browser::{ShowMetaDetails, ShowPreview, StepEnum as _};
-use crate::llm::manager::events::endpoint;
-use crate::llm::router_only::RouterVariants;
-use crate::llm::router_only::openrouter::OpenRouter;
-use crate::llm::{LlmEvent, ProviderKey};
+use crate::app::view::components::context_browser::{
+    ContextBrowserMode, ShowMetaDetails, ShowPreview, StepEnum as _,
+};
 
 pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
     // Intercept keys for model browser overlay when visible
 
     if let Some(cb) = app.context_browser.as_mut() {
         use KeyCode::*;
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                if cb.preview_select_active {
-                    cb.preview_select_active = false;
-                } else {
-                    app.context_browser = None;
+        match cb.mode {
+            ContextBrowserMode::Insert => match (key.code, key.modifiers) {
+                (KeyCode::Esc, _) => {
+                    cb.mode = ContextBrowserMode::Normal;
+                    return;
                 }
+                (KeyCode::Enter, _) => {
+                    cb.mode = ContextBrowserMode::Normal;
+                    cb.mark_dirty();
+                }
+                (KeyCode::Backspace, _) => {
+                    cb.input.backspace();
+                    cb.mark_dirty();
+                }
+                (KeyCode::Delete, _) => {
+                    cb.input.delete();
+                    cb.mark_dirty();
+                }
+                (KeyCode::Left, _) => cb.input.move_left(),
+                (KeyCode::Right, _) => cb.input.move_right(),
+                (KeyCode::Home, _) => cb.input.move_home(),
+                (KeyCode::End, _) => cb.input.move_end(),
+                (KeyCode::Char(c), mods)
+                    if mods.is_empty() || mods == KeyModifiers::SHIFT =>
+                {
+                    cb.input.insert_char(c);
+                    cb.mark_dirty();
+                }
+                _ => {}
+            },
+            ContextBrowserMode::Normal => match (key.code, key.modifiers) {
+
+                // Change the following to be in the same format of (keycode, keymodifier) AI!
+                KeyCode::Enter => {
+                    cb.mode = ContextBrowserMode::Normal;
+                    cb.mark_dirty();
+                }
+                KeyCode::Up | KeyCode::Char('k') => cb.select_prev(),
+                KeyCode::Down | KeyCode::Char('j') => cb.select_next(),
+                KeyCode::Char('q') => {
+                    app.context_browser = None;
+                    return;
+                }
+                KeyCode::Char('i') | KeyCode::Char('/') => {
+                    cb.mode = ContextBrowserMode::Insert;
+                    return;
+                }
+            KeyCode::Char('?') => {
+                cb.help_visible = !cb.help_visible;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                cb.selected = cb.selected.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                cb.selected = cb
-                    .selected
-                    .saturating_add(1)
-                    .min(cb.items.len().saturating_sub(1));
-            }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                // Toggle expanded item off/on
-                if let Some(item) = cb.items.get_mut(cb.selected) {
+            // TODO: Add a way to make the item name and/or text snippet the term used for the next
+            // search, probably using `s` to search for item name and/or `shift+s` to search using
+            // the text snippet of the selected item as the search term.
+                _ => {}
+            },
+        }
+
+        // Shared navigation + item toggles (available in both modes)
+        match key.code {
+            KeyCode::Enter | KeyCode::Char(' ')
+                if matches!(cb.mode, ContextBrowserMode::Normal) =>
+            {
+                let idx = cb.selected_index();
+                if let Some(item) = cb.items.get_mut(idx) {
                     item.expanded = !item.expanded;
                 }
             }
-            KeyCode::Char('l') => {
-                if let Some(item) = cb.items.get_mut(cb.selected) {
+            KeyCode::Char('l') if matches!(cb.mode, ContextBrowserMode::Normal) => {
+                let idx = cb.selected_index();
+                if let Some(item) = cb.items.get_mut(idx) {
                     // Switch to expanding item, repeated press doesn't toggle
                     if !item.expanded {
                         item.expanded = true;
@@ -52,11 +89,10 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                     tracing::debug!(hit_l_show_preview = ?item.show_preview);
                 }
             }
-            KeyCode::Char('h') => {
+            KeyCode::Char('h') if matches!(cb.mode, ContextBrowserMode::Normal) => {
                 // Switch to collapsed item, repeated press doesn't toggle
-                if let Some(item) = cb.items.get_mut(cb.selected)
-                    && item.expanded
-                {
+                let idx = cb.selected_index();
+                if let Some(item) = cb.items.get_mut(idx) && item.expanded {
                     if item.show_preview == ShowPreview::NoPreview {
                         item.expanded = false;
                     }
@@ -64,13 +100,6 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                     item.show_meta_details = item.show_meta_details.prev_clamped();
                     tracing::debug!(hit_h_show_preview = ?item.show_preview);
                 }
-            }
-            // TODO: Add a way to make the item name and/or text snippet the term used for the next
-            // search, probably using `s` to search for item name and/or `shift+s` to search using
-            // the text snippet of the selected item as the search term.
-            KeyCode::Char('s') => {}
-            KeyCode::Char('?') => {
-                cb.help_visible = !cb.help_visible;
             }
             _ => {}
         }
