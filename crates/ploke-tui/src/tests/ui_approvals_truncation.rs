@@ -67,6 +67,7 @@ async fn test_truncation_controls_no_panic() {
             selected: 0,
             help_visible: false,
             view_lines,
+            filter: Default::default(),
         };
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -118,6 +119,7 @@ async fn test_help_display_truncation() {
             selected: 0,
             help_visible: true,
             view_lines,
+            filter: Default::default(),
         };
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

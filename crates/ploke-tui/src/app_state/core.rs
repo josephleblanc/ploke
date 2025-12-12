@@ -210,13 +210,16 @@ impl RuntimeConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditProposalStatus {
     Pending,
     Approved,
     Denied,
     Applied,
     Failed(String),
+    /// Stale indicates the workspace changed enough that the proposal likely no longer applies.
+    /// TODO: wire to validation/DB checks to detect stale edits vs. live workspace content.
+    Stale(String),
 }
 
 impl EditProposalStatus {
@@ -227,6 +230,7 @@ impl EditProposalStatus {
             EditProposalStatus::Denied => "Denied",
             EditProposalStatus::Applied => "Applied",
             EditProposalStatus::Failed(_) => "Failed",
+            EditProposalStatus::Stale(_) => "Stale",
         }
     }
 }

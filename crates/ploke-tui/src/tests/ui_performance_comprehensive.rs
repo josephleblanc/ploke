@@ -174,6 +174,7 @@ mod performance_tests {
                         selected: j % 5,
                         help_visible: false,
                         view_lines: 0,
+                        filter: Default::default(),
                     };
                     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
 
@@ -263,6 +264,7 @@ mod performance_tests {
                     selected: i % 10,
                     help_visible: i % 5 == 0,
                     view_lines: 0,
+                    filter: Default::default(),
                 };
                 let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
 
@@ -388,6 +390,7 @@ mod stress_tests {
                 selected: (total_renders % 10) as usize,
                 help_visible: total_renders % 20 == 0,
                 view_lines: 0,
+                filter: Default::default(),
             };
 
             let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();

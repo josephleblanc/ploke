@@ -49,7 +49,8 @@ use tokio::time::Instant as TokioInstant;
 use toml::to_string;
 use tracing::instrument;
 use view::components::approvals::{
-    ApprovalsState, ProposalKind, render_approvals_overlay, unified_items,
+    ApprovalListItem, ApprovalsFilter, ApprovalsState, ProposalKind, filtered_items,
+    render_approvals_overlay,
 };
 use view::components::model_browser::{
     ModelBrowserItem, ModelBrowserState, ModelProviderRow, compute_browser_scroll,
@@ -735,16 +736,25 @@ impl App {
                 }
                 return true;
             }
+            KeyCode::Char('f') => {
+                if let Some(st) = &mut self.approvals {
+                    st.cycle_filter();
+                }
+                return true;
+            }
             KeyCode::Char('o') => {
                 // Open-in-editor for the first file of selected proposal (edit or create)
                 if let Some(st) = &self.approvals {
                     let sel_index = st.selected;
+                    let filter = st.filter;
                     let state = Arc::clone(&self.state);
                     let cmd_tx = self.cmd_tx.clone();
                     tokio::spawn(async move {
                         // Build unified ordering to match overlay
-                        let items = unified_items(&state);
-                        if let Some((kind, id, _)) = items.get(sel_index).cloned() {
+                        let items = filtered_items(&state, filter);
+                        if let Some(ApprovalListItem { kind, id, .. }) =
+                            items.get(sel_index).cloned()
+                        {
                             let path_opt = match kind {
                                 ProposalKind::Edit => {
                                     let guard = state.proposals.read().await;
@@ -780,24 +790,15 @@ impl App {
         if approve || deny {
             if let Some(st) = &self.approvals {
                 let sel_index = st.selected;
+                let filter = st.filter;
                 let state = Arc::clone(&self.state);
                 let cmd_tx = self.cmd_tx.clone();
                 tokio::spawn(async move {
                     // Build unified item list asynchronously to avoid blocking UI thread
-                    let (p_guard, c_guard) = {
-                        let p = state.proposals.read().await;
-                        let c = state.create_proposals.read().await;
-                        (p, c)
-                    };
-                    let mut items: Vec<(ProposalKind, uuid::Uuid)> = Vec::new();
-                    for (id, _) in p_guard.iter() {
-                        items.push((ProposalKind::Edit, *id));
-                    }
-                    for (id, _) in c_guard.iter() {
-                        items.push((ProposalKind::Create, *id));
-                    }
-                    items.sort_by_key(|(_, id)| *id);
-                    if let Some((kind, id)) = items.get(sel_index).cloned() {
+                    let items = filtered_items(&state, filter);
+                    if let Some(ApprovalListItem { kind, id, .. }) =
+                        items.get(sel_index).cloned()
+                    {
                         let _ = match (approve, kind) {
                             (true, ProposalKind::Edit) => {
                                 cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })

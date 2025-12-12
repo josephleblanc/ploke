@@ -45,6 +45,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Add input autocomplete for commands and keywords; show suggestions inline.
 * [ ] In Slash/Command mode, detect known commands pre-submit and change input box color (visual affordance).
 * [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
+* [ ] Approvals overlay: approvals currently don’t enforce mutual exclusion/validation. Approving multiple overlapping proposals can all land as Applied even if stale/conflicting. Need pre-apply validation (hash/hunk match, DB/workspace check), conflict detection, and marking Stale/Failed instead of Applied; surface partial-apply results in UI/chat.
 
 ## OpenRouter Types
 * [ ] Consolidate OpenRouter types into a single module with strong typing (serde derives), remove ad‑hoc conversions; add micro validation layer.
