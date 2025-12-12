@@ -34,3 +34,24 @@
       - When an item is disabled or partially validated, note it in the docstring (“Currently skipped
         because …”). This mirrors the commented-out macro invocations so future updates aren’t
         accidental.
+
+• Fixture hygiene and documentation updates
+  - Ensure every new definition/import you add to a fixture crate is actually exercised (e.g., add a
+    reference inside `use_imported_items` or another helper so the crate continues to compile cleanly).
+  - Update `docs/active/todo/2025-12-12-link-import-fixture.md` whenever you add/remove fixture items so
+    the coverage checklist stays authoritative; note any remaining gaps there.
+
+• Phase‑3/backlink regression hooks
+  - After adding a new importable definition, add a regression test in
+    `crates/ingest/syn_parser/tests/uuid_phase3_resolution/backlink_*.rs` (or the relevant module)
+    that asserts the definition→import relation. If the relation isn’t implemented yet, leave the test
+    `#[ignore]` but ensure it exists so the gap is visible.
+  - When creating these regression tests, reuse cached fixture state via `lazy_static!` (either by
+    referencing `common::parsed_fixtures` or by caching locally) to keep the tests fast enough for
+    pre-commit hooks.
+
+• Testing checklist
+  - After updating fixtures and tests, rerun `cargo test -p syn_parser uuid_phase2_partial_graphs`
+    to confirm the ExpectedData assertions still pass.
+  - Run (or at least list) the backlink regression suite so new tests appear in test output; once the
+    relation exists, remove `#[ignore]` and ensure the suite is green.

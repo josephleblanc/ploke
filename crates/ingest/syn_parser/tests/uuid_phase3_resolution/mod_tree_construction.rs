@@ -408,10 +408,16 @@ fn test_module_tree_import_export_segregation() {
     );
 
     // --- Assertions for Re-Exports ---
-    // The imports.rs fixture does not contain any `pub use` statements.
+    // The imports.rs fixture contains one `pub use` statement: `pub use crate::traits as TraitsMod;`
     assert!(
-        export_paths.is_empty(),
-        "Expected no pending exports from imports.rs, found: {:?}",
+        export_paths.contains("crate::traits"),
+        "Expected pending exports from imports.rs to contain 'crate::traits', found: {:?}",
+        export_paths
+    );
+    assert_eq!(
+        export_paths.len(),
+        1,
+        "Expected exactly one pending export from imports.rs, found: {:?}",
         export_paths
     );
 
@@ -442,13 +448,22 @@ fn test_module_tree_imports_fixture_nodes() {
     let tree = graph_and_tree.1; // We only need the tree for this test
 
     // --- Check Pending Exports ---
+    // The fixture_nodes/imports.rs contains one `pub use` statement: `pub use crate::traits as TraitsMod;`
+    let export_paths: Vec<String> = tree
+        .pending_exports()
+        .iter()
+        .map(|p| p.export_node().source_path.join("::"))
+        .collect();
     assert!(
-        tree.pending_exports().is_empty(),
-        "Expected no pending exports from fixture_nodes/imports.rs, found: {:?}",
-        tree.pending_exports()
-            .iter()
-            .map(|p| p.export_node().source_path.join("::"))
-            .collect::<Vec<_>>()
+        export_paths.contains(&"crate::traits".to_string()),
+        "Expected pending exports from fixture_nodes/imports.rs to contain 'crate::traits', found: {:?}",
+        export_paths
+    );
+    assert_eq!(
+        export_paths.len(),
+        1,
+        "Expected exactly one pending export from fixture_nodes/imports.rs, found: {:?}",
+        export_paths
     );
 
     // --- Check Pending Imports ---
@@ -468,6 +483,7 @@ fn test_module_tree_imports_fixture_nodes() {
     let expected_imports: HashSet<(String, bool, bool)> = [
         // --- From imports.rs top level ---
         ("crate::structs::TupleStruct".to_string(), false, false),
+        ("crate::structs::UnitStruct".to_string(), false, false),
         ("std::collections::HashMap".to_string(), false, false),
         ("std::fmt".to_string(), false, false),
         ("std::sync::Arc".to_string(), false, false),
@@ -487,6 +503,23 @@ fn test_module_tree_imports_fixture_nodes() {
         ("crate::type_alias::SimpleId".to_string(), false, false), // Relative crate
         ("::std::time::Duration".to_string(), false, false), // Absolute path
         ("serde".to_string(), false, true),    // Extern crate
+        (
+            "crate::enums::SampleEnum1::Variant1".to_string(),
+            false,
+            false,
+        ), // Enum variant
+        (
+            "crate::const_static::TOP_LEVEL_BOOL".to_string(),
+            false,
+            false,
+        ), // Const
+        (
+            "crate::const_static::TOP_LEVEL_COUNTER".to_string(),
+            false,
+            false,
+        ), // Static
+        ("crate::unions::IntOrFloat".to_string(), false, false), // Union
+        ("crate::macros::documented_macro".to_string(), false, false), // Macro
         // Renamed extern crate 'serde as SerdeAlias' also has path "serde"
         // --- From imports.rs -> sub_imports module ---
         ("super::fmt".to_string(), false, false),
@@ -607,6 +640,7 @@ In Actual missing from Expected: {:#?}\n",
 /// This should only pass once a relation exists that links a defining node to the ImportNode
 /// (e.g., StructNodeId -> ImportNodeId) for re-exports/imports.
 #[test]
+#[ignore = "Backlink relation not yet implemented"]
 fn expect_backlink_from_definition_to_import_for_sample_struct() {
     let fixture_name = "fixture_nodes";
     let (graph, tree) = build_tree_for_tests(fixture_name);

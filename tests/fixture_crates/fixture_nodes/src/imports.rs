@@ -4,7 +4,7 @@
 //! Test fixture for parsing import (`use` and `extern crate`) statements.
 
 // --- Basic Imports ---
-use crate::structs::TupleStruct;
+use crate::structs::{TupleStruct, UnitStruct};
 use std::collections::HashMap; // Simple path
 use std::fmt;
 use std::sync::Arc; // Importing a module
@@ -12,6 +12,13 @@ use std::sync::Arc; // Importing a module
 // --- Renaming ---
 use crate::structs::SampleStruct as MySimpleStruct;
 use std::io::Result as IoResult; // Simple rename // Rename local item
+
+// --- Additional Local Item Coverage ---
+use crate::enums::SampleEnum1::Variant1 as EnumVariant1;
+use crate::const_static::TOP_LEVEL_BOOL;
+use crate::const_static::TOP_LEVEL_COUNTER;
+use crate::unions::IntOrFloat;
+use crate::macros::documented_macro;
 
 // --- Grouped Imports ---
 use crate::{
@@ -22,6 +29,9 @@ use std::{
     fs::{self, File},      // Module and item from same subpath
     path::{Path, PathBuf}, // Multiple items from same subpath
 };
+
+// --- Module aliasing via re-export ---
+pub use crate::traits as TraitsMod;
 
 // --- Glob Imports ---
 use std::env::*; // Glob import
@@ -67,6 +77,9 @@ pub fn use_imported_items() {
     let _local_struct = MySimpleStruct {
         field: "example".to_string(),
     };
+    let _unit_struct = UnitStruct;
+    let _enum_variant = EnumVariant1;
+    let _bool_flag = TOP_LEVEL_BOOL;
     let _fs_res = fs::read_to_string("dummy");
     let _file: File;
     let _path: &Path;
@@ -80,6 +93,8 @@ pub fn use_imported_items() {
         }
     }
     let _trait_user = DummyTraitUser;
+    let alias_checker = |t: &dyn TraitsMod::SimpleTrait| t.required_method();
+    let _alias_result = alias_checker(&_trait_user);
     // MyGenTrait usage requires type annotation
     struct GenTraitImpl;
     impl<T> MyGenTrait<T> for GenTraitImpl {
@@ -88,6 +103,8 @@ pub fn use_imported_items() {
         }
     }
     let _gen_trait_user = GenTraitImpl;
+
+    let _macro_output = documented_macro!(fixture alias coverage);
 
     // Glob import usage (e.g., current_dir)
     let _cwd = current_dir();
@@ -110,4 +127,17 @@ pub fn use_imported_items() {
     let _arc = Arc::new(1);
     let _nested_item = sub_imports::nested_sub::NestedItem;
     let _tuple_struct = TupleStruct(1, 2);
+
+    unsafe {
+        let _ = TOP_LEVEL_COUNTER; // ensure symbol referenced before mutation
+        TOP_LEVEL_COUNTER += 1;
+        let _counter = TOP_LEVEL_COUNTER;
+
+        inner_mod::INNER_MUT_STATIC = !inner_mod::INNER_MUT_STATIC;
+        let _inner_mut = inner_mod::INNER_MUT_STATIC;
+        let mut union_val = IntOrFloat { i: 5 };
+        union_val.f = 2.5;
+        let _union_bits = union_val.i;
+        let _ = (_counter, _inner_mut, _union_bits);
+    }
 }

@@ -5,23 +5,23 @@ The following checklist tracks which Rust item kinds and import syntaxes already
 ### Definition targets
 - [x] Named struct – `tests/fixture_crates/fixture_nodes/src/imports.rs:13` imports `crate::structs::SampleStruct` as `MySimpleStruct`.
 - [x] Tuple struct – `tests/fixture_crates/fixture_nodes/src/imports.rs:7` imports `crate::structs::TupleStruct`.
-- [ ] Unit struct – only defined (`tests/fixture_crates/fixture_nodes/src/structs.rs:12`) but never imported.
+- [x] Unit struct – imported via `use crate::structs::UnitStruct;` (`tests/fixture_crates/fixture_nodes/src/imports.rs:7`) and exercised in `use_imported_items`.
 - [x] Enum type – `tests/fixture_crates/fixture_nodes/src/imports.rs:17-19` import `EnumWithData` and `SampleEnum1`.
-- [ ] Enum variant – no `use crate::enums::SampleEnum1::Variant1` style import exists in any fixture.
+- [x] Enum variant – `tests/fixture_crates/fixture_nodes/src/imports.rs:17` imports `crate::enums::SampleEnum1::Variant1 as EnumVariant1`.
 - [x] Trait – `tests/fixture_crates/fixture_nodes/src/imports.rs:17-20` import `SimpleTrait` and `GenericTrait as MyGenTrait`; `tests/fixture_crates/fixture_impls/src/main.rs:36` also uses `use crate::TestImplStruct` for inherent impl testing.
 - [x] Type alias – `tests/fixture_crates/fixture_nodes/src/imports.rs:32` imports `crate::type_alias::SimpleId`.
 - [ ] Trait alias – not represented in fixtures (none defined or imported).
 - [x] Function (`use`) – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:89` conditionally imports `crate::local_mod::func_using_dep as aliased_func_a` behind `feature_a`.
 - [x] Function (`pub use`) – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:93` conditionally re-exports `crate::local_mod::local_func` behind `feature_b`; `tests/fixture_crates/fixture_spp_edge_cases/src/lib.rs:87-109` provide multi-hop `pub use crate::chain_a::item_a` chains without cfg.
-- [ ] Const – no fixture imports `crate::const_static::TOP_LEVEL_BOOL` (or similar) even though definitions exist.
-- [ ] Static – same gap as const; `tests/fixture_crates/fixture_nodes/src/const_static.rs:20` defines `TOP_LEVEL_COUNTER` but nothing imports it.
+- [x] Const – `tests/fixture_crates/fixture_nodes/src/imports.rs:18` imports `crate::const_static::TOP_LEVEL_BOOL`.
+- [x] Static – `tests/fixture_crates/fixture_nodes/src/imports.rs:19` imports `crate::const_static::TOP_LEVEL_COUNTER`.
 - [x] Module definition – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:82` imports `crate::local_mod::nested` as `PrivateNestedAlias`.
 - [x] Nested module via `self::` – `tests/fixture_crates/fixture_nodes/src/imports.rs:30` imports `self::sub_imports::SubItem`.
 - [x] Module via `super::` – `tests/fixture_crates/fixture_nodes/src/imports.rs:31` imports `super::structs::AttributedStruct`.
 - [x] Module via `crate::` – `tests/fixture_crates/fixture_nodes/src/imports.rs:32` imports `crate::type_alias::SimpleId`.
 - [x] Module re-export – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:118` re-exports `local_mod::nested` as `reexported_nested_mod`.
-- [ ] Union – `tests/fixture_crates/fixture_nodes/src/unions.rs` defines several unions but none are imported anywhere.
-- [ ] Macro (`macro_rules!`/proc) – `tests/fixture_crates/fixture_nodes/src/macros.rs` defines macros but nothing `use`s or re-exports them.
+- [x] Union – `tests/fixture_crates/fixture_nodes/src/imports.rs:20` imports `crate::unions::IntOrFloat`.
+- [x] Macro (`macro_rules!`/proc) – `tests/fixture_crates/fixture_nodes/src/imports.rs:21` imports `crate::macros::documented_macro`.
 - [x] Extern crate – `tests/fixture_crates/fixture_nodes/src/imports.rs:38-39` include `extern crate serde;` and `extern crate serde as SerdeAlias;`.
 
 ### Import syntax + scenarios
@@ -37,9 +37,9 @@ The following checklist tracks which Rust item kinds and import syntaxes already
 - [x] `pub use` rename chains – `tests/fixture_crates/fixture_spp_edge_cases/src/lib.rs:211-283`.
 - [x] `pub use` with `self`/`super` – `tests/fixture_crates/fixture_spp_edge_cases/src/lib.rs:194-199`.
 - [x] `#[cfg]`-gated `use`/`pub use` – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:82-95` (feature_a/feature_b gating).
-- [ ] Importing a const/static/union/macro via any syntax – still missing entirely.
-- [ ] Importing an enum variant specifically – not yet represented.
-- [ ] Importing a `pub mod name as Alias` (module alias via `pub use`); current fixtures only alias modules via private `use` statements.
+- [x] Importing a const/static/union/macro via any syntax – covered in `tests/fixture_crates/fixture_nodes/src/imports.rs:17-21`.
+- [x] Importing an enum variant specifically – `tests/fixture_crates/fixture_nodes/src/imports.rs:17`.
+- [x] Importing a `pub mod name as Alias` (module alias via `pub use`) – `tests/fixture_crates/fixture_nodes/src/imports.rs:33` (`pub use crate::traits as TraitsMod;`).
 
 ### Requested fixture review
 - `fixture_nodes` – already covers structs, tuple structs, enums, traits, type aliases, nested module imports, rename/group/glob/self/super/crate/absolute, and extern crates. Missing function/const/static/union/macro imports.
@@ -48,8 +48,10 @@ The following checklist tracks which Rust item kinds and import syntaxes already
 - `fixture_spp_edge_cases_no_cfg` – mirrors the previous fixture without cfg gates, so it can back tests that must run without feature flags.
 - `file_dir_detection` – (named `file_dir_detection` in the tree) contains module declarations but no actual `use crate::...` statements; therefore it does **not** cover any of the missing item kinds.
 
+### Backlink regression status
+- Created `crates/ingest/syn_parser/tests/uuid_phase3_resolution/backlink_imports.rs`, which uses a helper+macro to assert a definition→import relation for structs, unit structs, consts, statics, unions, macros, and module aliases in `fixture_nodes`. Each test is currently `#[ignore]` until the relation lands.
+
 ### Outstanding gaps / next steps
-1. Add fixture imports for unit structs, enum variants, consts, statics, unions, and macros (e.g., extend `tests/fixture_crates/fixture_nodes/src/imports.rs` with `use crate::structs::UnitStruct;`, `use crate::enums::SampleEnum1::Variant1;`, `use crate::const_static::TOP_LEVEL_BOOL;`, `use crate::unions::IntOrFloat;`, `use crate::macros::exported_macro;`).
-2. Consider a fixture that `pub use`s a module under a new alias so we can test module alias backlinks (currently only private aliases exist).
-3. For cfg-gated imports we already have examples (`fixture_path_resolution`), but we still need non-gated coverage for const/static/macro/union items to keep default tests simple.
-4. Once fixtures exist, add regression tests mirroring `expect_backlink_from_definition_to_import_for_sample_struct` for each checked item type plus explicit tests for the new import syntaxes (enum variants, const/static, macros, unions, module aliasing).
+1. Introduce trait aliases (definition + import) so we can cover that node type.
+2. Extend fixtures/tests with `#[cfg]-`gated imports and restricted-visibility re-exports (`pub(crate)`, `pub(in path)`), then add matching Phase‑2 + Phase‑3 tests.
+3. Implement the ModuleTree backlink relation so `backlink_imports.rs` tests can be un-ignored and enforced in CI.
