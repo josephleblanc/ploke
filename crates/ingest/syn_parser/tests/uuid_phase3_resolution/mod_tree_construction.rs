@@ -625,9 +625,7 @@ fn expect_backlink_from_definition_to_import_for_sample_struct() {
 
     // Locate the ImportNode for `use crate::structs::SampleStruct as MySimpleStruct;` in crate::imports.
     let imports_module = graph
-        .modules()
-        .iter()
-        .find(|m| m.path == vec!["crate".to_string(), "imports".to_string()])
+        .find_module_by_path_checked(&["crate".to_string(), "imports".to_string()])
         .expect("imports module not found in fixture_nodes");
     let my_simple_struct_import = imports_module
         .imports
