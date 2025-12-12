@@ -1,3 +1,4 @@
+use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::ImplNodeId;
 
 use super::*;
@@ -90,6 +91,9 @@ pub struct ModuleTree {
     /// into the `tree_relations` vector where that ID appears as the target.
     /// Used for efficient lookup of incoming relations.
     relations_by_target: HashMap<AnyNodeId, Vec<usize>>,
+    /// Canonical path -> primary definition mapping for crate-local items.
+    definition_index: HashMap<NodePath, PrimaryNodeId>,
+    definition_index_ready: bool,
 }
 
 impl ModuleTree {
@@ -290,6 +294,8 @@ impl ModuleTree {
             pending_path_attrs: Some(Vec::new()),
             relations_by_source: HashMap::new(),
             relations_by_target: HashMap::new(),
+            definition_index: HashMap::new(),
+            definition_index_ready: false,
         })
         // Should never happen, but might want to handle this sometime
         // // Initialize path attributes from root if present
@@ -995,6 +1001,7 @@ impl ModuleTree {
                 .map(|exports| exports.len())
                 .unwrap_or(0)
         );
+        self.ensure_definition_index(graph)?;
         let pending_private_imports = self.pending_imports.clone();
         let pending_public_imports = self
             .pending_exports
@@ -1007,7 +1014,7 @@ impl ModuleTree {
                 pending.containing_mod_id(),
                 pending.import_node(),
                 graph,
-            );
+            )?;
         }
 
         for pending in pending_public_imports {
@@ -1015,7 +1022,7 @@ impl ModuleTree {
                 pending.containing_mod_id(),
                 pending.export_node(),
                 graph,
-            );
+            )?;
         }
 
         Ok(())
@@ -1026,32 +1033,72 @@ impl ModuleTree {
         source_mod_id: ModuleNodeId,
         import_node: &ImportNode,
         graph: &ParsedCodeGraph,
-    ) {
+    ) -> Result<(), ModuleTreeError> {
         let path_segments = import_node.source_path();
 
         if path_segments.is_empty() {
-            return;
+            return Ok(());
         }
 
-        let (base_module_id, segments_to_resolve) = if path_segments[0] == "crate" {
-            (self.root(), &path_segments[1..])
+        let mut start_idx = 0;
+        while start_idx < path_segments.len() && path_segments[start_idx].is_empty() {
+            start_idx += 1;
+        }
+        let trimmed_segments = &path_segments[start_idx..];
+        if trimmed_segments.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(target_primary_id) =
+            self.lookup_definition_by_segments(source_mod_id, trimmed_segments)?
+        {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+            return Ok(());
+        }
+
+        let leading_global = start_idx > 0;
+        let starts_with_crate = trimmed_segments
+            .first()
+            .map(|seg| seg == "crate")
+            .unwrap_or(false);
+        let (base_module_id, segments_to_resolve) = if leading_global || starts_with_crate {
+            (
+                self.root(),
+                if starts_with_crate {
+                    &trimmed_segments[1..]
+                } else {
+                    trimmed_segments
+                },
+            )
         } else {
-            (source_mod_id, path_segments)
+            (source_mod_id, trimmed_segments)
         };
 
         if segments_to_resolve.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Skip external dependency imports; they will be handled when dependency graphs are available.
         if base_module_id == self.root() {
-            let first_seg = &segments_to_resolve[0];
-            if graph.iter_dependency_names().any(|dep_name| dep_name == first_seg)
-                || first_seg == "std"
-                || first_seg == "core"
-                || first_seg == "alloc"
-            {
-                return;
+            if let Some(first_seg) = segments_to_resolve.first() {
+                if graph.iter_dependency_names().any(|dep_name| dep_name == first_seg)
+                    || first_seg == "std"
+                    || first_seg == "core"
+                    || first_seg == "alloc"
+                {
+                    return Ok(());
+                }
             }
         }
 
@@ -1066,27 +1113,115 @@ impl ModuleTree {
                         source_mod_id,
                         e
                     );
-                    return;
+                    return Ok(());
                 }
             };
 
-        let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) else {
-            // Non-primary targets (e.g., fields) are not linked via ImportedBy
-            return;
+        if let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+        }
+
+        Ok(())
+    }
+
+    fn ensure_definition_index(
+        &mut self,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        if self.definition_index_ready {
+            return Ok(());
+        }
+
+        let mut index = HashMap::new();
+        for module in self.modules.values() {
+            if module.is_decl() {
+                continue;
+            }
+            let Some(items) = module.items() else {
+                continue;
+            };
+            for item_id in items {
+                if ModuleNodeId::try_from(*item_id).is_ok() {
+                    continue;
+                }
+                let node = graph
+                    .find_node_unique(item_id.as_any())
+                    .map_err(ModuleTreeError::from)?;
+                let mut node_path_vec = module.path().clone();
+                node_path_vec.push(node.name().to_string());
+                let node_path = NodePath::try_from(node_path_vec)
+                    .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+                index.entry(node_path).or_insert(*item_id);
+            }
+        }
+
+        self.definition_index = index;
+        self.definition_index_ready = true;
+        Ok(())
+    }
+
+    fn lookup_definition_by_segments(
+        &self,
+        source_mod_id: ModuleNodeId,
+        path_segments: &[String],
+    ) -> Result<Option<PrimaryNodeId>, ModuleTreeError> {
+        if path_segments.is_empty() {
+            return Ok(None);
+        }
+
+        let mut canonical_path = if path_segments
+            .first()
+            .map(|seg| seg == "crate" || seg.is_empty())
+            .unwrap_or(false)
+        {
+            vec!["crate".to_string()]
+        } else {
+            self.modules
+                .get(&source_mod_id)
+                .ok_or(ModuleTreeError::ModuleNotFound(source_mod_id))?
+                .path()
+                .clone()
         };
 
-        let relation = SyntacticRelation::ImportedBy {
-            source: target_primary_id,
-            target: import_node.id,
-        };
-        self.add_rel(relation.into());
-        log::debug!(
-            target: LOG_TARGET_MOD_TREE_BUILD,
-            "ImportedBy created: {:?} -> import {} ({})",
-            target_primary_id,
-            import_node.visible_name,
-            import_node.source_path.join("::")
-        );
+        for (idx, segment) in path_segments.iter().enumerate() {
+            if idx == 0 && (segment == "crate" || segment.is_empty()) {
+                continue;
+            }
+            match segment.as_str() {
+                "" => continue,
+                "self" => {}
+                "crate" => {
+                    canonical_path.clear();
+                    canonical_path.push("crate".to_string());
+                }
+                "super" => {
+                    if canonical_path.len() <= 1 {
+                        return Ok(None);
+                    }
+                    canonical_path.pop();
+                }
+                _ => canonical_path.push(segment.clone()),
+            }
+        }
+
+        if canonical_path.len() <= 1 {
+            return Ok(None);
+        }
+
+        let node_path = NodePath::try_from(canonical_path)
+            .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+        Ok(self.definition_index.get(&node_path).copied())
     }
 
     #[allow(dead_code)]
