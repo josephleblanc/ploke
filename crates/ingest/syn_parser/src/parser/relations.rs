@@ -80,6 +80,13 @@ pub enum SyntacticRelation {
         source: ImportNodeId,
         target: PrimaryNodeId,
     },
+    /// A definition is brought into scope by a `use`/`pub use` site.
+    /// Source: PrimaryNodeId (definition)
+    /// Target: ImportNodeId (the import/re-export site)
+    ImportedBy {
+        source: PrimaryNodeId,
+        target: ImportNodeId,
+    },
 
     //-----------------------------------------------------------------------
     // Item Composition Relations (Primarily from Visitor)
@@ -182,6 +189,12 @@ impl SyntacticRelation {
             _ => None,
         }
     }
+    pub fn imported_by(&self, src: PrimaryNodeId) -> Option<ImportNodeId> {
+        match self {
+            Self::ImportedBy { source: s, target } if *s == src => Some(*target),
+            _ => None,
+        }
+    }
     pub fn target_exported_by(&self, trg: PrimaryNodeId) -> Option<ImportNodeId> {
         match self {
             Self::ReExports { source, target: t } if *t == trg => Some(*source),
@@ -210,6 +223,7 @@ impl SyntacticRelation {
             SyntacticRelation::Sibling { source, .. } => source.into(),
             SyntacticRelation::ModuleImports { source, .. } => source.into(),
             SyntacticRelation::ReExports { source, .. } => source.into(),
+            SyntacticRelation::ImportedBy { source, .. } => source.into(),
             SyntacticRelation::StructField { source, .. } => source.into(),
             SyntacticRelation::UnionField { source, .. } => source.into(),
             SyntacticRelation::VariantField { source, .. } => source.into(),
@@ -228,6 +242,7 @@ impl SyntacticRelation {
             SyntacticRelation::Sibling { target, .. } => target.into(),
             SyntacticRelation::ModuleImports { target, .. } => target.into(),
             SyntacticRelation::ReExports { target, .. } => target.into(),
+            SyntacticRelation::ImportedBy { target, .. } => target.into(),
             SyntacticRelation::StructField { target, .. } => target.into(),
             SyntacticRelation::UnionField { target, .. } => target.into(),
             SyntacticRelation::VariantField { target, .. } => target.into(),
@@ -262,6 +277,7 @@ impl SyntacticRelation {
             SyntacticRelation::Sibling { .. } => "Sibling",
             SyntacticRelation::ModuleImports { .. } => "ModuleImports",
             SyntacticRelation::ReExports { .. } => "ReExports",
+            SyntacticRelation::ImportedBy { .. } => "ImportedBy",
             SyntacticRelation::StructField { .. } => "StructField",
             SyntacticRelation::UnionField { .. } => "UnionField",
             SyntacticRelation::VariantField { .. } => "VariantField",
@@ -316,6 +332,9 @@ impl std::fmt::Display for SyntacticRelation {
             SyntacticRelation::ReExports { source, target } => {
                 write!(f, "ReExports({} → {})", source, target)
             }
+            SyntacticRelation::ImportedBy { source, target } => {
+                write!(f, "ImportedBy({} → {})", source, target)
+            }
             SyntacticRelation::StructField { source, target } => {
                 write!(f, "StructField({} → {})", source, target)
             }
@@ -358,6 +377,7 @@ impl TryInto<ScopeKind> for SyntacticRelation {
             Self::Contains { .. } => Ok(ScopeKind::CanUse),
             Self::ModuleImports { .. } => Ok(ScopeKind::CanUse),
             Self::ReExports { .. } => Ok(ScopeKind::CanUse),
+            Self::ImportedBy { .. } => Ok(ScopeKind::CanUse),
             Self::CustomPath { .. } => Ok(ScopeKind::CanUse), // Module linked via path is usable
 
             // Relations where the target requires the source as a parent/qualifier

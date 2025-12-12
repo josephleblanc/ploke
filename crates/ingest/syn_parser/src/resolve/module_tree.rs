@@ -980,6 +980,82 @@ impl ModuleTree {
         self.found_path_attrs.get(&module_id)
     }
 
+    /// Adds backlinks from definition nodes to the ImportNodes that bring them into scope.
+    /// Only internal (same-crate) targets are linked; external dependencies are skipped.
+    pub(crate) fn link_definition_imports(
+        &mut self,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        log::debug!(
+            target: LOG_TARGET_MOD_TREE_BUILD,
+            "link_definition_imports: pending imports {}",
+            self.pending_imports.len()
+        );
+        // Iterate over a cloned list to avoid borrowing self while inserting relations.
+        for pending in self.pending_imports.clone() {
+            let import_node = pending.import_node();
+            let source_mod_id = pending.containing_mod_id();
+            let path_segments = import_node.source_path();
+
+            if path_segments.is_empty() {
+                continue;
+            }
+
+            let (base_module_id, segments_to_resolve) = if path_segments[0] == "crate" {
+                (self.root(), &path_segments[1..])
+            } else {
+                (source_mod_id, path_segments)
+            };
+
+            // Skip external dependency imports; they will be handled when dependency graphs are available.
+            if base_module_id == self.root() && !segments_to_resolve.is_empty() {
+                let first_seg = &segments_to_resolve[0];
+                if graph.iter_dependency_names().any(|dep_name| dep_name == first_seg)
+                    || first_seg == "std"
+                    || first_seg == "core"
+                    || first_seg == "alloc"
+                {
+                    continue;
+                }
+            }
+
+            let target_any_id =
+                match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        log::debug!(
+                            target: LOG_TARGET_MOD_TREE_BUILD,
+                            "link_definition_imports: skip unresolved import {:?} in module {:?}: {}",
+                            path_segments,
+                            source_mod_id,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+            let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) else {
+                // Non-primary targets (e.g., fields) are not linked via ImportedBy
+                continue;
+            };
+
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+        }
+
+        Ok(())
+    }
+
     #[allow(dead_code)]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: ImportNodeId) -> Option<String> {
         // Changed: item_id is ImportNodeId

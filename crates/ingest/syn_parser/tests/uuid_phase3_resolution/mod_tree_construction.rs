@@ -603,6 +603,51 @@ In Actual missing from Expected: {:#?}\n",
     assert!(extern_serde.is_inherited_use()); // Extern crates are treated as inherited for pending list
 }
 
+/// Pending-feature test: expects a backlink from a local definition to its import site.
+/// This should only pass once a relation exists that links a defining node to the ImportNode
+/// (e.g., StructNodeId -> ImportNodeId) for re-exports/imports.
+#[test]
+fn expect_backlink_from_definition_to_import_for_sample_struct() {
+    let fixture_name = "fixture_nodes";
+    let (graph, tree) = build_tree_for_tests(fixture_name);
+
+    // Locate the defining StructNode for SampleStruct.
+    let sample_struct_id = graph
+        .defined_types()
+        .iter()
+        .find_map(|def| match def {
+            syn_parser::parser::nodes::TypeDefNode::Struct(s) if s.name == "SampleStruct" => {
+                Some(s.id)
+            }
+            _ => None,
+        })
+        .expect("SampleStruct definition not found in fixture_nodes");
+
+    // Locate the ImportNode for `use crate::structs::SampleStruct as MySimpleStruct;` in crate::imports.
+    let imports_module = graph
+        .modules()
+        .iter()
+        .find(|m| m.path == vec!["crate".to_string(), "imports".to_string()])
+        .expect("imports module not found in fixture_nodes");
+    let my_simple_struct_import = imports_module
+        .imports
+        .iter()
+        .find(|imp| imp.visible_name == "MySimpleStruct")
+        .expect("MySimpleStruct import not found in imports module");
+    let import_any_id = syn_parser::parser::nodes::AnyNodeId::from(my_simple_struct_import.id);
+
+    // Expect a relation that points from the definition to the import site.
+    let has_backlink = tree.tree_relations().iter().any(|tr| {
+        tr.rel().source() == syn_parser::parser::nodes::AnyNodeId::from(sample_struct_id)
+            && tr.rel().target() == import_any_id
+    });
+
+    assert!(
+        has_backlink,
+        "Expected a relation linking definition SampleStruct -> import MySimpleStruct; implement the backlink relation to satisfy this test."
+    );
+}
+
 /// **Covers:** Basic visibility checks using `ModuleTree::is_accessible`.
 /// It uses the `file_dir_detection` fixture to test access between modules
 use std::io::Write; // Import Write trait for formatting
