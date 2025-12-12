@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::{ops::Deref, path::Path};
+use std::{ops::Deref, panic::Location, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
@@ -54,6 +54,18 @@ pub struct Database {
     db: Db<MemStorage>,
     #[cfg(feature = "multi_embedding_db")]
     pub active_embedding_set: EmbeddingSet,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct QueryContext {
+    pub name: &'static str,
+    pub script: &'static str,
+}
+
+impl QueryContext {
+    pub const fn new(name: &'static str, script: &'static str) -> Self {
+        Self { name, script }
+    }
 }
 
 #[derive(Deserialize)]
@@ -639,14 +651,17 @@ impl Database {
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| n.ends_with(":hnsw_idx"));
+            .filter(|n| n.ends_with(HNSW_SUFFIX));
 
         for index in rels {
-            let mut script = String::from("::index drop ");
+            tracing::debug!(?index);
+            let mut script = String::from("::hnsw drop ");
             script.extend(index.chars().filter(|c| *c == '\"'));
-            self.db
+            let dropped_hnsw = self
+                .db
                 .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
                 .map_err(DbError::from)?;
+            tracing::debug!(?dropped_hnsw);
         }
         Ok(())
     }
@@ -720,6 +735,26 @@ impl Database {
         Ok(QueryResult::from(result))
     }
 
+    /// Execute a CozoScript query and preserve the Rust callsite + logical query name on errors.
+    #[track_caller]
+    pub fn raw_query_with_context(&self, ctx: QueryContext) -> Result<QueryResult, DbError> {
+        let caller = Location::caller();
+        let result = self.db.run_script(
+            ctx.script,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Immutable,
+        );
+
+        match result {
+            Ok(rows) => Ok(QueryResult::from(rows)),
+            Err(err) => Err(DbError::cozo_with_callsite(
+                ctx.name,
+                err.to_string(),
+                caller,
+            )),
+        }
+    }
+
     pub fn raw_query_mut(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
             .db
@@ -774,6 +809,15 @@ impl Database {
     }
     pub fn relations_vec(&self) -> Result<Vec<String>, PlokeError> {
         let vector = Vec::from_iter(self.iter_relations()?);
+        Ok(vector)
+    }
+
+    pub fn relations_vec_no_hnsw(&self) -> Result<Vec<String>, PlokeError> {
+        let filtered_rels = self
+            .iter_relations()?
+            .into_iter()
+            .filter(|s| s.ends_with(HNSW_SUFFIX));
+        let vector = Vec::from_iter(filtered_rels);
         Ok(vector)
     }
     pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
@@ -1570,10 +1614,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_nodes_for_embedding() -> Result<(), PlokeError> {
-        // #[cfg(feature = "multi_embedding_db")]
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
-        // #[cfg(not (feature = "multi_embedding_db") )]
-        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
         #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         #[cfg(feature = "multi_embedding_db")]
@@ -1587,11 +1628,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_two() -> Result<(), PlokeError> {
-        // #[cfg(feature = "multi_embedding_db")]
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
-        // #[cfg(not (feature = "multi_embedding_db") )]
-        // ploke_test_utils::init_test_tracing_with_target(Level::INFO);
         // Initialize the logger to see output from Cozo
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
         #[cfg(not(feature = "multi_embedding_db"))]
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         #[cfg(feature = "multi_embedding_db")]
@@ -1645,7 +1683,7 @@ mod tests {
     /// Expects all common node items to individually have tracking hashes
     async fn test_get_anynode_th() -> Result<(), PlokeError> {
         use crate::multi_embedding::debug::DebugAll;
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        // ploke_test_utils::init_test_tracing(Level::INFO);
 
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
@@ -2029,15 +2067,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_retract_embeddings_partial() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
+        // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
         let embedding_set = &db.active_embedding_set;
 
-        // debug_print_counts(&db)?;
-        crate::create_index_primary(&db)?;
-        // debug_print_counts(&db)?;
+        debug_print_counts(&db)?;
+        db.clear_hnsw_idx().await?;
+        debug_print_counts(&db)?;
+        crate::create_index_primary_with_index(&db)?;
+        debug_print_counts(&db)?;
 
         let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
         assert!(

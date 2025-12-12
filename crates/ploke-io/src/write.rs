@@ -24,11 +24,11 @@ use mpatch::ApplyOptions;
 use ploke_core::file_hash::{hash_file_blake3_bounded, LargeFilePolicy};
 use ploke_core::{WriteResult, WriteSnippetData};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 // `WriteSnippetData` and `WriteResult` moved to ploke-core
 // If changes are needed, share details in implementation-log and USER will propogate them to
@@ -77,7 +77,7 @@ pub struct NsWriteSnippetData {
     pub namespace: uuid::Uuid,
     pub diff: Diff,
     pub options: PatchApplyOptions,
-    pub large_file_policy: LargeFilePolicy
+    pub large_file_policy: LargeFilePolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,22 +193,20 @@ async fn process_one_write_ns(
             options,
         }));
     };
-    let parsed_patch = mpatch::parse_single_patch(diff.as_ref())
-        .map_err(|e| { 
-            tracing::error!("Error in parse_single_patch: {}", e.to_string());
-            PlokeError::from(IoError::NsPatchError(e.to_string())) 
-        })?;
+    let parsed_patch = mpatch::parse_single_patch(diff.as_ref()).map_err(|e| {
+        tracing::error!("Error in parse_single_patch: {}", e.to_string());
+        PlokeError::from(IoError::NsPatchError(e.to_string()))
+    })?;
     let patch_options = mpatch::ApplyOptions {
         dry_run: options.dry_run,
         fuzz_factor: options.fuzz_factor,
     };
 
     // TODO: Add a similar lock/read/write with atomic edits, similar to below `process_one_write`
-    mpatch::apply_patch_to_file(&parsed_patch, &file_path, patch_options)
-        .map_err(|e| { 
-            tracing::error!("Error in parse_single_patch: {}", e.to_string());
-            PlokeError::from(IoError::NsPatchError(e.to_string())) 
-        })?;
+    mpatch::apply_patch_to_file(&parsed_patch, &file_path, patch_options).map_err(|e| {
+        tracing::error!("Error in parse_single_patch: {}", e.to_string());
+        PlokeError::from(IoError::NsPatchError(e.to_string()))
+    })?;
 
     Ok(NsWriteResult::new(new_hash))
 }
@@ -397,12 +395,7 @@ pub(crate) async fn write_snippets_batch_ns(
 ) -> Vec<Result<NsWriteResult, PlokeError>> {
     let mut out = Vec::with_capacity(requests.len());
     for req in requests {
-        let res = process_one_write_ns(
-            req, 
-            roots.clone(), 
-            symlink_policy,
-            max_bytes
-        ).await;
+        let res = process_one_write_ns(req, roots.clone(), symlink_policy, max_bytes).await;
         out.push(res);
     }
     out

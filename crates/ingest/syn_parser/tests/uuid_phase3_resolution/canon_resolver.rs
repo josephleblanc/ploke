@@ -3,10 +3,7 @@
 use std::collections::HashSet;
 
 use ploke_core::{CanonId, IdTrait};
-use syn_parser::{
-    parser::nodes::ModuleNodeId,
-    resolve::id_resolver::CanonIdResolver,
-};
+use syn_parser::{parser::nodes::ModuleNodeId, resolve::id_resolver::CanonIdResolver};
 
 use crate::common::build_tree_for_tests; // Helper to build graph and tree
 

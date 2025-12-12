@@ -1,3 +1,6 @@
+use crate::app::view::components::context_browser::{
+    self, ContextSearchState, SearchItem, render_context_search,
+};
 use crate::llm::manager::events::endpoint;
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
@@ -34,6 +37,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use itertools::Itertools;
+use ploke_core::rag_types::ContextPart;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
@@ -41,6 +45,7 @@ use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
 use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
+use tokio::time::Instant as TokioInstant;
 use toml::to_string;
 use tracing::instrument;
 use view::components::approvals::{
@@ -111,6 +116,8 @@ pub struct App {
     show_context_preview: bool,
     // Modal overlay for interactive model discovery/selection
     model_browser: Option<ModelBrowserState>,
+    // Context Search overlay for interactive exploration of code context
+    context_browser: Option<ContextSearchState>,
     // Modal overlay for approvals list
     approvals: Option<ApprovalsState>,
     // Input history browsing (Insert mode)
@@ -151,6 +158,7 @@ impl App {
             approvals: None,
             input_history: Vec::new(),
             input_history_pos: None,
+            context_browser: None,
         }
     }
 
@@ -198,6 +206,10 @@ impl App {
         // If the provided input stream ends (e.g., tests using an empty stream),
         // stop polling it to avoid starving event handling.
         let mut input_done = false;
+
+        // Light tick for overlays that need debounce without touching global UI cadence.
+        let context_tick = tokio::time::sleep(Duration::from_millis(30));
+        tokio::pin!(context_tick);
 
         // let mut frame_counter = 0;
         while self.running {
@@ -348,6 +360,12 @@ impl App {
             Ok(app_event_bg) = self.bg_event_rx.recv() => {
                 events::handle_event(&mut self, app_event_bg).await;
                 self.needs_redraw = true;
+            }
+
+            // Debounced overlay ticks (context browser)
+            _ = &mut context_tick, if self.context_browser_needs_tick() => {
+                self.tick_context_browser();
+                context_tick.as_mut().reset(TokioInstant::now() + Duration::from_millis(30));
             }
 
             }
@@ -597,6 +615,58 @@ impl App {
                     .block(Block::default().style(overlay_style));
                 frame.render_widget(hint, footer_area);
             }
+        } else if let Some(cb) = &mut self.context_browser {
+            let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
+
+            let free_width = body_area.width.saturating_sub(43) as usize;
+            let trunc_search_string: String = cb
+                .input
+                .as_str()
+                .chars()
+                .take(free_width)
+                .collect();
+
+            // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
+            // on for better functionality later
+            // user_search::compute_browser_scroll(body_area, cb);
+
+            // subtract 43 for the length of the surrounding text in the `format!` call for the
+            // widget title below.
+            let widget = Paragraph::new(lines)
+                .style(overlay_style)
+                .block(
+                    Block::bordered()
+                        .title(format!(
+                            " Context Browser — {} results for \"{}\" ",
+                            cb.items.len(),
+                            trunc_search_string
+                        ))
+                        .style(overlay_style),
+                )
+                // Preserve leading indentation in detail lines
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .scroll((cb.vscroll, 0));
+            frame.render_widget(widget, body_area);
+            if cb.help_visible {
+                // NOTE: placeholder for now, not actually functional
+                let help = Paragraph::new(
+                    "Keys: Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
+                     Save/Load/Search:\n\
+                     - model save [path] [--with-keys]\n\
+                     - model load [path]\n\
+                     - model search <keyword>",
+                )
+                .style(overlay_style)
+                .block(Block::bordered().title(" Help ").style(overlay_style))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+                frame.render_widget(help, footer_area);
+            } else {
+                let hint = Paragraph::new(" ? Help ")
+                    .style(overlay_style)
+                    .alignment(ratatui::layout::Alignment::Right)
+                    .block(Block::default().style(overlay_style));
+                frame.render_widget(hint, footer_area);
+            }
         }
 
         // Render approvals overlay if visible (on top)
@@ -787,6 +857,11 @@ impl App {
             input::model_browser::handle_model_browser_input(self, key);
             self.needs_redraw = true;
             return;
+        // Intercept keys for context browser overlay when visible
+        } else if self.context_browser.is_some() {
+            input::context_browser::handle_context_browser_input(self, key);
+            self.needs_redraw = true;
+            return;
         }
 
         // Global action mapping (including OpenApprovals)
@@ -880,12 +955,10 @@ impl App {
             Action::Quit => {
                 self.quit();
             }
-
             Action::SwitchMode(new_mode) => {
                 self.mode = new_mode;
                 self.pending_char = None;
             }
-
             Action::InsertChar(c) => {
                 // While typing, keep the viewport stable (disable auto-centering on selection)
                 self.conversation.set_free_scrolling(true);
@@ -901,7 +974,6 @@ impl App {
                     self.add_input_char(c);
                 }
             }
-
             Action::Backspace => {
                 if self.mode == Mode::Command
                     && self.input_buffer.len() == 1
@@ -913,7 +985,6 @@ impl App {
                 self.conversation.set_free_scrolling(true);
                 self.handle_backspace();
             }
-
             Action::Submit => {
                 // Enter in Insert mode: send the user's message via StateCommands.
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
@@ -947,7 +1018,6 @@ impl App {
                     self.input_buffer.clear();
                 }
             }
-
             Action::ExecuteCommand => {
                 self.execute_command();
                 // Ensure snap-to-bottom so long outputs (e.g., /help) are fully visible.
@@ -956,7 +1026,6 @@ impl App {
                 self.input_buffer.clear();
                 self.mode = Mode::Insert;
             }
-
             Action::NavigateListUp => {
                 self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
@@ -971,7 +1040,6 @@ impl App {
                     direction: ListNavigation::Down,
                 });
             }
-
             Action::PageDown => {
                 self.conversation.page_down();
                 self.conversation.set_free_scrolling(true);
@@ -982,7 +1050,6 @@ impl App {
                 self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
-
             Action::BranchPrev => {
                 self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
@@ -995,7 +1062,6 @@ impl App {
                 self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
             }
-
             Action::ScrollLineDown => {
                 self.conversation.scroll_line_down();
                 self.conversation.set_free_scrolling(true);
@@ -1006,7 +1072,6 @@ impl App {
                 self.conversation.set_free_scrolling(true);
                 self.pending_char = None;
             }
-
             Action::GotoSequenceG => {
                 if matches!(self.pending_char, Some('g')) {
                     // gg -> bottom (preserve existing behavior)
@@ -1029,7 +1094,6 @@ impl App {
                 self.conversation.set_free_scrolling(false);
                 self.pending_char = None;
             }
-
             Action::OpenCommand => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
@@ -1058,13 +1122,13 @@ impl App {
                 self.pending_char = None;
                 self.show_context_preview = !self.show_context_preview;
             }
-
             Action::InputScrollPrev => {
                 self.input_view.scroll_prev();
             }
             Action::InputScrollNext => {
                 self.input_view.scroll_next();
             }
+            Action::OpenContextSearch => todo!(),
         }
     }
 
@@ -1180,6 +1244,78 @@ impl App {
             viewport_height: 0,
         });
         self.needs_redraw = true;
+    }
+
+    #[instrument(skip(self),
+        level = "debug",
+        fields(
+            search_input,
+            retrieved_items_len = retrieved_items.len(),
+            self.context_browser
+        )
+    )]
+    #[instrument(
+        skip(self, retrieved_items),
+        fields(search_input, retrieved_items_len = retrieved_items.len())
+    )]
+    fn open_context_browser(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
+        let search_items = Self::build_context_search_items(retrieved_items);
+        self.context_browser = Some(ContextSearchState::with_items(search_input, search_items));
+        self.needs_redraw = true;
+    }
+
+    fn context_browser_needs_tick(&self) -> bool {
+        self.context_browser
+            .as_ref()
+            .map(|cb| cb.pending_dispatch)
+            .unwrap_or(false)
+    }
+
+    fn tick_context_browser(&mut self) {
+        let mut query_to_dispatch: Option<String> = None;
+        if let Some(cb) = self.context_browser.as_mut() {
+            if !cb.pending_dispatch {
+                return;
+            }
+            if cb.last_edit_at.elapsed() < Duration::from_millis(cb.debounce_ms) {
+                return;
+            }
+            let query = cb.input.as_str().trim().to_string();
+            if query == cb.last_sent_query {
+                cb.pending_dispatch = false;
+                cb.loading_search = false;
+                return;
+            }
+            query_to_dispatch = Some(query);
+        }
+
+        if let Some(query) = query_to_dispatch {
+            self.dispatch_context_search(&query);
+            self.needs_redraw = true;
+        }
+    }
+
+    fn dispatch_context_search(&mut self, query: &str) {
+        let query = query.trim();
+        let Some(cb) = self.context_browser.as_mut() else { return };
+        cb.query_id = cb.query_id.saturating_add(1);
+        let query_id = cb.query_id;
+        cb.last_sent_query = query.to_string();
+        cb.pending_dispatch = false;
+        cb.loading_search = true;
+
+        commands::exec::open_context_search(self, query_id, query);
+    }
+
+    #[instrument(
+        level = "debug",
+        fields(retrieved_items_len = retrieved_items.len())
+    )]
+    fn build_context_search_items(retrieved_items: Vec<ContextPart>) -> Vec<SearchItem> {
+        retrieved_items
+            .into_iter()
+            .map(SearchItem::from)
+            .collect_vec()
     }
 
     fn build_model_browser_items(items: Vec<models::ResponseItem>) -> Vec<ModelBrowserItem> {

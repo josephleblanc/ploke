@@ -479,7 +479,7 @@ lazy_static! {
         m.insert("crate::imports::env_glob", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "std::env::*", 
+            ident: "std::env::*",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,

@@ -52,7 +52,19 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
-* [ ] abstract the commonly used rules like `parent_of`, `ancestor`, and `has_embeddings`, or any other rules used in more than one place to either a const that serves as a common reference for creating the cozo scripts, or a rule that is loaded into the cozo database and then may be assumed to be loaded by the functions which would otherwise re-create these scripts.
+* [ ] abstract the commonly used rules like `parent_of`, `ancestor`, and
+`has_embeddings`, or any other rules used in more than one place to either a
+const that serves as a common reference for creating the cozo scripts, or a
+rule that is loaded into the cozo database and then may be assumed to be loaded
+by the functions which would otherwise re-create these scripts.
+* [ ] Add a field for `ty` or `node_ty` that holds the discriminant for the
+`NodeType` variant of the item in the database.
+  * [ ] Add a `From<cozo::DataValue> for FunctionNode`, or maybe
+  `From<Vec<cozo::DataValue>>` for each of the primary node types etc, 
+  * [ ] Ensure the `From` implementation includes a way to give the database
+  items typed ids.
+  * [ ] For other search results add methods that can take a `node_ty, Uuid`
+  pair and create the typed node id
 
 ## Tests
 - [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`

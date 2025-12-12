@@ -48,12 +48,11 @@ impl From<EmbeddingError> for PlokeError {
     fn from(error: EmbeddingError) -> Self {
         match error {
             // Classify as InternalError for infrastructure issues
-            EmbeddingError::ModelDownload(_) | 
+            EmbeddingError::ModelDownload(_) |
             // TODO: Not sure whether this makes sense, improve later when refactoring error
             // handling
-            EmbeddingError::Io(_) => 
+            EmbeddingError::Io(_) =>
                  error.into(),
-            
             // All others as TransformError
             // TODO: Placeholder, improve later.
             _ => TransformError::Transformation(error.to_string()).into(),

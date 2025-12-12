@@ -21,7 +21,9 @@ pub use io_types::{
     WriteResult, WriteSnippetData,
 };
 mod arc_str;
+
 pub mod rag_types;
+
 pub use arc_str::ArcStr;
 pub mod embeddings;
 
@@ -32,6 +34,7 @@ pub mod byte_hasher {
     use std::hash::Hasher;
 
     #[derive(Default)]
+    // crate::byte_hasher::ByteHasher
     pub struct ByteHasher {
         bytes: Vec<u8>,
     }

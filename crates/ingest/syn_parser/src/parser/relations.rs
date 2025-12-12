@@ -11,7 +11,7 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
-    NotApplicable(SyntacticRelation), // Use the new enum type
+    NotApplicable(SyntacticRelation),
 }
 /// Represents a type-safe structural or semantic relation between two nodes in the code graph.
 /// Each variant enforces the correct NodeId types for its source and target where possible.

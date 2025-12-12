@@ -10,7 +10,7 @@ mod phase2_tests {
 
     #[test]
     #[cfg(not(feature = "type_bearing_ids"))]
-fn test_simple_crate_phase2_output() {
+    fn test_simple_crate_phase2_output() {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps

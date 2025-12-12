@@ -1,5 +1,5 @@
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ProvidersResponse {
@@ -9,15 +9,43 @@ pub struct ProvidersResponse {
 #[derive(Clone, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Provider {
     pub name: ProviderName,
+    #[serde(deserialize_with = "deserialize_optional_url")]
     pub privacy_policy_url: Option<Url>,
     pub slug: ProviderSlug,
+    #[serde(deserialize_with = "deserialize_optional_url")]
     pub status_page_url: Option<Url>,
+    #[serde(deserialize_with = "deserialize_optional_url")]
     pub terms_of_service_url: Option<Url>,
+}
+
+fn deserialize_optional_url<'de, D>(deserializer: D) -> Result<Option<Url>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match Url::parse(trimmed) {
+        Ok(url) => Ok(Some(url)),
+        Err(err) => {
+            log::warn!(
+                "openrouter provider entry had invalid URL '{}': {err}",
+                trimmed
+            );
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ProviderName {
+    Sourceful,
     ModelRun,
     Modular,
     Clarifai,
@@ -100,6 +128,8 @@ pub enum ProviderName {
     Meta,
     Parasail,
     GMICloud,
+    Mara,
+    Xiaomi,
 }
 use std::fmt::{self, Display};
 
@@ -183,13 +213,16 @@ impl ProviderName {
             ProviderName::BytePlus => "BytePlus",
             ProviderName::BlackForestLabs => "Black Forest Labs",
             ProviderName::StreamLake => "StreamLake",
-            ProviderName::AmazonNova => "AmazonNova",
+            ProviderName::AmazonNova => "Amazon Nova",
             ProviderName::GoPomelo => "GoPomelo",
             ProviderName::Relace => "Relace",
             ProviderName::FakeProvider => "FakeProvider",
             ProviderName::Cirrascale => "Cirrascale",
-            ProviderName::Clarifai => todo!(),
-            ProviderName::Modular => todo!(),
+            ProviderName::Clarifai => "Clarifai",
+            ProviderName::Modular => "Modular",
+            ProviderName::Sourceful => "Sourceful",
+            ProviderName::Mara => "Mara",
+            ProviderName::Xiaomi => "Xiaomi",
         }
     }
     pub fn has_slug(self, other: ProviderSlug) -> bool {
@@ -272,6 +305,9 @@ impl ProviderName {
             ProviderName::FakeProvider => ProviderSlug::fake_provider,
             ProviderName::Cirrascale => ProviderSlug::cirrascale,
             ProviderName::ModelRun => ProviderSlug::model_run,
+            ProviderName::Sourceful => ProviderSlug::sourceful,
+            ProviderName::Mara => ProviderSlug::mara,
+            ProviderName::Xiaomi => ProviderSlug::xiaomi,
         }
     }
 }
@@ -279,6 +315,7 @@ impl ProviderName {
 #[derive(Clone, Copy, PartialOrd, PartialEq, Debug, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ProviderSlug {
+    sourceful,
     #[serde(rename = "modelrun")]
     model_run,
     modular,
@@ -366,6 +403,8 @@ pub enum ProviderSlug {
     parasail,
     gmicloud,
     nvidia,
+    mara,
+    xiaomi,
 }
 
 impl Display for ProviderSlug {
@@ -459,6 +498,9 @@ impl ProviderSlug {
             ProviderSlug::clarifai => ProviderName::Clarifai,
             ProviderSlug::modular => ProviderName::Modular,
             ProviderSlug::model_run => ProviderName::ModelRun,
+            ProviderSlug::sourceful => ProviderName::Sourceful,
+            ProviderSlug::mara => ProviderName::Mara,
+            ProviderSlug::xiaomi => ProviderName::Xiaomi,
         }
     }
 }
@@ -471,10 +513,11 @@ impl std::str::FromStr for ProviderSlug {
             "modelrun" => Ok(ProviderSlug::model_run),
             "modular" => Ok(ProviderSlug::modular),
             "clarifai" => Ok(ProviderSlug::clarifai),
-            "cirra-scale" => Ok(ProviderSlug::cirrascale),
+            "cirrascale" => Ok(ProviderSlug::cirrascale),
             "fake-provider" => Ok(ProviderSlug::fake_provider),
             "relace" => Ok(ProviderSlug::relace),
             "gopomelo" => Ok(ProviderSlug::gopomelo),
+            "streamlake" => Ok(ProviderSlug::streamlake),
             "black-forest-labs" => Ok(ProviderSlug::blackforestlabs),
             "z-ai" => Ok(ProviderSlug::z_ai),
             "wandb" => Ok(ProviderSlug::wandb),
@@ -488,6 +531,7 @@ impl std::str::FromStr for ProviderSlug {
             "stealth" => Ok(ProviderSlug::stealth),
             "sambanova" => Ok(ProviderSlug::sambanova),
             "atlas-cloud" => Ok(ProviderSlug::atlas_cloud),
+            "amazon-nova" => Ok(ProviderSlug::amazon_nova),
             "amazon-bedrock" => Ok(ProviderSlug::amazon_bedrock),
             "groq" => Ok(ProviderSlug::groq),
             "featherless" => Ok(ProviderSlug::featherless),
@@ -540,6 +584,9 @@ impl std::str::FromStr for ProviderSlug {
             "nvidia" => Ok(ProviderSlug::nvidia),
             "arcee-ai" => Ok(ProviderSlug::arceeai),
             "byteplus" => Ok(ProviderSlug::byteplus),
+            "sourceful" => Ok(ProviderSlug::sourceful),
+            "mara" => Ok(ProviderSlug::mara),
+            "xiaomi" => Ok(ProviderSlug::xiaomi),
             _ => Err(()),
         }
     }

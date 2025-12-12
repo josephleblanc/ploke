@@ -503,11 +503,11 @@ pub fn analyze_files_parallel(
                     crate_context.namespace,
                     logical_path, // Pass the derived path
 
-                ) 
+                )
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
                 .map_err(|e| e.into())
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
-            
+
                 log::debug!(target: "debug_dup", "file path in par_iter: {}", file_path.display());
                 #[cfg(feature = "cfg_eval")]
                 let parsed = analyze_file_phase2(
@@ -515,11 +515,11 @@ pub fn analyze_files_parallel(
                     crate_context.namespace,
                     logical_path, // Pass the derived path
                     crate_context
-                ) 
+                )
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
-                .map_err(|e| { 
+                .map_err(|e| {
                         eprintln!("Error found: {}", e);
-                        e.into() 
+                        e.into()
                     })
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
                 parsed

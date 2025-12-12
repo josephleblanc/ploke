@@ -261,7 +261,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
 
     #[cfg(feature = "type_bearing_ids")]
     fn get_child_modules(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
-        use itertools::Itertools;
+        // use itertools::Itertools;
 
         let mut ids = self.ids_contained_by(module_id);
         self.modules()
@@ -284,8 +284,18 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
     }
 
     fn get_child_modules_decl(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
-        self.get_child_modules(module_id)
-            .filter(|m| matches!(m.module_def, ModuleKind::Declaration { .. }))
+        // use SyntacticRelation::*;
+        // self.relations().iter()
+        //     .filter_map(move |rel| {
+        //         match rel {
+        //             ResolvesToDefinition { source: decl, .. } => ( Some( decl ) ),
+        //             CustomPath { source: decl, .. } => Some(decl),
+        //             _ => None
+        //         }
+        //     })
+        //     .filter_map(|m_id| self.modules().iter().find(|m| *m_id == m.id))
+        self.get_child_modules(module_id).filter(|m| m.is_decl())
+        // .filter(|m| matches!(m.module_def, ModuleKind::Declaration { .. }))
     }
 
     /// Finds a module node by its full path.
@@ -377,7 +387,7 @@ unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total",
 
         match first {
             Some(node) => {
-                debug!(target: LOG_TARGET_GRAPH_FIND, 
+                debug!(target: LOG_TARGET_GRAPH_FIND,
                     "{} {}", 
                     "Found unique non-declaration node:".log_header(), 
                     node.id.to_string().magenta());

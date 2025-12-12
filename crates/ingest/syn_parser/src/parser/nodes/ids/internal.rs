@@ -293,7 +293,7 @@ impl GenerateTypeId for VisitorState {
                     .map(|aid| aid.as_any())
             )
             .chain(
-                self.current_secondary_defn_scope.iter() 
+                self.current_secondary_defn_scope.iter()
                     .map(|sid| sid.as_any())
             )
             .last().expect(

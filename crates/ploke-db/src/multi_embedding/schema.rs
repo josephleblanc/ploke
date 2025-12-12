@@ -256,6 +256,9 @@ pub trait CozoEmbeddingSetExt: EmbeddingSetExt {
     }
 
     fn script_vector_identity(&self) -> String {
-        format!("{} {{ node_id, at, vector, embedding_set_id }}", self.rel_name())
+        format!(
+            "{} {{ node_id, at, vector, embedding_set_id }}",
+            self.rel_name()
+        )
     }
 }

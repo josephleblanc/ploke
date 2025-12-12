@@ -491,37 +491,30 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     }
 }
 
+// TODO:docs Add doc comments
 pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
-    #[cfg(feature = "multi_embedding_db")]
-    {
-        use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+    use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
-        let r1 = db.ensure_embedding_set_relation();
-        tracing::info!(create_embedding_set_relation = ?r1);
-        r1.unwrap_or_else(|_| panic!());
+    let r1 = db.ensure_embedding_set_relation();
+    tracing::info!(create_embedding_set_relation = ?r1);
+    r1.unwrap_or_else(|_| panic!());
 
-        let r2 = db.ensure_embedding_relation(&db.active_embedding_set);
-        tracing::info!(ensure_embedding_relation = ?r2);
-        r2.unwrap_or_else(|_| panic!());
+    let r2 = db.ensure_embedding_relation(&db.active_embedding_set);
+    tracing::info!(ensure_embedding_relation = ?r2);
+    r2.unwrap_or_else(|_| panic!());
 
-        let r3 = db.ensure_vector_embedding_relation(&db.active_embedding_set);
-        tracing::info!(ensure_vector_embedding_relation = ?r3);
-        r3.unwrap_or_else(|_| panic!());
+    let r3 = db.ensure_vector_embedding_relation(&db.active_embedding_set);
+    tracing::info!(ensure_vector_embedding_relation = ?r3);
+    r3.unwrap_or_else(|_| panic!());
+    Ok(())
+}
 
-        // let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
-        // tracing::info!(create_embedding_index = ?r3);
-        // r3.unwrap_or_else(|_| panic!());
-        #[allow(clippy::needless_return)]
-        return db.create_embedding_index(&db.active_embedding_set);
-    }
+// TODO:docs Add doc comments
+pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
+    use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
-    #[cfg(not(feature = "multi_embedding_db"))]
-    {
-        for ty in NodeType::primary_nodes() {
-            create_index(db, ty)?;
-        }
-        Ok(())
-    }
+    create_index_primary(db)?;
+    db.create_embedding_index(&db.active_embedding_set.clone())
 }
 
 #[cfg(feature = "multi_embedding_db")]
@@ -635,7 +628,7 @@ mod tests {
             .map_err(DbError::from)
             .map_err(ploke_error::Error::from)?;
 
-        super::create_index_primary(&db)?;
+        super::create_index_primary_with_index(&db)?;
 
         let k = 20;
         let ef = 40;
