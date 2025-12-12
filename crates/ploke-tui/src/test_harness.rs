@@ -147,7 +147,7 @@ lazy_static! {
             event_bus.clone(),
             state.clone(),
         ));
-        let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+        let app = App::new(command_style, state, cmd_tx, &event_bus, default_model(), crate::user_config::AnimationConfig::default());
 
         Arc::new(Mutex::new(app))
     };

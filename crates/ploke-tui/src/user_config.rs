@@ -48,9 +48,86 @@ pub struct UserConfig {
     #[serde(default)]
     pub editing: EditingConfig,
     #[serde(default)]
+    pub animation: AnimationConfig,
+    #[serde(default)]
     pub ploke_editor: Option<String>,
     #[serde(default)]
     pub context_management: CtxPrefs,
+}
+
+/// Configuration for animation behavior in the TUI
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AnimationConfig {
+    /// Enable or disable all animations
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Default duration for animations in milliseconds
+    #[serde(default = "default_duration")]
+    pub default_duration_ms: u64,
+    /// Animation effect for new user messages
+    #[serde(default)]
+    pub new_message_effect: AnimationEffect,
+    /// Animation effect for new assistant messages
+    #[serde(default)]
+    pub assistant_message_effect: AnimationEffect,
+    /// Animation effect for system messages
+    #[serde(default)]
+    pub system_message_effect: AnimationEffect,
+    /// Animation effect for error messages
+    #[serde(default)]
+    pub error_message_effect: AnimationEffect,
+    /// Easing function for animations
+    #[serde(default)]
+    pub easing_function: EasingFunction,
+}
+
+/// Types of animation effects available
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub enum AnimationEffect {
+    /// No animation
+    #[default]
+    None,
+    /// Fade in effect
+    FadeIn,
+    /// Slide in from left
+    SlideInLeft,
+    /// Slide in from right
+    SlideInRight,
+    /// Slide in from top
+    SlideInUp,
+    /// Slide in from bottom
+    SlideInDown,
+    /// Typewriter effect (character by character)
+    Typewriter,
+    /// Pulse effect
+    Pulse,
+    /// Highlight effect
+    Highlight,
+}
+
+/// Easing functions for smooth animations
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub enum EasingFunction {
+    /// Linear progression
+    #[default]
+    Linear,
+    /// Ease in (starts slow, ends fast)
+    EaseIn,
+    /// Ease out (starts fast, ends slow)
+    EaseOut,
+    /// Ease in out (starts slow, speeds up, ends slow)
+    EaseInOut,
+    /// Bounce effect
+    Bounce,
+}
+
+// Helper functions for serde defaults
+fn default_true() -> bool {
+    true
+}
+
+fn default_duration() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

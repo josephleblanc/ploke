@@ -133,7 +133,7 @@ fn init_tool_persist_worker(state: &Arc<AppState>) {
 async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
     match ev {
         // Persist conversation turns when a message is (created/)updated
-        AppEvent::MessageUpdated(MessageUpdatedEvent(id)) => {
+        AppEvent::MessageUpdated(MessageUpdatedEvent { message_id: id, .. }) => {
             if let Some(msg) = get_message(state, id).await {
                 if let Err(e) = persist_conversation_turn(state, &msg).await {
                     tracing::warn!("observability: upsert_conversation_turn failed: {}", e);

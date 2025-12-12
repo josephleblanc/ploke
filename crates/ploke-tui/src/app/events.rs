@@ -1,13 +1,15 @@
 use super::App;
 use crate::SearchEvent;
+use crate::app::animation::{AnimationFactory, AnimationType};
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
 use crate::llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
+use crate::user_config::{AnimationConfig, AnimationEffect, EasingFunction};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
 use ploke_core::rag_types::AssembledContext;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
@@ -21,6 +23,10 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
     // Forward to view components that subscribe to events
     app.conversation.on_event(&app_event);
     app.input_view.on_event(&app_event);
+
+    // Handle animation triggers
+    handle_animation_triggers(app, &app_event).await;
+
     match app_event {
         AppEvent::Quit => {
             app.quit();
@@ -42,8 +48,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 if query_id != ctx_browser.query_id {
                     trace!(
                         "Ignoring stale context search results: incoming={} current={}",
-                        query_id,
-                        ctx_browser.query_id
+                        query_id, ctx_browser.query_id
                     );
                     return;
                 }
@@ -203,7 +208,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                         display_file_info(file_dir.as_ref()),
                     );
                     app.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}\nRoot project path set to: {}", 
+                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}\nRoot project path set to: {}",
                             display_file_info(file_dir.as_ref()),
                             display_file_info(root_path.as_ref())
                         ),
@@ -225,7 +230,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                     );
                     if let Some(error_str) = error {
                         app.send_cmd(StateCommand::AddMessageImmediate {
-                            msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", 
+                            msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}",
                                 display_file_info(file_dir.as_ref()),
                                 &error_str),
                             kind: MessageKind::SysInfo,
@@ -251,6 +256,195 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         }
         AppEvent::GenerateContext(_id) => {
             // future hook
+        }
+    }
+}
+
+/// Handle animation triggers based on app events
+async fn handle_animation_triggers(app: &mut App, app_event: &AppEvent) {
+    // Check if animations are enabled in the config
+    if !app.animation_state.config.enabled {
+        return;
+    }
+
+    match app_event {
+        AppEvent::MessageUpdated(message_event) => {
+            // Get animation configuration from user config
+            let animation_config = &app.state.config.read().await.animation;
+
+            // Trigger appropriate animation based on message kind and user config
+            let animation_type = match message_event.kind {
+                MessageKind::User => match animation_config.new_message_effect {
+                    AnimationEffect::None => return,
+                    AnimationEffect::FadeIn => AnimationFactory::fade_in(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    )),
+                    AnimationEffect::SlideInLeft => AnimationFactory::slide_in_left(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInRight => AnimationFactory::slide_in_right(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInUp => AnimationFactory::slide_in_up(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInDown => AnimationFactory::slide_in_down(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::Typewriter => {
+                        AnimationFactory::typewriter(Duration::from_millis(30))
+                    }
+                    AnimationEffect::Pulse => AnimationFactory::pulse(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        0.5,
+                    ),
+                    AnimationEffect::Highlight => AnimationFactory::highlight(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        "yellow".to_string(),
+                    ),
+                },
+                MessageKind::Assistant => match animation_config.assistant_message_effect {
+                    AnimationEffect::None => return,
+                    AnimationEffect::FadeIn => AnimationFactory::fade_in(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    )),
+                    AnimationEffect::SlideInLeft => AnimationFactory::slide_in_left(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInRight => AnimationFactory::slide_in_right(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInUp => AnimationFactory::slide_in_up(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::SlideInDown => AnimationFactory::slide_in_down(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                    ),
+                    AnimationEffect::Typewriter => {
+                        AnimationFactory::typewriter(Duration::from_millis(30))
+                    }
+                    AnimationEffect::Pulse => AnimationFactory::pulse(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        0.5,
+                    ),
+                    AnimationEffect::Highlight => AnimationFactory::highlight(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        "green".to_string(),
+                    ),
+                },
+                MessageKind::System | MessageKind::SysInfo => {
+                    match animation_config.system_message_effect {
+                        AnimationEffect::None => return,
+                        AnimationEffect::FadeIn => AnimationFactory::fade_in(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                        ),
+                        AnimationEffect::SlideInLeft => AnimationFactory::slide_in_left(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                        ),
+                        AnimationEffect::SlideInRight => AnimationFactory::slide_in_right(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                        ),
+                        AnimationEffect::SlideInUp => AnimationFactory::slide_in_up(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                        ),
+                        AnimationEffect::SlideInDown => AnimationFactory::slide_in_down(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                        ),
+                        AnimationEffect::Typewriter => {
+                            AnimationFactory::typewriter(Duration::from_millis(30))
+                        }
+                        AnimationEffect::Pulse => AnimationFactory::pulse(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                            0.5,
+                        ),
+                        AnimationEffect::Highlight => AnimationFactory::highlight(
+                            Duration::from_millis(animation_config.default_duration_ms),
+                            "cyan".to_string(),
+                        ),
+                    }
+                }
+                MessageKind::Tool => AnimationFactory::fade_in(Duration::from_millis(200)),
+            };
+
+            app.animation_state
+                .start_animation(message_event.message_id, animation_type);
+        }
+
+        AppEvent::Error(_) => {
+            // Trigger error animation for error messages based on user config
+            let animation_config = &app.state.config.read().await.animation;
+
+            match animation_config.error_message_effect {
+                AnimationEffect::None => return,
+                AnimationEffect::FadeIn => {
+                    let animation_type = AnimationFactory::fade_in(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    ));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::SlideInLeft => {
+                    let animation_type = AnimationFactory::slide_in_left(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    ));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::SlideInRight => {
+                    let animation_type = AnimationFactory::slide_in_right(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    ));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::SlideInUp => {
+                    let animation_type = AnimationFactory::slide_in_up(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    ));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::SlideInDown => {
+                    let animation_type = AnimationFactory::slide_in_down(Duration::from_millis(
+                        animation_config.default_duration_ms,
+                    ));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::Typewriter => {
+                    let animation_type = AnimationFactory::typewriter(Duration::from_millis(30));
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::Pulse => {
+                    let animation_type = AnimationFactory::pulse(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        0.7, // Higher intensity for errors
+                    );
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+                AnimationEffect::Highlight => {
+                    let animation_type = AnimationFactory::highlight(
+                        Duration::from_millis(animation_config.default_duration_ms),
+                        "red".to_string(),
+                    );
+                    let message_id = Uuid::new_v4();
+                    app.animation_state
+                        .start_animation(message_id, animation_type);
+                }
+            }
+        }
+
+        _ => {
+            // No animation triggers for other events
         }
     }
 }

@@ -156,6 +156,7 @@ pub struct RuntimeConfig {
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub embedding: EmbeddingConfig,
+    pub animation: crate::user_config::AnimationConfig,
     pub ploke_editor: Option<String>,
 }
 
@@ -186,6 +187,7 @@ impl From<UserConfig> for RuntimeConfig {
             editing,
             command_style: uc.command_style,
             embedding: uc.embedding,
+            animation: uc.animation,
             ploke_editor: uc.ploke_editor,
         }
     }
@@ -204,6 +206,7 @@ impl RuntimeConfig {
             command_style: self.command_style,
             embedding: self.embedding.clone(),
             editing,
+            animation: crate::user_config::AnimationConfig::default(),
             ploke_editor: self.ploke_editor.clone(),
             context_management: CtxPrefs::default(),
         }

@@ -270,7 +270,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+    let app = App::new(
+        command_style,
+        state,
+        cmd_tx,
+        &event_bus,
+        default_model(),
+        config.animation,
+    );
     let result = app.run(terminal).await;
     ratatui::restore();
     result

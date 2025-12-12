@@ -48,7 +48,7 @@ pub async fn update_message(
                     new_status = ?new_status,
                     "Message updated successfully; dispatching MessageUpdatedEvent"
                 );
-                event_bus.send(MessageUpdatedEvent::new(id).into());
+                event_bus.send(MessageUpdatedEvent::new(id, msg_kind).into());
             }
             Err(e) => {
                 tracing::error!(
@@ -78,7 +78,7 @@ pub async fn delete_message(state: &Arc<AppState>, event_bus: &Arc<EventBus>, id
             chat_guard.current = curr;
         }
         // Notify UI to refresh based on the new current selection
-        event_bus.send(MessageUpdatedEvent::new(curr).into());
+        event_bus.send(MessageUpdatedEvent::new(curr, MessageKind::User).into());
     }
 }
 
@@ -112,7 +112,7 @@ pub async fn add_message(
         chat_guard.add_child(parent_id, child_id, &content, status, kind, None)
     {
         chat_guard.current = new_message_id;
-        event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
+        event_bus.send(MessageUpdatedEvent::new(new_message_id, MessageKind::User).into())
     }
 }
 
@@ -123,7 +123,13 @@ pub async fn navigate_list(
 ) {
     let mut chat_guard = state.chat.0.write().await;
     chat_guard.navigate_list(direction);
-    event_bus.send(MessageUpdatedEvent(chat_guard.current).into())
+    event_bus.send(
+        MessageUpdatedEvent {
+            message_id: chat_guard.current,
+            kind: MessageKind::User,
+        }
+        .into(),
+    )
 }
 
 pub async fn create_assistant_message(
@@ -147,7 +153,7 @@ pub async fn create_assistant_message(
     ) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
-        event_bus.send(MessageUpdatedEvent::new(new_id).into());
+        event_bus.send(MessageUpdatedEvent::new(new_id, MessageKind::Assistant).into());
     }
 }
 
@@ -207,7 +213,7 @@ pub async fn add_msg_immediate(
         chat_guard.current = message_id;
         drop(chat_guard);
 
-        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+        event_bus.send(MessageUpdatedEvent::new(message_id, kind).into());
 
         if kind == MessageKind::User {
             let llm_request = AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::Request {
@@ -256,7 +262,7 @@ pub async fn add_msg_immediate_nofocus(
 
     if let Ok(message_id) = message_wrapper {
         // Do NOT change current selection; emit event so UI can render the new message
-        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+        event_bus.send(MessageUpdatedEvent::new(message_id, kind).into());
     } else {
         tracing::error!("Failed to add message (nofocus) of kind: {}", kind);
     }

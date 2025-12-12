@@ -7,6 +7,7 @@ use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
+pub mod animation;
 pub mod commands;
 pub mod editor;
 pub mod events;
@@ -124,6 +125,8 @@ pub struct App {
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
+    // Animation state for message animations
+    animation_state: animation::AnimationState,
 }
 
 impl App {
@@ -134,6 +137,7 @@ impl App {
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
         active_model_id: String,
+        animation_config: user_config::AnimationConfig,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -160,6 +164,17 @@ impl App {
             input_history: Vec::new(),
             input_history_pos: None,
             context_browser: None,
+            animation_state: animation::AnimationState::with_config(animation::AnimationConfig {
+                enabled: animation_config.enabled,
+                default_duration: Duration::from_millis(animation_config.default_duration_ms),
+                easing_function: match animation_config.easing_function {
+                    user_config::EasingFunction::Linear => animation::EasingFunction::Linear,
+                    user_config::EasingFunction::EaseIn => animation::EasingFunction::EaseIn,
+                    user_config::EasingFunction::EaseOut => animation::EasingFunction::EaseOut,
+                    user_config::EasingFunction::EaseInOut => animation::EasingFunction::EaseInOut,
+                    user_config::EasingFunction::Bounce => animation::EasingFunction::Bounce,
+                },
+            }),
         }
     }
 
@@ -211,6 +226,10 @@ impl App {
         // Light tick for overlays that need debounce without touching global UI cadence.
         let context_tick = tokio::time::sleep(Duration::from_millis(30));
         tokio::pin!(context_tick);
+
+        // Animation tick for smooth animation updates
+        let animation_tick = tokio::time::sleep(Duration::from_millis(16)); // ~60 FPS
+        tokio::pin!(animation_tick);
 
         // let mut frame_counter = 0;
         while self.running {
@@ -363,6 +382,15 @@ impl App {
                 self.needs_redraw = true;
             }
 
+            // Animation updates for smooth animations
+            _ = &mut animation_tick => {
+                let completed_animations = self.animation_state.update_animations();
+                if !completed_animations.is_empty() {
+                    self.needs_redraw = true;
+                }
+                animation_tick.as_mut().reset(TokioInstant::now() + Duration::from_millis(16));
+            }
+
             // Debounced overlay ticks (context browser)
             _ = &mut context_tick, if self.context_browser_needs_tick() => {
                 self.tick_context_browser();
@@ -478,6 +506,7 @@ impl App {
             conversation_width,
             chat_area,
             selected_index_opt,
+            &self.animation_state,
         );
 
         // Right-side context preview (placeholder until wired to Rag events)
@@ -620,12 +649,7 @@ impl App {
             let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
 
             let free_width = body_area.width.saturating_sub(43) as usize;
-            let trunc_search_string: String = cb
-                .input
-                .as_str()
-                .chars()
-                .take(free_width)
-                .collect();
+            let trunc_search_string: String = cb.input.as_str().chars().take(free_width).collect();
 
             // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
             // on for better functionality later
@@ -796,9 +820,7 @@ impl App {
                 tokio::spawn(async move {
                     // Build unified item list asynchronously to avoid blocking UI thread
                     let items = filtered_items(&state, filter);
-                    if let Some(ApprovalListItem { kind, id, .. }) =
-                        items.get(sel_index).cloned()
-                    {
+                    if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
                         let _ = match (approve, kind) {
                             (true, ProposalKind::Edit) => {
                                 cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
@@ -1298,7 +1320,9 @@ impl App {
 
     fn dispatch_context_search(&mut self, query: &str) {
         let query = query.trim();
-        let Some(cb) = self.context_browser.as_mut() else { return };
+        let Some(cb) = self.context_browser.as_mut() else {
+            return;
+        };
         cb.query_id = cb.query_id.saturating_add(1);
         let query_id = cb.query_id;
         cb.last_sent_query = query.to_string();

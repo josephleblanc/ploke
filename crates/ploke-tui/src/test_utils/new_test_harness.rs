@@ -163,6 +163,7 @@ impl AppHarness {
             cmd_tx.clone(),
             &event_bus,
             default_model(),
+            crate::user_config::AnimationConfig::default(),
         );
         let app_task = tokio::spawn(async move {
             let _ = app

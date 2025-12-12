@@ -99,6 +99,7 @@ impl ConversationView {
         conversation_width: u16,
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
+        animation_state: &crate::app::animation::AnimationState,
     ) where
         I: IntoIterator<Item = &'a T>,
     {
@@ -110,6 +111,7 @@ impl ConversationView {
             self.offset_y,
             &self.item_heights,
             selected_index_opt,
+            animation_state,
         );
     }
 

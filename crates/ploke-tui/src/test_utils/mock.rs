@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
-use crate::user_config::CommandStyle;
+use crate::user_config::{AnimationConfig, CommandStyle};
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagService, TokenBudget};
@@ -56,6 +56,7 @@ pub fn create_mock_app() -> App {
         cmd_tx,
         &event_bus,
         active_model_id,
+        AnimationConfig::default(),
     )
 }
 

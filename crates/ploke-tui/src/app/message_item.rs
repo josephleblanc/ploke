@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use super::*;
+use crate::app::animation::{AnimationState, AnimationUtils};
 use crate::app::types::RenderMsg;
 use crate::chat_history::MessageKind;
 // In app.rs, replace the List rendering with custom Paragraph-based rendering
@@ -83,6 +84,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
     offset_y: u16,
     heights: &[u16],
     selected_index: Option<usize>,
+    animation_state: &AnimationState,
 ) where
     I: IntoIterator<Item = &'a T>,
 {
@@ -116,7 +118,34 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
 
         // Use the same effective width as in height calc: always reserve 1-column gutter.
         let eff_w = conversation_width.saturating_sub(1);
-        let wrapped = textwrap::wrap(msg.content(), eff_w as usize);
+
+        // Apply animation effects if the message has an active animation
+        let content = if animation_state.has_animation(&msg.id()) {
+            let progress = animation_state.get_progress(&msg.id()).unwrap_or(1.0);
+            let animation_type = animation_state.get_animation_type(&msg.id()).unwrap();
+
+            match animation_type {
+                animation::AnimationType::FadeIn { .. } => {
+                    AnimationUtils::apply_fade_effect(msg.content(), progress)
+                }
+                animation::AnimationType::Typewriter { .. } => {
+                    AnimationUtils::apply_typewriter_effect(msg.content(), progress)
+                }
+                animation::AnimationType::SlideIn { direction, .. } => {
+                    AnimationUtils::apply_slide_effect(msg.content(), progress, *direction)
+                }
+                animation::AnimationType::Pulse { .. } => {
+                    AnimationUtils::apply_pulse_effect(msg.content(), progress, 0.5)
+                }
+                animation::AnimationType::Highlight { .. } => {
+                    AnimationUtils::apply_highlight_effect(msg.content(), progress, "yellow")
+                }
+            }
+        } else {
+            msg.content().to_string()
+        };
+
+        let wrapped = textwrap::wrap(&content, eff_w as usize);
         let bar = Span::styled("│", base_style.fg(Color::White));
 
         // If offset lands inside this message, skip top lines so we don’t waste space
@@ -129,8 +158,29 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
             if is_selected {
                 spans.push(bar.clone());
             }
-            spans.push(Span::raw(line.as_ref()));
-            let para = Paragraph::new(Line::from(spans)).style(base_style);
+
+            // Apply animation-specific styling
+            let mut line_style = base_style;
+            if animation_state.has_animation(&msg.id()) {
+                let progress = animation_state.get_progress(&msg.id()).unwrap_or(1.0);
+                let animation_type = animation_state.get_animation_type(&msg.id()).unwrap();
+
+                match animation_type {
+                    animation::AnimationType::Pulse { intensity, .. } => {
+                        // Add pulse effect by modulating the style
+                        let pulse_strength = (1.0 + intensity * (progress * 2.0 - 1.0)).max(0.5);
+                        line_style = line_style.add_modifier(Modifier::BOLD);
+                    }
+                    animation::AnimationType::Highlight { color, .. } => {
+                        // Add highlight effect
+                        line_style = line_style.fg(Color::Yellow);
+                    }
+                    _ => {}
+                }
+            }
+
+            spans.push(Span::styled(line.as_ref(), line_style));
+            let para = Paragraph::new(Line::from(spans));
 
             let area = Rect::new(
                 conversation_area.x + 1,

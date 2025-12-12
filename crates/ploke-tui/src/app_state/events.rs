@@ -1,11 +1,16 @@
 use uuid::Uuid;
 
+use crate::chat_history::MessageKind;
+
 #[derive(Debug, Clone, Copy)]
-pub struct MessageUpdatedEvent(pub Uuid);
+pub struct MessageUpdatedEvent {
+    pub message_id: Uuid,
+    pub kind: MessageKind,
+}
 
 impl MessageUpdatedEvent {
-    pub fn new(message_id: Uuid) -> Self {
-        Self(message_id)
+    pub fn new(message_id: Uuid, kind: MessageKind) -> Self {
+        Self { message_id, kind }
     }
 }
 
