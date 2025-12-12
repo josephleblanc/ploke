@@ -1,5 +1,6 @@
 • To extend the fixtures and keep test coverage on par with the existing uuid_phase2_partial_graphs
-  suite, follow this pattern (the enum file is a good template):
+  suite, follow this pattern (the [enum test file](ploke/crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/enums.rs) is a good template):
+
 
   1. Track coverage in the module‑level docstring
       - Each nodes/<kind>.rs file begins with a Markdown doc comment that lists the fixture files it

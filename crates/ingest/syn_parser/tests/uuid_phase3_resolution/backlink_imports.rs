@@ -7,8 +7,9 @@
 //! * **Goal:** Verify that every supported import kind (structs, unit structs, consts, statics,
 //!   unions, macros, module re-exports, etc.) emits a `TreeRelation` from the defining node to the
 //!   `ImportNode` in `crate::imports`.
-//! * **Live Gate:** These tests intentionally fail until the ModuleTree establishes the
-//!   definition→import relation. They should be enabled once the relation exists.
+//! * **Live Gate:** These tests enforce that the ModuleTree establishes the
+//!   definition→import relation for every supported import. They should be kept up-to-date
+//!   with fixture additions so regressions surface immediately.
 //!
 //! ## Structure & Rationale
 //!
@@ -26,6 +27,7 @@ use ploke_core::ItemKind;
 use syn_parser::parser::nodes::AnyNodeId;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::parser::ParsedCodeGraph;
+use syn_parser::parser::graph::GraphAccess;
 
 use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_by_path_name_kind_checked;
@@ -59,10 +61,8 @@ fn expect_backlink_for_item(
     });
 
     let imports_module = graph
-        .modules()
-        .iter()
-        .find(|m| m.path == IMPORTS_MODULE_PATH)
-        .unwrap_or_else(|| panic!("imports module {:?} not found", IMPORTS_MODULE_PATH));
+        .find_module_by_path_checked(&module_path_vec(IMPORTS_MODULE_PATH))
+        .expect("imports module path should exist in fixture");
 
     let import_any_id = imports_module
         .imports
@@ -92,7 +92,6 @@ fn expect_backlink_for_item(
 macro_rules! backlink_case {
     ($name:ident, $path:expr, $item:expr, $kind:expr, $import:expr) => {
         #[test]
-        #[ignore = "Backlink relation not yet implemented"]
         fn $name() {
             expect_backlink_for_item($path, $item, $kind, $import);
         }
@@ -149,8 +148,12 @@ backlink_case!(
 
 backlink_case!(
     module_traits_alias_backlinks,
-    &["crate", "traits"],
+    &["crate"],
     "traits",
     ItemKind::Module,
     "TraitsMod"
 );
+
+fn module_path_vec(path: &[&str]) -> Vec<String> {
+    path.iter().map(|seg| (*seg).to_string()).collect()
+}

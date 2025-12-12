@@ -2,6 +2,8 @@ pub mod mod_tree_construction;
 
 pub mod canon_resolver;
 
+pub mod backlink_imports;
+
 pub mod path_attribute;
 
 #[cfg(not(feature = "type_bearing_ids"))]

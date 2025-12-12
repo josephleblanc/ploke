@@ -676,17 +676,26 @@ pub(super) fn resolve_path_relative_to(
     let mut current_module_id = base_module_id;
     let mut remaining_segments = path_segments;
 
-    // 1. Handle `tree::` prefix
-    if remaining_segments[0] == "tree" {
+    // 1. Handle leading `self::` or repeated instances.
+    while !remaining_segments.is_empty() && remaining_segments[0] == "self" {
+        remaining_segments = &remaining_segments[1..];
+        if remaining_segments.is_empty() {
+            // Path was exactly `self`
+            return Ok(current_module_id.as_any());
+        }
+    }
+
+    // 2. Handle `tree::` prefix
+    if !remaining_segments.is_empty() && remaining_segments[0] == "tree" {
         remaining_segments = &remaining_segments[1..];
         if remaining_segments.is_empty() {
             // Path was just "tree", refers to the module ittree
             return Ok(current_module_id.as_any()); // Changed: Return AnyNodeId
         }
     }
-    // 2. Handle `super::` prefix (potentially multiple times)
+    // 3. Handle `super::` prefix (potentially multiple times)
     else {
-        while remaining_segments[0] == "super" {
+        while !remaining_segments.is_empty() && remaining_segments[0] == "super" {
             let node_path = NodePath::try_from(path_segments.to_vec())?;
             current_module_id = tree.get_parent_module_id(current_module_id).ok_or({
                 ModuleTreeError::UnresolvedReExportTarget {
@@ -702,7 +711,7 @@ pub(super) fn resolve_path_relative_to(
         }
     }
 
-    // 3. Iterative Resolution through remaining segments
+    // 4. Iterative Resolution through remaining segments
     let mut resolved_any_id: Option<AnyNodeId> = None; // Changed: Store AnyNodeId
 
     for (i, segment) in remaining_segments.iter().enumerate() {
@@ -719,7 +728,12 @@ pub(super) fn resolve_path_relative_to(
             None => current_module_id, // Start in the initial/adjusted module
         };
 
-        // 4. Find items named `segment` directly contained within `search_in_module_id` using AnyNodeId
+        // 5. Find items named `segment` directly contained within `search_in_module_id` using AnyNodeId
+        if segment == "self" {
+            resolved_any_id = Some(search_in_module_id.as_any());
+            continue;
+        }
+
         let contains_relations = tree
             .get_iter_relations_from(&search_in_module_id.as_any()) // Use AnyNodeId
             .map(|iter| iter.collect::<Vec<_>>()) // Collect for logging/multiple checks

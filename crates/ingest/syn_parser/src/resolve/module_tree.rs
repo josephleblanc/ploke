@@ -988,72 +988,105 @@ impl ModuleTree {
     ) -> Result<(), ModuleTreeError> {
         log::debug!(
             target: LOG_TARGET_MOD_TREE_BUILD,
-            "link_definition_imports: pending imports {}",
-            self.pending_imports.len()
+            "link_definition_imports: pending imports {} (reexports tracked: {})",
+            self.pending_imports.len(),
+            self.pending_exports
+                .as_ref()
+                .map(|exports| exports.len())
+                .unwrap_or(0)
         );
-        // Iterate over a cloned list to avoid borrowing self while inserting relations.
-        for pending in self.pending_imports.clone() {
-            let import_node = pending.import_node();
-            let source_mod_id = pending.containing_mod_id();
-            let path_segments = import_node.source_path();
+        let pending_private_imports = self.pending_imports.clone();
+        let pending_public_imports = self
+            .pending_exports
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
 
-            if path_segments.is_empty() {
-                continue;
-            }
+        for pending in pending_private_imports {
+            self.try_link_single_import(
+                pending.containing_mod_id(),
+                pending.import_node(),
+                graph,
+            );
+        }
 
-            let (base_module_id, segments_to_resolve) = if path_segments[0] == "crate" {
-                (self.root(), &path_segments[1..])
-            } else {
-                (source_mod_id, path_segments)
-            };
-
-            // Skip external dependency imports; they will be handled when dependency graphs are available.
-            if base_module_id == self.root() && !segments_to_resolve.is_empty() {
-                let first_seg = &segments_to_resolve[0];
-                if graph.iter_dependency_names().any(|dep_name| dep_name == first_seg)
-                    || first_seg == "std"
-                    || first_seg == "core"
-                    || first_seg == "alloc"
-                {
-                    continue;
-                }
-            }
-
-            let target_any_id =
-                match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        log::debug!(
-                            target: LOG_TARGET_MOD_TREE_BUILD,
-                            "link_definition_imports: skip unresolved import {:?} in module {:?}: {}",
-                            path_segments,
-                            source_mod_id,
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-            let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) else {
-                // Non-primary targets (e.g., fields) are not linked via ImportedBy
-                continue;
-            };
-
-            let relation = SyntacticRelation::ImportedBy {
-                source: target_primary_id,
-                target: import_node.id,
-            };
-            self.add_rel(relation.into());
-            log::debug!(
-                target: LOG_TARGET_MOD_TREE_BUILD,
-                "ImportedBy created: {:?} -> import {} ({})",
-                target_primary_id,
-                import_node.visible_name,
-                import_node.source_path.join("::")
+        for pending in pending_public_imports {
+            self.try_link_single_import(
+                pending.containing_mod_id(),
+                pending.export_node(),
+                graph,
             );
         }
 
         Ok(())
+    }
+
+    fn try_link_single_import(
+        &mut self,
+        source_mod_id: ModuleNodeId,
+        import_node: &ImportNode,
+        graph: &ParsedCodeGraph,
+    ) {
+        let path_segments = import_node.source_path();
+
+        if path_segments.is_empty() {
+            return;
+        }
+
+        let (base_module_id, segments_to_resolve) = if path_segments[0] == "crate" {
+            (self.root(), &path_segments[1..])
+        } else {
+            (source_mod_id, path_segments)
+        };
+
+        if segments_to_resolve.is_empty() {
+            return;
+        }
+
+        // Skip external dependency imports; they will be handled when dependency graphs are available.
+        if base_module_id == self.root() {
+            let first_seg = &segments_to_resolve[0];
+            if graph.iter_dependency_names().any(|dep_name| dep_name == first_seg)
+                || first_seg == "std"
+                || first_seg == "core"
+                || first_seg == "alloc"
+            {
+                return;
+            }
+        }
+
+        let target_any_id =
+            match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::debug!(
+                        target: LOG_TARGET_MOD_TREE_BUILD,
+                        "link_definition_imports: skip unresolved import {:?} in module {:?}: {}",
+                        path_segments,
+                        source_mod_id,
+                        e
+                    );
+                    return;
+                }
+            };
+
+        let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) else {
+            // Non-primary targets (e.g., fields) are not linked via ImportedBy
+            return;
+        };
+
+        let relation = SyntacticRelation::ImportedBy {
+            source: target_primary_id,
+            target: import_node.id,
+        };
+        self.add_rel(relation.into());
+        log::debug!(
+            target: LOG_TARGET_MOD_TREE_BUILD,
+            "ImportedBy created: {:?} -> import {} ({})",
+            target_primary_id,
+            import_node.visible_name,
+            import_node.source_path.join("::")
+        );
     }
 
     #[allow(dead_code)]
