@@ -6,6 +6,8 @@ pub mod backlink_imports;
 
 pub mod path_attribute;
 
+pub mod prune_unlinked_imports;
+
 #[cfg(not(feature = "type_bearing_ids"))]
 pub mod shortest_path;
 

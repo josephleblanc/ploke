@@ -1995,13 +1995,40 @@ impl ModuleTree {
                 .push(index);
         }
 
+        // --- Step 6: Drop pending (re-)exports belonging to pruned modules ---
+        if !initial_prunable_module_ids.is_empty() {
+            let pending_imports_before = self.pending_imports.len();
+            self.pending_imports.retain(|pending| {
+                !initial_prunable_module_ids.contains(&pending.containing_mod_id())
+            });
+            let pending_imports_after = self.pending_imports.len();
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned pending_imports: {} -> {} (removed {})",
+                pending_imports_before,
+                pending_imports_after,
+                pending_imports_before - pending_imports_after
+            );
+
+            if let Some(exports) = self.pending_exports.as_mut() {
+                let pending_exports_before = exports.len();
+                exports.retain(|pending| {
+                    !initial_prunable_module_ids.contains(&pending.containing_mod_id())
+                });
+                let pending_exports_after = exports.len();
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned pending_exports: {} -> {} (removed {})",
+                    pending_exports_before,
+                    pending_exports_after,
+                    pending_exports_before - pending_exports_after
+                );
+            }
+        }
+
         all_prunable_item_ids.retain(|item| {
             !initial_prunable_module_ids
                 .iter()
                 .map(|m| m.as_any())
                 .any(|m| m == *item)
         });
-        // --- Step 6: Prepare return data ---
+        // --- Step 7: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
             pruned_item_ids: all_prunable_item_ids, // Return all items that were pruned as a result (as AnyNodeId)
