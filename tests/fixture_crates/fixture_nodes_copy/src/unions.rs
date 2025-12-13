@@ -1,7 +1,7 @@
 // Basic public union
 pub union IntOrFloat {
-    i: i32,
-    f: f32,
+    pub i: i32,
+    pub f: f32,
 }
 
 // Private union (inherited visibility)

@@ -27,3 +27,6 @@ pub struct AttributedStruct {
 pub struct DocumentedStruct {
     pub field: String,
 }
+
+/// Struct used for cfg-gated import coverage.
+pub struct CfgOnlyStruct;

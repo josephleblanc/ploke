@@ -106,3 +106,6 @@ macro_rules! attributed_macro {
 //     inner_macros::inner_exported_macro!();
 //     inner_macros::inner_local_macro!();
 // }
+
+// Re-export the documented macro through this module so `use crate::macros::documented_macro;` remains valid.
+pub use crate::documented_macro;
