@@ -35,8 +35,6 @@ pub use crate::traits as TraitsMod;
 
 // --- Restricted visibility + cfg-gated imports ---
 pub(crate) use crate::structs::SampleStruct as CrateVisibleStruct;
-pub(in crate::structs) use crate::traits::SimpleTrait as RestrictedTraitAlias;
-
 #[cfg(feature = "fixture_nodes_cfg")]
 use crate::structs::CfgOnlyStruct as CfgStructAlias;
 
@@ -88,6 +86,10 @@ pub mod sub_imports {
 
     pub mod nested_sub {
         pub struct NestedItem;
+    }
+
+    pub mod restricted_scope {
+        pub(in crate::imports::sub_imports::restricted_scope) use crate::traits::SimpleTrait as RestrictedTraitAlias;
     }
 }
 
@@ -166,11 +168,9 @@ pub fn use_imported_items() {
         TOP_LEVEL_COUNTER += 1;
         let _counter = TOP_LEVEL_COUNTER;
 
-        inner_mod::INNER_MUT_STATIC = !inner_mod::INNER_MUT_STATIC;
-        let _inner_mut = inner_mod::INNER_MUT_STATIC;
         let mut union_val = IntOrFloat { i: 5 };
         union_val.f = 2.5;
         let _union_bits = union_val.i;
-        let _ = (_counter, _inner_mut, _union_bits);
+        let _ = (_counter, _union_bits);
     }
 }

@@ -201,13 +201,15 @@ lazy_static! {
             kind: ImportKind::UseStatement(VisibilityKind::Crate),
             cfgs: vec![],
         });
-        m.insert("crate::imports::RestrictedTraitAlias", ExpectedImportNode {
+        m.insert("crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias", ExpectedImportNode {
             source_path: &["crate", "traits", "SimpleTrait"],
             visible_name: "RestrictedTraitAlias",
             original_name: Some("SimpleTrait"),
             is_glob: false,
             is_self_import: false,
-            kind: ImportKind::UseStatement(VisibilityKind::Restricted(vec!["crate".into(), "structs".into()])),
+            kind: ImportKind::UseStatement(VisibilityKind::Restricted(
+                vec!["crate".into(), "imports".into(), "sub_imports".into(), "restricted_scope".into()],
+            )),
             cfgs: vec![],
         });
         m.insert("crate::imports::CfgStructAlias", ExpectedImportNode {
@@ -580,12 +582,12 @@ lazy_static! {
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
         });
-        m.insert("crate::imports::RestrictedTraitAlias", ParanoidArgs {
+        m.insert("crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
             ident: "RestrictedTraitAlias",
             expected_cfg: None,
-            expected_path: &["crate", "imports"],
+            expected_path: &["crate", "imports", "sub_imports", "restricted_scope"],
             item_kind: ItemKind::Import,
         });
         m.insert("crate::imports::CfgStructAlias", ParanoidArgs {
@@ -954,7 +956,7 @@ paranoid_test_fields_and_values!(
 
 paranoid_test_fields_and_values!(
     node_RestrictedTraitAlias,
-    "crate::imports::RestrictedTraitAlias",
+    "crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias",
     EXPECTED_IMPORTS_ARGS,
     EXPECTED_IMPORTS_DATA,
     syn_parser::parser::nodes::ImportNode,

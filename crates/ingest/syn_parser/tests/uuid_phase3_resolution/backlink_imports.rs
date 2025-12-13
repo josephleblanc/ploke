@@ -34,7 +34,7 @@ use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_by_path_name_kind_checked;
 
 const FIXTURE_NAME: &str = "fixture_nodes";
-const IMPORTS_MODULE_PATH: &[&str] = &["crate", "imports"];
+const DEFAULT_IMPORTS_MODULE_PATH: &[&str] = &["crate", "imports"];
 
 lazy_static! {
     static ref BACKLINK_FIXTURE: (ParsedCodeGraph, ModuleTree) = build_tree_for_tests(FIXTURE_NAME);
@@ -44,6 +44,7 @@ fn expect_backlink_for_item(
     definition_module_path: &[&str],
     definition_name: &str,
     definition_kind: ItemKind,
+    import_module_path: &[&str],
     import_visible_name: &str,
 ) {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -63,7 +64,7 @@ fn expect_backlink_for_item(
     });
 
     let imports_module = graph
-        .find_module_by_path_checked(&module_path_vec(IMPORTS_MODULE_PATH))
+        .find_module_by_path_checked(&module_path_vec(import_module_path))
         .expect("imports module path should exist in fixture");
 
     let import = imports_module
@@ -73,7 +74,7 @@ fn expect_backlink_for_item(
         .unwrap_or_else(|| {
             panic!(
                 "Import `{}` not found in module {:?}",
-                import_visible_name, IMPORTS_MODULE_PATH
+                import_visible_name, import_module_path
             )
         });
 
@@ -96,7 +97,22 @@ macro_rules! backlink_case {
     ($name:ident, $path:expr, $item:expr, $kind:expr, $import:expr) => {
         #[test]
         fn $name() {
-            expect_backlink_for_item($path, $item, $kind, $import);
+            expect_backlink_for_item(
+                $path,
+                $item,
+                $kind,
+                DEFAULT_IMPORTS_MODULE_PATH,
+                $import,
+            );
+        }
+    };
+}
+
+macro_rules! backlink_case_in_module {
+    ($name:ident, $path:expr, $item:expr, $kind:expr, $import_module:expr, $import:expr) => {
+        #[test]
+        fn $name() {
+            expect_backlink_for_item($path, $item, $kind, $import_module, $import);
         }
     };
 }
@@ -197,11 +213,12 @@ backlink_case!(
     "SimpleTrait"
 );
 
-backlink_case!(
+backlink_case_in_module!(
     trait_simple_trait_restricted_alias_backlinks,
     &["crate", "traits"],
     "SimpleTrait",
     ItemKind::Trait,
+    &["crate", "imports", "sub_imports", "restricted_scope"],
     "RestrictedTraitAlias"
 );
 

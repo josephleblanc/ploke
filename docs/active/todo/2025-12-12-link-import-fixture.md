@@ -38,7 +38,7 @@ The following checklist tracks which Rust item kinds and import syntaxes already
 - [x] `pub use` rename chains – `tests/fixture_crates/fixture_spp_edge_cases/src/lib.rs:211-283`.
 - [x] `pub use` with `self`/`super` – `tests/fixture_crates/fixture_spp_edge_cases/src/lib.rs:194-199`.
 - [x] `#[cfg]`-gated `use`/`pub use` – `tests/fixture_crates/fixture_path_resolution/src/lib.rs:82-95` (feature_a/feature_b gating) and `tests/fixture_crates/fixture_nodes/src/imports.rs` (`CfgStructAlias` / `CfgTraitAlias`).
-- [x] Restricted visibility (`pub(crate)`, `pub(in path)`) – `tests/fixture_crates/fixture_nodes/src/imports.rs` adds `CrateVisibleStruct` and `RestrictedTraitAlias`.
+- [x] Restricted visibility (`pub(crate)`, `pub(in path)`) – `tests/fixture_crates/fixture_nodes/src/imports.rs` adds `CrateVisibleStruct` and `RestrictedTraitAlias` (now defined inside `crate::imports::sub_imports::restricted_scope` to demonstrate scoped ancestors).
 - [x] Multi-hop re-export chain inside a single module – `tests/fixture_crates/fixture_nodes/src/imports.rs` (`trait_chain` ⇒ `trait_chain_stage` ⇒ `crate::traits::SimpleTrait`).
 - [x] Importing a const/static/union/macro via any syntax – covered in `tests/fixture_crates/fixture_nodes/src/imports.rs:17-21`.
 - [x] Importing an enum variant specifically – `tests/fixture_crates/fixture_nodes/src/imports.rs:17`.

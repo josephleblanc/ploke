@@ -194,7 +194,11 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
         .iter()
         .find(|i| i.name.as_deref() == Some(&parsed_field_name_i))
         .expect("Field 'i' not found");
-    assert_eq!(field_i.visibility, VisibilityKind::Inherited); // Fields inherit union visibility by default
+    assert_eq!(
+        field_i.visibility,
+        VisibilityKind::Public,
+        "Union fixture now exposes fields publicly for import coverage"
+    );
     assert!(field_i.attributes.is_empty());
     let type_i = find_type_node(graph, field_i.type_id);
     assert!(matches!(&type_i.kind, TypeKind::Named { path, .. } if path == &["i32"]));
@@ -207,7 +211,7 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
         .iter()
         .find(|f| f.name.as_deref() == Some(&parsed_field_name_f))
         .expect("Field 'f' not found");
-    assert_eq!(field_f.visibility, VisibilityKind::Inherited);
+    assert_eq!(field_f.visibility, VisibilityKind::Public);
     assert!(field_f.attributes.is_empty());
     let type_f = find_type_node(graph, field_f.type_id);
     assert!(matches!(&type_f.kind, TypeKind::Named { path, .. } if path == &["f32"]));

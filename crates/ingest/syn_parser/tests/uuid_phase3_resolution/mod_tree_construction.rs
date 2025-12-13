@@ -300,6 +300,28 @@ fn get_child_mod_decl(
     top_pub_mod_decl_node
 }
 
+fn module_path_vec(path: &[&str]) -> Vec<String> {
+    path.iter().map(|seg| (*seg).to_string()).collect()
+}
+
+fn find_module_id_by_path(
+    graph: &ParsedCodeGraph,
+    tree: &ModuleTree,
+    path: &[&str],
+) -> ModuleNodeId {
+    let path_vec = module_path_vec(path);
+    let module = graph
+        .find_module_by_path_checked(&path_vec)
+        .expect("module path should exist in parsed graph");
+    let module_id = module.id;
+    assert!(
+        tree.modules().contains_key(&module_id),
+        "module tree should also contain module {:?}",
+        path_vec
+    );
+    module_id
+}
+
 /// **Covers:** Correct separation of `ImportNode`s into the `pending_imports` and
 /// `pending_exports` lists based on their visibility (`use` vs `pub use`). It checks
 /// that various forms of private/inherited `use` statements (simple, renamed, grouped,
@@ -310,8 +332,7 @@ fn get_child_mod_decl(
 fn test_module_tree_import_export_segregation() {
     // Use the fixture_nodes crate, specifically focusing on imports.rs
     let fixture_name = "fixture_nodes";
-    let graph_and_tree = build_tree_for_tests(fixture_name);
-    let tree = graph_and_tree.1;
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Collect paths from pending imports and exports
     let import_paths: HashSet<String> = tree
@@ -341,9 +362,11 @@ fn test_module_tree_import_export_segregation() {
         })
         .collect();
 
+    let imports_module_id = find_module_id_by_path(&graph, &tree, &["crate", "imports"]);
     let export_paths: HashSet<String> = tree
         .pending_exports()
         .iter()
+        .filter(|export| export.containing_mod_id() == imports_module_id)
         .map(|p| p.export_node().source_path.join("::"))
         .collect();
 
@@ -408,18 +431,27 @@ fn test_module_tree_import_export_segregation() {
     );
 
     // --- Assertions for Re-Exports ---
-    // The imports.rs fixture contains one `pub use` statement: `pub use crate::traits as TraitsMod;`
-    assert!(
-        export_paths.contains("crate::traits"),
-        "Expected pending exports from imports.rs to contain 'crate::traits', found: {:?}",
-        export_paths
-    );
+    // `imports.rs` currently exposes three variants: public alias (`TraitsMod`), crate-visible alias
+    // (`CrateVisibleStruct`), and the scoped alias we use for `RestrictedTraitAlias`.
+    let expected_export_paths: HashSet<&str> = HashSet::from([
+        "crate::traits",
+        "crate::structs::SampleStruct",
+        "crate::traits::SimpleTrait",
+    ]);
     assert_eq!(
         export_paths.len(),
-        1,
-        "Expected exactly one pending export from imports.rs, found: {:?}",
+        expected_export_paths.len(),
+        "Expected {:?} pending exports from imports.rs, found: {:?}",
+        expected_export_paths,
         export_paths
     );
+    for expected in expected_export_paths {
+        assert!(
+            export_paths.contains(expected),
+            "Missing expected export `{expected}`; exports: {:?}",
+            export_paths
+        );
+    }
 
     // --- Assertions for Extern Crates (Check if they appear as pending imports) ---
     // The current ModuleTree::add_module logic likely treats extern crates like private imports
@@ -444,26 +476,30 @@ fn test_module_tree_import_export_segregation() {
 #[test]
 fn test_module_tree_imports_fixture_nodes() {
     let fixture_name = "fixture_nodes";
-    let graph_and_tree = build_tree_for_tests(fixture_name);
-    let tree = graph_and_tree.1; // We only need the tree for this test
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // --- Check Pending Exports ---
     // The fixture_nodes/imports.rs contains one `pub use` statement: `pub use crate::traits as TraitsMod;`
+    let imports_module_id = find_module_id_by_path(&graph, &tree, &["crate", "imports"]);
     let export_paths: Vec<String> = tree
         .pending_exports()
         .iter()
+        .filter(|export| export.containing_mod_id() == imports_module_id)
         .map(|p| p.export_node().source_path.join("::"))
         .collect();
-    assert!(
-        export_paths.contains(&"crate::traits".to_string()),
-        "Expected pending exports from fixture_nodes/imports.rs to contain 'crate::traits', found: {:?}",
-        export_paths
-    );
+    let export_path_set: HashSet<String> = export_paths.into_iter().collect();
+    let expected_export_paths: HashSet<String> = [
+        "crate::traits",
+        "crate::structs::SampleStruct",
+        "crate::traits::SimpleTrait",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     assert_eq!(
-        export_paths.len(),
-        1,
-        "Expected exactly one pending export from fixture_nodes/imports.rs, found: {:?}",
-        export_paths
+        export_path_set, expected_export_paths,
+        "Expected pending exports from fixture_nodes/imports.rs to be {:?}",
+        expected_export_paths
     );
 
     // --- Check Pending Imports ---
@@ -488,6 +524,7 @@ fn test_module_tree_imports_fixture_nodes() {
         ("std::fmt".to_string(), false, false),
         ("std::sync::Arc".to_string(), false, false),
         ("crate::structs::SampleStruct".to_string(), false, false), // Renamed
+        ("crate::structs::CfgOnlyStruct".to_string(), false, false), // CFG-gated alias
         ("std::io::Result".to_string(), false, false),              // Renamed
         ("crate::enums::EnumWithData".to_string(), false, false),   // Grouped
         ("crate::enums::SampleEnum1".to_string(), false, false),    // Grouped
@@ -498,6 +535,7 @@ fn test_module_tree_imports_fixture_nodes() {
         ("std::path::Path".to_string(), false, false),              // Grouped
         ("std::path::PathBuf".to_string(), false, false),           // Grouped
         ("std::env".to_string(), true, false), // Glob import (path is to the module)
+        ("crate::traits".to_string(), true, false), // Local glob import (`use crate::traits::*;`)
         ("self::sub_imports::SubItem".to_string(), false, false), // Relative self
         ("super::structs::AttributedStruct".to_string(), false, false), // Relative super
         ("crate::type_alias::SimpleId".to_string(), false, false), // Relative crate
