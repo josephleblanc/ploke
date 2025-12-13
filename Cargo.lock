@@ -3782,6 +3782,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-llm"
+version = "0.1.0"
+
+[[package]]
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [

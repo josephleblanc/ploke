@@ -41,7 +41,7 @@ members = [
     "crates/ploke-io",
     "crates/ploke-ty-mcp",
     "xtask",
-    "tests/fixture_crates/fixture_impls",
+    "tests/fixture_crates/fixture_impls", "crates/ploke-llm",
     # Add more modules as needed
 ]
 
