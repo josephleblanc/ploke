@@ -620,12 +620,7 @@ impl App {
             let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
 
             let free_width = body_area.width.saturating_sub(43) as usize;
-            let trunc_search_string: String = cb
-                .input
-                .as_str()
-                .chars()
-                .take(free_width)
-                .collect();
+            let trunc_search_string: String = cb.input.as_str().chars().take(free_width).collect();
 
             // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
             // on for better functionality later
@@ -796,9 +791,7 @@ impl App {
                 tokio::spawn(async move {
                     // Build unified item list asynchronously to avoid blocking UI thread
                     let items = filtered_items(&state, filter);
-                    if let Some(ApprovalListItem { kind, id, .. }) =
-                        items.get(sel_index).cloned()
-                    {
+                    if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
                         let _ = match (approve, kind) {
                             (true, ProposalKind::Edit) => {
                                 cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
@@ -1298,7 +1291,9 @@ impl App {
 
     fn dispatch_context_search(&mut self, query: &str) {
         let query = query.trim();
-        let Some(cb) = self.context_browser.as_mut() else { return };
+        let Some(cb) = self.context_browser.as_mut() else {
+            return;
+        };
         cb.query_id = cb.query_id.saturating_add(1);
         let query_id = cb.query_id;
         cb.last_sent_query = query.to_string();

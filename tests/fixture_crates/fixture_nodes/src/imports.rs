@@ -33,6 +33,28 @@ use std::{
 // --- Module aliasing via re-export ---
 pub use crate::traits as TraitsMod;
 
+// --- Restricted visibility + cfg-gated imports ---
+pub(crate) use crate::structs::SampleStruct as CrateVisibleStruct;
+pub(in crate::structs) use crate::traits::SimpleTrait as RestrictedTraitAlias;
+
+#[cfg(feature = "fixture_nodes_cfg")]
+use crate::structs::CfgOnlyStruct as CfgStructAlias;
+
+#[cfg(feature = "fixture_nodes_cfg")]
+pub use crate::traits::SimpleTrait as CfgTraitAlias;
+
+// --- Local glob import ---
+use crate::traits::*; // Exercise crate-scoped glob imports
+
+// --- Multi-hop re-export chain ---
+pub mod trait_chain {
+    pub use super::trait_chain_stage::StageOneTraitAlias as ChainPublicTraitAlias;
+}
+
+pub mod trait_chain_stage {
+    pub use crate::traits::SimpleTrait as StageOneTraitAlias;
+}
+
 // --- Glob Imports ---
 use std::env::*; // Glob import
 
@@ -77,6 +99,9 @@ pub fn use_imported_items() {
     let _local_struct = MySimpleStruct {
         field: "example".to_string(),
     };
+    let _crate_vis_struct = CrateVisibleStruct {
+        field: "alias-visible".to_string(),
+    };
     let _unit_struct = UnitStruct;
     let _enum_variant = EnumVariant1;
     let _bool_flag = TOP_LEVEL_BOOL;
@@ -95,6 +120,14 @@ pub fn use_imported_items() {
     let _trait_user = DummyTraitUser;
     let alias_checker = |t: &dyn TraitsMod::SimpleTrait| t.required_method();
     let _alias_result = alias_checker(&_trait_user);
+    #[cfg(feature = "fixture_nodes_cfg")]
+    {
+        let _cfg_struct = CfgStructAlias;
+        let cfg_checker = |t: &dyn CfgTraitAlias| t.required_method();
+        let _cfg_alias_result = cfg_checker(&_trait_user);
+        let _ = _cfg_struct;
+        let _ = _cfg_alias_result;
+    }
     // MyGenTrait usage requires type annotation
     struct GenTraitImpl;
     impl<T> MyGenTrait<T> for GenTraitImpl {

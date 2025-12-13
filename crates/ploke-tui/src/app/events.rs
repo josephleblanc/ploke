@@ -42,8 +42,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 if query_id != ctx_browser.query_id {
                     trace!(
                         "Ignoring stale context search results: incoming={} current={}",
-                        query_id,
-                        ctx_browser.query_id
+                        query_id, ctx_browser.query_id
                     );
                     return;
                 }

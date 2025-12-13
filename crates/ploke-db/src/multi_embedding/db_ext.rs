@@ -1800,7 +1800,7 @@ mod tests {
         let count_common_nodes = common_nodes_result.rows.len();
 
         assert_eq!(
-            136, count_common_nodes,
+            139, count_common_nodes,
             r#"
 Should match the number of expected nodes (more means the syn_parser has likely become more
 sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
@@ -1980,7 +1980,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             "{}: {}",
             "count_pending_embeddings".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
         assert_eq!(
-            136, count_all_embeddable,
+            139, count_all_embeddable,
             "Expect all nodes present (flaky, add better count later)"
         );
 
@@ -1996,7 +1996,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         info!(target: "cozo-script",
             "{}: {}",
             "count_unembedded_nonfiles".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
-        assert_eq!(126, count_unembedded_nonfiles, "Expect all nodes present");
+        assert_eq!(129, count_unembedded_nonfiles, "Expect all nodes present");
 
         assert!(
             count_all_embeddable == (count_unembedded_nonfiles + count_unembedded_files),

@@ -323,7 +323,7 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
         .build()
         .unwrap();
     rt.block_on(async {
-        use ploke_tui::app::view::components::approvals::{filtered_items, ApprovalsFilter};
+        use ploke_tui::app::view::components::approvals::{ApprovalsFilter, filtered_items};
 
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
         let io_handle = ploke_io::IoManagerHandle::new();

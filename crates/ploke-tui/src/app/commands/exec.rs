@@ -683,12 +683,10 @@ pub(crate) fn open_context_search(app: &mut App, query_id: u64, search_term: &st
                 .await
             {
                 Ok(ctx_returned) => {
-                    emit_app_event(AppEvent::ContextSearch(
-                        crate::SearchEvent::SearchResults {
-                            query_id,
-                            context: ctx_returned,
-                        },
-                    ))
+                    emit_app_event(AppEvent::ContextSearch(crate::SearchEvent::SearchResults {
+                        query_id,
+                        context: ctx_returned,
+                    }))
                     .await;
                 }
                 Err(e) => {

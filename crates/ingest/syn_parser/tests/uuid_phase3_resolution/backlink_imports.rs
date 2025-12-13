@@ -22,12 +22,13 @@
 //! * Additional fixture imports should only require adding another `backlink_case!` entry plus
 //!   referencing the item in the fixture coverage doc.
 
+use env_logger;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
-use syn_parser::parser::nodes::AnyNodeId;
-use syn_parser::resolve::module_tree::ModuleTree;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::AnyNodeId;
+use syn_parser::parser::ParsedCodeGraph;
+use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_by_path_name_kind_checked;
@@ -45,6 +46,7 @@ fn expect_backlink_for_item(
     definition_kind: ItemKind,
     import_visible_name: &str,
 ) {
+    let _ = env_logger::builder().is_test(true).try_init();
     let (graph, tree) = &*BACKLINK_FIXTURE;
 
     let def_any_id = find_item_id_by_path_name_kind_checked(
@@ -64,17 +66,18 @@ fn expect_backlink_for_item(
         .find_module_by_path_checked(&module_path_vec(IMPORTS_MODULE_PATH))
         .expect("imports module path should exist in fixture");
 
-    let import_any_id = imports_module
+    let import = imports_module
         .imports
         .iter()
         .find(|imp| imp.visible_name == import_visible_name)
-        .map(|imp| AnyNodeId::from(imp.id))
         .unwrap_or_else(|| {
             panic!(
                 "Import `{}` not found in module {:?}",
                 import_visible_name, IMPORTS_MODULE_PATH
             )
         });
+
+    let import_any_id = AnyNodeId::from(import.id);
 
     let has_backlink = tree.tree_relations().iter().any(|tr| {
         let rel = tr.rel();
@@ -107,11 +110,27 @@ backlink_case!(
 );
 
 backlink_case!(
+    struct_sample_struct_crate_vis_backlinks,
+    &["crate", "structs"],
+    "SampleStruct",
+    ItemKind::Struct,
+    "CrateVisibleStruct"
+);
+
+backlink_case!(
     unit_struct_backlinks,
     &["crate", "structs"],
     "UnitStruct",
     ItemKind::Struct,
     "UnitStruct"
+);
+
+backlink_case!(
+    tuple_struct_backlinks,
+    &["crate", "structs"],
+    "TupleStruct",
+    ItemKind::Struct,
+    "TupleStruct"
 );
 
 backlink_case!(
@@ -152,6 +171,94 @@ backlink_case!(
     "traits",
     ItemKind::Module,
     "TraitsMod"
+);
+
+backlink_case!(
+    enum_sample_enum1_backlinks,
+    &["crate", "enums"],
+    "SampleEnum1",
+    ItemKind::Enum,
+    "SampleEnum1"
+);
+
+backlink_case!(
+    enum_enum_with_data_backlinks,
+    &["crate", "enums"],
+    "EnumWithData",
+    ItemKind::Enum,
+    "EnumWithData"
+);
+
+backlink_case!(
+    trait_simple_trait_backlinks,
+    &["crate", "traits"],
+    "SimpleTrait",
+    ItemKind::Trait,
+    "SimpleTrait"
+);
+
+backlink_case!(
+    trait_simple_trait_restricted_alias_backlinks,
+    &["crate", "traits"],
+    "SimpleTrait",
+    ItemKind::Trait,
+    "RestrictedTraitAlias"
+);
+
+backlink_case!(
+    trait_simple_trait_cfg_alias_backlinks,
+    &["crate", "traits"],
+    "SimpleTrait",
+    ItemKind::Trait,
+    "CfgTraitAlias"
+);
+
+backlink_case!(
+    trait_generic_trait_alias_backlinks,
+    &["crate", "traits"],
+    "GenericTrait",
+    ItemKind::Trait,
+    "MyGenTrait"
+);
+
+backlink_case!(
+    trait_glob_simple_trait_backlinks,
+    &["crate", "traits"],
+    "SimpleTrait",
+    ItemKind::Trait,
+    "crate::traits::*"
+);
+
+backlink_case!(
+    trait_glob_documented_trait_backlinks,
+    &["crate", "traits"],
+    "DocumentedTrait",
+    ItemKind::Trait,
+    "crate::traits::*"
+);
+
+backlink_case!(
+    trait_glob_crate_trait_backlinks,
+    &["crate", "traits"],
+    "CrateTrait",
+    ItemKind::Trait,
+    "crate::traits::*"
+);
+
+backlink_case!(
+    type_alias_simple_id_backlinks,
+    &["crate", "type_alias"],
+    "SimpleId",
+    ItemKind::TypeAlias,
+    "SimpleId"
+);
+
+backlink_case!(
+    cfg_struct_alias_backlinks,
+    &["crate", "structs"],
+    "CfgOnlyStruct",
+    ItemKind::Struct,
+    "CfgStructAlias"
 );
 
 fn module_path_vec(path: &[&str]) -> Vec<String> {

@@ -8,9 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
+use crate::app::view::components::context_browser::StepEnum;
 use crate::app_state::AppState as _;
 use crate::app_state::core::{DiffPreview, EditProposalStatus}; // trait bounds
-use crate::app::view::components::context_browser::StepEnum;
 
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalsState {
@@ -81,9 +81,17 @@ impl ApprovalsFilter {
     fn matches_status(self, status: &EditProposalStatus) -> bool {
         use ApprovalsFilter::*;
         match self {
-            PendingOrErrored => matches!(status, EditProposalStatus::Pending | EditProposalStatus::Failed(_) | EditProposalStatus::Stale(_)),
+            PendingOrErrored => matches!(
+                status,
+                EditProposalStatus::Pending
+                    | EditProposalStatus::Failed(_)
+                    | EditProposalStatus::Stale(_)
+            ),
             PendingOnly => matches!(status, EditProposalStatus::Pending),
-            ApprovedApplied => matches!(status, EditProposalStatus::Approved | EditProposalStatus::Applied),
+            ApprovedApplied => matches!(
+                status,
+                EditProposalStatus::Approved | EditProposalStatus::Applied
+            ),
             FailedOnly => matches!(status, EditProposalStatus::Failed(_)),
             StaleOnly => matches!(status, EditProposalStatus::Stale(_)),
             All => true,
@@ -118,10 +126,7 @@ impl StepEnum<6> for ApprovalsFilter {
     ];
 
     fn idx(self) -> usize {
-        Self::ORDER
-            .iter()
-            .position(|v| v == &self)
-            .unwrap_or(0)
+        Self::ORDER.iter().position(|v| v == &self).unwrap_or(0)
     }
 }
 
@@ -149,7 +154,9 @@ fn status_style(status: &EditProposalStatus) -> Style {
         EditProposalStatus::Pending => Style::new().fg(Color::Cyan),
         EditProposalStatus::Failed(_) => Style::new().fg(Color::Red),
         EditProposalStatus::Stale(_) => Style::new().fg(Color::Yellow),
-        EditProposalStatus::Approved | EditProposalStatus::Applied => Style::new().fg(Color::DarkGray),
+        EditProposalStatus::Approved | EditProposalStatus::Applied => {
+            Style::new().fg(Color::DarkGray)
+        }
         EditProposalStatus::Denied => Style::new().fg(Color::Gray),
     }
 }
@@ -271,9 +278,7 @@ pub fn render_approvals_overlay(
     frame.render_stateful_widget(list, cols[0], &mut list_state);
 
     // Details
-    let selected = items
-        .get(selected_idx)
-        .map(|item| (item.kind, item.id));
+    let selected = items.get(selected_idx).map(|item| (item.kind, item.id));
     let mut detail_lines: Vec<Line> = Vec::new();
     if let Some((sel_kind, sel_id)) = selected {
         // Use the established pattern for accessing async data from sync context
@@ -429,8 +434,8 @@ pub fn render_approvals_overlay(
             truncation_info,
             ui.filter.label()
         ))
-            .style(overlay_style)
-            .alignment(ratatui::layout::Alignment::Right);
+        .style(overlay_style)
+        .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(hint, footer_area);
     }
 

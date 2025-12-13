@@ -9,3 +9,7 @@ path = "src/lib.rs" # Add this
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] } # Add serde dependency
+
+[features]
+default = ["fixture_nodes_cfg"]
+fixture_nodes_cfg = []

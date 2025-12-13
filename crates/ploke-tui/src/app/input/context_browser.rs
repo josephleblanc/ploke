@@ -52,7 +52,10 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                 (KeyCode::Char('?'), _) => {
                     cb.help_visible = !cb.help_visible;
                 }
-                (KeyCode::Char('h')| KeyCode::Char('H') | KeyCode::Left | KeyCode::Backspace, key_modifier) => {
+                (
+                    KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left | KeyCode::Backspace,
+                    key_modifier,
+                ) => {
                     // Switch to collapsed item, repeated press doesn't toggle
                     let idx = cb.selected_index();
                     if let Some(item) = cb.items.get_mut(idx)
@@ -71,7 +74,10 @@ pub fn handle_context_browser_input(app: &mut App, key: KeyEvent) {
                         tracing::debug!(hit_h_show_preview = ?item.show_preview);
                     }
                 }
-                (KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right | KeyCode::Char(' '), key_modifier) => {
+                (
+                    KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right | KeyCode::Char(' '),
+                    key_modifier,
+                ) => {
                     let idx = cb.selected_index();
                     if let Some(item) = cb.items.get_mut(idx) {
                         // Switch to expanding item, repeated press doesn't toggle
