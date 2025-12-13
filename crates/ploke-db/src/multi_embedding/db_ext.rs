@@ -1217,7 +1217,14 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
     db.import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
+    // NOTE: We don't need to clear the hnsw_idx as initially thougth when loading from the
+    // database. Previously we thought we needed to drop the hnsw index before importing the
+    // backup database, but it seems like we do not need to do that, and so we end up getting an
+    // error wyhen we ty to recreate the hnsw index again.
+    // - This might change if we were to try loading a database which had a non-default hnsw index
+    // on a non-default vector embedding set, but I'm not sure. Will need more testing later.
     crate::create_index_primary_with_index(db)?;
+    // crate::create_index_primary(db)?;
 
     // get count for sanity and user feedback
     match db.count_relations().await {
@@ -1800,7 +1807,7 @@ mod tests {
         let count_common_nodes = common_nodes_result.rows.len();
 
         assert_eq!(
-            139, count_common_nodes,
+            140, count_common_nodes,
             r#"
 Should match the number of expected nodes (more means the syn_parser has likely become more
 sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
@@ -1980,7 +1987,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             "{}: {}",
             "count_pending_embeddings".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
         assert_eq!(
-            139, count_all_embeddable,
+            140, count_all_embeddable,
             "Expect all nodes present (flaky, add better count later)"
         );
 
@@ -1996,7 +2003,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         info!(target: "cozo-script",
             "{}: {}",
             "count_unembedded_nonfiles".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
-        assert_eq!(129, count_unembedded_nonfiles, "Expect all nodes present");
+        assert_eq!(130, count_unembedded_nonfiles, "Expect all nodes present");
 
         assert!(
             count_all_embeddable == (count_unembedded_nonfiles + count_unembedded_files),

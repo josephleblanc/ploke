@@ -1,4 +1,5 @@
 use ploke_core::embeddings::EmbeddingSet;
+use tracing::Level;
 
 use crate::{
     multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt, schema::EmbeddingSetExt},
@@ -41,9 +42,8 @@ pub struct IsEmbeddingInfo {
 }
 
 impl IsEmbeddingInfo {
-    pub fn tracing_print_all(&self, level: tracing::Level) {
-        use tracing::Level;
-        let msg = format!(
+    pub fn tracing_string_all(&self) -> String {
+        format!(
             "Is embedding info all:
 \t{vec_name: <20} | vector relation name
 \t{hnsw_name: <20} | hnsw relation name
@@ -57,7 +57,11 @@ impl IsEmbeddingInfo {
             is_set_row = self.is_embedding_set_row,
             is_vec_emb = self.is_vector_embedding,
             is_hnsw_rel = self.is_hnsw_relation,
-        );
+        )
+    }
+    pub fn tracing_print_all(&self, level: tracing::Level) {
+        use tracing::Level;
+        let msg = self.tracing_string_all();
         use tracing::{debug, error, info, trace, warn};
         match level {
             Level::TRACE => {
