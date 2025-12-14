@@ -41,7 +41,8 @@ members = [
     "crates/ploke-io",
     "crates/ploke-ty-mcp",
     "xtask",
-    "tests/fixture_crates/fixture_impls", "crates/ploke-llm",
+    "tests/fixture_crates/fixture_impls",
+    "crates/ploke-llm",
     # Add more modules as needed
 ]
 
@@ -63,6 +64,7 @@ flume = "0.11.1"
 tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
 crossbeam-channel = "0.5.15"
+futures = "0.3"                                     # For .fuse() on streams
 
 # string interning
 lasso = { version = "0.7.3", features = ["multi-threaded", "serialize"] }
@@ -93,6 +95,8 @@ lazy_static = "1.5.0"
 ploke-core = { path = "crates/ploke-core", version = "0.1.0" }
 
 mpatch = "1.3"
+
+chrono = "0.4"
 
 [workspace.metadata]
 fixtures_dir = "tests/fixtures"

@@ -24,6 +24,9 @@ mod arc_str;
 
 pub mod rag_types;
 
+#[cfg(feature = "json")]
+pub mod tool_types;
+
 pub use arc_str::ArcStr;
 pub mod embeddings;
 

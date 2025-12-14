@@ -30,6 +30,7 @@ nonzero_ext = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 url = { version = "2.5.7", features = ["serde"] }
 governor = "0.10"
+ploke-llm = { path = "../ploke-llm" }
 
 # embeddings
 ploke-embed = { path = "../ingest/ploke-embed" }
@@ -42,7 +43,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # common
-ploke-core = { path = "../ploke-core" }
+ploke-core = { path = "../ploke-core", features = ["json"] }
 sha2 = "0.10"
 
 # tokio-tungstenite = { version = "0.27", features = ["native-tls"] }
@@ -71,7 +72,7 @@ log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
-chrono = "0.4"
+chrono = { workspace = true }
 
 # conversation history branching
 uuid = { workspace = true }

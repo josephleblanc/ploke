@@ -399,3 +399,10 @@ impl AppEvent {
         matches!(self, AppEvent::System(_))
     }
 }
+
+use ploke_llm::manager::events::LlmEvent;
+impl From<LlmEvent> for AppEvent {
+    fn from(value: LlmEvent) -> Self {
+        AppEvent::Llm(value)
+    }
+}

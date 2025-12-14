@@ -1,18 +1,16 @@
 use ploke_core::tool_types::ToolName;
+
 use crate::{
-    EventPriority,
-    llm::{
         error::LlmError,
         request::endpoint::EndpointsResponse,
         router_only::{Router, RouterVariants},
         types::meta::LLMMetadata,
-    },
 };
 
 use super::*;
 
 #[derive(Clone, Debug)]
-pub(crate) enum LlmEvent {
+pub enum LlmEvent {
     ChatCompletion(ChatEvt),
     Completion(ChatEvt),
     Tool(ToolEvent),
@@ -21,18 +19,7 @@ pub(crate) enum LlmEvent {
     Status(status::Event),
 }
 
-impl From<LlmEvent> for AppEvent {
-    fn from(value: LlmEvent) -> Self {
-        AppEvent::Llm(value)
-    }
-}
-
 pub(crate) mod status {
-    use serde_json::Value;
-    use uuid::Uuid;
-
-    use crate::{chat_history::MessageKind, tools::ToolName};
-
     #[derive(Clone, Debug, Copy)]
     pub(crate) enum Event {
         /// Status update
@@ -44,7 +31,7 @@ pub(crate) mod status {
 }
 
 pub(crate) mod endpoint {
-    use crate::llm::types::model_types::ModelVariant;
+    use crate::types::model_types::ModelVariant;
 
     use super::*;
 
@@ -73,7 +60,7 @@ pub(crate) mod endpoint {
 pub(crate) mod models {
     use ploke_core::ArcStr;
 
-    use crate::llm::request;
+    use crate::request;
 
     use super::*;
     #[derive(Clone, Debug)]

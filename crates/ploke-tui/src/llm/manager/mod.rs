@@ -1,14 +1,11 @@
-use crate::llm::router_only::{ApiRoute, Router};
+use crate::llm::manager::events::{ endpoint, models, status };
+use crate::llm::router_only::Router;
 mod commands;
 pub(crate) mod events;
 mod session;
 
 use crate::SystemEvent;
-use crate::app_state::handlers::chat::add_msg_immediate;
-use crate::error::ResultExt as _;
 use crate::llm::error::LlmError;
-use crate::llm::router_only::ApiRoute as _;
-use crate::llm::router_only::ChatCompRequest;
 use crate::llm::router_only::HasEndpoint;
 use crate::llm::router_only::HasModels;
 use crate::tools;
@@ -17,133 +14,49 @@ use crate::tools::ns_patch::NsPatch;
 use crate::tools::ns_read::NsRead;
 use events::ChatEvt;
 pub(crate) use events::LlmEvent;
-use events::endpoint;
-use events::models;
 use fxhash::FxHashMap as HashMap;
-use itertools::Itertools;
 use ploke_core::ArcStr;
 
 use ploke_rag::TokenCounter as _;
 use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::ops::ControlFlow;
-use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
-use thiserror::Error;
+use serde_json::Value;
+use std::{env, fs, path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio::task::JoinSet;
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::app_state::{AppState, StateCommand};
-use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate};
-use crate::rag::utils::ToolCallParams;
+use crate::chat_history::MessageKind;
 use crate::tools::code_edit::GatCodeEdit;
 use crate::tools::request_code_context::RequestCodeContextGat;
 use crate::tools::{
-    FunctionCall, FunctionMarker, RequestCodeContext, Tool as _, ToolCall, ToolDefinition,
-    ToolFunctionDef, ToolName,
+    Tool as _, ToolDefinition,
 };
 use crate::utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT};
 use crate::{AppEvent, EventBus};
 
 // API and Config
 
-use super::response::TokenUsage;
 use super::router_only::openrouter::OpenRouter;
 use super::router_only::openrouter::OpenRouterModelId;
 use super::*;
 
-#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, PartialOrd, Eq)]
-pub(crate) struct RequestMessage {
-    pub role: Role,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<ArcStr>,
-}
+// NOTE:ploke-llm
+// moved into ploke-llm
+// Reasoning is that the RequestMessage is about communicating with the LLM, not displaying the
+// message in the chat.
+// TODO:ploke-llm
+// document where the corresponding type is for where the request message ends up being translated
+// into the UI type.
+pub use ploke_llm::RequestMessage;
 
-// TODO: Add Role::Tool
-// - be careful when adding `Tool`
-// - note differences in the way the original json handles the `type Message` when there is a
-// `role: 'tool'`, such that it requires a `tool_call_id`. We will need to propogate this
-// requirement somehow. Needs HUMAN decision, ask.
-// - see original json below:
-// ```json
-// type Message =
-//   | {
-//       role: 'user' | 'assistant' | 'system';
-//       // ContentParts are only for the "user" role:
-//       content: string | ContentPart[];
-//       // If "name" is included, it will be prepended like this
-//       // for non-OpenAI models: `{name}: {content}`
-//       name?: string;
-//     }
-//   | {
-//       role: 'tool';
-//       content: string;
-//       tool_call_id: string;
-//       name?: string;
-//     };
-// ```
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    User,
-    Assistant,
-    System,
-    Tool,
-}
-
-impl RequestMessage {
-    pub fn new_system(content: String) -> Self {
-        Self {
-            role: Role::System,
-            content,
-            tool_call_id: None,
-        }
-    }
-
-    pub fn new_tool(content: String, tool_call_id: ArcStr) -> Self {
-        Self {
-            role: Role::Tool,
-            content,
-            tool_call_id: Some(tool_call_id),
-        }
-    }
-
-    pub fn new_user(content: String) -> Self {
-        Self {
-            role: Role::User,
-            content,
-            tool_call_id: None,
-        }
-    }
-
-    pub fn new_assistant(content: String) -> Self {
-        Self {
-            role: Role::Assistant,
-            content,
-            tool_call_id: None,
-        }
-    }
-
-    /// Validates that the message structure is correct according to OpenAI/OpenRouter spec
-    pub fn validate(&self) -> Result<(), String> {
-        match self.role {
-            Role::Tool => {
-                if self.tool_call_id.is_none() {
-                    return Err("Tool messages must have a tool_call_id".to_string());
-                }
-            }
-            Role::User | Role::Assistant | Role::System => {
-                // These roles should not have tool_call_id set, but we allow it for flexibility
-            }
-        }
-        Ok(())
-    }
-}
-
+// NOTE:ploke-llm
+// moved Role into ploke-llm
+// Overall idea is to have the role associated with the API call be distinct from the MessageKind
+// used in the chat conversation system which is only relevant to the UI
+pub use ploke_llm::Role;
 impl From<MessageKind> for Role {
     fn from(value: MessageKind) -> Self {
         match value {
@@ -249,13 +162,16 @@ pub async fn llm_manager(
                 variant,
                 router,
             })) => {
-                handle_endpoint_request(
-                    state.clone(),
-                    event_bus.clone(),
-                    client.clone(),
-                    model_key,
-                    variant,
-                );
+                use ploke_llm::handle_endpoint_request_async;
+                let event_bus_clone = event_bus.clone();
+                tokio::task::spawn(async move {
+                    let response = handle_endpoint_request_async(
+                        client.clone(),
+                        model_key,
+                        variant,
+                    ).await;
+                    event_bus_clone.send(AppEvent::Llm(response));
+                });
             }
             AppEvent::Llm(LlmEvent::Models(models::Event::Request { router })) => {
                 use std::str::FromStr;
@@ -289,37 +205,6 @@ pub async fn llm_manager(
             _ => {}
         }
     }
-}
-
-fn handle_endpoint_request(
-    state: Arc<AppState>,
-    event_bus: Arc<EventBus>,
-    client: Client,
-    model_key: ModelKey,
-    variant: Option<types::model_types::ModelVariant>,
-) {
-    use std::str::FromStr;
-    // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
-    // the typed version for that specific router before making the request.
-    // + make model_id typed as ModelKey
-    tokio::task::spawn(async move {
-        use endpoint::Event;
-        let model_id = ModelId::from_parts(model_key.clone(), variant);
-        let typed_model = OpenRouterModelId::from(model_id);
-        let result = OpenRouter::fetch_model_endpoints(&client, typed_model.clone())
-            .await
-            .map(Arc::new)
-            .inspect_err(|e| {
-                let msg = format!("Failed to fetch endpoints for {}: {:?}", typed_model, e);
-                tracing::warn!(msg);
-                // TODO: send a response with an error
-            })
-            .ok();
-        event_bus.send(AppEvent::Llm(LlmEvent::Endpoint(Event::Response {
-            model_key,
-            endpoints: result,
-        })));
-    });
 }
 
 #[instrument(skip_all)]

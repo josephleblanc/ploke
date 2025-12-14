@@ -3784,6 +3784,26 @@ dependencies = [
 [[package]]
 name = "ploke-llm"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "futures",
+ "fxhash",
+ "itertools 0.14.0",
+ "once_cell",
+ "ploke-core",
+ "ploke-error",
+ "ploke-rag",
+ "ploke-test-utils",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "ploke-rag"
@@ -3899,6 +3919,7 @@ dependencies = [
  "ploke-embed",
  "ploke-error",
  "ploke-io",
+ "ploke-llm",
  "ploke-rag",
  "ploke-test-utils",
  "ploke-transform",

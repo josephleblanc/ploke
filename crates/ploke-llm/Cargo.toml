@@ -4,3 +4,40 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# local crates
+ploke-core = { path = "../ploke-core", features = ["json"] }
+ploke-error = { path = "../ploke-error" }
+ploke-rag = { path = "../ploke-rag" }
+ploke-test-utils = { path = "../test-utils" }
+
+# concurrency
+futures = { workspace = true } # For .fuse() on streams
+tokio = { workspace = true }
+chrono = { workspace = true }
+
+# tracing/logging
+tracing = { workspace = true }
+
+# http handling
+reqwest = { version = "0.12", features = ["json"] }
+
+# used mostly in tests for convenience, refactor local error
+# type and remove this later
+color-eyre = "0.6"
+
+# convenience
+itertools = { workspace = true }
+
+# faster non-cryptographic hashing
+fxhash = { workspace = true }
+
+uuid = { workspace = true }
+
+# serde
+serde_json = { workspace = true }
+serde = { workspace = true }
+
+url = "2.5"
+thiserror = { workspace = true }
+
+once_cell = "1.19"

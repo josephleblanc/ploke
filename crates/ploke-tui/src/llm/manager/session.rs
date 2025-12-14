@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::DateTime;
+use ploke_llm::ChatHttpConfig;
+use ploke_llm::ChatStepOutcome;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
@@ -17,7 +19,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::llm::manager::RequestMessage;
+use ploke_llm::RequestMessage;
 use crate::llm::request::endpoint::ToolChoice;
 use crate::llm::response::FinishReason;
 use crate::llm::response::OpenAiResponse;
@@ -132,6 +134,96 @@ where
     pub fallback_on_404: bool,
     pub attempts: u32,
     pub state_cmd_tx: mpsc::Sender<StateCommand>,
+}
+
+pub struct TuiToolPolicy {
+    pub tool_call_timeout: Duration,
+    pub tool_call_chain_limit: usize,
+    pub retry_without_tools_on_404: bool,
+}
+
+impl Default for TuiToolPolicy {
+    fn default() -> Self {
+        Self {
+            // TODO:ploke-llm
+            // put these into a better config data structure
+            tool_call_timeout: Duration::from_secs(10),
+            tool_call_chain_limit: 10,
+            retry_without_tools_on_404: false,
+        }
+    }
+}
+
+pub async fn run_chat_session<R: Router>(
+    client: &Client,
+    mut req: ChatCompRequest<R>,
+    parent_id: Uuid,
+    event_bus: Arc<EventBus>,
+    state_cmd_tx: mpsc::Sender<StateCommand>,
+    policy: TuiToolPolicy,
+) -> Result<String, LlmError> {
+    // Optionally: set tool_choice=Auto if tools exist, etc.
+
+    // TODO:ploke-llm
+    // placeholder default config for now, fix up later
+    let cfg = ChatHttpConfig::default();
+    for _chain in 0..policy.tool_call_chain_limit {
+        let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
+
+        match outcome {
+            ChatStepOutcome::Content(text) => return Ok(text),
+
+            ChatStepOutcome::ToolCalls { calls, content, .. } => {
+                // 1) update placeholder message once (UI concern)
+                update_assistant_placeholder_once(&state_cmd_tx, parent_id, content).await;
+
+                // 2) run tools (EventBus + waiting is TUI concern)
+                let results = execute_tools_via_event_bus(
+                    event_bus.clone(),
+                    state_cmd_tx.clone(),
+                    parent_id,
+                    calls,
+                    policy.tool_call_timeout,
+                )
+                .await;
+
+                // 3) append tool results into req.core.messages for the next step
+                for (call_id, tool_json) in results {
+                    req.core
+                        .messages
+                        .push(RequestMessage::new_tool(tool_json, call_id));
+                }
+
+                // loop again
+            }
+        }
+    }
+
+    Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
+}
+
+async fn update_assistant_placeholder_once(
+    state_cmd_tx: mpsc::Sender<StateCommand>,
+    parent_id: Uuid,
+    content: Option< String >,
+    initial_message_updated: &mut bool,
+) {
+    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
+
+    if !initial_message_updated {
+        state_cmd_tx
+            .send(StateCommand::UpdateMessage {
+                id: parent_id,
+                update: MessageUpdate {
+                    content: Some(assistant_update),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
+            })
+            .await
+            .expect("state command must be running");
+        initial_message_updated = true;
+    }
 }
 
 use tracing::info;
