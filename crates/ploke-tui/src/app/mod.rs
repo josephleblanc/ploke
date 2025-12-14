@@ -1,11 +1,11 @@
 use crate::app::view::components::context_browser::{
     self, ContextSearchState, SearchItem, render_context_search,
 };
-use crate::llm::manager::events::endpoint;
+use ploke_llm::manager::events::endpoint;
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
-use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey, SupportsTools};
+use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 pub mod commands;
 pub mod editor;
@@ -1318,7 +1318,7 @@ impl App {
         items
             .into_iter()
             .map(|m| {
-                let supports_tools = m.supports_tools();
+                let supports_tools = ploke_llm::SupportsTools::supports_tools(&m);
                 // Model-level tools: true if any provider supports tools OR model supported_parameters says so
                 ModelBrowserItem {
                     id: m.id.clone(),

@@ -24,14 +24,14 @@ use super::{
 /// Completion request for the OpenRouter url at
 /// - https://openrouter.ai/api/v1/chat/completions
 #[derive(Serialize, Debug, Deserialize, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ChatCompReqCore {
+pub struct ChatCompReqCore {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
     // corresponding json: `messages?: Message[];`
     #[serde(default = "default_messages")]
-    pub(crate) messages: Vec<RequestMessage>,
+    pub messages: Vec<RequestMessage>,
     // corresponding json: `prompt?: string;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) prompt: Option<String>,
+    pub prompt: Option<String>,
     /// OpenRouter docs: "If "model" is unspecified, uses the user's default"
     ///  - Note: This default is set on the OpenRouter website
     ///  - If we get errors for "No model available", provide the user with a message suggesting
@@ -45,73 +45,73 @@ pub(crate) struct ChatCompReqCore {
     /// - deepseek/deepseek-chat-v3.1
     /// - can also have variant, deepseek/deepseek-chat-v3.1:free
     #[serde(default, serialize_with = "serialize_model_id_as_request_string")]
-    pub(crate) model: ModelId,
+    pub model: ModelId,
     /// TODO: We should create a Marker struct for this, similar to `FunctionMarker` in
     /// `crates/ploke-tui/src/tools/mod.rs`, since this is a constant value
     /// corresponding json: `response_format?: { type: 'json_object' };`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) response_format: Option<JsonObjMarker>,
+    pub response_format: Option<JsonObjMarker>,
 
     /// corresponding json: `stop?: string | string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stop: Option<Vec<String>>,
+    pub stop: Option<Vec<String>>,
     /// OpenRouter docs: "Enable streaming"
     /// corresponding json: `stream?: boolean;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stream: Option<bool>,
+    pub stream: Option<bool>,
 }
 
 impl ChatCompReqCore {
     /// Create a new `ChatCompReqCore` with default values
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the messages for the completion request
-    pub(crate) fn with_messages(mut self, messages: Vec<RequestMessage>) -> Self {
+    pub fn with_messages(mut self, messages: Vec<RequestMessage>) -> Self {
         self.messages = messages;
         self
     }
 
     /// Set a single message for the completion request
-    pub(crate) fn with_message(mut self, message: RequestMessage) -> Self {
+    pub fn with_message(mut self, message: RequestMessage) -> Self {
         self.messages = vec![message];
         self
     }
 
     /// Set the prompt for the completion request (alternative to messages)
-    pub(crate) fn with_prompt(mut self, prompt: String) -> Self {
+    pub fn with_prompt(mut self, prompt: String) -> Self {
         self.prompt = Some(prompt);
         self.messages = Vec::new(); // Clear messages when using prompt
         self
     }
 
     /// Set the model for the completion request
-    pub(crate) fn with_model(mut self, model: ModelId) -> Self {
+    pub fn with_model(mut self, model: ModelId) -> Self {
         self.model = model;
         self
     }
 
     /// Set the model by string (parses into ModelId)
-    pub(crate) fn with_model_str(self, model_str: &str) -> Result<Self, crate::IdError> {
+    pub fn with_model_str(self, model_str: &str) -> Result<Self, crate::IdError> {
         let model = ModelId::from_str(model_str)?;
         Ok(self.with_model(model))
     }
 
     /// Set the response format to JSON object
-    pub(crate) fn with_json_response(mut self) -> Self {
+    pub fn with_json_response(mut self) -> Self {
         self.response_format = Some(JsonObjMarker);
         self
     }
 
     /// Set the stop sequences
-    pub(crate) fn with_stop(mut self, stop: Vec<String>) -> Self {
+    pub fn with_stop(mut self, stop: Vec<String>) -> Self {
         self.stop = Some(stop);
         self
     }
 
     /// Add a single stop sequence
-    pub(crate) fn with_stop_sequence(mut self, stop: String) -> Self {
+    pub fn with_stop_sequence(mut self, stop: String) -> Self {
         match &mut self.stop {
             Some(stops) => stops.push(stop),
             None => self.stop = Some(vec![stop]),
@@ -120,23 +120,23 @@ impl ChatCompReqCore {
     }
 
     /// Enable or disable streaming
-    pub(crate) fn with_streaming(mut self, stream: bool) -> Self {
+    pub fn with_streaming(mut self, stream: bool) -> Self {
         self.stream = Some(stream);
         self
     }
 
     /// Enable streaming (convenience method)
-    pub(crate) fn streaming(self) -> Self {
+    pub fn streaming(self) -> Self {
         self.with_streaming(true)
     }
 
     /// Disable streaming (convenience method)
-    pub(crate) fn non_streaming(self) -> Self {
+    pub fn non_streaming(self) -> Self {
         self.with_streaming(false)
     }
 
     /// Build the request (identity function for consistency)
-    pub(crate) fn build(self) -> Self {
+    pub fn build(self) -> Self {
         self
     }
 

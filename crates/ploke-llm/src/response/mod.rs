@@ -3,27 +3,28 @@ use std::collections::HashMap;
 mod tool_call;
 pub use tool_call::ToolCall;
 
-use super::{manager::Role, *};
+use super::{manager::Role};
+pub use tool_call::FunctionCall;
 
 use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Debug, Serialize, Clone)]
-pub(crate) struct OpenAiResponse {
+pub struct OpenAiResponse {
     #[serde(default)]
-    pub(super) id: String,
+    pub id: String,
     #[serde(default)]
-    pub(super) choices: Vec<Choices>,
+    pub choices: Vec<Choices>,
     #[serde(default)]
-    pub(super) created: i64,
+    pub created: i64,
     #[serde(default)]
-    pub(super) model: String,
+    pub model: String,
     #[serde(default)]
-    pub(super) object: String,
+    pub object: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) system_fingerprint: Option<String>,
+    pub system_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) usage: Option<TokenUsage>,
+    pub usage: Option<TokenUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) logprobs: Option<serde_json::Value>,
+    pub logprobs: Option<serde_json::Value>,
 }
 
 /// Response format specification
@@ -36,10 +37,10 @@ pub enum ResponseFormat {
 
 /// Token usage statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TokenUsage {
-    pub(crate) prompt_tokens: u32,
-    pub(crate) completion_tokens: u32,
-    pub(crate) total_tokens: u32,
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
@@ -61,7 +62,7 @@ pub(super) struct ResponseUsage {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct Choices {
+pub struct Choices {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) logprobs: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -85,7 +86,7 @@ pub(crate) struct Choices {
 /// Generation completion reasons
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FinishReason {
+pub enum FinishReason {
     Stop,          // Natural stop sequence
     Length,        // Max tokens reached
     ContentFilter, // Blocked by safety system

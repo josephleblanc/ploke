@@ -36,7 +36,7 @@ pub enum Verbosity {
     High,
 }
 
-pub(crate) trait SupportsTools {
+pub trait SupportsTools {
     fn supports_tools(&self) -> bool;
 }
 

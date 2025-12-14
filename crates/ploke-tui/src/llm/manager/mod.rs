@@ -1,7 +1,7 @@
-use crate::llm::manager::events::{ endpoint, models, status };
+// use crate::llm::manager::events::{ endpoint, models, status };
 use crate::llm::router_only::Router;
 mod commands;
-pub(crate) mod events;
+// pub(crate) mod events;
 mod session;
 
 use crate::SystemEvent;
@@ -12,11 +12,14 @@ use crate::tools;
 use crate::tools::create_file::CreateFile;
 use crate::tools::ns_patch::NsPatch;
 use crate::tools::ns_read::NsRead;
-use events::ChatEvt;
-pub(crate) use events::LlmEvent;
+// use events::ChatEvt;
+// pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
+use ploke_llm::manager::events::endpoint;
+use ploke_llm::manager::events::models;
+use ploke_llm::manager::events::ChatEvt;
 use ploke_rag::TokenCounter as _;
 use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
@@ -56,7 +59,7 @@ pub use ploke_llm::RequestMessage;
 // moved Role into ploke-llm
 // Overall idea is to have the role associated with the API call be distinct from the MessageKind
 // used in the chat conversation system which is only relevant to the UI
-pub use ploke_llm::Role;
+pub use ploke_llm::manager::Role;
 impl From<MessageKind> for Role {
     fn from(value: MessageKind) -> Self {
         match value {
@@ -120,6 +123,7 @@ pub async fn llm_manager(
                     ready_contexts.insert(event_key, context);
                 } else {
                     // match found, process request
+                    let client_clone = client.clone();
                     let req = pending_requests
                         .remove(&event_key)
                         .expect("Event key-val must exist");
@@ -127,7 +131,7 @@ pub async fn llm_manager(
                         req,
                         Arc::clone(&state),
                         cmd_tx.clone(),
-                        client.clone(),
+                        client_clone,
                         event_bus.clone(),
                         context,
                     ));
@@ -164,13 +168,14 @@ pub async fn llm_manager(
             })) => {
                 use ploke_llm::handle_endpoint_request_async;
                 let event_bus_clone = event_bus.clone();
+                let client_clone = client.clone();
                 tokio::task::spawn(async move {
                     let response = handle_endpoint_request_async(
-                        client.clone(),
+                        client_clone,
                         model_key,
                         variant,
                     ).await;
-                    event_bus_clone.send(AppEvent::Llm(response));
+                    event_bus_clone.send(AppEvent::Llm(ploke_llm::LlmEvent::Endpoint(response)));
                 });
             }
             AppEvent::Llm(LlmEvent::Models(models::Event::Request { router })) => {
@@ -391,7 +396,7 @@ async fn prepare_and_run_llm_call(
     // WARN: Using default fields here, should try to load from registry first and use default if
     // the selected model is default or if the registry is not yet set up.
     let req = OpenRouter::default_chat_completion()
-        .with_core_bundle(crate::llm::request::ChatCompReqCore::default())
+        .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
         .with_model(model_id)
         .with_messages(messages)
         .with_param_bundle(_llm_params)

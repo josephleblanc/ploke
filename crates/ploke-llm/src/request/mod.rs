@@ -1,7 +1,8 @@
 mod completion;
-pub(crate) mod endpoint;
+pub mod endpoint;
+pub use endpoint::ToolChoice;
 mod marker;
-pub(crate) mod models;
+pub mod models;
 
 #[cfg(test)]
 mod tests;
@@ -11,8 +12,8 @@ use crate::utils::se_de::string_or_f64_opt;
 use crate::utils::se_de::string_to_f64_opt_zero;
 use serde::{Deserialize, Serialize};
 
-pub(crate) use completion::ChatCompReqCore;
-pub(crate) use marker::JsonObjMarker;
+pub use completion::ChatCompReqCore;
+pub use marker::JsonObjMarker;
 
 // --- common types for requests ---
 //

@@ -58,8 +58,7 @@ impl From<LlmError> for ploke_error::Error {
             ),
             LlmError::Api { status, message } => {
                 ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
-                    std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    std::sync::Arc::new(std::io::Error::other(
                         format!("API error {}: {}", status, message),
                     )),
                 ))
@@ -94,7 +93,7 @@ impl From<LlmError> for ploke_error::Error {
                 ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", msg)),
             ),
             LlmError::Conversion(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::NotImplemented(format!("{}", msg)),
+                ploke_error::InternalError::NotImplemented(msg.to_string()),
             ),
             LlmError::Unknown(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),

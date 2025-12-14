@@ -19,9 +19,9 @@ pub enum LlmEvent {
     Status(status::Event),
 }
 
-pub(crate) mod status {
+pub mod status {
     #[derive(Clone, Debug, Copy)]
-    pub(crate) enum Event {
+    pub enum Event {
         /// Status update
         Update {
             active_requests: usize, // Current workload
@@ -30,13 +30,13 @@ pub(crate) mod status {
     }
 }
 
-pub(crate) mod endpoint {
+pub mod endpoint {
     use crate::types::model_types::ModelVariant;
 
     use super::*;
 
     #[derive(Clone, Debug)]
-    pub(crate) enum Event {
+    pub enum Event {
         Request {
             // removed "parent_id" since that is usually to refer to a conversation history
             // message, where this refers to a model and is not used in a chat history context
@@ -57,14 +57,14 @@ pub(crate) mod endpoint {
     }
 }
 
-pub(crate) mod models {
+pub mod models {
     use ploke_core::ArcStr;
 
     use crate::request;
 
     use super::*;
     #[derive(Clone, Debug)]
-    pub(crate) enum Event {
+    pub enum Event {
         /// A request to the `/models` endpoint for a router, which should return a list of models
         /// that contain the model identifier in the form `{author}/{model}:{variant}` where
         /// `:{variant}` is optional.
@@ -89,7 +89,7 @@ pub(crate) mod models {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ChatEvt {
+pub enum ChatEvt {
     /// Request to generate content from an LLM
     Request {
         request_msg_id: Uuid, // Unique tracking ID

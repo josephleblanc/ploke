@@ -54,7 +54,7 @@ pub struct ModelPrefs {
 }
 
 impl ModelPrefs {
-    pub(crate) fn get_default_profile(&self) -> Option<&ModelProfile> {
+    pub fn get_default_profile(&self) -> Option<&ModelProfile> {
         self.default_profile
             .as_ref()
             .and_then(|def_pr| self.profiles.get(&def_pr.name))

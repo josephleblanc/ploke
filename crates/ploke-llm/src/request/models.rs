@@ -38,7 +38,7 @@ use super::ModelPricing;
 /// Represents a model `/models` from OpenRouter's API.
 /// https://openrouter.ai/api/v1/models
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Response {
+pub struct Response {
     /// List of available model endpoints from OpenRouter.
     pub data: Vec<ResponseItem>,
 }
@@ -61,43 +61,43 @@ impl IntoIterator for Response {
 ///     - top_provider.max_completion_tokens: missing ~half the time, 151/323
 ///     - architecture.instruct_type: missing for most (~65%), 208/323
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct ResponseItem {
+pub struct ResponseItem {
     /// canonical endpoint name ({author}/{slug}:{variant}), e.g.
     /// - deepseek/deepseek-chat-v3.1
     /// - but also possible: deepseek/deepseek-chat-v3.1:free
-    pub(crate) id: ModelId,
+    pub id: ModelId,
     /// User-friendly name, e.g. DeepSeek: DeepSeek V3.1
     /// Examples from responses to OpenRouter API:
     /// id -    "qwen/qwen3-next-80b-a3b-thinking",
     /// name -  "Qwen: Qwen3 Next 80B A3B Thinking"
-    pub(crate) name: ModelName,
+    pub name: ModelName,
     /// Unix timestamp, e.g. 1755779628
     // TODO: Get serde to deserialize into proper type
-    pub(crate) created: i64,
+    pub created: i64,
     /// User-facing description. Kind of long.
-    pub(crate) description: ArcStr,
+    pub description: ArcStr,
     /// Things like tokenizer, modality, etc. See `Architecture` struct.
-    pub(crate) architecture: Architecture,
+    pub architecture: Architecture,
     /// Top provider info (often carries context length when model-level is missing).
     #[serde(default)]
-    pub(crate) top_provider: TopProvider,
+    pub top_provider: TopProvider,
     /// Input/output pricing; maps from OpenRouter's prompt/completion when present.
-    pub(crate) pricing: ModelPricing,
+    pub pricing: ModelPricing,
     /// For example:
     /// - "canonical_slug": "qwen/qwen3-30b-a3b-thinking-2507",
     /// - "canonical_slug": "x-ai/grok-code-fast-1",
     /// - "canonical_slug": "nousresearch/hermes-4-70b",
     #[serde(rename = "canonical_slug", default)]
-    pub(crate) canonical: Option<ModelId>,
+    pub canonical: Option<ModelId>,
     /// Context window size if known (model-level).
     #[serde(default)]
-    pub(crate) context_length: Option<u32>,
+    pub context_length: Option<u32>,
     /// Presumably the huggingface model card
     #[serde(default)]
-    pub(crate) hugging_face_id: Option<String>,
+    pub hugging_face_id: Option<String>,
     /// null on all values so far, but it is there in the original so I'll include it.
     #[serde(default)]
-    pub(crate) per_request_limits: Option<HashMap<String, serde_json::Value>>,
+    pub per_request_limits: Option<HashMap<String, serde_json::Value>>,
     /// Parameters supported as options by this endpoint, includes things like:
     /// - tools
     /// - top_k
@@ -107,7 +107,7 @@ pub(crate) struct ResponseItem {
     /// See SupportedParameters for full enum of observed values.
     /// (also appears in endpoints)
     #[serde(default)]
-    pub(crate) supported_parameters: Option<Vec<SupportedParameters>>,
+    pub supported_parameters: Option<Vec<SupportedParameters>>,
 }
 
 impl PartialOrd for ResponseItem {

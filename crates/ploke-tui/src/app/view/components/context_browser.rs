@@ -13,7 +13,6 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::llm::request::endpoint::Endpoint;
-use crate::llm::router_only::openrouter::providers::ProviderName;
 use crate::llm::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey};
 use crate::user_config::OPENROUTER_URL;
 use crate::utils::helper::truncate_string;

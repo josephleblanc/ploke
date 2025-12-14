@@ -15,7 +15,6 @@
 use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
-use crate::llm::manager::events::models;
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
@@ -24,6 +23,7 @@ use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, op
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::ArcStr;
+use ploke_llm::manager::events::models;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -632,7 +632,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 let total_models = models_resp.data.len();
                 let models_arc = Arc::new(models_resp);
                 let search_kw = ArcStr::from(keyword_str);
-                emit_app_event(AppEvent::Llm(llm::LlmEvent::Models(
+                emit_app_event(AppEvent::Llm(ploke_llm::LlmEvent::Models(
                     models::Event::Response {
                         models: Some(models_arc),
                         // search_kw is ArcStr, which uses Arc::clone under the hood

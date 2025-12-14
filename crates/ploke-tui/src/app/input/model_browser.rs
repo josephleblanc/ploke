@@ -7,7 +7,7 @@ use crossterm::event::{
 
 use crate::ModelId;
 use crate::app::App;
-use crate::llm::manager::events::endpoint;
+use ploke_llm::manager::events::endpoint;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{LlmEvent, ProviderKey};

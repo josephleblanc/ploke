@@ -11,10 +11,10 @@ use crate::{Author, EndpointKey, IdError, ModelKey, ModelSlug, ProviderSlug, Qua
 
 use super::{ApiRoute, HasEndpoint, HasModels, Router, RouterModelId, RouterVariants};
 
-pub(crate) mod providers;
+pub mod providers;
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Hash, Eq)]
-pub(crate) struct OpenRouter;
+pub struct OpenRouter;
 
 impl HasModels for OpenRouter {
     type Response = crate::request::models::Response;
@@ -65,35 +65,35 @@ impl HasEndpoint for OpenRouter {
 /// Provider-specific information about the model.
 /// - Unique type only used by OpenRouter
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, PartialOrd, Eq)]
-pub(crate) struct TopProvider {
+pub struct TopProvider {
     /// Whether this model is subject to content moderation.
-    pub(crate) is_moderated: bool,
-    pub(crate) context_length: Option<u32>,
-    pub(crate) max_completion_tokens: Option<u64>,
+    pub is_moderated: bool,
+    pub context_length: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
 }
 
 impl TopProvider {
     /// Set whether this model is subject to content moderation.
-    pub(crate) fn with_moderated(mut self, moderated: bool) -> Self {
+    pub fn with_moderated(mut self, moderated: bool) -> Self {
         self.is_moderated = moderated;
         self
     }
 
     /// Set the context length for this model.
-    pub(crate) fn with_context_length(mut self, length: u32) -> Self {
+    pub fn with_context_length(mut self, length: u32) -> Self {
         self.context_length = Some(length);
         self
     }
 
     /// Set the maximum completion tokens for this model.
-    pub(crate) fn with_max_completion_tokens(mut self, tokens: u64) -> Self {
+    pub fn with_max_completion_tokens(mut self, tokens: u64) -> Self {
         self.max_completion_tokens = Some(tokens);
         self
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub(crate) struct OpenRouterModelId {
+pub struct OpenRouterModelId {
     pub(crate) key: ModelKey,
     pub(crate) variant: Option<OpenRouterModelVariant>,
 }
@@ -253,7 +253,7 @@ impl serde::Serialize for OpenRouterModelId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct ChatCompFields {
+pub struct ChatCompFields {
     /// OpenRouter docs: See "Prompt Transforms" section: openrouter.ai/docs/transforms
     /// From `https://openrouter.ai/docs/features/message-transforms`
     ///  This can be useful for situations where perfect recall is not required. The transform works
@@ -264,7 +264,7 @@ pub(crate) struct ChatCompFields {
     ///  using middle-out. To disable this, set transforms: [] in the request body.
     /// corresponding json: `transforms?: string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) transforms: Option<Transform>,
+    pub transforms: Option<Transform>,
     /// OpenRouter docs: See "Model Routing" section: openrouter.ai/docs/model-routing
     /// From `https://openrouter.ai/docs/features/model-routing`
     ///  The models parameter lets you automatically try other models if the primary model’s
@@ -280,19 +280,19 @@ pub(crate) struct ChatCompFields {
     /// ```
     /// Note that models here are in the form of canonical endpoint name (author/slug), e.g. deepseek/deepseek-chat-v3.1
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) models: Option<Vec<OpenRouterModelId>>,
+    pub models: Option<Vec<OpenRouterModelId>>,
     /// the docs literally just have the string 'fallback' here. No idea what this means, maybe they
     /// read the string as a bool?
     /// corresponding json: `route?: 'fallback';`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) route: Option<FallbackMarker>,
+    pub route: Option<FallbackMarker>,
     /// OpenRouter docs: See "Provider Routing" section: openrouter.ai/docs/provider-routing
     /// corresponding json: `provider?: ProviderPreferences;`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) provider: Option<ProviderPreferences>,
+    pub provider: Option<ProviderPreferences>,
     /// corresponding json: `user?: string; // A stable identifier for your end-users. Used to help detect and prevent abuse.`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) user: Option<String>,
+    pub user: Option<String>,
 }
 
 impl ChatCompFields {

@@ -1,7 +1,7 @@
 mod commands;
-pub(crate) mod events;
+pub mod events;
 mod session;
-pub use session::{ChatHttpConfig, ChatStepOutcome, chat_step};
+pub use session::{ChatHttpConfig, ChatStepOutcome, chat_step, parse_chat_outcome};
 
 use crate::error::LlmError;
 use crate::manager::events::{endpoint};

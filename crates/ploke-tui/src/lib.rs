@@ -31,7 +31,12 @@ pub mod llm;
 
 pub mod user_config;
 
-use llm::{EndpointsResponse, ModelId, manager::events::ChatEvt, router_only::default_model};
+// use llm::{EndpointsResponse, ModelId, 
+//     manager::events::ChatEvt, 
+//     router_only::default_model};
+use ploke_llm::{EndpointsResponse, ModelId, 
+    manager::events::ChatEvt, 
+    router_only::default_model};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -322,9 +327,9 @@ pub enum SearchEvent {
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm(llm::LlmEvent),
+    Llm(ploke_llm::LlmEvent),
     // placeholder
-    LlmTool(llm::manager::events::ToolEvent),
+    LlmTool(ploke_llm::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
     // TODO:
@@ -356,7 +361,7 @@ impl AppEvent {
     // TODO: Change EventPriority to isntead be either a field within the event struct itself or
     // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
-        use llm::manager::events::ToolEvent;
+        use ploke_llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::LlmTool(ev) => match ev {

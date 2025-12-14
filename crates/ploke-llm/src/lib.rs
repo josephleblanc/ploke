@@ -1,12 +1,12 @@
-pub(crate) mod error;
-pub(crate) mod manager;
-pub(crate) mod registry;
-pub(crate) mod request;
-pub(crate) mod response;
-pub(crate) mod router_only;
-pub(crate) mod types;
-pub(crate) mod utils;
-pub(crate) mod wire;
+pub mod error;
+pub mod manager;
+pub mod registry;
+pub mod request;
+pub mod response;
+pub mod router_only;
+pub mod types;
+pub mod utils;
+pub mod wire;
 
 pub use manager::LlmEvent;
 pub use request::endpoint::EndpointsResponse;
@@ -19,6 +19,7 @@ pub use types::newtypes::{
 };
 pub use types::params::LLMParameters;
 pub use wire::WireRequest;
+pub use error::LlmError;
 
 pub use manager::{ chat_step, ChatHttpConfig, ChatStepOutcome, RequestMessage, handle_endpoint_request_async };
 

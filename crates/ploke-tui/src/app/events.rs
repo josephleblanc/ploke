@@ -2,7 +2,7 @@ use super::App;
 use crate::SearchEvent;
 use crate::app::view::EventSubscriber;
 use crate::app_state::events::SystemEvent;
-use crate::llm::manager::events::{endpoint, models};
+use ploke_llm::manager::events::{endpoint, models};
 use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
