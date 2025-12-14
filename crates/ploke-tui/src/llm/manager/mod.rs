@@ -1,27 +1,16 @@
 // use crate::llm::manager::events::{ endpoint, models, status };
-use crate::llm::router_only::Router;
-mod commands;
 // pub(crate) mod events;
 mod session;
 
 use crate::SystemEvent;
-use crate::llm::error::LlmError;
-use crate::llm::router_only::HasEndpoint;
-use crate::llm::router_only::HasModels;
-use crate::tools;
-use crate::tools::create_file::CreateFile;
-use crate::tools::ns_patch::NsPatch;
-use crate::tools::ns_read::NsRead;
 // use events::ChatEvt;
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
-use ploke_llm::manager::events::endpoint;
-use ploke_llm::manager::events::models;
-use ploke_llm::manager::events::ChatEvt;
-use ploke_rag::TokenCounter as _;
-use ploke_rag::context::ApproxCharTokenizer;
+use ploke_llm::{manager::events::{endpoint, models, ChatEvt}, request::ToolChoice, router_only::openrouter::OpenRouter, HasModels as _, LlmError, LlmEvent, Router as _};
+
+use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,36 +19,25 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::app_state::{AppState, StateCommand};
-use crate::chat_history::MessageKind;
-use crate::tools::code_edit::GatCodeEdit;
-use crate::tools::request_code_context::RequestCodeContextGat;
-use crate::tools::{
-    Tool as _, ToolDefinition,
+pub use ploke_llm::RequestMessage;
+pub use ploke_llm::manager::Role;
+
+use crate::{
+    AppEvent, EventBus,
+    app_state::{AppState, StateCommand},
+    chat_history::MessageKind,
+    tools::{
+        self, Tool as _, ToolDefinition, code_edit::GatCodeEdit, create_file::CreateFile,
+        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
+    },
+    utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
 };
-use crate::utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT};
-use crate::{AppEvent, EventBus};
 
 // API and Config
 
-use super::router_only::openrouter::OpenRouter;
-use super::router_only::openrouter::OpenRouterModelId;
-use super::*;
-
-// NOTE:ploke-llm
-// moved into ploke-llm
-// Reasoning is that the RequestMessage is about communicating with the LLM, not displaying the
-// message in the chat.
 // TODO:ploke-llm
 // document where the corresponding type is for where the request message ends up being translated
 // into the UI type.
-pub use ploke_llm::RequestMessage;
-
-// NOTE:ploke-llm
-// moved Role into ploke-llm
-// Overall idea is to have the role associated with the API call be distinct from the MessageKind
-// used in the chat conversation system which is only relevant to the UI
-pub use ploke_llm::manager::Role;
 impl From<MessageKind> for Role {
     fn from(value: MessageKind) -> Self {
         match value {
@@ -170,11 +148,8 @@ pub async fn llm_manager(
                 let event_bus_clone = event_bus.clone();
                 let client_clone = client.clone();
                 tokio::task::spawn(async move {
-                    let response = handle_endpoint_request_async(
-                        client_clone,
-                        model_key,
-                        variant,
-                    ).await;
+                    let response =
+                        handle_endpoint_request_async(client_clone, model_key, variant).await;
                     event_bus_clone.send(AppEvent::Llm(ploke_llm::LlmEvent::Endpoint(response)));
                 });
             }
@@ -337,14 +312,6 @@ pub async fn process_llm_request(
     if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
-
-    // let _ = cmd_tx
-    //     .send(StateCommand::AddMessageImmediate {
-    //         msg: summary,
-    //         kind: MessageKind::SysInfo,
-    //         new_msg_id: Uuid::new_v4(),
-    //     })
-    //     .await;
 }
 
 #[instrument(skip_all)]
@@ -372,9 +339,6 @@ async fn prepare_and_run_llm_call(
 
     // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
     //      Construct a concrete request object that RequestSession will dispatch.
-    use crate::llm::request::endpoint::ToolChoice;
-    use crate::llm::router_only;
-    use crate::llm::router_only::openrouter;
 
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = {

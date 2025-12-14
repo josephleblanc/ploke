@@ -562,7 +562,7 @@ mod tests {
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
         use ploke_test_utils::init_test_tracing_with_target;
         use tracing::Level;
-        init_test_tracing_with_target("live_api", Level::DEBUG);
+        init_test_tracing_with_target("live_api", Level::ERROR);
 
         let pe = ModelKey {
             author: Author::new("deepseek")?,

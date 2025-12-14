@@ -1055,7 +1055,7 @@ mod test {
         //     eprintln!("Skipping: PLOKE_RUN_UPDATE_EMBED!=1");
         //     return Ok(());
         // }
-        init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::TRACE);
+        init_test_tracing_with_target(TUI_SCAN_TARGET, tracing::Level::ERROR);
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";
         let workspace = "tests/fixture_crates/fixture_update_embed";
