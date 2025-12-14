@@ -67,9 +67,71 @@ pub enum ChatEvt {
 
 impl From<LlmChatEvt> for ChatEvt {
     fn from(value: LlmChatEvt) -> Self {
-        // AI: The LlmChatEvt and ChatEvt are essentially exactly the same. We are splitting them
-        // into two crates that will begin to have diverging uses for the similar structs, but for
-        // now I want you to implement this From trait so we can cleanly handle transitions AI!
-        todo!()
+        match value {
+            LlmChatEvt::Request {
+                request_msg_id,
+                parent_id,
+            } => ChatEvt::Request {
+                request_msg_id,
+                parent_id,
+            },
+            LlmChatEvt::Response {
+                request_id,
+                parent_id,
+                content,
+                model,
+                metadata,
+                usage,
+            } => ChatEvt::Response {
+                request_id,
+                parent_id,
+                content,
+                model,
+                metadata,
+                usage,
+            },
+            LlmChatEvt::PartialResponse {
+                request_id,
+                delta,
+            } => ChatEvt::PartialResponse {
+                request_id,
+                delta,
+            },
+            LlmChatEvt::Error {
+                request_id,
+                error,
+            } => ChatEvt::Error {
+                request_id,
+                error,
+            },
+            LlmChatEvt::Status {
+                active_requests,
+                queue_depth,
+            } => ChatEvt::Status {
+                active_requests,
+                queue_depth,
+            },
+            LlmChatEvt::ModelChanged { new_model } => ChatEvt::ModelChanged { new_model },
+            LlmChatEvt::ToolCall {
+                request_id,
+                parent_id,
+                name,
+                arguments,
+                call_id,
+            } => ChatEvt::ToolCall {
+                request_id,
+                parent_id,
+                name,
+                arguments,
+                call_id,
+            },
+            LlmChatEvt::PromptConstructed {
+                parent_id,
+                formatted_prompt,
+            } => ChatEvt::PromptConstructed {
+                parent_id,
+                formatted_prompt,
+            },
+        }
     }
 }
