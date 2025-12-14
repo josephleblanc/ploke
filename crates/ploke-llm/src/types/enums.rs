@@ -104,7 +104,7 @@ pub(crate) enum Tokenizer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
-pub(crate) enum InstructType {
+pub enum InstructType {
     #[serde(rename = "qwq")]
     Qwq,
     #[serde(rename = "phi3")]
@@ -149,7 +149,7 @@ pub(crate) enum InstructType {
 ///     "quantization": "fp4",
 #[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, PartialOrd, Eq, Hash)]
 #[allow(non_camel_case_types)]
-pub(crate) enum Quant {
+pub enum Quant {
     int4,
     int8,
     fp4,
@@ -162,7 +162,7 @@ pub(crate) enum Quant {
 }
 
 impl Quant {
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Quant::int4 => "int4",
             Quant::int8 => "int8",

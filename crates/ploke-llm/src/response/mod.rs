@@ -44,6 +44,7 @@ pub struct TokenUsage {
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
+#[allow(dead_code, reason = "Useful later when we handle streaming")]
 pub(super) enum ResponseObject {
     #[serde(rename = "chat.completion")]
     ChatCompletion,
@@ -52,6 +53,7 @@ pub(super) enum ResponseObject {
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, PartialOrd, PartialEq)]
+#[allow(dead_code, reason = "Useful later when we add token + cost tracking")]
 pub(super) struct ResponseUsage {
     /** Including images and tools if any */
     pub(super) prompt_tokens: i64,
@@ -119,10 +121,15 @@ pub(crate) struct ErrorResponse {
 
 // Use OpenAI-style normalized tool call shape per OpenRouter docs
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub(crate) struct Choice {
-    pub(super) message: ResponseMessage,
-}
+// TODO:ploke-llm
+// Old, I think not useful, but want to leave it until we finish up with the transition from
+// ploke-tui::llm.
+// Delete after migration complete.
+//
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// pub(crate) struct Choice {
+//     pub(super) message: ResponseMessage,
+// }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct ResponseMessage {

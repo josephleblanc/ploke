@@ -1,6 +1,5 @@
-use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr, sync::Arc};
+use std::fmt;
 use url::Url;
 
 use super::{
@@ -116,45 +115,61 @@ impl<'de> Deserialize<'de> for EndpointTag {
         D: serde::Deserializer<'de>,
     {
         struct Visitor;
+
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = EndpointTag;
+
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str(
-                    "a string in format \"provider_slug\" or \"provider_slug/quantization\"",
+                    "a string like \"provider\" or \"provider/quant\", where the final segment \
+                     is interpreted as quant only if it matches a known quant token",
                 )
             }
+
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                let parts: Vec<&str> = v.split('/').collect();
-                match parts.as_slice() {
-                    [provider] => Ok(EndpointTag {
-                        provider_name: ProviderSlug::new(*provider),
-                        quantization: None,
-                    }),
-                    [provider, quant] => {
-                        let quantization = match *quant {
-                            "int4" => Quant::int4,
-                            "int8" => Quant::int8,
-                            "fp4" => Quant::fp4,
-                            "fp6" => Quant::fp6,
-                            "fp8" => Quant::fp8,
-                            "fp16" => Quant::fp16,
-                            "bf16" => Quant::bf16,
-                            "fp32" => Quant::fp32,
-                            "unknown" => Quant::unknown,
-                            _ => return Err(E::custom("invalid quantization value")),
-                        };
-                        Ok(EndpointTag {
-                            provider_name: ProviderSlug::new(*provider),
-                            quantization: Some(quantization),
-                        })
-                    }
-                    _ => Err(E::custom("invalid format")),
+                fn parse_quant(s: &str) -> Option<Quant> {
+                    Some(match s {
+                        "int4" => Quant::int4,
+                        "int8" => Quant::int8,
+                        "fp4" => Quant::fp4,
+                        "fp6" => Quant::fp6,
+                        "fp8" => Quant::fp8,
+                        "fp16" => Quant::fp16,
+                        "bf16" => Quant::bf16,
+                        "fp32" => Quant::fp32,
+                        "unknown" => Quant::unknown,
+                        _ => return None,
+                    })
                 }
+
+                // Split on the *last* '/', and only treat the suffix as quant if recognized.
+                if let Some((provider_part, last_seg)) = v.rsplit_once('/')
+                    && let Some(q) = parse_quant(last_seg)
+                {
+                    if provider_part.is_empty() {
+                        return Err(E::custom("invalid format: empty provider"));
+                    }
+                    return Ok(EndpointTag {
+                        provider_name: ProviderSlug::new(provider_part),
+                        quantization: Some(q),
+                    });
+                }
+
+                // Otherwise, the entire string is the provider/tag (even if it contains '/').
+                if v.is_empty() {
+                    return Err(E::custom("invalid format: empty provider"));
+                }
+
+                Ok(EndpointTag {
+                    provider_name: ProviderSlug::new(v),
+                    quantization: None,
+                })
             }
         }
+
         deserializer.deserialize_str(Visitor)
     }
 }
@@ -163,7 +178,7 @@ impl<'de> Deserialize<'de> for EndpointTag {
 pub struct BaseUrl(#[serde(with = "serde_url")] Url);
 mod serde_url {
     use super::*;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
     pub fn serialize<S: Serializer>(u: &Url, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(u.as_str())
     }
@@ -228,8 +243,8 @@ mod tests {
     use std::fs;
     use std::str::FromStr;
 
-    use crate::router_only::cli::MODELS_TXT_IDS;
     use crate::ModelId;
+    use crate::router_only::cli::MODELS_TXT_IDS;
     use crate::types::model_types::ModelVariant;
 
     // TODO:

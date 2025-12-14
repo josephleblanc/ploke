@@ -1,11 +1,12 @@
+// #![allow()]
 use fxhash::FxHashSet as HashSet;
 use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ModelId;
 use crate::error::LlmError;
-use crate::registry::user_prefs::{ModelPrefs, RegistryPrefs};
-use crate::request::endpoint::EndpointsResponse;
+use crate::registry::user_prefs::RegistryPrefs;
+use crate::request::endpoint::{EndpointsResponse, FallbackMarker};
 use crate::types::model_types::ModelVariant;
 use crate::{Author, EndpointKey, IdError, ModelKey, ModelSlug, ProviderSlug, Quant};
 
@@ -38,14 +39,17 @@ impl TryFrom<RouterVariants> for OpenRouter {
 
     fn try_from(value: RouterVariants) -> Result<Self, Self::Error> {
         match value {
-            RouterVariants::OpenRouter(open_router) => Ok(OpenRouter),
-            RouterVariants::Anthropic(anthropic) => Err(LlmError::Conversion(String::from(
+            RouterVariants::OpenRouter(_open_router) => Ok(OpenRouter),
+            RouterVariants::Anthropic(_anthropic) => Err(LlmError::Conversion(String::from(
                 "Invalid conversion from Anthropic to OpenRouter",
             ))),
         }
     }
 }
 
+// I think we are intentionally using `Into` here so we cannot go from RouterVariants into
+// OpenRouter or something. Possibly revisit later.
+#[allow(clippy::from_over_into)]
 impl Into<RouterVariants> for OpenRouter {
     fn into(self) -> RouterVariants {
         RouterVariants::OpenRouter(self)
@@ -94,8 +98,8 @@ impl TopProvider {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct OpenRouterModelId {
-    pub(crate) key: ModelKey,
-    pub(crate) variant: Option<OpenRouterModelVariant>,
+    pub key: ModelKey,
+    pub variant: Option<OpenRouterModelVariant>,
 }
 
 impl From<ModelId> for OpenRouterModelId {
@@ -113,7 +117,7 @@ impl OpenRouterModelId {
         let EndpointKey {
             model,
             variant,
-            provider,
+            ..
         } = value;
         Self {
             key: model,
@@ -134,7 +138,7 @@ impl From<EndpointKey> for OpenRouterModelId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) enum OpenRouterModelVariant {
+pub enum OpenRouterModelVariant {
     Free,
     Beta,
     Extended,
@@ -161,7 +165,7 @@ impl From<ModelVariant> for OpenRouterModelVariant {
 }
 
 impl OpenRouterModelVariant {
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Free => "free",
             Self::Beta => "beta",
@@ -298,7 +302,7 @@ pub struct ChatCompFields {
 impl ChatCompFields {
     /// Adds user model preferences
     // TODO: Try getting this into the `ApiRoute` trait
-    pub(crate) fn preferences_union(mut self, pref: &RegistryPrefs) -> Self {
+    pub fn preferences_union(mut self, pref: &RegistryPrefs) -> Self {
         if let Some(openrouter_prefs) = pref
             .router_prefs
             .get(&RouterVariants::OpenRouter(OpenRouter))
@@ -309,31 +313,31 @@ impl ChatCompFields {
     }
 
     /// Set the transforms parameter.
-    pub(crate) fn with_transforms(mut self, transforms: Transform) -> Self {
+    pub fn with_transforms(mut self, transforms: Transform) -> Self {
         self.transforms = Some(transforms);
         self
     }
 
     /// Set the models parameter for fallback routing.
-    pub(crate) fn with_models<I: IntoIterator<Item = ModelId>>(mut self, models: I) -> Self {
+    pub fn with_models<I: IntoIterator<Item = ModelId>>(mut self, models: I) -> Self {
         self.models = Some(models.into_iter().map(Into::into).collect());
         self
     }
 
     /// Set the route parameter.
-    pub(crate) fn with_route(mut self, route: FallbackMarker) -> Self {
+    pub fn with_route(mut self, route: FallbackMarker) -> Self {
         self.route = Some(route);
         self
     }
 
     /// Set the provider preferences.
-    pub(crate) fn with_provider(mut self, provider: ProviderPreferences) -> Self {
+    pub fn with_provider(mut self, provider: ProviderPreferences) -> Self {
         self.provider = Some(provider);
         self
     }
 
     /// Set the user identifier.
-    pub(crate) fn with_user(mut self, user: String) -> Self {
+    pub fn with_user(mut self, user: String) -> Self {
         self.user = Some(user);
         self
     }
@@ -341,14 +345,14 @@ impl ChatCompFields {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum Transform {
+pub enum Transform {
     MiddleOut([MiddleOutMarker; 1]),
     Disable([&'static str; 0]),
 }
 
 // Marker for route -> "middle-out"
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MiddleOutMarker;
+pub struct MiddleOutMarker;
 
 impl Serialize for MiddleOutMarker {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -385,71 +389,32 @@ impl<'de> Deserialize<'de> for MiddleOutMarker {
     }
 }
 
-// Marker for route -> "fallback"
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FallbackMarker;
-
-impl Serialize for FallbackMarker {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str("fallback")
-    }
-}
-
-impl<'de> Deserialize<'de> for FallbackMarker {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct V;
-        impl serde::de::Visitor<'_> for V {
-            type Value = FallbackMarker;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("the string \"fallback\"")
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "fallback" {
-                    Ok(FallbackMarker)
-                } else {
-                    Err(E::custom("expected 'fallback'"))
-                }
-            }
-        }
-        deserializer.deserialize_str(V)
-    }
-}
-
 /// OpenRouter "provider" routing preferences (typed).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct ProviderPreferences {
+pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) order: Option<HashSet<ProviderSlug>>,
+    pub order: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) allow_fallbacks: Option<bool>,
+    pub allow_fallbacks: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) require_parameters: Option<bool>,
+    pub require_parameters: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) data_collection: Option<DataCollection>,
+    pub data_collection: Option<DataCollection>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) only: Option<HashSet<ProviderSlug>>,
+    pub only: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) ignore: Option<HashSet<ProviderSlug>>,
+    pub ignore: Option<HashSet<ProviderSlug>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) quantizations: Option<HashSet<Quant>>,
+    pub quantizations: Option<HashSet<Quant>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) sort: Option<SortBy>,
+    pub sort: Option<SortBy>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) max_price: Option<MaxPrice>,
+    pub max_price: Option<MaxPrice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Copy)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DataCollection {
+pub enum DataCollection {
     Allow,
     #[default]
     Deny,
@@ -457,33 +422,33 @@ pub(crate) enum DataCollection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SortBy {
+pub enum SortBy {
     Price,
     Throughput,
     Latency,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
-pub(crate) struct MaxPrice {
-    pub(crate) prompt_tokens: Option<f64>,
-    pub(crate) completion_tokens: Option<f64>,
-    pub(crate) request: Option<f64>,
+pub struct MaxPrice {
+    pub prompt_tokens: Option<f64>,
+    pub completion_tokens: Option<f64>,
+    pub request: Option<f64>,
 }
 
 impl ProviderPreferences {
-    pub(crate) fn merge_union(mut self, other: &Self) -> Self {
+    pub fn merge_union(mut self, other: &Self) -> Self {
         if let Some(order) = other.order.as_ref() {
             self.order = self
                 .order
                 .map(|ord| ord.union(order).cloned().collect::<HashSet<ProviderSlug>>());
         }
-        if let Some(allow_fallbacks) = other.allow_fallbacks {
+        if let Some(_allow_fallbacks) = other.allow_fallbacks {
             self.allow_fallbacks = other.allow_fallbacks;
         }
-        if let Some(require_parameters) = other.require_parameters {
+        if let Some(_require_parameters) = other.require_parameters {
             self.require_parameters = other.require_parameters;
         }
-        if let Some(data_collection) = other.data_collection {
+        if let Some(_data_collection) = other.data_collection {
             self.data_collection = other.data_collection;
         }
         if let Some(only) = other.only.as_ref() {
@@ -501,7 +466,7 @@ impl ProviderPreferences {
                 .quantizations
                 .map(|q| q.union(quantizations).cloned().collect::<HashSet<Quant>>());
         }
-        if let Some(sort) = other.sort {
+        if let Some(_sort) = other.sort {
             self.sort = other.sort;
         }
         if let Some(max_price) = other.max_price.as_ref() {
@@ -512,69 +477,65 @@ impl ProviderPreferences {
     }
 
     /// Add an order preference.
-    pub(crate) fn with_order<I: IntoIterator<Item = ProviderSlug>>(mut self, order: I) -> Self {
+    pub fn with_order<I: IntoIterator<Item = ProviderSlug>>(mut self, order: I) -> Self {
         self.order = Some(order.into_iter().collect());
         self
     }
 
     /// Set allow_fallbacks preference.
-    pub(crate) fn with_allow_fallbacks(mut self, allow: bool) -> Self {
+    pub fn with_allow_fallbacks(mut self, allow: bool) -> Self {
         self.allow_fallbacks = Some(allow);
         self
     }
 
     /// Set require_parameters preference.
-    pub(crate) fn with_require_parameters(mut self, require: bool) -> Self {
+    pub fn with_require_parameters(mut self, require: bool) -> Self {
         self.require_parameters = Some(require);
         self
     }
 
     /// Set data_collection preference.
-    pub(crate) fn with_data_collection(mut self, collection: DataCollection) -> Self {
+    pub fn with_data_collection(mut self, collection: DataCollection) -> Self {
         self.data_collection = Some(collection);
         self
     }
 
     /// Add an allow preference.
-    pub(crate) fn with_only<I: IntoIterator<Item = ProviderSlug>>(mut self, allow: I) -> Self {
+    pub fn with_only<I: IntoIterator<Item = ProviderSlug>>(mut self, allow: I) -> Self {
         self.only = Some(allow.into_iter().collect());
         self
     }
 
     /// Add an ignore list.
-    pub(crate) fn with_ignore<I: IntoIterator<Item = ProviderSlug>>(mut self, ignore: I) -> Self {
+    pub fn with_ignore<I: IntoIterator<Item = ProviderSlug>>(mut self, ignore: I) -> Self {
         self.ignore = Some(ignore.into_iter().collect());
         self
     }
 
     /// Add quantizations filter.
-    pub(crate) fn with_quantizations<I: IntoIterator<Item = Quant>>(
-        mut self,
-        quantizations: I,
-    ) -> Self {
+    pub fn with_quantizations<I: IntoIterator<Item = Quant>>(mut self, quantizations: I) -> Self {
         self.quantizations = Some(quantizations.into_iter().collect());
         self
     }
 
     /// Set sort preference.
-    pub(crate) fn with_sort(mut self, sort: SortBy) -> Self {
+    pub fn with_sort(mut self, sort: SortBy) -> Self {
         self.sort = Some(sort);
         self
     }
 
     /// Set max_price preference.
-    pub(crate) fn with_max_price(mut self, max_price: MaxPrice) -> Self {
+    pub fn with_max_price(mut self, max_price: MaxPrice) -> Self {
         self.max_price = Some(max_price);
         self
     }
 
     /// Validate that there is no intersection between only and ignore lists.
-    pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if let (Some(only), Some(ignore)) = (&self.only, &self.ignore) {
-            if only.iter().any(|slug| ignore.contains(slug)) {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if let (Some(only), Some(ignore)) = (&self.only, &self.ignore)
+            && only.iter().any(|slug| ignore.contains(slug)) {
                 return Err("ProviderPreferences only and ignore lists have overlapping entries");
             }
-        }
         Ok(())
     }
 }

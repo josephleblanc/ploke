@@ -4,12 +4,11 @@ mod session;
 pub use session::{ChatHttpConfig, ChatStepOutcome, chat_step, parse_chat_outcome};
 
 use crate::error::LlmError;
-use crate::manager::events::{endpoint};
+use crate::manager::events::endpoint;
 use crate::router_only::HasEndpoint;
 
 pub use events::LlmEvent;
 use ploke_core::ArcStr;
-
 
 use ploke_rag::TokenCounter as _;
 use ploke_rag::context::ApproxCharTokenizer;
@@ -112,17 +111,6 @@ impl RequestMessage {
     }
 }
 
-/// Event id helper struct, uses the user's previous message (parent_id) and the new id that will
-/// be updated with the LLM's response (new_msg_id) to differentiate items in the queue.
-// note: This is super overkill, we don't really need two 128-bit keys for such a small set of
-// itmes.
-// TODO: We don't currently send the msg id of the newly generated Llm message placeholder to the
-// context initalization, find a good way to coordinate this.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct EvtKey {
-    parent_id: Uuid,
-}
-
 pub async fn handle_endpoint_request_async(
     client: Client,
     model_key: ModelKey,
@@ -145,6 +133,7 @@ pub async fn handle_endpoint_request_async(
     }
 }
 
+#[allow(dead_code, reason = "useful later when we add better token tracking, probably")]
 pub(super) fn cap_messages_by_chars(
     messages: &[RequestMessage],
     budget: usize,
@@ -165,6 +154,7 @@ pub(super) fn cap_messages_by_chars(
     kept.into_iter().cloned().collect()
 }
 
+#[allow(dead_code, reason = "useful later when we add better token tracking, probably")]
 pub(super) fn cap_messages_by_tokens(
     messages: &[RequestMessage],
     token_budget: usize,
@@ -186,6 +176,7 @@ pub(super) fn cap_messages_by_tokens(
 }
 
 // Diagnostics helpers (env-driven, independent of tracing)
+#[allow(dead_code, reason = "possibly useful for adding log files to tests here")]
 fn diag_dir() -> Option<PathBuf> {
     // Prefer explicit env override; otherwise default to a stable test-output folder.
     let path = env::var_os("PLOKE_E2E_DIAG_DIR")
@@ -194,6 +185,7 @@ fn diag_dir() -> Option<PathBuf> {
     let _ = fs::create_dir_all(&path);
     Some(path)
 }
+#[allow(dead_code, reason = "possibly useful for adding log files to tests here")]
 fn now_ts() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

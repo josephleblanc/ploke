@@ -1,25 +1,17 @@
-use std::collections::BTreeMap;
-use std::str::FromStr;
-use std::sync::Arc;
-
 use ploke_core::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Quant;
 use crate::SupportedParameters;
-use crate::router_only::openrouter::providers::{ProviderName, ProviderSlug};
+use crate::router_only::openrouter::providers::ProviderName;
 use crate::types::model_types::Architecture;
 use crate::types::newtypes::{EndpointTag, ModelName};
 use crate::*;
-use ploke_core::tool_types::{FunctionMarker, ToolDefinition};
-use crate::utils::se_de::string_or_f64;
-use crate::utils::se_de::string_to_f64_opt_zero;
+use ploke_core::tool_types::FunctionMarker;
 
 // Example json response for
 // `https://openrouter.ai/api/v1/models/deepseek/deepseek-chat-v3.1/endpoints`
 // is shown in the test below for a simple sanity check `test_example_json_deserialize`
-
-use crate::utils::se_de::{de_arc_str, se_arc_str};
 
 use super::ModelPricing;
 
@@ -162,12 +154,11 @@ impl<'de> Deserialize<'de> for JsonObjMarker {
             {
                 let mut found = false;
                 while let Some((k, v)) = map.next_entry::<String, serde_json::Value>()? {
-                    if k == "type" {
-                        if let Some(s) = v.as_str() {
-                            if s == "json_object" {
-                                found = true;
-                            }
-                        }
+                    if k == "type"
+                        && let Some(s) = v.as_str()
+                        && s == "json_object"
+                    {
+                        found = true;
                     }
                 }
                 if found {
@@ -554,7 +545,6 @@ mod tests {
     }
 
     use crate::router_only::openrouter::OpenRouterModelId;
-    use std::str::FromStr;
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_fetch_smoke() -> color_eyre::Result<()> {
@@ -570,11 +560,36 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
+        use ploke_test_utils::init_test_tracing_with_target;
+        use tracing::Level;
+        init_test_tracing_with_target("live_api", Level::DEBUG);
+
         let pe = ModelKey {
             author: Author::new("deepseek")?,
             slug: ModelSlug::new("deepseek-chat-v3.1")?,
         };
-        let v = call_openrouter_endpoint(pe, None).await?;
+        let v = call_openrouter_endpoint(pe, None).await.inspect(|val| {
+            let endpoints = val
+                .get("data")
+                .and_then(|d| d.get("endpoints"))
+                .and_then(|end| end.as_array())
+                .expect("expect well-shaped response, data.endpoints should be array");
+            let all_ep_count = endpoints.len();
+            let count_name_quants = endpoints
+                .iter()
+                .map(|ep| (ep.get("name"), ep.get("quantization")))
+                .filter(|(n, q)| n.is_some() && q.is_some())
+                .inspect(|(name, quant)| {
+                    println!("{: <20}{: >20}", format!("{name:?}"), format!("{quant:?}"))
+                })
+                .count();
+            println!(
+                "total count: {}\nwith name, quant count: {}",
+                all_ep_count, count_name_quants
+            );
+            let pretty = serde_json::to_string_pretty(val).expect("returned val to be valid json");
+            tracing::debug!(target: "live_api", %pretty);
+        })?;
         // eprintln!("{:#?}", v);
         let parsed: EndpointsResponse = serde_json::from_value(v)?;
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned");
@@ -595,9 +610,11 @@ mod tests {
         mk: ModelKey,
         variant: Option<OpenRouterModelVariant>,
     ) -> color_eyre::Result<serde_json::Value> {
+        use crate::utils::test_helpers::default_headers;
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .default_headers(crate::test_harness::default_headers())
+            .default_headers(default_headers())
             .build()?;
         let model_id = OpenRouterModelId { key: mk, variant };
         let url = OpenRouter::endpoints_url(model_id);
@@ -633,7 +650,9 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
     async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
-        let Some(_op) = crate::test_harness::openrouter_env() else {
+        use crate::utils::test_helpers::openrouter_env;
+
+        let Some(_op) = openrouter_env() else {
             panic!("Skipping live tests: OPENROUTER_API_KEY not set");
         };
         let candidates: &[(&str, &str)] = &[

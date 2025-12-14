@@ -592,20 +592,22 @@ impl std::str::FromStr for ProviderSlug {
     }
 }
 
+// TODO:ploke-llm
 #[cfg(feature = "live_api_tests")]
+#[cfg(test)]
 mod tests {
     use reqwest::Client;
     use std::time::Duration;
 
     use crate::router_only::openrouter::OpenRouter;
     use crate::router_only::{Router, openrouter::providers::ProvidersResponse};
-    use crate::{
-        test_harness::{default_headers, openrouter_env},
-        user_config::openrouter_url,
-    };
+    use crate::utils::test_helpers::default_headers;
+    // use crate::{
+    //     test_harness::{default_headers, openrouter_env},
+    //     user_config::openrouter_url,
+    // };
 
     #[tokio::test]
-    #[cfg(feature = "live_api_tests")]
     /// Flakey test to help notice when OpenRouter changes their provider list.
     async fn flakey_openrouter_providers() -> color_eyre::Result<()> {
         let client = Client::builder()
@@ -643,14 +645,14 @@ mod tests {
         let providers_response: ProvidersResponse = serde_json::from_value(body)?;
 
         let count_providers = providers_response.data.len();
-        assert_eq!(66, count_providers);
+        assert_eq!(68, count_providers);
 
         let count_tos = providers_response
             .data
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(60, count_tos);
+        assert_eq!(62, count_tos);
 
         let count_status_page = providers_response
             .data
@@ -664,7 +666,7 @@ mod tests {
             .iter()
             .filter(|p| p.privacy_policy_url.is_some())
             .count();
-        assert_eq!(60, count_pp);
+        assert_eq!(62, count_pp);
         Ok(())
     }
 }

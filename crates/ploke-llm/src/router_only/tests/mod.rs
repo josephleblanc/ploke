@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{error::LlmError, router_only::{cli::{MODELS_JSON_ID_NOT_NAME, MODELS_JSON_RAW}, openrouter::OpenRouter}, ModelId};
+use crate::{error::LlmError, request::endpoint::FallbackMarker, router_only::{cli::{MODELS_JSON_ID_NOT_NAME, MODELS_JSON_RAW}, openrouter::{MiddleOutMarker, OpenRouter, OpenRouterModelId, Transform}}, ModelId};
 use std::{path::PathBuf, str::FromStr as _};
 
 mod builder_tests;
@@ -146,6 +146,7 @@ Unkown command: {s}\nvalid choices:\n\traw\n\tall\n\tid\n\tarch\n\ttop
 }
 
 use color_eyre::Result;
+use itertools::Itertools as _;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 #[tokio::test]

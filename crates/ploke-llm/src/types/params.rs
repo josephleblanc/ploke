@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -337,21 +337,21 @@ mod tests {
     use super::*;
     use color_eyre::Result;
 
-    static LLM_TEST_PARAMS: LLMParameters = LLMParameters {
-        max_tokens: Some(8192),
-        temperature: Some(0.7),
-        seed: Some(42),
-        top_p: Some(0.9),
-        top_k: Some(1.5),
-        frequency_penalty: Some(0.1),
-        presence_penalty: Some(0.1),
-        repetition_penalty: Some(1.1),
-        logit_bias: None,
-        top_logprobs: Some(5),
-        min_p: Some(0.1),
-        top_a: Some(0.2),
-        verbosity: Some(Verbosity::Low),
-    };
+    // static LLM_TEST_PARAMS: LLMParameters = LLMParameters {
+    //     max_tokens: Some(8192),
+    //     temperature: Some(0.7),
+    //     seed: Some(42),
+    //     top_p: Some(0.9),
+    //     top_k: Some(1.5),
+    //     frequency_penalty: Some(0.1),
+    //     presence_penalty: Some(0.1),
+    //     repetition_penalty: Some(1.1),
+    //     logit_bias: None,
+    //     top_logprobs: Some(5),
+    //     min_p: Some(0.1),
+    //     top_a: Some(0.2),
+    //     verbosity: Some(Verbosity::Low),
+    // };
 
     #[test]
     fn test_builder_fields() {

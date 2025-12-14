@@ -17,7 +17,7 @@ use crate::{
 /// that may vary across routers/providers, e.g. for OpenRouter
 /// - ModelKey might be: deepseek/deepseek-r1
 /// - but there may be a ModelId, `deepseek/deepseek-r1:free`, which may correspond to an Endpoint
-/// such as `deepinfra/deepseek-r1`
+///   such as `deepinfra/deepseek-r1`
 pub struct ModelKey {
     pub author: Author,  // e.g. "openai", "nousresearch"
     pub slug: ModelSlug, // e.g. "gpt-5", "deephermes-3-llama-3-8b-preview"
@@ -67,6 +67,7 @@ impl From<ModelKey> for ModelId {
 }
 
 impl ModelId {
+    #[allow(dead_code)]
     pub(crate) fn with_variant(mut self, variant: Option<ModelVariant>) -> Self {
         self.variant = variant;
         self
@@ -181,7 +182,7 @@ impl FromStr for ModelId {
 
 /// Architecture details of a model, including input/output modalities and tokenizer info.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq, Eq)]
-pub(crate) struct Architecture {
+pub struct Architecture {
     /// Input modalities supported by this model (text, image, audio, video).
     pub input_modalities: Vec<InputModality>,
     pub modality: Modality,

@@ -3787,6 +3787,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "color-eyre",
+ "dotenvy",
  "futures",
  "fxhash",
  "itertools 0.14.0",

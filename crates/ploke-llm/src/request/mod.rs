@@ -25,7 +25,7 @@ pub use marker::JsonObjMarker;
 /// WARNING: Repeating for emphasis, this is price in USD/token, not USD per million tokens.
 /// - need to watch out for float errors
 /// - round to nearest 100th of a cent, e.g. $0.0001, when presenting to user and/or transforming
-/// into a crate-local format
+///   into a crate-local format
 #[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Deserialize, Copy)]
 pub struct ModelPricing {
     // Price per token in USD for system(?) prompt
@@ -98,9 +98,7 @@ pub struct ModelPricing {
 #[cfg(test)]
 mod pricing_tests {
     use super::*;
-    use ploke_test_utils::{init_test_tracing, init_tracing_tests};
     use serde_json::json;
-    use tracing::Level;
 
     // file with a `Vec<ModelPricing>` pretty-printed as json
     use crate::router_only::{cli::MODELS_JSON_PRICING, cli::test_data::MODELS_PRICING_JSON_LAZY};

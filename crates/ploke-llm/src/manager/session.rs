@@ -99,8 +99,8 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
-    if let Ok(v) = serde_json::from_str::<Value>(body_text) {
-        if let Some(err) = v.get("error") {
+    if let Ok(v) = serde_json::from_str::<Value>(body_text)
+        && let Some(err) = v.get("error") {
             let msg = err
                 .get("message")
                 .and_then(|m| m.as_str())
@@ -127,7 +127,6 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
                 message: full_msg,
             });
         }
-    }
 
     let parsed: OpenAiResponse = serde_json::from_str(body_text).map_err(|e| {
         // Avoid dumping arbitrarily large bodies into errors/logs.

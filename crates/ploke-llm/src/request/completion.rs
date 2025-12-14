@@ -1,25 +1,13 @@
 use crate::manager::RequestMessage;
 pub(crate) use crate::router_only::default_messages;
-pub(crate) use crate::router_only::default_model;
 use crate::types::model_types::serialize_model_id_as_request_string;
-use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-        LLMParameters, ModelId,
-        router_only::{
-            ApiRoute,
-            openrouter::{self, ProviderPreferences, Transform},
-        },
-};
-use ploke_core::tool_types::ToolDefinition;
+use crate::ModelId;
 use std::str::FromStr;
 
-use super::{
-    endpoint::{FallbackMarker, ToolChoice},
-    marker::JsonObjMarker,
-};
+use super::marker::JsonObjMarker;
 
 /// Completion request for the OpenRouter url at
 /// - https://openrouter.ai/api/v1/chat/completions
@@ -144,8 +132,9 @@ impl ChatCompReqCore {
     // case it should return invalid. Must have one of the two.
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::{ModelId, manager::RequestMessage, request::JsonObjMarker};
+    use crate::{ModelId, manager::RequestMessage};
 
     use super::ChatCompReqCore;
     use color_eyre::Result;

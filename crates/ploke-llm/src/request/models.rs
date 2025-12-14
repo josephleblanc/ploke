@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 
 use ploke_core::ArcStr;
-use ploke_test_utils::workspace_root;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -29,9 +28,6 @@ use crate::{
     router_only::{HasModelId, openrouter::TopProvider},
     types::{model_types::Architecture, newtypes::ModelName},
 };
-
-use serde_json::Value;
-
 
 use super::ModelPricing;
 
@@ -133,7 +129,6 @@ impl SupportsTools for ResponseItem {
 #[cfg(test)]
 mod tests {
     use crate::{InputModality, Modality, OutputModality, SupportedParameters, Tokenizer};
-    use ploke_core::ArcStr;
     use serde_json::json;
 
     use super::super::models;

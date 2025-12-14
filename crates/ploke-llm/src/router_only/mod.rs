@@ -8,24 +8,14 @@ pub mod openrouter;
 
 use crate::manager::RequestMessage;
 use crate::manager::Role;
-use itertools::Itertools;
-use openrouter::{FallbackMarker, MiddleOutMarker, OpenRouterModelId, Transform};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use ploke_core::tool_types::ToolDefinition;
 
-use super::registry::user_prefs::ModelPrefs;
-use super::registry::user_prefs::ModelProfile;
 use super::{
     EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey,
-    registry::user_prefs::RegistryPrefs,
-    request::{
-        ChatCompReqCore, JsonObjMarker,
-        endpoint::{EndpointData, ToolChoice},
-        models,
-    },
-    types::model_types::ModelVariant,
+    request::{ChatCompReqCore, endpoint::ToolChoice, models},
 };
 mod anthropic {
     use super::*;
@@ -35,6 +25,7 @@ mod anthropic {
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
     // Note: Placeholder, just an example for now
+    #[allow(dead_code)]
     pub struct ChatCompFields {
         claude_specific_one: Option<String>,
         claude_specific_two: Option<String>,
@@ -51,29 +42,35 @@ pub trait HasModels: Router {
     type Models: for<'a> Deserialize<'a> + HasModelId + Into<models::ResponseItem>;
     type Error;
 
-    async fn fetch_models(client: &reqwest::Client) -> color_eyre::Result<Self::Response> {
-        let url = Self::MODELS_URL;
-        let api_key = Self::resolve_api_key()?;
+    fn fetch_models(
+        client: &reqwest::Client,
+    ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
+        async {
+            let url = Self::MODELS_URL;
+            let api_key = Self::resolve_api_key()?;
 
-        let resp = client
-            .get(url)
-            .bearer_auth(api_key)
-            .header("Accept", "application/json")
-            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-            .header("X-Title", "Ploke TUI")
-            .send()
-            .await?
-            .error_for_status()?;
+            let resp = client
+                .get(url)
+                .bearer_auth(api_key)
+                .header("Accept", "application/json")
+                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+                .header("X-Title", "Ploke TUI")
+                .send()
+                .await?
+                .error_for_status()?;
 
-        let parsed = resp.json::<Self::Response>().await?;
+            let parsed = resp.json::<Self::Response>().await?;
 
-        Ok(parsed)
+            Ok(parsed)
+        }
     }
 
-    async fn fetch_models_iter(
+    fn fetch_models_iter(
         client: &reqwest::Client,
-    ) -> color_eyre::Result<impl IntoIterator<Item = Self::Models>> {
-        Self::fetch_models(client).await.map(|r| r.into_iter())
+    ) -> impl std::future::Future<
+        Output = color_eyre::Result<impl IntoIterator<Item = Self::Models>>,
+    > + Send {
+        async { Self::fetch_models(client).await.map(|r| r.into_iter()) }
     }
 }
 
@@ -81,28 +78,30 @@ pub trait HasEndpoint: Router {
     type EpResponse: for<'a> Deserialize<'a> + Into<EndpointsResponse>;
     type Error;
 
-    async fn fetch_model_endpoints(
+    fn fetch_model_endpoints(
         client: &reqwest::Client,
         model: Self::RouterModelId,
-    ) -> color_eyre::Result<Self::EpResponse> {
-        let url = Self::endpoints_url(model);
-        let api_key = Self::resolve_api_key()?;
+    ) -> impl std::future::Future<Output = color_eyre::Result<Self::EpResponse>> + Send {
+        async {
+            let url = Self::endpoints_url(model);
+            let api_key = Self::resolve_api_key()?;
 
-        let resp = client
-            .get(url)
-            .bearer_auth(api_key)
-            .header("Accept", "application/json")
-            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-            .header("X-Title", "Ploke TUI")
-            .send()
-            .await?
-            .error_for_status()?;
+            let resp = client
+                .get(url)
+                .bearer_auth(api_key)
+                .header("Accept", "application/json")
+                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+                .header("X-Title", "Ploke TUI")
+                .send()
+                .await?
+                .error_for_status()?;
 
-        // let body = resp.json().await?;
-        // Parse with stronger typed endpoint shape first
-        let parsed = resp.json::<Self::EpResponse>().await?;
+            // let body = resp.json().await?;
+            // Parse with stronger typed endpoint shape first
+            let parsed = resp.json::<Self::EpResponse>().await?;
 
-        Ok(parsed)
+            Ok(parsed)
+        }
     }
 }
 
@@ -147,7 +146,7 @@ pub trait Router:
     /// - deepseek/deepseek-v3.1:free
     ///
     /// See `OpenRouterVariants` and `RouterVariants` enums for possible values.
-    type RouterModelId: RouterModelId + From<EndpointKey> + From<ModelId>;
+    type RouterModelId: RouterModelId + From<EndpointKey> + From<ModelId> + Send;
     // This is where we would put other differentiating items, for example if there are
     // OpenRouter-unique fields of `LLMParameters`, we would create something like:
     // LlmParamFields: `RouterLlmParam + From<LlmParameters>
@@ -235,7 +234,6 @@ pub trait ApiRoute: Sized + Default + Serialize {
         Self::parent().into()
     }
 }
-use serde_json::{Value, json};
 use std::{str::FromStr as _, sync::OnceLock};
 
 static DEFAULT_MODEL: OnceLock<String> = OnceLock::new();

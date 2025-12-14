@@ -1,10 +1,8 @@
 use ploke_core::tool_types::ToolName;
 
 use crate::{
-        error::LlmError,
-        request::endpoint::EndpointsResponse,
-        router_only::{Router, RouterVariants},
-        types::meta::LLMMetadata,
+    error::LlmError, request::endpoint::EndpointsResponse, router_only::RouterVariants,
+    types::meta::LLMMetadata,
 };
 
 use super::*;
@@ -74,7 +72,7 @@ pub mod models {
             /// The information on all models, can be used to update the cached model info and/or
             /// persisted into the database.
             /// - Caches the owned deserialized values in-memory, then persist with 12-hour update
-            /// cycles.
+            ///   cycles.
             // Larger response, make an Arc to hold it
             models: Option<Arc<request::models::Response>>,
             /// Optional search keyword that initiated this response, so consumers can drop stale
