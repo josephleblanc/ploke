@@ -345,7 +345,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 

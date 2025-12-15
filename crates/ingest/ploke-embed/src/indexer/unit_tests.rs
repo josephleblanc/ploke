@@ -708,15 +708,15 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     {
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
-        use ploke_db::multi_embedding::{hnsw_ext::HnswExt, schema::EmbeddingSetExt};
+    use ploke_db::multi_embedding::{hnsw_ext::HnswExt, schema::EmbeddingSetExt};
 
-        let db_ret = ploke_db::create_index_warn(&db);
-        let is_hnsw_registered = db.is_hnsw_index_registered(&db.active_embedding_set)?;
-        tracing::info!(?is_hnsw_registered);
-        assert!(
-            is_hnsw_registered,
-            "expect hnsw registered after embedding process finished"
-        );
+    let db_ret = ploke_db::create_index_warn(&db);
+    let is_hnsw_registered = db.is_hnsw_index_registered(&db.active_embedding_set)?;
+    tracing::info!(?is_hnsw_registered);
+    assert!(
+        is_hnsw_registered,
+        "expect hnsw registered after embedding process finished"
+    );
 
     if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
         tracing::warn!("CallbackManager not closed?");

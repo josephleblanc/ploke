@@ -60,9 +60,10 @@ pub enum ProposalKind {
     Create,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ApprovalsFilter {
     /// Default: show Pending + Failed + Stale (things needing attention).
+    #[default]
     PendingOrErrored,
     PendingOnly,
     ApprovedApplied,
@@ -71,11 +72,6 @@ pub enum ApprovalsFilter {
     All,
 }
 
-impl Default for ApprovalsFilter {
-    fn default() -> Self {
-        ApprovalsFilter::PendingOrErrored
-    }
-}
 
 impl ApprovalsFilter {
     fn matches_status(self, status: &EditProposalStatus) -> bool {

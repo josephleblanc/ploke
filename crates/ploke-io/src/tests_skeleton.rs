@@ -46,7 +46,6 @@ use crate::read::tests::tracking_hash;
 
 use super::*;
 use ploke_common::{fixtures_crates_dir, workspace_root};
-#[cfg(feature = "multi_embedding_io")]
 use ploke_test_utils::setup_db_full_multi_embedding;
 use ploke_test_utils::{setup_db_full, setup_db_full_embeddings};
 use std::fs;
@@ -224,15 +223,12 @@ async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
     let fixture_name = "fixture_nodes";
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(&project_root, std::slice::from_ref(&crate_path))
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     tracing::info!("🚀 Starting test");
     tracing::debug!("Initializing test database");
 
-    #[cfg(feature = "multi_embedding_io")]
-    let embedding_data = setup_db_full_embeddings(fixture_name)?;
-    #[cfg(not(feature = "multi_embedding_io"))]
     let embedding_data = setup_db_full_embeddings(fixture_name)?;
     let flat_nodes: Vec<_> = embedding_data
         .iter()
@@ -357,7 +353,7 @@ async fn test_read_file_plain_success() {
     assert!(resp.exists);
     assert_eq!(resp.file_path, file_path);
     assert_eq!(resp.byte_len, Some(contents.len() as u64));
-    assert_eq!(resp.truncated, false);
+    assert!(!resp.truncated);
     assert_eq!(resp.content.as_deref(), Some(contents));
 
     handle.shutdown().await;

@@ -1,5 +1,7 @@
 # Technical Debt
 
+Note: dates at the end of these comments were the "written on" dates
+
 This is a list of known fixes that I will want to make but are not terribly urgent.
 
 ## Documentation
@@ -61,6 +63,8 @@ This is a list of known fixes that I will want to make but are not terribly urge
 
 ## Organization
 * [ ] Refactor the `tools` module in `ploke-tui` into its own crate, `ploke-tools` (see Note 1 below)
+* [ ] Revisit dead_code items, identify where/if they would be useful,
+      determine if wasted space or wasted opportunity 2025-12-15
 
 ## OpenRouter Types
 * [ ] Consolidate OpenRouter types into a single module with strong typing (serde derives), remove ad‑hoc conversions; add micro validation layer.

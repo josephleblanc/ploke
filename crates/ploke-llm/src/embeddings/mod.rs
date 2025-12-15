@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HTTP_REFERER, HTTP_TITLE, LlmError, ModelId, Router, embeddings,
+    HTTP_REFERER, HTTP_TITLE, ModelId, Router,
     request::models,
     router_only::{ApiRoute, HasModelId},
     types::model_types::serialize_model_id_as_request_string,

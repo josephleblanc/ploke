@@ -386,7 +386,7 @@ impl IoManager {
         };
         let hash = match hashed_result {
             Ok(hash) => hash,
-            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
                 return Ok(missing_response(&path));
             }
             Err(err) => return Err(err.into()),
@@ -404,7 +404,7 @@ impl IoManager {
                     file_hash: Some(hash),
                 })
             }
-            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
                 Ok(missing_response(&path))
             }
             Err(err) => Err(err.into()),
@@ -445,7 +445,7 @@ impl IoManager {
                     file_hash: None,
                 })
             }
-            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
                 Ok(ReadFileResponse {
                     exists: false,
                     file_path: path,
@@ -885,7 +885,7 @@ impl IoManager {
 }
 
 pub(crate) fn read_and_compute_hash(
-    path: &PathBuf,
+    path: &Path,
     policy: LargeFilePolicy,
     max_bytes_hashed: u64,
 ) -> Result<Result<FileHash, IoError>, PlokeError> {
@@ -898,7 +898,7 @@ pub(crate) fn read_and_compute_hash(
             let kind = io_error.kind();
             Err(IoError::FileOperation {
                 operation: "read",
-                path: path.clone(),
+                path: path.to_path_buf().clone(),
                 source: Arc::new(io_error),
                 kind,
             })

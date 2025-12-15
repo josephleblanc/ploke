@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
+
 use lasso::{Spur, ThreadedRodeo};
 use once_cell::sync::Lazy;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -172,6 +174,6 @@ pub fn gen_repeated_inputs(unique: usize, factor: usize) -> Vec<String> {
         .map(|i| format!("author{}/model{}:free", i % 1_003, i))
         .collect();
     base.into_iter()
-        .flat_map(|s| std::iter::repeat(s).take(factor))
+        .flat_map(|s| std::iter::repeat_n(s, factor))
         .collect()
 }

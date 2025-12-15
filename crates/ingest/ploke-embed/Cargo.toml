@@ -48,7 +48,7 @@ once_cell = "1"
 
 
 [features]
-default = ["debug"]
+default = ["debug", "live_api_tests"]
 debug = []
 update_embeds = []
 live_api_tests = []

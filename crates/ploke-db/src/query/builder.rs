@@ -183,12 +183,13 @@ impl NodeType {
                     .chain(&[n.relation_str()])
                     .chain(&[left])
                     .chain(
-                        n.fields()
+                        // changed to method call due to warning from rustc that the `intersperse`
+                        // name may be taken over by an std method. Keep here until something
+                        // happens that makes me want to adjust it again - e.g. update to rustc,
+                        // breaking change from Itertools
+                        Itertools::intersperse(n.fields()
                             .iter()
-                            .filter(|s| ["id", "name", "tracking_hash", "span"].contains(s))
-                            // // replace tracking_hash for simplicity in `get_nodes_ordered`
-                            // .map(|th| if *th == "tracking_hash" { &hash } else { th })
-                            .intersperse(&", "),
+                            .filter(|s| ["id", "name", "tracking_hash", "span"].contains(s)), &", "),
                     )
                     .chain(&[right])
                     .join("")

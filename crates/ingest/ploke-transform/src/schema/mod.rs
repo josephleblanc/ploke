@@ -28,7 +28,6 @@ pub mod primary_nodes {
 }
 
 pub mod assoc_nodes_multi;
-use assoc_nodes_multi::*;
 
 // Re-exporting with same module path for consumers, to keep changes in feature flag isolated from
 // the changes.
