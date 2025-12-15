@@ -1,8 +1,8 @@
 use crate::{
     EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
-    embeddings::{HasEmbeddingModels, HasEmbeddings},
+    embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddingModels, HasEmbeddings},
     router_only::{
-        ApiRoute,
+        ApiRoute, Router,
         openrouter::{EmbeddingProviderPrefs, ProviderPreferences},
     },
 };
@@ -54,7 +54,7 @@ impl HasEmbeddings for super::OpenRouter {
                 .send()
                 .await
                 .map_err(|e| OpenRouterEmbeddingError::Transport {
-                    source: e.to_string(),
+                    message: e.to_string(),
                     url: url.clone(),
                 })?;
 
@@ -86,7 +86,7 @@ impl HasEmbeddings for super::OpenRouter {
 
             let parsed = resp.json::<Self::EmbeddingsResponse>().await.map_err(|e| {
                 OpenRouterEmbeddingError::Transport {
-                    source: e.to_string(),
+                    message: e.to_string(),
                     url: url.clone(),
                 }
             })?;
@@ -163,6 +163,182 @@ pub struct Usage {
     cost: Option<f64>,
 }
 
+#[cfg(test)]
+mod error_mapping_tests {
+    use super::*;
+    use crate::{
+        embeddings::EmbeddingRequest,
+        router_only::openrouter::OpenRouter,
+    };
+    use httpmock::prelude::*;
+    use once_cell::sync::Lazy;
+    use reqwest::Client;
+    use tokio::sync::Mutex;
+    use std::str::FromStr;
+
+    static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn base_request() -> EmbeddingRequest<OpenRouter> {
+        let mut req: EmbeddingRequest<OpenRouter> = Default::default();
+        req.model = ModelId::from_str("openai/text-embedding-3-small").unwrap();
+        req.input = EmbeddingInput::Single("hello".into());
+        req
+    }
+
+    fn set_env(url: &str) {
+        // Env mutation is process-global; restrict to tests.
+        unsafe {
+            std::env::set_var("OPENROUTER_API_KEY", "test-key");
+            std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
+        }
+    }
+
+    async fn expect_error<F>(status: u16, body: &str, assert: F)
+    where
+        F: Fn(&OpenRouterEmbeddingError),
+    {
+        let _guard = TEST_MUTEX.lock().await;
+        let server = MockServer::start();
+        let _m = server.mock(|when, then| {
+            when.method(POST).path("/v1/embeddings");
+            then.status(status).body(body);
+        });
+        set_env(&server.url("/v1/embeddings"));
+        let req = base_request();
+        let err = OpenRouter::fetch_embeddings(&Client::new(), &req)
+            .await
+            .expect_err("expected error");
+        let kind = err
+            .downcast_ref::<OpenRouterEmbeddingError>()
+            .expect("typed openrouter embedding error");
+        assert(kind);
+    }
+
+    #[tokio::test]
+    async fn maps_bad_request() {
+        expect_error(400, "bad input", |e| match e {
+            OpenRouterEmbeddingError::BadRequest { detail, .. } => {
+                assert_eq!(detail, "bad input");
+            }
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maps_unauthorized() {
+        expect_error(401, "unauthorized", |e| match e {
+            OpenRouterEmbeddingError::Unauthorized { .. } => {}
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maps_payment_required() {
+        expect_error(402, "payment", |e| match e {
+            OpenRouterEmbeddingError::PaymentRequired { .. } => {}
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maps_not_found() {
+        expect_error(404, "missing model", |e| match e {
+            OpenRouterEmbeddingError::NotFound { model, .. } => {
+                assert_eq!(model.to_string(), "openai/text-embedding-3-small");
+            }
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maps_rate_limited_with_retry_after() {
+        let _guard = TEST_MUTEX.lock().await;
+        let server = MockServer::start();
+        let _m = server
+            .mock(|when, then| {
+                when.method(POST).path("/v1/embeddings");
+                then.status(429)
+                    .header("Retry-After", "2")
+                    .body("too many");
+            });
+        set_env(&server.url("/v1/embeddings"));
+        let req = base_request();
+        let err = OpenRouter::fetch_embeddings(&Client::new(), &req)
+            .await
+            .expect_err("expected rate limit error");
+        let kind = err
+            .downcast_ref::<OpenRouterEmbeddingError>()
+            .expect("typed openrouter embedding error");
+        match kind {
+            OpenRouterEmbeddingError::RateLimited { retry_after, .. } => {
+                assert_eq!(retry_after.as_ref().map(|d| d.as_secs()), Some(2));
+            }
+            other => panic!("unexpected error variant {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_provider_overloaded() {
+        expect_error(529, "overloaded", |e| match e {
+            OpenRouterEmbeddingError::ProviderOverloaded { .. } => {}
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maps_unexpected() {
+        expect_error(500, "server error", |e| match e {
+            OpenRouterEmbeddingError::Unexpected { status, body, .. } => {
+                assert_eq!(*status, 500);
+                assert_eq!(body, "server error");
+            }
+            other => panic!("unexpected error variant {other:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn parses_success() {
+        let _guard = TEST_MUTEX.lock().await;
+        let server = MockServer::start();
+        let body = serde_json::json!({
+            "data": [{
+                "index": 0,
+                "embedding": [0.1, 0.2, 0.3]
+            }],
+            "model": "text-embedding-3-small",
+            "id": "req-123",
+            "usage": {
+                "prompt_tokens": 5.0,
+                "total_tokens": 5.0,
+                "cost": null
+            }
+        })
+        .to_string();
+        let _m = server
+            .mock(|when, then| {
+                when.method(POST).path("/v1/embeddings");
+                then.status(200).body(body);
+            });
+        set_env(&server.url("/v1/embeddings"));
+        let req = base_request();
+        let resp = OpenRouter::fetch_embeddings(&Client::new(), &req)
+            .await
+            .expect("success");
+        assert_eq!(resp.data.len(), 1);
+        assert!(resp.model.matches_request(&req.model));
+        assert_eq!(
+            resp.id.as_ref().map(|i| i.as_str()),
+            Some("req-123")
+        );
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenRouterEmbeddingError {
     #[error("invalid embedding request: {detail} (url={url})")]
@@ -177,8 +353,8 @@ pub enum OpenRouterEmbeddingError {
     RateLimited { url: String, retry_after: Option<Duration> },
     #[error("provider overloaded (url={url})")]
     ProviderOverloaded { url: String },
-    #[error("transport error for embeddings (url={url}): {source}")]
-    Transport { source: String, url: String },
+    #[error("transport error for embeddings (url={url}): {message}")]
+    Transport { message: String, url: String },
     #[error("unexpected embedding error status={status} url={url} body={body}")]
     Unexpected { status: u16, url: String, body: String },
 }
