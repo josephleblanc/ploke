@@ -12,6 +12,7 @@ use crate::{Author, EndpointKey, IdError, ModelKey, ModelSlug, ProviderSlug, Qua
 
 use super::{ApiRoute, HasEndpoint, HasModels, Router, RouterModelId, RouterVariants};
 
+pub mod embed;
 pub mod providers;
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Hash, Eq)]
@@ -114,11 +115,7 @@ impl From<ModelId> for OpenRouterModelId {
 
 impl OpenRouterModelId {
     fn from_parts(value: EndpointKey, variant: Option<ModelVariant>) -> Self {
-        let EndpointKey {
-            model,
-            variant,
-            ..
-        } = value;
+        let EndpointKey { model, variant, .. } = value;
         Self {
             key: model,
             variant: variant.map(OpenRouterModelVariant::from),
@@ -389,26 +386,55 @@ impl<'de> Deserialize<'de> for MiddleOutMarker {
     }
 }
 
-/// OpenRouter "provider" routing preferences (typed).
+/// OpenRouter "provider" routing preferences.
+/// The descriptions of each field are taken from OpenRouter documentation,
+/// at https://openrouter.ai/docs/guides/routing/provider-selection
+///
+/// Last updated by JL 2025-12-14
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// List of provider slugs to try in order (e.g. ["anthropic", "openai"])
     pub order: Option<HashSet<ProviderSlug>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether to allow backup providers when the primary is unavailable
     pub allow_fallbacks: Option<bool>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Only use providers that support all parameters in your request.
     pub require_parameters: Option<bool>,
+
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    /// Control whether to use providers that may store data. Learn more
     pub data_collection: Option<DataCollection>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    /// Restrict routing to only ZDR (Zero Data Retention) endpoints. Learn more
+    pub zdr: Option<bool>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Restrict routing to only models that allow text distillation. Learn more
+    pub enforce_distillable_text: Option<HashSet<ProviderSlug>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// List of provider slugs to allow for this request.
     pub only: Option<HashSet<ProviderSlug>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// List of provider slugs to skip for this request.
     pub ignore: Option<HashSet<ProviderSlug>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// List of quantization levels to filter by (e.g. ["int4", "int8"])
     pub quantizations: Option<HashSet<Quant>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Sort providers by price or throughput. (e.g. "price" or "throughput")
     pub sort: Option<SortBy>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The maximum pricing you want to pay for this request.
     pub max_price: Option<MaxPrice>,
 }
 
@@ -533,9 +559,10 @@ impl ProviderPreferences {
     /// Validate that there is no intersection between only and ignore lists.
     pub fn validate(&self) -> Result<(), &'static str> {
         if let (Some(only), Some(ignore)) = (&self.only, &self.ignore)
-            && only.iter().any(|slug| ignore.contains(slug)) {
-                return Err("ProviderPreferences only and ignore lists have overlapping entries");
-            }
+            && only.iter().any(|slug| ignore.contains(slug))
+        {
+            return Err("ProviderPreferences only and ignore lists have overlapping entries");
+        }
         Ok(())
     }
 }
