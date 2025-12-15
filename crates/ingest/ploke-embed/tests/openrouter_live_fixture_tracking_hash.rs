@@ -1,4 +1,4 @@
-#![cfg(all(feature = "live_api_tests", feature = "multi_embedding_embedder"))]
+#![cfg(feature = "live_api_tests")]
 
 use std::{
     collections::BTreeSet,

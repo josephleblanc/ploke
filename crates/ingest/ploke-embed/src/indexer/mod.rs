@@ -400,12 +400,6 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
-        #[cfg(not(feature = "multi_embedding_embedder"))]
-        for ty in NodeType::primary_nodes() {
-            let db_ret = ploke_db::create_index_warn(&db_clone, ty);
-            tracing::info!("db_ret = {:?}", db_ret);
-        }
-        #[cfg(feature = "multi_embedding_embedder")]
         let db_ret = ploke_db::create_index_warn(&db_clone)?;
 
         tracing::info!("Ending index_workspace: {workspace_dir}");
@@ -427,14 +421,11 @@ impl IndexerTask {
     ) -> Result<(), EmbedError> {
         // Ensure the active embedding set is ready (relations exist) before any batch writes.
         // This is critical for remote embeddings where provider/model/dims differ from defaults.
-        #[cfg(feature = "multi_embedding_embedder")]
-        {
-            use ploke_db::multi_embedding::db_ext::EmbeddingExt as _;
-            self.db.ensure_embedding_set_relation()?;
-            self.db.put_embedding_set(&self.db.active_embedding_set)?;
-            self.db
-                .ensure_vector_embedding_relation(&self.db.active_embedding_set)?;
-        }
+        use ploke_db::multi_embedding::db_ext::EmbeddingExt as _;
+        self.db.ensure_embedding_set_relation()?;
+        self.db.put_embedding_set(&self.db.active_embedding_set)?;
+        self.db
+            .ensure_vector_embedding_relation(&self.db.active_embedding_set)?;
 
         let num_not_proc = self.db.count_unembedded_nonfiles()?;
         tracing::info!("Starting indexing with {} unembedded nodes", num_not_proc);
