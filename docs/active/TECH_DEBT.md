@@ -56,6 +56,9 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
 * [ ] Approvals overlay: approvals currently don’t enforce mutual exclusion/validation. Approving multiple overlapping proposals can all land as Applied even if stale/conflicting. Need pre-apply validation (hash/hunk match, DB/workspace check), conflict detection, and marking Stale/Failed instead of Applied; surface partial-apply results in UI/chat.
 
+## RAG
+* [ ] Add dedup for code snippets retrieved
+
 ## Organization
 * [ ] Refactor the `tools` module in `ploke-tui` into its own crate, `ploke-tools` (see Note 1 below)
 
