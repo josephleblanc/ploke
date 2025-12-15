@@ -48,9 +48,5 @@ tokio-test = "0.4.4"
 criterion = "0.7"
 
 [features]
-default = ["multi_embedding_db"]
+default = []
 type_bearing_ids = []
-multi_embedding_db = [
-    "ploke-test-utils/multi_embedding_test",
-    "ploke-embed/multi_embedding_embedder",
-]

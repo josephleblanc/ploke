@@ -140,7 +140,6 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     Ok(db)
 }
 
-#[cfg(feature = "multi_embedding_test")]
 fn setup_db_create_multi_embeddings(
     db: cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
@@ -201,7 +200,6 @@ fn setup_db_create_multi_embeddings(
     Ok(db)
 }
 
-#[cfg(feature = "multi_embedding_test")]
 pub fn setup_db_create_multi_embeddings_with_hnsw(
     fixture: &'static str,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
@@ -213,7 +211,6 @@ pub fn setup_db_create_multi_embeddings_with_hnsw(
     Ok(db)
 }
 
-#[cfg(feature = "multi_embedding_test")]
 pub fn setup_db_full_multi_embedding(
     fixture: &'static str,
 ) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
@@ -302,11 +299,7 @@ pub fn setup_db_full_crate(
         "{}: Parsing and Database Transform Complete",
         "Setup".log_step()
     );
-    #[cfg(feature = "multi_embedding_test")]
-    {
-        return setup_db_create_multi_embeddings(db);
-    }
-    Ok(db)
+    setup_db_create_multi_embeddings(db)
 }
 
 #[cfg(feature = "test_setup")]
@@ -315,10 +308,7 @@ pub fn setup_db_full_embeddings(
 ) -> std::result::Result<std::vec::Vec<ploke_db::TypedEmbedData>, ploke_error::Error> {
     use ploke_core::EmbeddingData;
 
-    #[cfg(feature = "multi_embedding_test")]
     let db = ploke_db::Database::new(setup_db_full_multi_embedding(fixture)?);
-    #[cfg(not(feature = "multi_embedding_test"))]
-    let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;
     let cursor = 0;

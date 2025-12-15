@@ -49,10 +49,6 @@ once_cell = "1"
 
 [features]
 default = ["debug"]
-multi_embedding_embedder = [
-    "ploke-test-utils/multi_embedding_test",
-    "ploke-db/multi_embedding_db",
-]
 debug = []
 update_embeds = []
 live_api_tests = []

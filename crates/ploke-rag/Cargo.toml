@@ -26,9 +26,4 @@ lazy_static = "1.5.0"
 criterion = { version = "0.7", features = ["async_tokio"] }
 
 [features]
-default = ["multi_embedding_rag"]
-multi_embedding_rag = [
-    "ploke-embed/multi_embedding_embedder",
-    "ploke-test-utils/multi_embedding_test",
-    "ploke-db/multi_embedding_db",
-]
+default = []

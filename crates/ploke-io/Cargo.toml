@@ -36,17 +36,13 @@ mpatch = { workspace = true }
 blake3 = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-ploke-db = { path = "../ploke-db", features = ["multi_embedding_db"] }
+ploke-db = { path = "../ploke-db" }
 ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.10.1"
 mockall = "0.12"
 
 [features]
-default = ["multi_embedding_io"]
+default = []
 parallel-hash = ["blake3/rayon"]
 watcher = ["notify"]
-multi_embedding_io = [
-    "ploke-db/multi_embedding_db",
-    "ploke-test-utils/multi_embedding_test",
-]
 # testing = ["ploke-test-utils/test_setup"]
