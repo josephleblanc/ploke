@@ -18,7 +18,7 @@ use crate::app::App;
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
-use crate::llm::{self, ProviderKey};
+use crate::llm::{self, LlmEvent, ProviderKey};
 use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
@@ -632,7 +632,7 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 let total_models = models_resp.data.len();
                 let models_arc = Arc::new(models_resp);
                 let search_kw = ArcStr::from(keyword_str);
-                emit_app_event(AppEvent::Llm(ploke_llm::LlmEvent::Models(
+                emit_app_event(AppEvent::Llm(LlmEvent::Models(
                     models::Event::Response {
                         models: Some(models_arc),
                         // search_kw is ArcStr, which uses Arc::clone under the hood

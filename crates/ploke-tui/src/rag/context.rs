@@ -1,8 +1,7 @@
 use crate::{
     chat_history::{ContextStatus, TurnsToLive},
     llm::{
-        LlmEvent,
-        manager::{Role},
+        manager::Role, ChatEvt, LlmEvent
     },
 };
 use std::{
@@ -15,7 +14,6 @@ use ploke_core::{
     ArcStr,
     rag_types::{AssembledContext, ContextPart},
 };
-use ploke_llm::manager::events::ChatEvt;
 use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 

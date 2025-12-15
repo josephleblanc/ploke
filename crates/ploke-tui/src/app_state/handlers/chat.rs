@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::EventBus;
 use crate::app_state::commands;
 use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
-use crate::llm::LlmEvent;
-use ploke_llm::manager::events::ChatEvt;
+use crate::llm::{ChatEvt, LlmEvent};
+// use ploke_llm::manager::events::ChatEvt;
 use crate::tracing_setup::CHAT_TARGET;
 use crate::utils::helper::truncate_string;
 

@@ -29,7 +29,10 @@ impl Default for ChatHttpConfig {
         Self {
             referer: HTTP_REFERER,
             title: HTTP_TITLE,
-            timeout: Duration::from_secs(10),
+            // NOTE:ploke-llm 2025-12-14
+            // Setting to 15 secs for now, try using it and getting a feel for the right default
+            // timing
+            timeout: Duration::from_secs(15),
         }
     }
 }

@@ -1,8 +1,22 @@
 use ploke_core::tool_types::ToolName;
-use ploke_llm::{manager::events::{LlmChatEvt, UsageMetrics}, LLMMetadata, LlmError, RequestMessage};
+use ploke_llm::{manager::events::{endpoint, models, status, ToolEvent, UsageMetrics}, LLMMetadata, LlmError, RequestMessage};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[derive(Clone, Debug)]
+pub enum LlmEvent {
+    ChatCompletion(ChatEvt),
+    // NOTE: the event for `Completion` is unused, so commenting it out for now. 
+    // See `ploke/docs/active/open-questions/llm-api-related.md` for details/updates
+    // Completion(ChatEvt),
+    Tool(ToolEvent),
+    Endpoint(endpoint::Event),
+    Models(models::Event),
+    Status(status::Event),
+}
+
+// NOTE:ploke-llm 2025-12-14
+//Keeping this for now in case the
 #[derive(Clone, Debug)]
 pub enum ChatEvt {
     /// Request to generate content from an LLM
@@ -65,73 +79,73 @@ pub enum ChatEvt {
     },
 }
 
-impl From<LlmChatEvt> for ChatEvt {
-    fn from(value: LlmChatEvt) -> Self {
-        match value {
-            LlmChatEvt::Request {
-                request_msg_id,
-                parent_id,
-            } => ChatEvt::Request {
-                request_msg_id,
-                parent_id,
-            },
-            LlmChatEvt::Response {
-                request_id,
-                parent_id,
-                content,
-                model,
-                metadata,
-                usage,
-            } => ChatEvt::Response {
-                request_id,
-                parent_id,
-                content,
-                model,
-                metadata,
-                usage,
-            },
-            LlmChatEvt::PartialResponse {
-                request_id,
-                delta,
-            } => ChatEvt::PartialResponse {
-                request_id,
-                delta,
-            },
-            LlmChatEvt::Error {
-                request_id,
-                error,
-            } => ChatEvt::Error {
-                request_id,
-                error,
-            },
-            LlmChatEvt::Status {
-                active_requests,
-                queue_depth,
-            } => ChatEvt::Status {
-                active_requests,
-                queue_depth,
-            },
-            LlmChatEvt::ModelChanged { new_model } => ChatEvt::ModelChanged { new_model },
-            LlmChatEvt::ToolCall {
-                request_id,
-                parent_id,
-                name,
-                arguments,
-                call_id,
-            } => ChatEvt::ToolCall {
-                request_id,
-                parent_id,
-                name,
-                arguments,
-                call_id,
-            },
-            LlmChatEvt::PromptConstructed {
-                parent_id,
-                formatted_prompt,
-            } => ChatEvt::PromptConstructed {
-                parent_id,
-                formatted_prompt,
-            },
-        }
-    }
-}
+// impl From<LlmChatEvt> for ChatEvt {
+//     fn from(value: LlmChatEvt) -> Self {
+//         match value {
+//             LlmChatEvt::Request {
+//                 request_msg_id,
+//                 parent_id,
+//             } => ChatEvt::Request {
+//                 request_msg_id,
+//                 parent_id,
+//             },
+//             LlmChatEvt::Response {
+//                 request_id,
+//                 parent_id,
+//                 content,
+//                 model,
+//                 metadata,
+//                 usage,
+//             } => ChatEvt::Response {
+//                 request_id,
+//                 parent_id,
+//                 content,
+//                 model,
+//                 metadata,
+//                 usage,
+//             },
+//             LlmChatEvt::PartialResponse {
+//                 request_id,
+//                 delta,
+//             } => ChatEvt::PartialResponse {
+//                 request_id,
+//                 delta,
+//             },
+//             LlmChatEvt::Error {
+//                 request_id,
+//                 error,
+//             } => ChatEvt::Error {
+//                 request_id,
+//                 error,
+//             },
+//             LlmChatEvt::Status {
+//                 active_requests,
+//                 queue_depth,
+//             } => ChatEvt::Status {
+//                 active_requests,
+//                 queue_depth,
+//             },
+//             LlmChatEvt::ModelChanged { new_model } => ChatEvt::ModelChanged { new_model },
+//             LlmChatEvt::ToolCall {
+//                 request_id,
+//                 parent_id,
+//                 name,
+//                 arguments,
+//                 call_id,
+//             } => ChatEvt::ToolCall {
+//                 request_id,
+//                 parent_id,
+//                 name,
+//                 arguments,
+//                 call_id,
+//             },
+//             LlmChatEvt::PromptConstructed {
+//                 parent_id,
+//                 formatted_prompt,
+//             } => ChatEvt::PromptConstructed {
+//                 parent_id,
+//                 formatted_prompt,
+//             },
+//         }
+//     }
+// }

@@ -1,14 +1,26 @@
-// use crate::llm::manager::events::{ endpoint, models, status };
-// pub(crate) mod events;
+// NOTE:ploke-llm 2025-12-14
+// Keeping session mod here.
+// This is firmly within the domain of managing the contents that are sent to the LLM and received
+// back, plus what happens to construct those message, and how they are handled after arriving and
+// routed (e.g. to tools or similar), and displaying the UI
 mod session;
+// NOTE:ploke-llm 2025-12-14
+// For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
+// some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
+mod events;
+pub(crate) use events::{ChatEvt, LlmEvent};
 
 use crate::SystemEvent;
-// use events::ChatEvt;
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
-use ploke_llm::{manager::events::{endpoint, models, ChatEvt}, request::ToolChoice, router_only::openrouter::OpenRouter, HasModels as _, LlmError, LlmEvent, Router as _};
+use ploke_llm::{
+    HasModels as _, LlmError, Router as _,
+    manager::events::{endpoint, models},
+    request::ToolChoice,
+    router_only::openrouter::OpenRouter,
+};
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
@@ -150,7 +162,7 @@ pub async fn llm_manager(
                 tokio::task::spawn(async move {
                     let response =
                         handle_endpoint_request_async(client_clone, model_key, variant).await;
-                    event_bus_clone.send(AppEvent::Llm(ploke_llm::LlmEvent::Endpoint(response)));
+                    event_bus_clone.send(AppEvent::Llm(LlmEvent::Endpoint(response)));
                 });
             }
             AppEvent::Llm(LlmEvent::Models(models::Event::Request { router })) => {
@@ -374,18 +386,27 @@ async fn prepare_and_run_llm_call(
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
-    // Delegate the per-request loop to RequestSession
-    let session = session::RequestSession::<OpenRouter> {
-        client,
-        event_bus,
-        parent_id,
-        req,
-        fallback_on_404: false,
-        attempts: TOOL_CALL_CHAIN_LIMIT,
-        state_cmd_tx: cmd_tx.clone(),
-    };
+    #[cfg(not(feature = "ploke-llm-refactor"))]
+    {
+        // Delegate the per-request loop to RequestSession
+        let session = session::RequestSession::<OpenRouter> {
+            client,
+            event_bus,
+            parent_id,
+            req,
+            fallback_on_404: false,
+            attempts: TOOL_CALL_CHAIN_LIMIT,
+            state_cmd_tx: cmd_tx.clone(),
+        };
 
-    session.run().await
+        session.run().await
+    }
+    #[cfg(feature = "ploke-llm-refactor")]
+    {
+        use crate::llm::manager::session::{run_chat_session, TuiToolPolicy};
+        let policy = TuiToolPolicy::default();
+        run_chat_session(client, req, parent_id, event_bus, cmd_tx.clone(), policy).await
+    }
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {

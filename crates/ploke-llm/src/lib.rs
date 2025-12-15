@@ -8,7 +8,6 @@ pub mod types;
 pub mod utils;
 pub mod wire;
 
-pub use manager::LlmEvent;
 pub use request::endpoint::EndpointsResponse;
 pub use types::enums::*;
 pub use types::meta::LLMMetadata;

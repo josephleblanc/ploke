@@ -65,7 +65,6 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
             }
             LlmEvent::Endpoint(ep_evt) => handle_llm_endpoints_response(app, ep_evt),
             LlmEvent::ChatCompletion(_) => {}
-            LlmEvent::Completion(_) => {}
             LlmEvent::Tool(_) => {}
             LlmEvent::Status(_) => {}
             _ => {}

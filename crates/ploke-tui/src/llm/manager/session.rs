@@ -35,60 +35,6 @@ use ploke_llm::LlmError;
 
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
 
-// fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> {
-//     // First, detect provider-embedded errors inside a 200 body
-//     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text)
-//         && let Some(err) = v.get("error")
-//     {
-//         let msg = err
-//             .get("message")
-//             .and_then(|m| m.as_str())
-//             .unwrap_or("Unknown provider error");
-//         let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-//         return Err(LlmError::Api {
-//             status: code as u16,
-//             message: msg.to_string(),
-//         });
-//     }
-//
-//     // Parse into normalized response
-//     let parsed: OpenAiResponse = serde_json::from_str(body_text)
-//         .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
-//
-//     // Some providers may return both content and tool calls in the same message.
-//     if let Some(choice) = parsed.choices.into_iter().next() {
-//         // assuming if not present it is stop to trigger return from session
-//         let finish_reason = choice.finish_reason.unwrap_or(FinishReason::Stop);
-//         if let Some(msg) = choice.message {
-//             // if there is a tool call, return with tool call info
-//             let content = msg.content;
-//             if let Some(tc) = msg.tool_calls {
-//                 return Ok(ChatStepOutcome::ToolCalls {
-//                     calls: tc,
-//                     content,
-//                     finish_reason,
-//                 });
-//             } else if let Some(text_content) = content {
-//                 return Ok(ChatStepOutcome::Content(text_content));
-//             }
-//         } else if let Some(text) = choice.text {
-//             // if there is no tool call, then just return the text content of the LLM response
-//             return Ok(ChatStepOutcome::Content(text));
-//         } else if let Some(_delta) = choice.delta {
-//             return Err(LlmError::Deserialization(
-//                 "Unexpected streaming delta".into(),
-//             ));
-//         } else {
-//             return Err(LlmError::Deserialization(
-//                 "Empty `choice` in LLM respnse".into(),
-//             ));
-//         }
-//     }
-//     Err(LlmError::Deserialization(
-//         "No `choice` in llm response".into(),
-//     ))
-// }
-
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
     match serde_json::from_str::<serde_json::Value>(body_text) {
@@ -129,6 +75,10 @@ where
     pub state_cmd_tx: mpsc::Sender<StateCommand>,
 }
 
+// TODO:ploke-llm 2025-12-13
+// put these into a better config data structure
+// - ensure there is a place to set the defaults for the user
+// - ensure the settings are persisted once set by the user, fall back on defaults
 #[derive(Clone, Copy)]
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
@@ -141,10 +91,10 @@ type ToolCallTimeout = Duration;
 impl Default for TuiToolPolicy {
     fn default() -> Self {
         Self {
-            // TODO:ploke-llm
-            // put these into a better config data structure
             tool_call_timeout: Duration::from_secs(10),
-            tool_call_chain_limit: 10,
+            // TODO:ploke-llm 2025-12-14
+            // Set to 15 as initial default, experiment to determine the right default to set
+            tool_call_chain_limit: 15,
             retry_without_tools_on_404: false,
         }
     }
@@ -160,7 +110,7 @@ pub async fn run_chat_session<R: Router>(
 ) -> Result<String, LlmError> {
     // Optionally: set tool_choice=Auto if tools exist, etc.
 
-    // TODO:ploke-llm
+    // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
     let cfg = ChatHttpConfig::default();
     let mut initial_message_updated = false;
@@ -181,21 +131,43 @@ pub async fn run_chat_session<R: Router>(
                 // 2) run tools (EventBus + waiting is TUI concern)
                 let results = execute_tools_via_event_bus(
                     event_bus.clone(),
-                    step_request_id,
                     parent_id,
+                    step_request_id,
                     calls,
                     policy.tool_call_timeout,
-                )
+                ) 
                 .await;
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results {
-                    // TODO:ploke-llm
-                    // better error handling
-                    let tool_json = tool_json_result.map_err(|e| LlmError::ToolCall(e))?;
-                    req.core
-                        .messages
-                        .push(RequestMessage::new_tool(tool_json, call_id));
+                    match tool_json_result {
+                        Ok(tool_json) => {
+                            req.core
+                                .messages
+                                .push(RequestMessage::new_tool(tool_json, call_id));
+                        }
+                        Err(err_string) => {
+                            let content =
+                                json!({ "ok": false, "error": err_string }).to_string();
+                            req.core.messages.push(RequestMessage::new_tool(
+                                content,
+                                call_id.clone(),
+                            ));
+
+                            let err_msg =
+                                format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
+                            state_cmd_tx
+                                .send(StateCommand::AddMessageTool {
+                                    new_msg_id: Uuid::new_v4(),
+                                    msg: err_msg.clone(),
+                                    kind: MessageKind::Tool,
+                                    tool_call_id: call_id,
+                                })
+                                .await
+                                .expect("state manager must be running");
+                            continue;
+                        }
+                    }
                 }
 
                 // loop again

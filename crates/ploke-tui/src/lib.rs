@@ -35,7 +35,6 @@ pub mod user_config;
 //     manager::events::ChatEvt, 
 //     router_only::default_model};
 use ploke_llm::{EndpointsResponse, ModelId, 
-    manager::events::ChatEvt, 
     router_only::default_model};
 
 pub mod test_utils;
@@ -87,6 +86,7 @@ use ratatui::{
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
+use crate::llm::{ChatEvt, LlmEvent};
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
@@ -327,7 +327,7 @@ pub enum SearchEvent {
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm(ploke_llm::LlmEvent),
+    Llm(crate::llm::LlmEvent),
     // placeholder
     LlmTool(ploke_llm::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
@@ -405,7 +405,6 @@ impl AppEvent {
     }
 }
 
-use ploke_llm::manager::events::LlmEvent;
 impl From<LlmEvent> for AppEvent {
     fn from(value: LlmEvent) -> Self {
         AppEvent::Llm(value)

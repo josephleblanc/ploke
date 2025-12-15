@@ -7,7 +7,6 @@ use crate::error::LlmError;
 use crate::manager::events::endpoint;
 use crate::router_only::HasEndpoint;
 
-pub use events::LlmEvent;
 use ploke_core::ArcStr;
 
 use ploke_rag::TokenCounter as _;
