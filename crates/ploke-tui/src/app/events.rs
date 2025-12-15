@@ -6,7 +6,7 @@ use crate::llm::{LlmEvent, ProviderKey};
 use crate::{app_state::StateCommand, chat_history::MessageKind};
 use itertools::Itertools;
 use ploke_core::rag_types::AssembledContext;
-use ploke_llm::manager::events::{endpoint, models};
+use ploke_llm::manager::events::{embedding_models, endpoint, models};
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -62,6 +62,9 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::Llm(event) => match event {
             LlmEvent::Models(resp @ models::Event::Response { .. }) => {
                 handle_llm_models_response(app, resp)
+            }
+            LlmEvent::EmbeddingModels(resp @ embedding_models::Event::Response { .. }) => {
+                handle_llm_embedding_models_response(app, resp)
             }
             LlmEvent::Endpoint(ep_evt) => handle_llm_endpoints_response(app, ep_evt),
             LlmEvent::ChatCompletion(_) => {}
@@ -320,6 +323,74 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
             mb.selected = mb.items.len() - 1;
         }
         mb.vscroll = 0;
+        app.needs_redraw = true;
+    }
+}
+
+fn handle_llm_embedding_models_response(
+    app: &mut App,
+    models_event: embedding_models::Event,
+) {
+    let embedding_models::Event::Response {
+        models,
+        search_keyword,
+    } = models_event
+    else {
+        debug!("Unexpected event type");
+        return;
+    };
+
+    let Some(models_payload) = models else {
+        send_warning(app, "Embedding model search response missing payload.");
+        return;
+    };
+
+    let Some(eb) = app.embedding_browser.as_ref() else {
+        debug!("Received embedding model list response without open browser");
+        return;
+    };
+
+    let Some(keyword_snapshot) = app.embedding_browser.as_ref().map(|eb| eb.keyword.clone())
+    else {
+        debug!("Received embedding model list response without an open browser; ignoring");
+        return;
+    };
+
+    if let Some(kw) = search_keyword.as_deref().filter(|k| *k != eb.keyword) {
+        debug!(
+            "Dropping stale embedding results, expected '{}', got '{}')",
+            eb.keyword, kw
+        );
+        return;
+    }
+
+    let filtered = filter_models_for_keyword(models_payload.as_ref(), &eb.keyword);
+    if filtered.is_empty() {
+        let warning = format!(
+            "No embedding models matched '{}'. Try a broader search.",
+            keyword_snapshot
+        );
+        send_warning(app, &warning);
+    }
+
+    if let Some(eb) = app.embedding_browser.as_mut() {
+        if eb.keyword != keyword_snapshot {
+            debug!(
+                "Embedding browser keyword changed from '{}' → '{}' while request was pending",
+                keyword_snapshot, eb.keyword,
+            );
+            return;
+        }
+
+        let mapped = App::build_embedding_browser_items(filtered);
+        let previous_selection = eb.selected;
+        eb.items = mapped;
+        if eb.items.is_empty() {
+            eb.selected = 0;
+        } else if previous_selection >= eb.items.len() {
+            eb.selected = eb.items.len() - 1;
+        }
+        eb.vscroll = 0;
         app.needs_redraw = true;
     }
 }
