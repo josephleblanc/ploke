@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::HTTP_REFERER;
+use crate::HTTP_TITLE;
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
@@ -36,9 +38,6 @@ impl Default for ChatHttpConfig {
         }
     }
 }
-
-pub const HTTP_REFERER: &str = "https://github.com/ploke-ai/ploke";
-pub const HTTP_TITLE: &str = "Ploke TUI";
 
 pub async fn chat_step<R: Router>(
     client: &reqwest::Client,
@@ -103,33 +102,34 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
     if let Ok(v) = serde_json::from_str::<Value>(body_text)
-        && let Some(err) = v.get("error") {
-            let msg = err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown provider error");
+        && let Some(err) = v.get("error")
+    {
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown provider error");
 
-            // Provider "code" is often not an HTTP status; it may be a string like "invalid_api_key".
-            // Prefer an explicit `status` field if present, otherwise mark as 200 (embedded error).
-            let status = err.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+        // Provider "code" is often not an HTTP status; it may be a string like "invalid_api_key".
+        // Prefer an explicit `status` field if present, otherwise mark as 200 (embedded error).
+        let status = err.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
 
-            let code_str = match err.get("code") {
-                Some(Value::String(s)) => Some(s.to_string()),
-                Some(Value::Number(n)) => Some(n.to_string()),
-                _ => None,
-            };
+        let code_str = match err.get("code") {
+            Some(Value::String(s)) => Some(s.to_string()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
 
-            let full_msg = if let Some(code) = code_str {
-                format!("{msg} (code: {code})")
-            } else {
-                msg.to_string()
-            };
+        let full_msg = if let Some(code) = code_str {
+            format!("{msg} (code: {code})")
+        } else {
+            msg.to_string()
+        };
 
-            return Err(LlmError::Api {
-                status,
-                message: full_msg,
-            });
-        }
+        return Err(LlmError::Api {
+            status,
+            message: full_msg,
+        });
+    }
 
     let parsed: OpenAiResponse = serde_json::from_str(body_text).map_err(|e| {
         // Avoid dumping arbitrarily large bodies into errors/logs.

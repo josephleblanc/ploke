@@ -57,7 +57,7 @@ where
     }
 }
 
-pub(crate) fn string_or_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+pub fn string_or_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {

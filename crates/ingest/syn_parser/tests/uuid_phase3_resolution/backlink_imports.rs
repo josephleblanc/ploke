@@ -97,13 +97,7 @@ macro_rules! backlink_case {
     ($name:ident, $path:expr, $item:expr, $kind:expr, $import:expr) => {
         #[test]
         fn $name() {
-            expect_backlink_for_item(
-                $path,
-                $item,
-                $kind,
-                DEFAULT_IMPORTS_MODULE_PATH,
-                $import,
-            );
+            expect_backlink_for_item($path, $item, $kind, DEFAULT_IMPORTS_MODULE_PATH, $import);
         }
     };
 }

@@ -395,10 +395,14 @@ impl<'de> Deserialize<'de> for MiddleOutMarker {
 pub struct ProviderPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// List of provider slugs to try in order (e.g. ["anthropic", "openai"])
-    pub order: Option<HashSet<ProviderSlug>>,
+    pub order: Option<Vec<ProviderSlug>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Whether to allow backup providers when the primary is unavailable
+    /// Whether to allow backup providers to serve requests
+    /// - true: (default) when the primary provider (or your custom providers in “order”) is
+    ///   unavailable, use the next best provider.
+    /// - false: use only the primary/custom provider, and return the upstream error if it’s
+    ///   unavailable.
     pub allow_fallbacks: Option<bool>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,6 +442,29 @@ pub struct ProviderPreferences {
     pub max_price: Option<MaxPrice>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Embedding provider preferences with the basic set of provider preferences plus a couple extra
+/// fields (min_throughput, max_latency) that seem to be embedding-provider specific.
+///
+/// Doc comments on fields from OpenRouter docs
+///
+/// Last updated by JL 2025-12-14
+/// from https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings
+pub struct EmbeddingProviderPrefs {
+    #[serde(flatten)]
+    base_provider_prefs: ProviderPreferences,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The minimum throughput (in tokens per second) required for this request. Only providers
+    /// serving the model with at least this throughput will be used.
+    min_throughput: Option<f64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The maximum latency (in seconds) allowed for this request. Only providers serving the model
+    /// with better than this latency will be used.
+    max_latency: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum DataCollection {
@@ -464,9 +491,16 @@ pub struct MaxPrice {
 impl ProviderPreferences {
     pub fn merge_union(mut self, other: &Self) -> Self {
         if let Some(order) = other.order.as_ref() {
-            self.order = self
-                .order
-                .map(|ord| ord.union(order).cloned().collect::<HashSet<ProviderSlug>>());
+            self.order = self.order.map(|ord| {
+                ord.into_iter()
+                    .chain(order.iter().cloned())
+                    .fold(Vec::new(), |mut acc, item| {
+                        if !acc.contains(&item) {
+                            acc.push(item)
+                        };
+                        acc
+                    })
+            })
         }
         if let Some(_allow_fallbacks) = other.allow_fallbacks {
             self.allow_fallbacks = other.allow_fallbacks;

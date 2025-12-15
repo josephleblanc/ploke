@@ -632,13 +632,11 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 let total_models = models_resp.data.len();
                 let models_arc = Arc::new(models_resp);
                 let search_kw = ArcStr::from(keyword_str);
-                emit_app_event(AppEvent::Llm(LlmEvent::Models(
-                    models::Event::Response {
-                        models: Some(models_arc),
-                        // search_kw is ArcStr, which uses Arc::clone under the hood
-                        search_keyword: Some(search_kw.clone()),
-                    },
-                )))
+                emit_app_event(AppEvent::Llm(LlmEvent::Models(models::Event::Response {
+                    models: Some(models_arc),
+                    // search_kw is ArcStr, which uses Arc::clone under the hood
+                    search_keyword: Some(search_kw.clone()),
+                })))
                 .await;
                 debug!(
                     ?search_kw,

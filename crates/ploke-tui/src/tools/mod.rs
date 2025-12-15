@@ -102,7 +102,6 @@ pub use ploke_core::tool_types::ToolName;
 // }
 pub use ploke_core::tool_types::ToolDescr;
 
-
 // NOTE:ploke-llm
 // moved into ploke-core for shared access
 //
@@ -149,7 +148,6 @@ pub use ploke_core::tool_types::ToolDescr;
 //     }
 // }
 pub use ploke_core::tool_types::FunctionMarker;
-
 
 // NOTE:ploke-llm
 // moved into ploke-core for shared access

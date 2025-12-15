@@ -56,13 +56,11 @@ impl From<LlmError> for ploke_error::Error {
                     std::io::Error::new(std::io::ErrorKind::ConnectionAborted, msg),
                 )),
             ),
-            LlmError::Api { status, message } => {
-                ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
-                    std::sync::Arc::new(std::io::Error::other(
-                        format!("API error {}: {}", status, message),
-                    )),
-                ))
-            }
+            LlmError::Api { status, message } => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::other(format!("API error {}: {}", status, message)),
+                )),
+            ),
             LlmError::RateLimited => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Rate limit exceeded".to_string()),
             ),

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use url::Url;
+use ploke_core::ArcStr;
 
 use super::{
     Quant,
@@ -83,6 +84,68 @@ impl ModelSlug {
     }
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// Embedding model name echoed by OpenRouter embeddings responses.
+/// Typically lacks provider prefix (e.g., `text-embedding-3-small`), but we allow any non-empty token.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct EmbeddingModelName(ArcStr);
+impl fmt::Debug for EmbeddingModelName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("EmbeddingModelName").field(&self.0).finish()
+    }
+}
+impl EmbeddingModelName {
+    pub fn new(s: impl Into<String>) -> Result<Self, IdError> {
+        let s = s.into();
+        if s.trim().is_empty() {
+            return Err(IdError::Invalid("embedding model name"));
+        }
+        if s.contains(' ') {
+            return Err(IdError::Invalid("embedding model name contains whitespace"));
+        }
+        Ok(Self(ArcStr::from(s)))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl fmt::Display for EmbeddingModelName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Identifier echoed by OpenRouter embedding responses (`id` field). Observed as a short token
+/// without spaces; keep it strongly typed to avoid stringly plumbing.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct EmbeddingResponseId(ArcStr);
+impl fmt::Debug for EmbeddingResponseId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("EmbeddingResponseId").field(&self.0).finish()
+    }
+}
+impl EmbeddingResponseId {
+    pub fn new(s: impl Into<String>) -> Result<Self, IdError> {
+        let s = s.into();
+        if s.trim().is_empty() {
+            return Err(IdError::Invalid("embedding response id"));
+        }
+        if s.contains(' ') {
+            return Err(IdError::Invalid("embedding response id contains whitespace"));
+        }
+        Ok(Self(ArcStr::from(s)))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl fmt::Display for EmbeddingResponseId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

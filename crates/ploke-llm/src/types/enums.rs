@@ -54,7 +54,7 @@ impl SupportsTools for &Vec<SupportedParameters> {
 /// Possible input modalities that a model can accept.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum InputModality {
+pub enum InputModality {
     Text,
     Image,
     Audio,
@@ -65,26 +65,29 @@ pub(crate) enum InputModality {
 /// Possible output modalities that a model can produce.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum OutputModality {
+pub enum OutputModality {
     Text,
     Image,
     Audio, // no endpoints actually have the audio field?
+    Embeddings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
 #[allow(clippy::enum_variant_names)]
-pub(crate) enum Modality {
+pub enum Modality {
     #[serde(rename = "text->text")]
     TextToText,
     #[serde(rename = "text+image->text")]
     TextImageToText,
     #[serde(rename = "text+image->text+image")]
     TextImageToTextImage,
+    #[serde(rename = "text->embeddings")]
+    TextToEmbeddings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd)]
-pub(crate) enum Tokenizer {
+pub enum Tokenizer {
     Claude,
     Cohere,
     DeepSeek,

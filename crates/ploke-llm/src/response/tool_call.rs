@@ -1,5 +1,8 @@
 use crate::utils::se_de::{de_arc_str, se_arc_str};
-use ploke_core::{tool_types::{FunctionMarker, ToolName}, ArcStr};
+use ploke_core::{
+    ArcStr,
+    tool_types::{FunctionMarker, ToolName},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq)]

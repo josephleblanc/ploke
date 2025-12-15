@@ -8,21 +8,26 @@ pub mod types;
 pub mod utils;
 pub mod wire;
 
+pub mod embeddings;
+
+pub use error::LlmError;
 pub use request::endpoint::EndpointsResponse;
 pub use types::enums::*;
 pub use types::meta::LLMMetadata;
 pub use types::model_types::{ModelId, ModelKey, ModelVariant};
 pub use types::newtypes::{
-    ApiKeyEnv, Author, BaseUrl, EndpointKey, IdError, ModelName, ModelSlug, ProviderConfig,
-    ProviderKey, ProviderName, ProviderSlug, Transport,
+    ApiKeyEnv, Author, BaseUrl, EmbeddingModelName, EmbeddingResponseId, EndpointKey, IdError,
+    ModelName, ModelSlug, ProviderConfig, ProviderKey, ProviderName, ProviderSlug, Transport,
 };
 pub use types::params::LLMParameters;
 pub use wire::WireRequest;
-pub use error::LlmError;
 
-pub use manager::{ chat_step, ChatHttpConfig, ChatStepOutcome, RequestMessage, handle_endpoint_request_async };
+pub use manager::{
+    ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_step, handle_endpoint_request_async,
+};
 
 pub use router_only::{HasModels, Router};
+pub use utils::const_settings::{HTTP_REFERER, HTTP_TITLE};
 
 use serde::{Deserialize, Serialize};
 

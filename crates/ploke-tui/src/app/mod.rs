@@ -1,12 +1,12 @@
 use crate::app::view::components::context_browser::{
     self, ContextSearchState, SearchItem, render_context_search,
 };
-use ploke_llm::manager::events::endpoint;
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
+use ploke_llm::manager::events::endpoint;
 pub mod commands;
 pub mod editor;
 pub mod events;

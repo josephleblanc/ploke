@@ -132,7 +132,10 @@ pub async fn handle_endpoint_request_async(
     }
 }
 
-#[allow(dead_code, reason = "useful later when we add better token tracking, probably")]
+#[allow(
+    dead_code,
+    reason = "useful later when we add better token tracking, probably"
+)]
 pub(super) fn cap_messages_by_chars(
     messages: &[RequestMessage],
     budget: usize,
@@ -153,7 +156,10 @@ pub(super) fn cap_messages_by_chars(
     kept.into_iter().cloned().collect()
 }
 
-#[allow(dead_code, reason = "useful later when we add better token tracking, probably")]
+#[allow(
+    dead_code,
+    reason = "useful later when we add better token tracking, probably"
+)]
 pub(super) fn cap_messages_by_tokens(
     messages: &[RequestMessage],
     token_budget: usize,
@@ -175,7 +181,10 @@ pub(super) fn cap_messages_by_tokens(
 }
 
 // Diagnostics helpers (env-driven, independent of tracing)
-#[allow(dead_code, reason = "possibly useful for adding log files to tests here")]
+#[allow(
+    dead_code,
+    reason = "possibly useful for adding log files to tests here"
+)]
 fn diag_dir() -> Option<PathBuf> {
     // Prefer explicit env override; otherwise default to a stable test-output folder.
     let path = env::var_os("PLOKE_E2E_DIAG_DIR")
@@ -184,7 +193,10 @@ fn diag_dir() -> Option<PathBuf> {
     let _ = fs::create_dir_all(&path);
     Some(path)
 }
-#[allow(dead_code, reason = "possibly useful for adding log files to tests here")]
+#[allow(
+    dead_code,
+    reason = "possibly useful for adding log files to tests here"
+)]
 fn now_ts() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

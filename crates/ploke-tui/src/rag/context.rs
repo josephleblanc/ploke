@@ -1,8 +1,6 @@
 use crate::{
     chat_history::{ContextStatus, TurnsToLive},
-    llm::{
-        manager::Role, ChatEvt, LlmEvent
-    },
+    llm::{ChatEvt, LlmEvent, manager::Role},
 };
 use std::{
     ops::{ControlFlow, Deref},

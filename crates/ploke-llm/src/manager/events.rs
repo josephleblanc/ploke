@@ -16,7 +16,7 @@ use super::*;
 // #[derive(Clone, Debug)]
 // pub enum LlmEvent {
 //     ChatCompletion(LlmChatEvt),
-//     // NOTE: the event for `Completion` is unused, so commenting it out for now. 
+//     // NOTE: the event for `Completion` is unused, so commenting it out for now.
 //     // See `ploke/docs/active/open-questions/llm-api-related.md` for details/updates
 //     // Completion(ChatEvt),
 //     Tool(ToolEvent),
@@ -86,7 +86,6 @@ pub enum LlmChatEvt {
         formatted_prompt: Vec<RequestMessage>,
     },
 }
-
 
 pub mod status {
     #[derive(Clone, Debug, Copy)]

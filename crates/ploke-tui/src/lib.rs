@@ -31,11 +31,10 @@ pub mod llm;
 
 pub mod user_config;
 
-// use llm::{EndpointsResponse, ModelId, 
-//     manager::events::ChatEvt, 
+// use llm::{EndpointsResponse, ModelId,
+//     manager::events::ChatEvt,
 //     router_only::default_model};
-use ploke_llm::{EndpointsResponse, ModelId, 
-    router_only::default_model};
+use ploke_llm::{EndpointsResponse, ModelId, router_only::default_model};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
@@ -83,10 +82,10 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
+use crate::llm::{ChatEvt, LlmEvent};
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
-use crate::llm::{ChatEvt, LlmEvent};
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 

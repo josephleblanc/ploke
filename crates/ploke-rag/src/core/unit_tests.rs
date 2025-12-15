@@ -6,7 +6,10 @@ mod tests {
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::EmbeddingData;
-    use ploke_db::{create_index_primary, create_index_primary_with_index, multi_embedding::debug::DebugAll, Database};
+    use ploke_db::{
+        create_index_primary, create_index_primary_with_index, multi_embedding::debug::DebugAll,
+        Database,
+    };
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
@@ -217,7 +220,11 @@ mod tests {
         let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
         let io_handle = IoManagerHandle::new();
 
-        let debug_msg = node_info.iter().enumerate().map(|x| format!("{:#?}", x) ).join("\n");
+        let debug_msg = node_info
+            .iter()
+            .enumerate()
+            .map(|x| format!("{:#?}", x))
+            .join("\n");
         debug!(%debug_msg);
 
         let snippet_find: Vec<String> = io_handle

@@ -1,14 +1,14 @@
 use crate::registry::user_prefs::{ModelPrefs, ProfileName};
-use ploke_core::tool_types::ToolDefinition;
 use crate::{
-        LLMParameters, ModelKey,
-        manager::RequestMessage,
-        registry::user_prefs::{ModelProfile, RegistryPrefs},
-        router_only::{Router, openrouter::OpenRouter},
-        types::model_types::ModelId,
+    LLMParameters, ModelKey,
+    manager::RequestMessage,
+    registry::user_prefs::{ModelProfile, RegistryPrefs},
+    router_only::{Router, openrouter::OpenRouter},
+    types::model_types::ModelId,
 };
 use color_eyre::Result;
 use fxhash::FxHashMap as HashMap;
+use ploke_core::tool_types::ToolDefinition;
 use std::str::FromStr;
 
 type TestChatCompRequest = super::super::ChatCompRequest<OpenRouter>;

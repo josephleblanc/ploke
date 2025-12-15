@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::DateTime;
-use ploke_llm::response::ToolCall;
 use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
+use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
@@ -22,14 +22,14 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
+use crate::tools::ToolDefinition;
+use crate::tools::ToolName;
+use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::request::ToolChoice;
 use ploke_llm::response::FinishReason;
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
-use crate::tools::ToolDefinition;
-use crate::tools::ToolName;
-use crate::utils::consts::TOOL_CALL_TIMEOUT;
 
 use ploke_llm::LlmError;
 
@@ -124,7 +124,13 @@ pub async fn run_chat_session<R: Router>(
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
                 if !initial_message_updated {
-                    let is_updated = update_assistant_placeholder_once(&state_cmd_tx, parent_id, content, initial_message_updated).await;
+                    let is_updated = update_assistant_placeholder_once(
+                        &state_cmd_tx,
+                        parent_id,
+                        content,
+                        initial_message_updated,
+                    )
+                    .await;
                     initial_message_updated = is_updated;
                 }
 
@@ -135,7 +141,7 @@ pub async fn run_chat_session<R: Router>(
                     step_request_id,
                     calls,
                     policy.tool_call_timeout,
-                ) 
+                )
                 .await;
 
                 // 3) append tool results into req.core.messages for the next step
@@ -147,15 +153,12 @@ pub async fn run_chat_session<R: Router>(
                                 .push(RequestMessage::new_tool(tool_json, call_id));
                         }
                         Err(err_string) => {
-                            let content =
-                                json!({ "ok": false, "error": err_string }).to_string();
-                            req.core.messages.push(RequestMessage::new_tool(
-                                content,
-                                call_id.clone(),
-                            ));
+                            let content = json!({ "ok": false, "error": err_string }).to_string();
+                            req.core
+                                .messages
+                                .push(RequestMessage::new_tool(content, call_id.clone()));
 
-                            let err_msg =
-                                format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
+                            let err_msg = format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
@@ -182,7 +185,7 @@ pub async fn run_chat_session<R: Router>(
 async fn update_assistant_placeholder_once(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
     parent_id: Uuid,
-    content: Option< String >,
+    content: Option<String>,
     initial_message_updated: bool,
 ) -> bool {
     let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
@@ -221,7 +224,8 @@ pub async fn execute_tools_via_event_bus(
     let mut rx = event_bus.realtime_tx.subscribe();
 
     // Per-call waiters
-    let mut waiters: HashMap<ploke_core::ArcStr, oneshot::Sender<Result<String, String>>> = HashMap::new();
+    let mut waiters: HashMap<ploke_core::ArcStr, oneshot::Sender<Result<String, String>>> =
+        HashMap::new();
     let mut handles = Vec::new();
 
     for call in &calls {
@@ -243,21 +247,31 @@ pub async fn execute_tools_via_event_bus(
     let dispatcher = tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(AppEvent::System(SystemEvent::ToolCallCompleted { request_id, call_id, content, .. }))
-                    if request_id == step_request_id =>
-                {
+                Ok(AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    call_id,
+                    content,
+                    ..
+                })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
                         let _ = tx.send(Ok(content));
                     }
-                    if waiters.is_empty() { break; }
+                    if waiters.is_empty() {
+                        break;
+                    }
                 }
-                Ok(AppEvent::System(SystemEvent::ToolCallFailed { request_id, call_id, error, .. }))
-                    if request_id == step_request_id =>
-                {
+                Ok(AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    call_id,
+                    error,
+                    ..
+                })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
                         let _ = tx.send(Err(error));
                     }
-                    if waiters.is_empty() { break; }
+                    if waiters.is_empty() {
+                        break;
+                    }
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(n)) => {

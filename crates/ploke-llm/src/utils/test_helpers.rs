@@ -45,9 +45,10 @@ pub static OPENROUTER_URL: OnceCell<url::Url> = OnceCell::new();
 
 use crate::Router;
 pub fn openrouter_url() -> Url {
-    OPENROUTER_URL.get_or_init(|| {
-        let base_url_str = crate::router_only::openrouter::OpenRouter::BASE_URL;
-        Url::parse(base_url_str)
-            .expect("Failed to parse OpenRouter BASE_URL into a valid URL")
-    }).clone()
+    OPENROUTER_URL
+        .get_or_init(|| {
+            let base_url_str = crate::router_only::openrouter::OpenRouter::BASE_URL;
+            Url::parse(base_url_str).expect("Failed to parse OpenRouter BASE_URL into a valid URL")
+        })
+        .clone()
 }

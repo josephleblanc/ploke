@@ -1,6 +1,14 @@
 use std::time::Duration;
 
-use crate::{error::LlmError, request::endpoint::FallbackMarker, router_only::{cli::{MODELS_JSON_ID_NOT_NAME, MODELS_JSON_RAW}, openrouter::{MiddleOutMarker, OpenRouter, OpenRouterModelId, Transform}}, ModelId};
+use crate::{
+    ModelId,
+    error::LlmError,
+    request::endpoint::FallbackMarker,
+    router_only::{
+        cli::{MODELS_JSON_ID_NOT_NAME, MODELS_JSON_RAW},
+        openrouter::{MiddleOutMarker, OpenRouter, OpenRouterModelId, Transform},
+    },
+};
 use std::{path::PathBuf, str::FromStr as _};
 
 mod builder_tests;

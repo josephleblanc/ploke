@@ -3,7 +3,7 @@ use std::collections::HashMap;
 mod tool_call;
 pub use tool_call::ToolCall;
 
-use super::{manager::Role};
+use super::manager::Role;
 pub use tool_call::FunctionCall;
 
 use serde::{Deserialize, Serialize};

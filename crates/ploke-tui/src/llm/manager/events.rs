@@ -1,12 +1,15 @@
 use ploke_core::tool_types::ToolName;
-use ploke_llm::{manager::events::{endpoint, models, status, ToolEvent, UsageMetrics}, LLMMetadata, LlmError, RequestMessage};
+use ploke_llm::{
+    LLMMetadata, LlmError, RequestMessage,
+    manager::events::{ToolEvent, UsageMetrics, endpoint, models, status},
+};
 use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub enum LlmEvent {
     ChatCompletion(ChatEvt),
-    // NOTE: the event for `Completion` is unused, so commenting it out for now. 
+    // NOTE: the event for `Completion` is unused, so commenting it out for now.
     // See `ploke/docs/active/open-questions/llm-api-related.md` for details/updates
     // Completion(ChatEvt),
     Tool(ToolEvent),

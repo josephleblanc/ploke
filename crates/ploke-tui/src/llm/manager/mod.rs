@@ -403,7 +403,7 @@ async fn prepare_and_run_llm_call(
     }
     #[cfg(feature = "ploke-llm-refactor")]
     {
-        use crate::llm::manager::session::{run_chat_session, TuiToolPolicy};
+        use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
         let policy = TuiToolPolicy::default();
         run_chat_session(client, req, parent_id, event_bus, cmd_tx.clone(), policy).await
     }

@@ -140,7 +140,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/fixtures/all_raw.json"
         ));
-    
+
         serde_json::from_str(RAW).expect("valid test JSON")
     });
 
@@ -288,8 +288,7 @@ mod tests {
     #[test]
     fn test_deserialization_with_fixture() {
         // Use the saved fixture to test deserialization of all variations
-        let response: models::Response =
-            serde_json::from_value(EXAMPLE_JSON.clone()).unwrap();
+        let response: models::Response = serde_json::from_value(EXAMPLE_JSON.clone()).unwrap();
 
         // Ensure we can deserialize all items in the data array
         assert!(!response.data.is_empty());

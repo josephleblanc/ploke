@@ -7,10 +7,10 @@ use crossterm::event::{
 
 use crate::ModelId;
 use crate::app::App;
-use ploke_llm::manager::events::endpoint;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{LlmEvent, ProviderKey};
+use ploke_llm::manager::events::endpoint;
 
 pub fn handle_model_browser_input(app: &mut App, key: KeyEvent) {
     let mut chosen_model: Option<ModelId> = None;

@@ -65,7 +65,6 @@ impl<'de> Deserialize<'de> for FunctionMarker {
     }
 }
 
-
 // OpenAI tool/function definition (for request payload)
 #[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ToolDefinition {
@@ -88,14 +87,14 @@ pub struct ToolFunctionDef {
     pub parameters: serde_json::Value, // JSON Schema
 }
 
- impl From<ToolFunctionDef> for ToolDefinition {
-     fn from(val: ToolFunctionDef) -> Self {
-         ToolDefinition {
-             r#type: FunctionMarker,
-             function: val,
-         }
-     }
- }
+impl From<ToolFunctionDef> for ToolDefinition {
+    fn from(val: ToolFunctionDef) -> Self {
+        ToolDefinition {
+            r#type: FunctionMarker,
+            function: val,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq)]
 pub enum ToolDescr {
