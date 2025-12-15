@@ -1,16 +1,19 @@
 //! Tests focusing on the parsing and handling of the `#[path]` attribute on modules.
 
-use crate::common::uuid_ids_utils::run_phases_and_collect;
 use colored::*; // Import colored for terminal colors
 use log::debug;
-use syn_parser::parser::nodes::ModuleKind;
+use syn_parser::parser::nodes::{AsAnyNodeId, ModuleKind};
+use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::ParsedCodeGraph;
+use syn_parser::resolve::RelationIndexer;
+use syn_parser::run_phases_and_collect;
+
+use ploke_error::Error as PlokeError;
 
 const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
 
 #[test]
-#[cfg(not(feature = "type_bearing_ids"))]
-fn test_path_attribute_handling() {
+fn test_path_attribute_handling() -> Result<(), PlokeError> {
     // Initialize logger without timestamps (ignore errors if already initialized)
     let _ = env_logger::builder()
         .is_test(true)
@@ -18,7 +21,7 @@ fn test_path_attribute_handling() {
         .try_init();
     debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "Starting test_path_attribute_handling".green());
     let fixture_name = "fixture_path_resolution";
-    let results = run_phases_and_collect(fixture_name);
+    let results = run_phases_and_collect(fixture_name)?;
 
     let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
     debug!(target: LOG_TARGET_GRAPH_FIND, "Merged graph contains {} modules.", merged_graph.graph.modules.len());
@@ -37,7 +40,7 @@ fn test_path_attribute_handling() {
 
     let module_tree_result = merged_graph.build_module_tree();
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
-    let module_tree = module_tree_result.expect("Module tree build failed unexpectedly");
+    let (tree, merged) = module_tree_result.expect("Module tree build failed unexpectedly");
 
     // --- Test `logical_path_mod` (#[path = "renamed_path/actual_file.rs"]) ---
 
@@ -97,12 +100,16 @@ fn test_path_attribute_handling() {
 
     // 3. Assert the CustomPath relation exists in the module tree
     debug!(target: LOG_TARGET_GRAPH_FIND, "Checking for CustomPath relation...");
-    let custom_path_relation_exists = module_tree.tree_relations().iter().any(|tr| {
-        let rel = tr.relation();
-        rel.kind == syn_parser::parser::relations::RelationKind::CustomPath
-            && rel.source == syn_parser::parser::nodes::GraphId::Node(logical_mod_decl.id)
-            && rel.target == syn_parser::parser::nodes::GraphId::Node(actual_file_defn.id)
-    });
+    let custom_path_relation_exists = tree
+        .get_iter_relations_from(&logical_mod_decl.id.as_any())
+        .expect("at least one relation")
+        .any(|tr| {
+            let rel = tr.rel();
+            *rel == SyntacticRelation::CustomPath {
+                source: logical_mod_decl.id,
+                target: actual_file_defn.id,
+            }
+        });
     assert!(
         custom_path_relation_exists,
         "ModuleTree should contain a CustomPath relation from logical_path_mod ({}) to actual_file ({})",
@@ -138,10 +145,10 @@ fn test_path_attribute_handling() {
     // 2. Assert that *NO* CustomPath relation exists for common_import_mod
     //    (because the target file is external and wasn't found/linked)
     debug!(target: LOG_TARGET_GRAPH_FIND, "Checking for absence of CustomPath relation for common_import_mod...");
-    let common_custom_path_relation_exists = module_tree.tree_relations().iter().any(|tr| {
-        let rel = tr.relation();
-        rel.kind == syn_parser::parser::relations::RelationKind::CustomPath
-            && rel.source == syn_parser::parser::nodes::GraphId::Node(common_mod_decl.id)
+    let common_custom_path_relation_exists = tree.tree_relations().iter().any(|tr| {
+        let rel = tr.rel();
+        matches!(rel, SyntacticRelation::CustomPath { .. })
+            && rel.source() == common_mod_decl.id.as_any()
     });
     assert!(
         !common_custom_path_relation_exists,
@@ -151,4 +158,5 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "Absence of CustomPath relation confirmed: {}", !common_custom_path_relation_exists);
 
     // Removed the previous assertions that expected a merged definition node for common_import_mod
+    Ok(())
 }

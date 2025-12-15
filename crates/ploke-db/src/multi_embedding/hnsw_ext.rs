@@ -4,7 +4,7 @@ use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 use itertools::Itertools;
 use ploke_core::embeddings::EmbeddingSet;
 use syn_parser::utils::LogStyle;
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
     },
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
 };
+
+pub(crate) const HNSW_TARGET: &str = "hnsw-index";
 
 pub trait HnswExt {
     fn ensure_embedding_relation(&self, embedding_set: &EmbeddingSet) -> Result<(), DbError>;
@@ -437,6 +439,12 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
         })
     }
 
+    #[instrument(
+        skip(self),
+        fields(?embedding_set, script_check_indices),
+        level = "debug",
+        ret
+    )]
     fn is_hnsw_index_registered(&self, embedding_set: &EmbeddingSet) -> Result<bool, DbError> {
         // TODO: introspect ::indices output to avoid repeated creation; currently we
         // always attempt to create the index, but we still run the query to ensure the
@@ -450,6 +458,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
                 cozo::ScriptMutability::Immutable,
             )
             .map_err(DbError::from);
+        debug!(%script_check_indices);
+        debug!(?db_res);
         let expect_err_msg = format!("Cannot find requested stored relation '{hnsw_rel_name}'");
         match db_res {
             // the script succeeds, finding the item in the database
@@ -538,6 +548,9 @@ impl HnswExt for Database {
 }
 
 #[cfg(test)]
+pub(crate) use tests::init_tracing_once;
+
+#[cfg(test)]
 mod tests {
     use std::{
         collections::HashSet,
@@ -562,7 +575,7 @@ mod tests {
     };
 
     static TEST_TRACING: Once = Once::new();
-    fn init_tracing_once(target: &'static str, level: tracing::Level) {
+    pub(crate) fn init_tracing_once(target: &'static str, level: tracing::Level) {
         TEST_TRACING.call_once(|| {
             ploke_test_utils::init_test_tracing_with_target(target, level);
         });
@@ -1006,14 +1019,47 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         use crate::create_index_primary;
         use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use ploke_test_utils::workspace_root;
+        use tracing::{error, Level};
+
+        // init_tracing_once(HNSW_TARGET, Level::TRACE);
+        info!(target: HNSW_TARGET, "starting test: test_load_db");
 
         let db = Database::init_with_schema()?;
+        // use default active embedding set of sentence-transformers...
+        let embedding_set = db.active_embedding_set.clone();
+
+        // clear hnsw relations before importing from backup (as specified by cozo docs)
+        // TODO: needs citation for cozo docs
+        let hnsw_rel = embedding_set.hnsw_rel_name();
+        let script_clear_hnsw = format!("::hnsw drop {hnsw_rel}");
+
+        let remove_hnsw_result = db.raw_query_mut(&script_clear_hnsw);
+        info!(target: HNSW_TARGET, ?remove_hnsw_result);
+        if let Err(err) = remove_hnsw_result {
+            let err_msg = err.to_string();
+            let expected_missing = err_msg.contains("Cannot find requested stored relation");
+            let expected_read_only = err_msg.contains("Cannot remove index in read-only mode");
+            if expected_missing || expected_read_only {
+                info!(
+                    target: HNSW_TARGET,
+                    "skipping drop failure, expected condition: {err_msg}"
+                );
+            } else {
+                return Err(err.into());
+            }
+        }
+
         let mut target_file = workspace_root();
         target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        let prior_rels_vec = db.relations_vec()?;
+        let prior_rels_vec = db
+            .relations_vec()
+            .inspect_err(|e| error!(target: HNSW_TARGET, "{e:#?}"))?;
+        let prior_rels_string = format!("{prior_rels_vec:#?}");
+        info!(target: HNSW_TARGET, %prior_rels_string);
         db.import_from_backup(&target_file, &prior_rels_vec)
-            .map_err(DbError::from)
-            .map_err(ploke_error::Error::from)?;
+            .expect("the database to be imported without errors");
+        // .map_err(DbError::from)
+        // .map_err(ploke_error::Error::from)?;
 
         // TODO: put the embeddings setup into create_index_primary, then make create_index_primary
         // a method on the database (if possible, weird with Arc)

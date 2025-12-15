@@ -261,6 +261,8 @@ impl ParsedCodeGraph {
             );
             // TODO: Decide if/how to use pruned_items later (e.g., for diagnostics, incremental updates)
         }
+        // 7. Link definitions to the import sites that bring them into scope (internal only).
+        tree.link_definition_imports(self)?;
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items

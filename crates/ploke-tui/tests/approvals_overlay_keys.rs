@@ -160,7 +160,7 @@ async fn make_app_with_proposals_and_editor(
     (app, cmd_rx, req_id)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn approvals_overlay_approve_and_deny_send_commands() {
     let (mut app, mut rx, req_id) = make_app_with_proposals().await;
 
@@ -193,8 +193,8 @@ async fn approvals_overlay_approve_and_deny_send_commands() {
     }
 }
 
-#[tokio::test]
-#[ignore = "test does not terminate"]
+#[tokio::test(flavor = "multi_thread")]
+// NOTE: Must be "multi_thread" flavor. Why?
 async fn approvals_overlay_open_in_editor_without_editor_emits_sysinfo() {
     let (mut app, mut rx, _req_id) = make_app_with_proposals().await;
 

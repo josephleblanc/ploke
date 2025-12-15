@@ -1,8 +1,7 @@
 use crate::{
     chat_history::{ContextStatus, TurnsToLive},
     llm::{
-        LlmEvent,
-        manager::{Role, events::ChatEvt},
+        manager::Role, ChatEvt, LlmEvent
     },
 };
 use std::{

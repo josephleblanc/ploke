@@ -79,10 +79,7 @@ impl VectorIndex {
         ef: usize,
     ) -> Result<Vec<(i32, String, f64)>, Box<dyn std::error::Error>> {
         let mut params = std::collections::BTreeMap::new();
-        params.insert(
-            "query_embedding".to_string(),
-            arr_to_float(query_embedding),
-        );
+        params.insert("query_embedding".to_string(), arr_to_float(query_embedding));
         params.insert("k".to_string(), DataValue::from(k as i64));
         params.insert("ef".to_string(), DataValue::from(ef as i64));
 
@@ -138,8 +135,8 @@ impl VectorIndex {
         for row in result.rows {
             let key = row[0].get_str().unwrap().to_string();
             let value = match &row[1] {
-                DataValue::Num( Num::Int(i) ) => serde_json::json!(*i),
-                DataValue::Num( Num::Float(f) ) => serde_json::json!(*f),
+                DataValue::Num(Num::Int(i)) => serde_json::json!(*i),
+                DataValue::Num(Num::Float(f)) => serde_json::json!(*f),
                 DataValue::Str(s) => serde_json::json!(s),
                 _ => serde_json::json!(null),
             };

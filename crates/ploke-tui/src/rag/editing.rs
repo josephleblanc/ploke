@@ -45,6 +45,9 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
         EditProposalStatus::Failed(_) => {
             tracing::debug!("Edit proposal failed, attempting edit again");
         }
+        EditProposalStatus::Stale(_) => {
+            tracing::debug!("Edit proposal marked stale, attempting edit again");
+        }
     }
 
     // Apply edits via IoManagerHandle
@@ -321,7 +324,8 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
     match proposal.status {
         EditProposalStatus::Pending
         | EditProposalStatus::Approved
-        | EditProposalStatus::Failed(_) => {
+        | EditProposalStatus::Failed(_)
+        | EditProposalStatus::Stale(_) => {
             proposal.status = EditProposalStatus::Denied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
@@ -392,6 +396,11 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
         EditProposalStatus::Failed(e) => {
             tracing::debug!(
                 "Create-file proposal for request_id {request_id} previously failed with error: {e};\nRetrying apply..."
+            );
+        }
+        EditProposalStatus::Stale(e) => {
+            tracing::debug!(
+                "Create-file proposal for request_id {request_id} marked stale: {e}; retrying apply..."
             );
         }
     }
@@ -502,7 +511,8 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
     match proposal.status {
         EditProposalStatus::Pending
         | EditProposalStatus::Approved
-        | EditProposalStatus::Failed(_) => {
+        | EditProposalStatus::Failed(_)
+        | EditProposalStatus::Stale(_) => {
             proposal.status = EditProposalStatus::Denied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();

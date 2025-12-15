@@ -31,14 +31,18 @@ pub mod llm;
 
 pub mod user_config;
 
-use llm::{EndpointsResponse, ModelId, manager::events::ChatEvt, router_only::default_model};
+// use llm::{EndpointsResponse, ModelId, 
+//     manager::events::ChatEvt, 
+//     router_only::default_model};
+use ploke_llm::{EndpointsResponse, ModelId, 
+    router_only::default_model};
 
 pub mod test_utils;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 pub use test_utils::mock;
 
-use ploke_core::ArcStr;
+use ploke_core::{ArcStr, rag_types::AssembledContext};
 
 pub mod test_harness;
 
@@ -82,6 +86,7 @@ use ratatui::{
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
+use crate::llm::{ChatEvt, LlmEvent};
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
@@ -312,11 +317,19 @@ pub enum RagEvent {
 }
 
 #[derive(Clone, Debug)]
+pub enum SearchEvent {
+    SearchResults {
+        query_id: u64,
+        context: AssembledContext,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
-    Llm(llm::LlmEvent),
+    Llm(crate::llm::LlmEvent),
     // placeholder
-    LlmTool(llm::manager::events::ToolEvent),
+    LlmTool(ploke_llm::manager::events::ToolEvent),
     // External signal to request a clean UI shutdown
     Quit,
     // TODO:
@@ -327,6 +340,7 @@ pub enum AppEvent {
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
+    ContextSearch(SearchEvent),
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
@@ -347,20 +361,14 @@ impl AppEvent {
     // TODO: Change EventPriority to isntead be either a field within the event struct itself or
     // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
-        use llm::manager::events::ToolEvent;
+        use ploke_llm::manager::events::ToolEvent;
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            // NOTE: I'm fairly sure that there should be better handling of AppEvent::Llm beyond
-            // this blanket implementation for Background, but check here first if there is an
-            // error the LLM event handling.
-            // AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::LlmTool(ev) => match ev {
                 ToolEvent::Requested { .. } => EventPriority::Background,
                 ToolEvent::Completed { .. } | ToolEvent::Failed { .. } => EventPriority::Realtime,
             },
             AppEvent::Quit => EventPriority::Realtime,
-            // Make sure the ModelSwitched event is in real-time priority, since it is intended to
-            // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::WriteQuery { .. }) => EventPriority::Realtime,
@@ -389,9 +397,16 @@ impl AppEvent {
                 EventPriority::Realtime
             }
             AppEvent::Llm(llm_event) => EventPriority::Background,
+            AppEvent::ContextSearch(search_event) => EventPriority::Realtime,
         }
     }
     pub fn is_system(&self) -> bool {
         matches!(self, AppEvent::System(_))
+    }
+}
+
+impl From<LlmEvent> for AppEvent {
+    fn from(value: LlmEvent) -> Self {
+        AppEvent::Llm(value)
     }
 }

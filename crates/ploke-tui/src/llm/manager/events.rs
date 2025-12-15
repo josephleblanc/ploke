@@ -1,107 +1,24 @@
-use crate::{
-    EventPriority,
-    llm::{
-        error::LlmError,
-        request::endpoint::EndpointsResponse,
-        router_only::{Router, RouterVariants},
-        types::meta::LLMMetadata,
-    },
-};
-
-use super::*;
+use ploke_core::tool_types::ToolName;
+use ploke_llm::{manager::events::{endpoint, models, status, ToolEvent, UsageMetrics}, LLMMetadata, LlmError, RequestMessage};
+use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
-pub(crate) enum LlmEvent {
+pub enum LlmEvent {
     ChatCompletion(ChatEvt),
-    Completion(ChatEvt),
+    // NOTE: the event for `Completion` is unused, so commenting it out for now. 
+    // See `ploke/docs/active/open-questions/llm-api-related.md` for details/updates
+    // Completion(ChatEvt),
     Tool(ToolEvent),
     Endpoint(endpoint::Event),
     Models(models::Event),
     Status(status::Event),
 }
 
-impl From<LlmEvent> for AppEvent {
-    fn from(value: LlmEvent) -> Self {
-        AppEvent::Llm(value)
-    }
-}
-
-pub(crate) mod status {
-    use serde_json::Value;
-    use uuid::Uuid;
-
-    use crate::{chat_history::MessageKind, tools::ToolName};
-
-    #[derive(Clone, Debug, Copy)]
-    pub(crate) enum Event {
-        /// Status update
-        Update {
-            active_requests: usize, // Current workload
-            queue_depth: usize,     // Pending requests
-        },
-    }
-}
-
-pub(crate) mod endpoint {
-    use crate::llm::types::model_types::ModelVariant;
-
-    use super::*;
-
-    #[derive(Clone, Debug)]
-    pub(crate) enum Event {
-        Request {
-            // removed "parent_id" since that is usually to refer to a conversation history
-            // message, where this refers to a model and is not used in a chat history context
-            model_key: ModelKey, // e.g., "gpt-4-turbo"
-            // Larger response, make an Arc to hold it
-            router: RouterVariants,
-            variant: Option<ModelVariant>,
-        },
-        Response {
-            model_key: ModelKey, // e.g., "gpt-4-turbo"
-            // Larger response, make an Arc to hold it
-            endpoints: Option<Arc<EndpointsResponse>>,
-        },
-        Error {
-            request_id: Uuid,
-            error: LlmError, // Structured error type
-        },
-    }
-}
-
-pub(crate) mod models {
-    use ploke_core::ArcStr;
-
-    use crate::llm::request;
-
-    use super::*;
-    #[derive(Clone, Debug)]
-    pub(crate) enum Event {
-        /// A request to the `/models` endpoint for a router, which should return a list of models
-        /// that contain the model identifier in the form `{author}/{model}:{variant}` where
-        /// `:{variant}` is optional.
-        Request { router: RouterVariants },
-        /// Response with the full returned values for the models.
-        Response {
-            /// The information on all models, can be used to update the cached model info and/or
-            /// persisted into the database.
-            /// - Caches the owned deserialized values in-memory, then persist with 12-hour update
-            /// cycles.
-            // Larger response, make an Arc to hold it
-            models: Option<Arc<request::models::Response>>,
-            /// Optional search keyword that initiated this response, so consumers can drop stale
-            /// payloads when a newer search is already in-flight.
-            search_keyword: Option<ArcStr>,
-        },
-        Error {
-            request_id: Uuid,
-            error: LlmError, // Structured error type
-        },
-    }
-}
-
+// NOTE:ploke-llm 2025-12-14
+//Keeping this for now in case the
 #[derive(Clone, Debug)]
-pub(crate) enum ChatEvt {
+pub enum ChatEvt {
     /// Request to generate content from an LLM
     Request {
         request_msg_id: Uuid, // Unique tracking ID
@@ -162,33 +79,73 @@ pub(crate) enum ChatEvt {
     },
 }
 
-#[derive(Clone, Debug)]
-pub enum ToolEvent {
-    Requested {
-        request_id: Uuid,
-        parent_id: Uuid,
-        name: String,
-        arguments: Value,
-        call_id: ArcStr,
-    },
-    Completed {
-        request_id: Uuid,
-        parent_id: Uuid,
-        call_id: ArcStr,
-        content: String,
-    },
-    Failed {
-        request_id: Uuid,
-        parent_id: Uuid,
-        call_id: ArcStr,
-        error: String,
-    },
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
-pub struct UsageMetrics {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    pub latency_ms: u64,
-}
+// impl From<LlmChatEvt> for ChatEvt {
+//     fn from(value: LlmChatEvt) -> Self {
+//         match value {
+//             LlmChatEvt::Request {
+//                 request_msg_id,
+//                 parent_id,
+//             } => ChatEvt::Request {
+//                 request_msg_id,
+//                 parent_id,
+//             },
+//             LlmChatEvt::Response {
+//                 request_id,
+//                 parent_id,
+//                 content,
+//                 model,
+//                 metadata,
+//                 usage,
+//             } => ChatEvt::Response {
+//                 request_id,
+//                 parent_id,
+//                 content,
+//                 model,
+//                 metadata,
+//                 usage,
+//             },
+//             LlmChatEvt::PartialResponse {
+//                 request_id,
+//                 delta,
+//             } => ChatEvt::PartialResponse {
+//                 request_id,
+//                 delta,
+//             },
+//             LlmChatEvt::Error {
+//                 request_id,
+//                 error,
+//             } => ChatEvt::Error {
+//                 request_id,
+//                 error,
+//             },
+//             LlmChatEvt::Status {
+//                 active_requests,
+//                 queue_depth,
+//             } => ChatEvt::Status {
+//                 active_requests,
+//                 queue_depth,
+//             },
+//             LlmChatEvt::ModelChanged { new_model } => ChatEvt::ModelChanged { new_model },
+//             LlmChatEvt::ToolCall {
+//                 request_id,
+//                 parent_id,
+//                 name,
+//                 arguments,
+//                 call_id,
+//             } => ChatEvt::ToolCall {
+//                 request_id,
+//                 parent_id,
+//                 name,
+//                 arguments,
+//                 call_id,
+//             },
+//             LlmChatEvt::PromptConstructed {
+//                 parent_id,
+//                 formatted_prompt,
+//             } => ChatEvt::PromptConstructed {
+//                 parent_id,
+//                 formatted_prompt,
+//             },
+//         }
+//     }
+// }

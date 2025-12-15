@@ -45,12 +45,13 @@ pub enum Action {
     GotoSequenceG, // 'g' (first press; App decides if this becomes 'gg')
 
     // Command palette openers
-    OpenCommand,      // '/', or ':hybrid' starter depending on style
-    OpenCommandColon, // ':' (Neovim style)
-    OpenQuickModel,   // 'm'
-    OpenHelp,         // '?'
-    TogglePreview,    // 'P'
-    OpenApprovals,    // 'a'
+    OpenCommand,       // '/', or ':hybrid' starter depending on style
+    OpenCommandColon,  // ':' (Neovim style)
+    OpenQuickModel,    // 'm'
+    OpenHelp,          // '?'
+    TogglePreview,     // 'P'
+    OpenApprovals,     // 'a'
+    OpenContextSearch, // `s`
 
     // Input widget scrolling (testing/dev keys)
     InputScrollPrev, // Ctrl+Up
@@ -116,6 +117,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Char('?') => Some(Action::OpenHelp),
                 KeyCode::Char('P') => Some(Action::TogglePreview),
                 KeyCode::Char('e') => Some(Action::OpenApprovals),
+                KeyCode::Char('s') => Some(Action::OpenContextSearch),
 
                 KeyCode::Char('k') | KeyCode::Up => Some(Action::NavigateListUp),
                 KeyCode::Char('j') | KeyCode::Down => Some(Action::NavigateListDown),

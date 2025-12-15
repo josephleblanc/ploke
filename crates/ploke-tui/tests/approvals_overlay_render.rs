@@ -179,6 +179,25 @@ fn approvals_overlay_renders_empty_list() {
 }
 
 #[test]
+fn approvals_filter_cycles_wraps() {
+    use ploke_tui::app::view::components::approvals::ApprovalsFilter;
+
+    let mut f = ApprovalsFilter::PendingOrErrored;
+    f = f.next_wrap(); // pending
+    assert_eq!(f, ApprovalsFilter::PendingOnly);
+    f = f.next_wrap(); // approved/applied
+    assert_eq!(f, ApprovalsFilter::ApprovedApplied);
+    f = f.next_wrap(); // failed
+    assert_eq!(f, ApprovalsFilter::FailedOnly);
+    f = f.next_wrap(); // stale
+    assert_eq!(f, ApprovalsFilter::StaleOnly);
+    f = f.next_wrap(); // all
+    assert_eq!(f, ApprovalsFilter::All);
+    f = f.next_wrap(); // wraps to first
+    assert_eq!(f, ApprovalsFilter::PendingOrErrored);
+}
+
+#[test]
 fn approvals_overlay_renders_single_proposal_unified_diff() {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -293,5 +312,121 @@ fn approvals_overlay_renders_multiple_and_moves_selection() {
         let red2 = redact(&text2);
         insta::assert_snapshot!("approvals_multiple_sel0_80x24", red1);
         insta::assert_snapshot!("approvals_multiple_sel1_80x24", red2);
+    });
+}
+
+#[test]
+fn approvals_overlay_filters_and_orders_by_status_and_recency() {
+    let _persist_guard = isolate_persisted_proposals();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        use ploke_tui::app::view::components::approvals::{ApprovalsFilter, filtered_items};
+
+        let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        let io_handle = ploke_io::IoManagerHandle::new();
+        let cfg = ploke_tui::user_config::UserConfig::default();
+        let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+        let state = Arc::new(AppState {
+            chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
+            config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
+            system: SystemState::default(),
+            indexing_state: RwLock::new(None),
+            indexer_task: None,
+            indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+            db,
+            embedder,
+            io_handle,
+            rag: None,
+            budget: ploke_rag::TokenBudget::default(),
+            proposals: RwLock::new(std::collections::HashMap::new()),
+            create_proposals: RwLock::new(std::collections::HashMap::new()),
+        });
+
+        // Fixed timestamps for deterministic ordering
+        let ts_new = 2000;
+        let ts_mid = 1500;
+        let ts_old = 1000;
+
+        let pending_new = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0001);
+        let failed_mid = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0002);
+        let pending_old = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0003);
+        let applied_new = uuid::Uuid::from_u128(0x1111_0000_0000_0000_0000_0000_0000_0004);
+
+        {
+            let mut guard = state.proposals.write().await;
+            guard.insert(
+                pending_new,
+                EditProposal {
+                    request_id: pending_new,
+                    parent_id: uuid::Uuid::new_v4(),
+                    call_id: ArcStr::from("p-new"),
+                    proposed_at_ms: ts_new,
+                    edits: vec![],
+                    edits_ns: vec![],
+                    files: vec![std::env::current_dir().unwrap().join("f1")],
+                    preview: DiffPreview::UnifiedDiff { text: "p1".into() },
+                    status: EditProposalStatus::Pending,
+                    is_semantic: true,
+                },
+            );
+            guard.insert(
+                failed_mid,
+                EditProposal {
+                    request_id: failed_mid,
+                    parent_id: uuid::Uuid::new_v4(),
+                    call_id: ArcStr::from("f-mid"),
+                    proposed_at_ms: ts_mid,
+                    edits: vec![],
+                    edits_ns: vec![],
+                    files: vec![std::env::current_dir().unwrap().join("f2")],
+                    preview: DiffPreview::UnifiedDiff { text: "f1".into() },
+                    status: EditProposalStatus::Failed("err".into()),
+                    is_semantic: true,
+                },
+            );
+            guard.insert(
+                pending_old,
+                EditProposal {
+                    request_id: pending_old,
+                    parent_id: uuid::Uuid::new_v4(),
+                    call_id: ArcStr::from("p-old"),
+                    proposed_at_ms: ts_old,
+                    edits: vec![],
+                    edits_ns: vec![],
+                    files: vec![std::env::current_dir().unwrap().join("f3")],
+                    preview: DiffPreview::UnifiedDiff { text: "p2".into() },
+                    status: EditProposalStatus::Pending,
+                    is_semantic: true,
+                },
+            );
+            guard.insert(
+                applied_new,
+                EditProposal {
+                    request_id: applied_new,
+                    parent_id: uuid::Uuid::new_v4(),
+                    call_id: ArcStr::from("a-new"),
+                    proposed_at_ms: ts_new + 10,
+                    edits: vec![],
+                    edits_ns: vec![],
+                    files: vec![std::env::current_dir().unwrap().join("f4")],
+                    preview: DiffPreview::UnifiedDiff { text: "a1".into() },
+                    status: EditProposalStatus::Applied,
+                    is_semantic: true,
+                },
+            );
+        }
+
+        // Default filter: Pending + Failed (errored) only, ordered by recency.
+        let items = filtered_items(&state, ApprovalsFilter::PendingOrErrored);
+        let ids: Vec<uuid::Uuid> = items.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![pending_new, failed_mid, pending_old]);
+
+        // Approved/Applied bucket is separate and should not show in default filter.
+        let applied_items = filtered_items(&state, ApprovalsFilter::ApprovedApplied);
+        let applied_ids: Vec<uuid::Uuid> = applied_items.iter().map(|i| i.id).collect();
+        assert_eq!(applied_ids, vec![applied_new]);
     });
 }

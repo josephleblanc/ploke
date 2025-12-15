@@ -375,11 +375,22 @@ impl IoManager {
         large_file_policy: Option<LargeFilePolicy>,
     ) -> Result<ReadFileResponse, PlokeError> {
         let policy = large_file_policy.unwrap_or_default();
-        let max_bytes_hashed = max_bytes
-            .map(|m| m as u64)
-            .unwrap_or(Self::FILE_BYTES_LIMIT);
-        let hashed_result = read_and_compute_hash(&path, policy, max_bytes_hashed)?;
-        let hash = hashed_result?;
+        let hashed_result = read_and_compute_hash(&path, policy, Self::FILE_BYTES_LIMIT)?;
+        let missing_response = |path: &PathBuf| ReadFileResponse {
+            exists: false,
+            file_path: path.clone(),
+            byte_len: None,
+            content: None,
+            truncated: false,
+            file_hash: None,
+        };
+        let hash = match hashed_result {
+            Ok(hash) => hash,
+            Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
+                return Ok(missing_response(&path));
+            }
+            Err(err) => return Err(err.into()),
+        };
         match read_file_to_string_abs(&path).await {
             Ok(content) => {
                 let byte_len = content.len() as u64;
@@ -394,14 +405,7 @@ impl IoManager {
                 })
             }
             Err(IoError::FileOperation { kind, .. }) if kind == ErrorKind::NotFound => {
-                Ok(ReadFileResponse {
-                    exists: false,
-                    file_path: path,
-                    byte_len: None,
-                    content: None,
-                    truncated: false,
-                    file_hash: None,
-                })
+                Ok(missing_response(&path))
             }
             Err(err) => Err(err.into()),
         }

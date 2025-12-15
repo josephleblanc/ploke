@@ -11,8 +11,8 @@ use ploke_core::rag_types::{
 use ploke_core::{ArcStr, FileData, PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
 use ploke_db::NodeType;
 use ploke_error::{DomainError, InternalError};
-use ploke_io::{Diff, NsWriteSnippetData, ReadStrategy};
 use ploke_io::read::{FileHashData, read_and_compute_filehash};
+use ploke_io::{Diff, NsWriteSnippetData, ReadStrategy};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 use tracing::debug;
@@ -720,7 +720,7 @@ pub async fn apply_ns_code_edit_tool(
             namespace,
             diff: Diff::from(diff),
             options,
-            large_file_policy
+            large_file_policy,
         };
         let edits_ns: Vec<NsWriteSnippetData> = vec![sn_write_data];
         let files = Vec::new();

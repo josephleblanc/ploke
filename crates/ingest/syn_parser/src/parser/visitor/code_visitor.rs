@@ -2235,7 +2235,10 @@ use statement ident: {:?}
 
             // Process imports only if process_use_tree succeeded
             match imports_result {
-                Ok(imports) => {
+                Ok(mut imports) => {
+                    for import_node in &mut imports {
+                        import_node.cfgs = item_cfgs.clone();
+                    }
                     for import_node in imports {
                         trace!(target: "some_target", "\n\tmodule name: {}\t\nimport: {:?}",module.name, import_node);
                         let typed_import_id = import_node.import_id();

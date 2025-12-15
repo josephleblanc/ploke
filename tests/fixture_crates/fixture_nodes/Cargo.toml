@@ -1,3 +1,4 @@
+# Why don't sheep remember people's birthdays? Because they always go "bah bah" instead of "baba"!
 [package]
 name = "fixture_nodes"
 version = "0.1.0"
@@ -8,3 +9,7 @@ path = "src/lib.rs" # Add this
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] } # Add serde dependency
+
+[features]
+default = ["fixture_nodes_cfg"]
+fixture_nodes_cfg = []

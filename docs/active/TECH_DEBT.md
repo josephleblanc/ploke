@@ -2,6 +2,15 @@
 
 This is a list of known fixes that I will want to make but are not terribly urgent.
 
+## Documentation
+* [ ] Review current (2025-12-14) documentation to ensure it is fresh
+* [ ] Update readme
+* [ ] Add a "good first contrib" or similar to welcome contributors
+* [ ] Add more structured, higher-level documentation (mdbook or similar)
+* [ ] Add comprehensive intro docs for cargo docs
+* [ ] Review and correct doc tests
+  - [ ] Correct currently failing doc tests in `syn_parser`
+
 ## Nodes
  * [ ] Change `VariantNode`'s field `discriminant` from `String` to a number.
     *  [ ] Change [node_definition](/crates/ingest/syn_parser/src/parser/nodes/enums.rs)
@@ -45,6 +54,13 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Add input autocomplete for commands and keywords; show suggestions inline.
 * [ ] In Slash/Command mode, detect known commands pre-submit and change input box color (visual affordance).
 * [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
+* [ ] Approvals overlay: approvals currently don’t enforce mutual exclusion/validation. Approving multiple overlapping proposals can all land as Applied even if stale/conflicting. Need pre-apply validation (hash/hunk match, DB/workspace check), conflict detection, and marking Stale/Failed instead of Applied; surface partial-apply results in UI/chat.
+
+## RAG
+* [ ] Add dedup for code snippets retrieved
+
+## Organization
+* [ ] Refactor the `tools` module in `ploke-tui` into its own crate, `ploke-tools` (see Note 1 below)
 
 ## OpenRouter Types
 * [ ] Consolidate OpenRouter types into a single module with strong typing (serde derives), remove ad‑hoc conversions; add micro validation layer.
@@ -52,7 +68,19 @@ This is a list of known fixes that I will want to make but are not terribly urge
 ## Database
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
-* [ ] abstract the commonly used rules like `parent_of`, `ancestor`, and `has_embeddings`, or any other rules used in more than one place to either a const that serves as a common reference for creating the cozo scripts, or a rule that is loaded into the cozo database and then may be assumed to be loaded by the functions which would otherwise re-create these scripts.
+* [ ] abstract the commonly used rules like `parent_of`, `ancestor`, and
+`has_embeddings`, or any other rules used in more than one place to either a
+const that serves as a common reference for creating the cozo scripts, or a
+rule that is loaded into the cozo database and then may be assumed to be loaded
+by the functions which would otherwise re-create these scripts.
+* [ ] Add a field for `ty` or `node_ty` that holds the discriminant for the
+`NodeType` variant of the item in the database.
+  * [ ] Add a `From<cozo::DataValue> for FunctionNode`, or maybe
+  `From<Vec<cozo::DataValue>>` for each of the primary node types etc, 
+  * [ ] Ensure the `From` implementation includes a way to give the database
+  items typed ids.
+  * [ ] For other search results add methods that can take a `node_ty, Uuid`
+  pair and create the typed node id
 
 ## Tests
 - [ ] `ObservabilityStore` in `ploke-db/src/observability.rs`
@@ -67,6 +95,13 @@ Need to add a way to handle this remotely and/or use gpu acceleration.
 `scan_for_change` in `ploke-tui/src/app_state/database.rs` is noticeably slow
 and can likely be improved by changing the algorithm or allocation strategy
 within the function.
+
+## Performance Profiling
+- [ ] Currently (2025-12-14) using ad hoc performance check in 
+  `ploke/crates/ploke-tui/src/tests/ui_performance_comprehensive.rs`
+  Instead we should put together a more systematic way to profile the
+  performance of various items
+  - see `ploke/docs/active/todo/2025-12-14_00-perf-profiling-todos.md`
 
 ### Tests
 * Database
@@ -88,7 +123,7 @@ within the function.
 
 ## Deps
 Audit
-```
+```bash
 cargo tree | less or cargo tree -e features (to see which features pull what).
 
 cargo geiger to check unsafe usage in dependencies.
@@ -96,9 +131,10 @@ cargo geiger to check unsafe usage in dependencies.
 cargo udeps for unused dependencies.
 ```
 
-Turn off default features aggressively.
-```
-Example: reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }.
+Turn off default features aggressively. \
+Example: 
+```toml
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }.
 ```
 
 This alone can cut dozens of transitive crates.
@@ -116,3 +152,15 @@ If Ploke is a workspace, you can isolate heavy stuff (e.g. graph visualization w
 
 Watch for codegen crates.
 Anything pulling prost, tonic, or bindgen will balloon compile time and disk use. Sometimes you can generate once and commit the result.
+
+## Notes
+
+- Note 1: Partial refactor of `tools` module in `ploke-tui`
+  - There are shared concepts and types that would be better organized (to
+  prevent cyclical deps) in their own crate.
+  - Currently (2025-12-14) there are some shared types needed by both
+  `ploke-llm` and `ploke-tui` which have been moved into `ploke-core` for
+  shared access, but they are kind of awkward in `ploke-core`, which is meant
+  to have less volatile primatives, while some of the types refactored out of
+  `ploke-tui::tools`, e.g. the enum `ToolName`, will need to be expanded for
+  each tool added

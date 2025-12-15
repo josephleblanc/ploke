@@ -50,6 +50,7 @@ impl SyntacticRelationSchema {
             SyntacticRelation::EnumVariant { .. } => ("Enum", "Variant"),
             SyntacticRelation::ImplAssociatedItem { .. } => ("Impl", "AssociatedItem"),
             SyntacticRelation::TraitAssociatedItem { .. } => ("Trait", "AssociatedItem"),
+            SyntacticRelation::ImportedBy { .. } => ("Primary", "Import"),
         };
 
         BTreeMap::from([

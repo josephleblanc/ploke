@@ -1,6 +1,12 @@
 //! Error types for ploke-db
 
+//! Error types for ploke-db
+
+use std::panic::Location;
+
 use ploke_core::embeddings::{EmbRelName, HnswRelName};
+use ploke_error::PrettyDebug;
+use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
@@ -13,6 +19,15 @@ pub enum DbError {
 
     #[error("Database error: {0}")]
     Cozo(String),
+
+    #[error("Cozo query `{query_name}` failed at {file}:{line}:{column}: {message}")]
+    CozoQuery {
+        query_name: &'static str,
+        message: String,
+        file: &'static str,
+        line: u32,
+        column: u32,
+    },
 
     #[error("Query execution error: {0}")]
     QueryExecution(String),
@@ -61,10 +76,55 @@ pub enum DbError {
     EmbeddingUpdateEmpty,
 }
 
+impl DbError {
+    pub fn cozo_with_callsite(
+        query_name: &'static str,
+        message: String,
+        caller: &'static Location<'static>,
+    ) -> Self {
+        Self::CozoQuery {
+            query_name,
+            message,
+            file: caller.file(),
+            line: caller.line(),
+            column: caller.column(),
+        }
+    }
+
+    /// Structured view for logging/pretty-printing the CozoQuery variant.
+    pub fn cozo_query_fields(&self) -> Option<CozoQueryFields<'_>> {
+        match self {
+            DbError::CozoQuery {
+                query_name,
+                message,
+                file,
+                line,
+                column,
+            } => Some(CozoQueryFields {
+                query_name,
+                message,
+                file,
+                line: *line,
+                column: *column,
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum DbWarning {
     #[error("Invalid query build attempt: {0}")]
     QueryBuild(String),
+}
+
+#[derive(Debug, Serialize)]
+pub struct CozoQueryFields<'a> {
+    pub query_name: &'static str,
+    pub message: &'a str,
+    pub file: &'static str,
+    pub line: u32,
+    pub column: u32,
 }
 
 impl From<cozo::Error> for DbError {
@@ -97,5 +157,13 @@ impl From<DbError> for ploke_error::Error {
 impl From<DbWarning> for ploke_error::WarningError {
     fn from(value: DbWarning) -> Self {
         ploke_error::WarningError::PlokeDb(value.to_string())
+    }
+}
+
+impl PrettyDebug for DbError {
+    type Fields<'a> = CozoQueryFields<'a>;
+
+    fn fields(&self) -> Option<Self::Fields<'_>> {
+        self.cozo_query_fields()
     }
 }

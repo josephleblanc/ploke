@@ -1,4 +1,6 @@
-use crate::parser::nodes::ImplNodeId;
+use crate::parser::graph::GraphAccess;
+use crate::parser::nodes::{ImplNodeId, ModuleNodeId, PrimaryNodeId, PrimaryNodeIdTrait};
+use crate::parser::types::VisibilityKind;
 
 use super::*;
 
@@ -90,6 +92,9 @@ pub struct ModuleTree {
     /// into the `tree_relations` vector where that ID appears as the target.
     /// Used for efficient lookup of incoming relations.
     relations_by_target: HashMap<AnyNodeId, Vec<usize>>,
+    /// Canonical path -> primary definition mapping for crate-local items.
+    definition_index: HashMap<NodePath, PrimaryNodeId>,
+    definition_index_ready: bool,
 }
 
 impl ModuleTree {
@@ -290,6 +295,8 @@ impl ModuleTree {
             pending_path_attrs: Some(Vec::new()),
             relations_by_source: HashMap::new(),
             relations_by_target: HashMap::new(),
+            definition_index: HashMap::new(),
+            definition_index_ready: false,
         })
         // Should never happen, but might want to handle this sometime
         // // Initialize path attributes from root if present
@@ -980,6 +987,382 @@ impl ModuleTree {
         self.found_path_attrs.get(&module_id)
     }
 
+    /// Adds backlinks from definition nodes to the ImportNodes that bring them into scope.
+    /// Only internal (same-crate) targets are linked; external dependencies are skipped.
+    pub(crate) fn link_definition_imports(
+        &mut self,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        log::debug!(
+            target: LOG_TARGET_MOD_TREE_BUILD,
+            "link_definition_imports: pending imports {} (reexports tracked: {})",
+            self.pending_imports.len(),
+            self.pending_exports
+                .as_ref()
+                .map(|exports| exports.len())
+                .unwrap_or(0)
+        );
+        self.ensure_definition_index(graph)?;
+        let pending_private_imports = self.pending_imports.clone();
+        let pending_public_imports = self.pending_exports.as_ref().cloned().unwrap_or_default();
+
+        for pending in pending_private_imports {
+            self.try_link_single_import(pending.containing_mod_id(), pending.import_node(), graph)?;
+        }
+
+        for pending in pending_public_imports {
+            self.try_link_single_import(pending.containing_mod_id(), pending.export_node(), graph)?;
+        }
+
+        Ok(())
+    }
+
+    fn try_link_single_import(
+        &mut self,
+        source_mod_id: ModuleNodeId,
+        import_node: &ImportNode,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        let path_segments = import_node.source_path();
+
+        if path_segments.is_empty() {
+            return Ok(());
+        }
+
+        let mut start_idx = 0;
+        while start_idx < path_segments.len() && path_segments[start_idx].is_empty() {
+            start_idx += 1;
+        }
+        let trimmed_segments = &path_segments[start_idx..];
+        if trimmed_segments.is_empty() {
+            return Ok(());
+        }
+
+        let leading_global = start_idx > 0;
+        let starts_with_crate = trimmed_segments
+            .first()
+            .map(|seg| seg == "crate")
+            .unwrap_or(false);
+        let (base_module_id, segments_to_resolve) = if leading_global || starts_with_crate {
+            (
+                self.root(),
+                if starts_with_crate {
+                    &trimmed_segments[1..]
+                } else {
+                    trimmed_segments
+                },
+            )
+        } else {
+            (source_mod_id, trimmed_segments)
+        };
+
+        if import_node.is_glob {
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "link_glob_import: attempting canonical lookup for glob {}",
+                import_node.visible_name
+            );
+            if let Some(target_primary_id) =
+                self.lookup_definition_by_segments(source_mod_id, trimmed_segments)?
+            {
+                if let Ok(target_module_id) = ModuleNodeId::try_from(target_primary_id) {
+                    log::debug!(
+                        target: LOG_TARGET_MOD_TREE_BUILD,
+                        "link_glob_import: canonical lookup matched module {:?}",
+                        target_module_id
+                    );
+                    self.link_module_scope_items(target_module_id, import_node, graph)?;
+                    return Ok(());
+                }
+            }
+
+            return self.link_glob_import(import_node, base_module_id, segments_to_resolve, graph);
+        }
+
+        if let Some(target_primary_id) =
+            self.lookup_definition_by_segments(source_mod_id, trimmed_segments)?
+        {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+            return Ok(());
+        }
+
+        if segments_to_resolve.is_empty() {
+            return Ok(());
+        }
+
+        // Skip external dependency imports; they will be handled when dependency graphs are available.
+        if base_module_id == self.root() {
+            if let Some(first_seg) = segments_to_resolve.first() {
+                if graph
+                    .iter_dependency_names()
+                    .any(|dep_name| dep_name == first_seg)
+                    || first_seg == "std"
+                    || first_seg == "core"
+                    || first_seg == "alloc"
+                {
+                    return Ok(());
+                }
+            }
+        }
+
+        let target_any_id =
+            match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::debug!(
+                        target: LOG_TARGET_MOD_TREE_BUILD,
+                        "link_definition_imports: skip unresolved import {:?} in module {:?}: {}",
+                        path_segments,
+                        source_mod_id,
+                        e
+                    );
+                    return Ok(());
+                }
+            };
+
+        log::debug!(
+            target: LOG_TARGET_MOD_TREE_BUILD,
+            "link_glob_import: resolved {} -> {:?}",
+            import_node.visible_name,
+            target_any_id
+        );
+        if import_node.visible_name.contains("traits::*") {
+            println!(
+                "link_glob_import resolved {} -> {:?}",
+                import_node.visible_name, target_any_id
+            );
+        }
+
+        if let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "ImportedBy created: {:?} -> import {} ({})",
+                target_primary_id,
+                import_node.visible_name,
+                import_node.source_path.join("::")
+            );
+        }
+
+        Ok(())
+    }
+
+    fn link_glob_import(
+        &mut self,
+        import_node: &ImportNode,
+        base_module_id: ModuleNodeId,
+        segments_to_resolve: &[String],
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        if segments_to_resolve.is_empty() {
+            return Ok(());
+        }
+
+        let target_any_id =
+            match self.resolve_path_relative_to(base_module_id, segments_to_resolve, graph) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::debug!(
+                        target: LOG_TARGET_MOD_TREE_BUILD,
+                        "link_definition_imports: skip unresolved glob import {:?}: {}",
+                        import_node.source_path,
+                        e
+                    );
+                    return Ok(());
+                }
+            };
+
+        if let Ok(target_module_id) = ModuleNodeId::try_from(target_any_id) {
+            self.link_module_scope_items(target_module_id, import_node, graph)?;
+            return Ok(());
+        }
+
+        if let Ok(target_primary_id) = PrimaryNodeId::try_from(target_any_id) {
+            let relation = SyntacticRelation::ImportedBy {
+                source: target_primary_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+        }
+
+        Ok(())
+    }
+
+    fn link_module_scope_items(
+        &mut self,
+        module_id: ModuleNodeId,
+        import_node: &ImportNode,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        let module_entry = match self.modules.get(&module_id) {
+            Some(module) => module,
+            None => return Err(ModuleTreeError::ModuleNotFound(module_id)),
+        };
+
+        let target_module_id = if module_entry.items().is_some() {
+            module_id
+        } else if let Some(def_id) = module_entry.resolved_definition() {
+            def_id
+        } else if let Some(def_id) = self.find_definition_for_declaration(module_id) {
+            def_id
+        } else {
+            module_id
+        };
+
+        let module = self
+            .modules
+            .get(&target_module_id)
+            .ok_or(ModuleTreeError::ModuleNotFound(target_module_id))?;
+
+        let Some(items) = module.items() else {
+            return Ok(());
+        };
+
+        let item_ids: Vec<PrimaryNodeId> = items.iter().copied().collect();
+        log::debug!(
+            target: LOG_TARGET_MOD_TREE_BUILD,
+            "link_module_scope_items: {} -> module {:?} ({} children)",
+            import_node.visible_name,
+            target_module_id,
+            item_ids.len()
+        );
+
+        for child_id in item_ids {
+            if !self.is_glob_visible_child(child_id, graph)? {
+                continue;
+            }
+            let relation = SyntacticRelation::ImportedBy {
+                source: child_id,
+                target: import_node.id,
+            };
+            self.add_rel(relation.into());
+            log::debug!(
+                target: LOG_TARGET_MOD_TREE_BUILD,
+                "link_module_scope_items: linked child {:?} to glob {}",
+                child_id,
+                import_node.visible_name
+            );
+        }
+
+        Ok(())
+    }
+
+    fn is_glob_visible_child(
+        &self,
+        child_id: PrimaryNodeId,
+        graph: &ParsedCodeGraph,
+    ) -> Result<bool, ModuleTreeError> {
+        let node = graph
+            .find_node_unique(child_id.as_any())
+            .map_err(ModuleTreeError::from)?;
+
+        Ok(matches!(
+            node.visibility(),
+            VisibilityKind::Public | VisibilityKind::Crate
+        ))
+    }
+
+    fn ensure_definition_index(&mut self, graph: &ParsedCodeGraph) -> Result<(), ModuleTreeError> {
+        if self.definition_index_ready {
+            return Ok(());
+        }
+
+        let mut index = HashMap::new();
+        for module in self.modules.values() {
+            if module.is_decl() {
+                continue;
+            }
+            let Some(items) = module.items() else {
+                continue;
+            };
+            for item_id in items {
+                if ModuleNodeId::try_from(*item_id).is_ok() {
+                    continue;
+                }
+                let node = graph
+                    .find_node_unique(item_id.as_any())
+                    .map_err(ModuleTreeError::from)?;
+                let mut node_path_vec = module.path().clone();
+                node_path_vec.push(node.name().to_string());
+                let node_path = NodePath::try_from(node_path_vec)
+                    .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+                index.entry(node_path).or_insert(*item_id);
+            }
+        }
+
+        self.definition_index = index;
+        self.definition_index_ready = true;
+        Ok(())
+    }
+
+    fn lookup_definition_by_segments(
+        &self,
+        source_mod_id: ModuleNodeId,
+        path_segments: &[String],
+    ) -> Result<Option<PrimaryNodeId>, ModuleTreeError> {
+        if path_segments.is_empty() {
+            return Ok(None);
+        }
+
+        let mut canonical_path = if path_segments
+            .first()
+            .map(|seg| seg == "crate" || seg.is_empty())
+            .unwrap_or(false)
+        {
+            vec!["crate".to_string()]
+        } else {
+            self.modules
+                .get(&source_mod_id)
+                .ok_or(ModuleTreeError::ModuleNotFound(source_mod_id))?
+                .path()
+                .clone()
+        };
+
+        for (idx, segment) in path_segments.iter().enumerate() {
+            if idx == 0 && (segment == "crate" || segment.is_empty()) {
+                continue;
+            }
+            match segment.as_str() {
+                "" => continue,
+                "self" => {}
+                "crate" => {
+                    canonical_path.clear();
+                    canonical_path.push("crate".to_string());
+                }
+                "super" => {
+                    if canonical_path.len() <= 1 {
+                        return Ok(None);
+                    }
+                    canonical_path.pop();
+                }
+                _ => canonical_path.push(segment.clone()),
+            }
+        }
+
+        if canonical_path.len() <= 1 {
+            return Ok(None);
+        }
+
+        let node_path = NodePath::try_from(canonical_path)
+            .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+        Ok(self.definition_index.get(&node_path).copied())
+    }
+
     #[allow(dead_code)]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: ImportNodeId) -> Option<String> {
         // Changed: item_id is ImportNodeId
@@ -1612,13 +1995,40 @@ impl ModuleTree {
                 .push(index);
         }
 
+        // --- Step 6: Drop pending (re-)exports belonging to pruned modules ---
+        if !initial_prunable_module_ids.is_empty() {
+            let pending_imports_before = self.pending_imports.len();
+            self.pending_imports.retain(|pending| {
+                !initial_prunable_module_ids.contains(&pending.containing_mod_id())
+            });
+            let pending_imports_after = self.pending_imports.len();
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned pending_imports: {} -> {} (removed {})",
+                pending_imports_before,
+                pending_imports_after,
+                pending_imports_before - pending_imports_after
+            );
+
+            if let Some(exports) = self.pending_exports.as_mut() {
+                let pending_exports_before = exports.len();
+                exports.retain(|pending| {
+                    !initial_prunable_module_ids.contains(&pending.containing_mod_id())
+                });
+                let pending_exports_after = exports.len();
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned pending_exports: {} -> {} (removed {})",
+                    pending_exports_before,
+                    pending_exports_after,
+                    pending_exports_before - pending_exports_after
+                );
+            }
+        }
+
         all_prunable_item_ids.retain(|item| {
             !initial_prunable_module_ids
                 .iter()
                 .map(|m| m.as_any())
                 .any(|m| m == *item)
         });
-        // --- Step 6: Prepare return data ---
+        // --- Step 7: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
             pruned_item_ids: all_prunable_item_ids, // Return all items that were pruned as a result (as AnyNodeId)

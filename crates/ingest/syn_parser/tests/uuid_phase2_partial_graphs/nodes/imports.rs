@@ -7,7 +7,7 @@
 //!
 //! ### 1. Coverage of Fixture Items:
 //!
-//! The `EXPECTED_IMPORTS_DATA` and `EXPECTED_IMPORTS_ARGS` maps cover all 26 distinct import items identified in the fixture (`use` statements and `extern crate` declarations), including those at the crate root and within the nested `sub_imports` module. This includes:
+//! The `EXPECTED_IMPORTS_DATA` and `EXPECTED_IMPORTS_ARGS` maps cover every import item identified in the fixture (`use` statements, `pub use`, and `extern crate` declarations), including those at the crate root and within the nested `sub_imports` module. This includes:
 //! *   Simple path imports (`std::collections::HashMap`, `std::fmt`, `crate::structs::TupleStruct`).
 //! *   Renamed imports (`as IoResult`, `as MySimpleStruct`, `as MyGenTrait`, `as SerdeAlias`).
 //! *   Grouped imports (`use crate::{...}`, `use std::{...}`).
@@ -15,18 +15,21 @@
 //! *   Relative path imports (`self::`, `super::`, `crate::`, `super::super::`).
 //! *   Absolute path import (`::std::time::Duration`).
 //! *   `extern crate` (simple and renamed).
+//! *   Enum variants (`use crate::enums::SampleEnum1::Variant1 as EnumVariant1`).
+//! *   Constants/statics (`TOP_LEVEL_BOOL`, `TOP_LEVEL_COUNTER`), unions (`IntOrFloat`), and macros (`documented_macro`).
+//! *   Module aliasing via `pub use crate::traits as TraitsMod;`.
 //! *   Imports within nested modules.
 //!
-//! **Conclusion for Fixture Coverage:** Excellent. All import statements from the fixture are covered by the `paranoid_test_fields_and_values!` tests.
+//! **Conclusion for Fixture Coverage:** Excellent. All import statements from the fixture are covered by the `paranoid_test_fields_and_values!` tests, including the new unit-struct, enum-variant, const/static, union, macro, and module-alias cases.
 //!
 //! ### 2. Coverage of `ImportNode` Property Variations:
 //!
-//! Based on the 26 items covered:
+//! Based on the currently covered items:
 //!
 //! *   `id: ImportNodeId`: Implicitly covered by ID generation and lookup.
 //! *   `span: (usize, usize)`: Not directly asserted by value in the new tests (previously checked for non-zero in Tier 2).
 //! *   `source_path: Vec<String>`: Excellent coverage (various lengths, `std`, `crate`, `self`, `super`, `::` prefix via empty string).
-//! *   `kind: ImportKind`: Excellent coverage (`UseStatement(VisibilityKind::Inherited)` and `ExternCrate`). Note: Only `Inherited` visibility is present in the fixture's `use` statements.
+//! *   `kind: ImportKind`: Excellent coverage (`UseStatement(VisibilityKind::Inherited)` and `ExternCrate`). The fixture now also includes `UseStatement(VisibilityKind::Public)` via the module alias.
 //! *   `visible_name: String`: Excellent coverage (simple names, renamed names, `*` for glob).
 //! *   `original_name: Option<String>`: Excellent coverage (`None` for direct imports, `Some` for renamed imports).
 //! *   `is_glob: bool`: Excellent coverage (both `true` and `false`).
@@ -36,7 +39,7 @@
 //! **Conclusion for Property Variation Coverage:** Most fields have excellent coverage.
 //! *   **Areas for potential expansion:**
 //!     *   `cfgs`: Add fixture imports with `#[cfg(...)]` attributes.
-//!     *   `kind`: Add fixture imports with explicit visibility (`pub use`, `pub(crate) use`) to test `UseStatement` variants beyond `Inherited`.
+//!     *   `kind`: Add fixture imports with additional restricted visibility (e.g., `pub(crate) use`, `pub(in path)`) to exercise more `UseStatement` variants.
 //!
 //! ### 3. Differences in Testing `ImportNode` vs. Other Nodes:
 //!
@@ -189,6 +192,107 @@ lazy_static! {
             kind: ImportKind::UseStatement(VisibilityKind::Inherited),
             cfgs: vec![],
         });
+        m.insert("crate::imports::CrateVisibleStruct", ExpectedImportNode {
+            source_path: &["crate", "structs", "SampleStruct"],
+            visible_name: "CrateVisibleStruct",
+            original_name: Some("SampleStruct"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Crate),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias", ExpectedImportNode {
+            source_path: &["crate", "traits", "SimpleTrait"],
+            visible_name: "RestrictedTraitAlias",
+            original_name: Some("SimpleTrait"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Restricted(
+                vec!["crate".into(), "imports".into(), "sub_imports".into(), "restricted_scope".into()],
+            )),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::CfgStructAlias", ExpectedImportNode {
+            source_path: &["crate", "structs", "CfgOnlyStruct"],
+            visible_name: "CfgStructAlias",
+            original_name: Some("CfgOnlyStruct"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec!["feature = \"fixture_nodes_cfg\"".to_string()],
+        });
+        m.insert("crate::imports::CfgTraitAlias", ExpectedImportNode {
+            source_path: &["crate", "traits", "SimpleTrait"],
+            visible_name: "CfgTraitAlias",
+            original_name: Some("SimpleTrait"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Public),
+            cfgs: vec!["feature = \"fixture_nodes_cfg\"".to_string()],
+        });
+        m.insert("crate::imports::UnitStruct", ExpectedImportNode {
+            source_path: &["crate", "structs", "UnitStruct"],
+            visible_name: "UnitStruct",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::EnumVariant1", ExpectedImportNode {
+            source_path: &["crate", "enums", "SampleEnum1", "Variant1"],
+            visible_name: "EnumVariant1",
+            original_name: Some("Variant1"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::TOP_LEVEL_BOOL", ExpectedImportNode {
+            source_path: &["crate", "const_static", "TOP_LEVEL_BOOL"],
+            visible_name: "TOP_LEVEL_BOOL",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::TOP_LEVEL_COUNTER", ExpectedImportNode {
+            source_path: &["crate", "const_static", "TOP_LEVEL_COUNTER"],
+            visible_name: "TOP_LEVEL_COUNTER",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::IntOrFloat", ExpectedImportNode {
+            source_path: &["crate", "unions", "IntOrFloat"],
+            visible_name: "IntOrFloat",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::documented_macro", ExpectedImportNode {
+            source_path: &["crate", "macros", "documented_macro"],
+            visible_name: "documented_macro",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::TraitsMod", ExpectedImportNode {
+            source_path: &["crate", "traits"],
+            visible_name: "TraitsMod",
+            original_name: Some("traits"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Public),
+            cfgs: vec![],
+        });
         m.insert("crate::imports::fs", ExpectedImportNode {
             source_path: &["std", "fs"],
             visible_name: "fs",
@@ -221,6 +325,15 @@ lazy_static! {
             visible_name: "PathBuf",
             original_name: None,
             is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::traits_glob", ExpectedImportNode {
+            source_path: &["crate", "traits"],
+            visible_name: "crate::traits::*",
+            original_name: None,
+            is_glob: true,
             is_self_import: false,
             kind: ImportKind::UseStatement(VisibilityKind::Inherited),
             cfgs: vec![],
@@ -289,6 +402,25 @@ lazy_static! {
             is_glob: false,
             is_self_import: false,
             kind: ImportKind::ExternCrate,
+            cfgs: vec![],
+        });
+
+        m.insert("crate::imports::trait_chain::ChainPublicTraitAlias", ExpectedImportNode {
+            source_path: &["super", "trait_chain_stage", "StageOneTraitAlias"],
+            visible_name: "ChainPublicTraitAlias",
+            original_name: Some("StageOneTraitAlias"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Public),
+            cfgs: vec![],
+        });
+        m.insert("crate::imports::trait_chain_stage::StageOneTraitAlias", ExpectedImportNode {
+            source_path: &["crate", "traits", "SimpleTrait"],
+            visible_name: "StageOneTraitAlias",
+            original_name: Some("SimpleTrait"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Public),
             cfgs: vec![],
         });
 
@@ -442,6 +574,94 @@ lazy_static! {
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
         });
+        m.insert("crate::imports::CrateVisibleStruct", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "CrateVisibleStruct",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "RestrictedTraitAlias",
+            expected_cfg: None,
+            expected_path: &["crate", "imports", "sub_imports", "restricted_scope"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::CfgStructAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "CfgStructAlias",
+            expected_cfg: Some(&["feature = \"fixture_nodes_cfg\""]),
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::CfgTraitAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "CfgTraitAlias",
+            expected_cfg: Some(&["feature = \"fixture_nodes_cfg\""]),
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::UnitStruct", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "UnitStruct",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::EnumVariant1", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "EnumVariant1",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::TOP_LEVEL_BOOL", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "TOP_LEVEL_BOOL",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::TOP_LEVEL_COUNTER", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "TOP_LEVEL_COUNTER",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::IntOrFloat", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "IntOrFloat",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::documented_macro", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "documented_macro",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::TraitsMod", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "TraitsMod",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
         m.insert("crate::imports::fs", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
@@ -474,12 +694,20 @@ lazy_static! {
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
         });
+        m.insert("crate::imports::traits_glob", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "crate::traits::*",
+            expected_cfg: None,
+            expected_path: &["crate", "imports"],
+            item_kind: ItemKind::Import,
+        });
         // NOTE: Changed env_gob after modifying how globs are handled, since now they use their
         // full paths as their names, so not strictly the `ident` in the `syn` sense
         m.insert("crate::imports::env_glob", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "std::env::*", 
+            ident: "std::env::*",
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::Import,
@@ -531,6 +759,22 @@ lazy_static! {
             expected_cfg: None,
             expected_path: &["crate", "imports"],
             item_kind: ItemKind::ExternCrate,
+        });
+        m.insert("crate::imports::trait_chain::ChainPublicTraitAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "ChainPublicTraitAlias",
+            expected_cfg: None,
+            expected_path: &["crate", "imports", "trait_chain"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::imports::trait_chain_stage::StageOneTraitAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "StageOneTraitAlias",
+            expected_cfg: None,
+            expected_path: &["crate", "imports", "trait_chain_stage"],
+            item_kind: ItemKind::Import,
         });
 
         // --- Module Path: ["crate", "imports", "sub_imports"] ---
@@ -700,6 +944,127 @@ paranoid_test_fields_and_values!(
 );
 
 paranoid_test_fields_and_values!(
+    node_CrateVisibleStruct,
+    "crate::imports::CrateVisibleStruct",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_RestrictedTraitAlias,
+    "crate::imports::sub_imports::restricted_scope::RestrictedTraitAlias",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_CfgStructAlias,
+    "crate::imports::CfgStructAlias",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_CfgTraitAlias,
+    "crate::imports::CfgTraitAlias",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_UnitStruct,
+    "crate::imports::UnitStruct",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_EnumVariant1,
+    "crate::imports::EnumVariant1",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_TOP_LEVEL_BOOL,
+    "crate::imports::TOP_LEVEL_BOOL",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_TOP_LEVEL_COUNTER,
+    "crate::imports::TOP_LEVEL_COUNTER",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_IntOrFloat,
+    "crate::imports::IntOrFloat",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_documented_macro,
+    "crate::imports::documented_macro",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_TraitsMod,
+    "crate::imports::TraitsMod",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
     node_fs,
     "crate::imports::fs",
     EXPECTED_IMPORTS_ARGS,                         // args_map
@@ -741,6 +1106,17 @@ paranoid_test_fields_and_values!(
     syn_parser::parser::nodes::ExpectedImportNode, // derived Expeced*Node
     as_import,                                     // downcast_method
     LOG_TEST_IMPORT                                // log_target
+);
+
+paranoid_test_fields_and_values!(
+    node_traits_glob,
+    "crate::imports::traits_glob",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
 );
 
 paranoid_test_fields_and_values!(
@@ -818,6 +1194,28 @@ paranoid_test_fields_and_values!(
     syn_parser::parser::nodes::ExpectedImportNode, // derived Expeced*Node
     as_import,                                     // downcast_method
     LOG_TEST_IMPORT                                // log_target
+);
+
+paranoid_test_fields_and_values!(
+    node_trait_chain_public_alias,
+    "crate::imports::trait_chain::ChainPublicTraitAlias",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
+);
+
+paranoid_test_fields_and_values!(
+    node_trait_chain_stage_alias,
+    "crate::imports::trait_chain_stage::StageOneTraitAlias",
+    EXPECTED_IMPORTS_ARGS,
+    EXPECTED_IMPORTS_DATA,
+    syn_parser::parser::nodes::ImportNode,
+    syn_parser::parser::nodes::ExpectedImportNode,
+    as_import,
+    LOG_TEST_IMPORT
 );
 
 // --- Module Path: ["crate", "sub_imports"] ---

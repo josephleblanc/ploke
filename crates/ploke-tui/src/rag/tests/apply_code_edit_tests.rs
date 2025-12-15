@@ -5,6 +5,7 @@ use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::rag_types::ApplyCodeEditResult;
 use ploke_db::NodeType;
+use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
 use std::sync::Arc;
@@ -253,7 +254,7 @@ async fn test_malformed_json_handling() {
     });
 
     // Observe dispatcher behavior and ensure malformed payloads emit ToolCallFailed.
-    use crate::tools::{self, FunctionCall, FunctionMarker, ToolCall, ToolName};
+    use crate::tools::{self, FunctionMarker, ToolCall, ToolName};
     use ploke_core::ArcStr;
 
     let mut event_rx = harness.event_bus.subscribe(EventPriority::Realtime);

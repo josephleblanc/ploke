@@ -174,6 +174,7 @@ mod performance_tests {
                         selected: j % 5,
                         help_visible: false,
                         view_lines: 0,
+                        filter: Default::default(),
                     };
                     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
 
@@ -207,7 +208,7 @@ mod performance_tests {
         for (i, handle) in handles.into_iter().enumerate() {
             handle
                 .await
-                .expect(&format!("Concurrent task {} should not panic", i));
+                .unwrap_or_else(|_| panic!("Concurrent task {i} should not panic"));
         }
 
         println!("✅ Concurrent access test passed - 10 tasks x 20 renders each");
@@ -263,6 +264,7 @@ mod performance_tests {
                     selected: i % 10,
                     help_visible: i % 5 == 0,
                     view_lines: 0,
+                    filter: Default::default(),
                 };
                 let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
 
@@ -386,8 +388,9 @@ mod stress_tests {
         while start_time.elapsed() < Duration::from_secs(30) {
             let ui_state = ApprovalsState {
                 selected: (total_renders % 10) as usize,
-                help_visible: total_renders % 20 == 0,
+                help_visible: total_renders.is_multiple_of(20),
                 view_lines: 0,
+                filter: Default::default(),
             };
 
             let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();

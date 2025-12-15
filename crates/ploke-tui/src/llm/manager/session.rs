@@ -3,11 +3,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::DateTime;
+use ploke_llm::response::ToolCall;
+use ploke_llm::ChatHttpConfig;
+use ploke_llm::ChatStepOutcome;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::AppEvent;
@@ -17,82 +22,18 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::llm::manager::RequestMessage;
-use crate::llm::request::endpoint::ToolChoice;
-use crate::llm::response::FinishReason;
-use crate::llm::response::OpenAiResponse;
-use crate::llm::router_only::{ApiRoute, ChatCompRequest, Router};
+use ploke_llm::RequestMessage;
+use ploke_llm::request::ToolChoice;
+use ploke_llm::response::FinishReason;
+use ploke_llm::response::OpenAiResponse;
+use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 use crate::tools::ToolDefinition;
 use crate::tools::ToolName;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 
-use super::LlmError;
+use ploke_llm::LlmError;
 
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
-
-#[derive(Debug, PartialEq)]
-enum ParseOutcome {
-    ToolCalls {
-        calls: Vec<crate::tools::ToolCall>,
-        content: Option<String>,
-        finish_reason: FinishReason,
-    },
-    Content(String),
-}
-
-fn parse_outcome(body_text: &str) -> Result<ParseOutcome, LlmError> {
-    // First, detect provider-embedded errors inside a 200 body
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body_text)
-        && let Some(err) = v.get("error")
-    {
-        let msg = err
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown provider error");
-        let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-        return Err(LlmError::Api {
-            status: code as u16,
-            message: msg.to_string(),
-        });
-    }
-
-    // Parse into normalized response
-    let parsed: OpenAiResponse = serde_json::from_str(body_text)
-        .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body_text)))?;
-
-    // Some providers may return both content and tool calls in the same message.
-    if let Some(choice) = parsed.choices.into_iter().next() {
-        // assuming if not present it is stop to trigger return from session
-        let finish_reason = choice.finish_reason.unwrap_or(FinishReason::Stop);
-        if let Some(msg) = choice.message {
-            // if there is a tool call, return with tool call info
-            let content = msg.content;
-            if let Some(tc) = msg.tool_calls {
-                return Ok(ParseOutcome::ToolCalls {
-                    calls: tc,
-                    content,
-                    finish_reason,
-                });
-            } else if let Some(text_content) = content {
-                return Ok(ParseOutcome::Content(text_content));
-            }
-        } else if let Some(text) = choice.text {
-            // if there is no tool call, then just return the text content of the LLM response
-            return Ok(ParseOutcome::Content(text));
-        } else if let Some(_delta) = choice.delta {
-            return Err(LlmError::Deserialization(
-                "Unexpected streaming delta".into(),
-            ));
-        } else {
-            return Err(LlmError::Deserialization(
-                "Empty `choice` in LLM respnse".into(),
-            ));
-        }
-    }
-    Err(LlmError::Deserialization(
-        "No `choice` in llm response".into(),
-    ))
-}
 
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
@@ -132,6 +73,224 @@ where
     pub fallback_on_404: bool,
     pub attempts: u32,
     pub state_cmd_tx: mpsc::Sender<StateCommand>,
+}
+
+// TODO:ploke-llm 2025-12-13
+// put these into a better config data structure
+// - ensure there is a place to set the defaults for the user
+// - ensure the settings are persisted once set by the user, fall back on defaults
+#[derive(Clone, Copy)]
+pub struct TuiToolPolicy {
+    pub tool_call_timeout: ToolCallTimeout,
+    pub tool_call_chain_limit: usize,
+    pub retry_without_tools_on_404: bool,
+}
+
+type ToolCallTimeout = Duration;
+
+impl Default for TuiToolPolicy {
+    fn default() -> Self {
+        Self {
+            tool_call_timeout: Duration::from_secs(10),
+            // TODO:ploke-llm 2025-12-14
+            // Set to 15 as initial default, experiment to determine the right default to set
+            tool_call_chain_limit: 15,
+            retry_without_tools_on_404: false,
+        }
+    }
+}
+
+pub async fn run_chat_session<R: Router>(
+    client: &Client,
+    mut req: ChatCompRequest<R>,
+    parent_id: Uuid,
+    event_bus: Arc<EventBus>,
+    state_cmd_tx: mpsc::Sender<StateCommand>,
+    policy: TuiToolPolicy,
+) -> Result<String, LlmError> {
+    // Optionally: set tool_choice=Auto if tools exist, etc.
+
+    // TODO:ploke-llm 2025-12-14
+    // placeholder default config for now, fix up later
+    let cfg = ChatHttpConfig::default();
+    let mut initial_message_updated = false;
+    for _chain in 0..policy.tool_call_chain_limit {
+        let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
+
+        match outcome {
+            ChatStepOutcome::Content(text) => return Ok(text),
+
+            ChatStepOutcome::ToolCalls { calls, content, .. } => {
+                let step_request_id = Uuid::new_v4();
+                // 1) update placeholder message once (UI concern)
+                if !initial_message_updated {
+                    let is_updated = update_assistant_placeholder_once(&state_cmd_tx, parent_id, content, initial_message_updated).await;
+                    initial_message_updated = is_updated;
+                }
+
+                // 2) run tools (EventBus + waiting is TUI concern)
+                let results = execute_tools_via_event_bus(
+                    event_bus.clone(),
+                    parent_id,
+                    step_request_id,
+                    calls,
+                    policy.tool_call_timeout,
+                ) 
+                .await;
+
+                // 3) append tool results into req.core.messages for the next step
+                for (call_id, tool_json_result) in results {
+                    match tool_json_result {
+                        Ok(tool_json) => {
+                            req.core
+                                .messages
+                                .push(RequestMessage::new_tool(tool_json, call_id));
+                        }
+                        Err(err_string) => {
+                            let content =
+                                json!({ "ok": false, "error": err_string }).to_string();
+                            req.core.messages.push(RequestMessage::new_tool(
+                                content,
+                                call_id.clone(),
+                            ));
+
+                            let err_msg =
+                                format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
+                            state_cmd_tx
+                                .send(StateCommand::AddMessageTool {
+                                    new_msg_id: Uuid::new_v4(),
+                                    msg: err_msg.clone(),
+                                    kind: MessageKind::Tool,
+                                    tool_call_id: call_id,
+                                })
+                                .await
+                                .expect("state manager must be running");
+                            continue;
+                        }
+                    }
+                }
+
+                // loop again
+            }
+        }
+    }
+
+    Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
+}
+
+#[instrument(skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
+async fn update_assistant_placeholder_once(
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    parent_id: Uuid,
+    content: Option< String >,
+    initial_message_updated: bool,
+) -> bool {
+    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
+
+    if !initial_message_updated {
+        state_cmd_tx
+            .send(StateCommand::UpdateMessage {
+                id: parent_id,
+                update: MessageUpdate {
+                    content: Some(assistant_update),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
+            })
+            .await
+            .inspect_err(|e| tracing::error!("{e:#?}"))
+            .expect("state command must be running");
+        true
+    } else {
+        false
+    }
+}
+
+pub struct ToolExecPolicy {
+    pub timeout: Duration,
+}
+
+pub async fn execute_tools_via_event_bus(
+    event_bus: Arc<EventBus>,
+    parent_id: Uuid,
+    step_request_id: Uuid,
+    calls: Vec<ToolCall>,
+    policy_timeout: ToolCallTimeout,
+) -> Vec<(ploke_core::ArcStr, Result<String, String>)> {
+    // One receiver for the whole batch
+    let mut rx = event_bus.realtime_tx.subscribe();
+
+    // Per-call waiters
+    let mut waiters: HashMap<ploke_core::ArcStr, oneshot::Sender<Result<String, String>>> = HashMap::new();
+    let mut handles = Vec::new();
+
+    for call in &calls {
+        let (tx, rx_one) = oneshot::channel();
+        waiters.insert(call.call_id.clone(), tx);
+
+        let call_id = call.call_id.clone();
+        handles.push(async move {
+            // timeout wrapper per call
+            match tokio::time::timeout(policy_timeout, rx_one).await {
+                Ok(Ok(res)) => (call_id, res),
+                Ok(Err(_closed)) => (call_id, Err("tool waiter dropped".into())),
+                Err(_) => (call_id, Err("Timed out waiting for tool result".into())),
+            }
+        });
+    }
+
+    // Dispatcher task routes broadcast events to the correct waiter
+    let dispatcher = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(AppEvent::System(SystemEvent::ToolCallCompleted { request_id, call_id, content, .. }))
+                    if request_id == step_request_id =>
+                {
+                    if let Some(tx) = waiters.remove(&call_id) {
+                        let _ = tx.send(Ok(content));
+                    }
+                    if waiters.is_empty() { break; }
+                }
+                Ok(AppEvent::System(SystemEvent::ToolCallFailed { request_id, call_id, error, .. }))
+                    if request_id == step_request_id =>
+                {
+                    if let Some(tx) = waiters.remove(&call_id) {
+                        let _ = tx.send(Err(error));
+                    }
+                    if waiters.is_empty() { break; }
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(%n, "tool dispatcher lagged");
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    // fail all remaining
+                    for (_, tx) in waiters.drain() {
+                        let _ = tx.send(Err("Event channel closed".into()));
+                    }
+                    break;
+                }
+            }
+        }
+    });
+
+    // Emit all tool requests *after* dispatcher is live
+    for call in calls {
+        event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call: call,
+            request_id: step_request_id,
+            parent_id,
+        }));
+    }
+
+    // Await all tool results
+    let results = futures::future::join_all(handles).await;
+
+    // Make sure dispatcher finishes too (best-effort)
+    let _ = dispatcher.await;
+
+    results
 }
 
 use tracing::info;
@@ -245,8 +404,8 @@ where
                 return Err(err);
             }
 
-            match parse_outcome(&body_text)? {
-                ParseOutcome::ToolCalls {
+            match ploke_llm::manager::parse_chat_outcome(&body_text)? {
+                ChatStepOutcome::ToolCalls {
                     calls: tool_calls,
                     content,
                     finish_reason,
@@ -343,7 +502,7 @@ where
                             };
                             match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
                                 Ok(r) => (call_id_clone, r),
-                                Err(_) => { 
+                                Err(_) => {
                                     add_sysinfo_message(&call_id_clone, &cmd_tx_clone, "timeout").await;
                                     ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
                                 }
@@ -428,7 +587,7 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                         return Ok(assistant_intro);
                     }
                 }
-                ParseOutcome::Content(content) => {
+                ChatStepOutcome::Content(content) => {
                     return Ok(content);
                 }
             }
@@ -483,6 +642,8 @@ async fn add_tool_failed_message(
 
 #[cfg(test)]
 mod tests {
+    use ploke_llm::manager::parse_chat_outcome;
+
     use super::*;
     use crate::EventBus;
     use crate::event_bus::EventBusCaps;
@@ -490,29 +651,29 @@ mod tests {
     use crate::tools::ToolName;
 
     #[test]
-    fn parse_outcome_content_message() {
+    fn parse_chat_outcome_content_message() {
         let body = r#"{
             "choices": [
                 { "message": {"role": "assistant", "content": "Hello world"} }
             ]
         }"#;
-        let r = parse_outcome(body).unwrap();
+        let r = parse_chat_outcome(body).unwrap();
         match r {
-            ParseOutcome::Content(c) => assert_eq!(c, "Hello world"),
+            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello world"),
             _ => panic!("expected content"),
         }
     }
 
     #[test]
-    fn parse_outcome_text_field() {
+    fn parse_chat_outcome_text_field() {
         let body = r#"{
             "choices": [
                 { "text": "Hello text" }
             ]
         }"#;
-        let r = parse_outcome(body).unwrap();
+        let r = parse_chat_outcome(body).unwrap();
         match r {
-            ParseOutcome::Content(c) => assert_eq!(c, "Hello text"),
+            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello text"),
             _ => panic!("expected content"),
         }
     }

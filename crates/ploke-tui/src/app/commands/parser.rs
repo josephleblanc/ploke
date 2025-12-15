@@ -51,6 +51,7 @@ pub enum Command {
     EditSetPreviewLines(usize),
     EditSetAutoConfirm(bool),
     Raw(String),
+    SearchContext(String),
 }
 
 /// Parse the input buffer into a Command, stripping the style prefix.
@@ -237,6 +238,10 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Ok(id) => Command::CreateDeny(id),
                 Err(_) => Command::Raw(trimmed.to_string()),
             }
+        }
+        s if s.starts_with("search ") => {
+            let search_term = s.trim_start_matches("search ").trim();
+            Command::SearchContext(search_term.to_string())
         }
         other => Command::Raw(other.to_string()),
     }

@@ -33,8 +33,7 @@ m.name = {}\nm.id = {}\nm.is_file_based() = {}\n",
             m.id,
             m.is_file_based(),
         );
-        (m.path() == module_path && m.is_inline())
-            || (m.path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline()) || (m.path() == module_path && m.is_file_based())
     })?;
     #[allow(clippy::suspicious_map)]
     let import_id = graph
@@ -176,9 +175,9 @@ pub fn print_module_tree(
                 rel_path
             }
         }
-        ModuleKind::Inline { 
+        ModuleKind::Inline {
             ..
-            // items, span 
+            // items, span
         } => {
             let vis_printable = format!("{}", module.visibility);
             format!("{} {}", "inline".dimmed(), vis_printable.dimmed())

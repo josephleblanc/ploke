@@ -723,7 +723,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         let db_ret = ploke_db::create_index_warn(&db);
         let is_hnsw_registered = db.is_hnsw_index_registered(&db.active_embedding_set)?;
         tracing::info!(?is_hnsw_registered);
-        assert!(is_hnsw_registered, "expect hnsw registered after embedding process finished");
+        assert!(
+            is_hnsw_registered,
+            "expect hnsw registered after embedding process finished"
+        );
     }
 
     #[cfg(not(feature = "multi_embedding_embedder"))]

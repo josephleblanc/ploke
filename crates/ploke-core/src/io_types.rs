@@ -1,9 +1,9 @@
-use std::{fmt::Display, ops::Deref, path::PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{file_hash::FileHash, TrackingHash};
+use crate::TrackingHash;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingData {
@@ -80,17 +80,12 @@ impl WriteResult {
 }
 
 // Create-file support (IO-level)
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OnExists {
+    #[default]
     Error,
     Overwrite,
-}
-
-impl Default for OnExists {
-    fn default() -> Self {
-        Self::Error
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -21,7 +21,7 @@ mod phase2_relation_tests {
 
     #[test]
     #[cfg(not(feature = "type_bearing_ids"))]
-fn test_contains_relation_example() {
+    fn test_contains_relation_example() {
         let crate_name = "example_crate";
         let crate_version = "0.1.0";
         let crate_path = fixtures_crates_dir().join(crate_name);

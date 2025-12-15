@@ -1638,6 +1638,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture_impls"
+version = "0.1.0"
+
+[[package]]
 name = "flate2"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3738,8 +3742,10 @@ dependencies = [
  "miette",
  "proc-macro2",
  "serde",
+ "serde_json",
  "thiserror 2.0.12",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3772,6 +3778,31 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "ploke-llm"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "dotenvy",
+ "futures",
+ "fxhash",
+ "itertools 0.14.0",
+ "once_cell",
+ "ploke-core",
+ "ploke-error",
+ "ploke-rag",
+ "ploke-test-utils",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "url",
  "uuid",
 ]
 
@@ -3889,6 +3920,7 @@ dependencies = [
  "ploke-embed",
  "ploke-error",
  "ploke-io",
+ "ploke-llm",
  "ploke-rag",
  "ploke-test-utils",
  "ploke-transform",
@@ -3916,6 +3948,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "unicode-width 0.1.14",
  "url",
  "uuid",
 ]

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use ploke_common::workspace_root;
-use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
+use syn_parser::{
+    discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel,
+    ParsedCodeGraph,
+};
 
 macro_rules! crate_test {
     // Basic case - just name and crate path
@@ -26,9 +29,7 @@ macro_rules! crate_test {
                 .try_init();
 
             let project_root = workspace_root();
-            let crate_path = workspace_root()
-                .join("crates")
-                .join($crate_name);
+            let crate_path = workspace_root().join("crates").join($crate_name);
 
             let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
 
@@ -56,10 +57,9 @@ crate_test!(new_parse_tui, "ploke-tui", build_tree);
 crate_test!(new_parse_ty_mcp, "ploke-ty-mcp", build_tree);
 crate_test!(new_parse_test_utils, "test-utils", build_tree);
 
-
 pub fn try_run_phases_and_collect_path(
     project_root: &Path,
-    crate_path: PathBuf
+    crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
     let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
 
@@ -95,4 +95,3 @@ pub fn try_run_phases_and_collect_path(
 //     let _(tree, pruned_items) = merged.build_tree_and_prune()?;
 //     Ok(())
 // }
-

@@ -20,9 +20,7 @@ use path_resolver::*;
 use serde::{Deserialize, Serialize};
 
 use crate::parser::{
-    nodes::{
-        AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId, PrimaryNodeIdTrait, ReexportNodeId,
-    }, // Removed GraphNode import
+    nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ReexportNodeId}, // Removed GraphNode import
 };
 use crate::parser::{
     nodes::{ImportNode, ModuleNodeId, NodePath},
@@ -38,10 +36,9 @@ use std::collections::VecDeque;
 use crate::{
     error::SynParserError,
     parser::{
-        nodes::{extract_path_attr_from_node, ModuleNode}, // Removed GraphNode import
-        types::VisibilityKind,
+        nodes::{extract_path_attr_from_node, ModuleNode},
         ParsedCodeGraph,
-    },
+    }, // Removed GraphNode import
     utils::{
         logging::{LogDataStructure, PathProcessingContext},
         LogStyle, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS,

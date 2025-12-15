@@ -9,7 +9,7 @@ mod determinism_tests {
 
     #[test]
     #[cfg(not(feature = "type_bearing_ids"))]
-fn test_phase2_determinism() {
+    fn test_phase2_determinism() {
         let fixture_names = [
             "duplicate_name_fixture_1",
             "duplicate_name_fixture_2",

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+use ploke_core::embeddings::EmbeddingSet;
 pub use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
@@ -143,9 +144,8 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 fn setup_db_create_multi_embeddings(
     db: cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
-    use ploke_db::multi_embedding::{
-        hnsw_ext::HnswExt,
-        schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
+    use ploke_db::multi_embedding::schema::{
+        CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector,
     };
     use std::collections::BTreeMap;
 
@@ -175,11 +175,7 @@ fn setup_db_create_multi_embeddings(
     );
 
     tracing::info!("{}: put default embedding set", "Db".log_step());
-    let embedding_set = EmbeddingSet::new(
-        EmbeddingProviderSlug::new_from_str("local"),
-        EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
-        EmbeddingShape::new_dims_default(384),
-    );
+    let embedding_set = EmbeddingSet::default();
 
     let script_put = embedding_set.script_put();
     let db_result = db
@@ -201,8 +197,19 @@ fn setup_db_create_multi_embeddings(
         )
         .map_err(DbError::from)?;
     tracing::info!(create_embedding_vector = ?db_result.rows);
-    db.create_embedding_index(&embedding_set)?;
 
+    Ok(db)
+}
+
+#[cfg(feature = "multi_embedding_test")]
+pub fn setup_db_create_multi_embeddings_with_hnsw(
+    fixture: &'static str,
+) -> Result<cozo::Db<cozo::MemStorage>, ploke_error::Error> {
+    use ploke_db::multi_embedding::hnsw_ext::HnswExt;
+
+    let embedding_set = EmbeddingSet::default();
+    let db = setup_db_full_multi_embedding(fixture)?;
+    db.create_embedding_index(&embedding_set)?;
     Ok(db)
 }
 
@@ -363,8 +370,8 @@ pub fn init_test_tracing_with_target(target: &'static str, level: tracing::Level
     let filter = filter::Targets::new()
         // .with_target("debug_dup", Level::ERROR)
         .with_target("db", Level::ERROR)
-        .with_target("ploke_tui::app_state", Level::INFO)
-        .with_target("ploke_embed", Level::ERROR)
+        .with_target("ploke_tui::app_state", Level::ERROR)
+        .with_target("ploke_embed", level)
         .with_target("specific_target", Level::ERROR)
         .with_target("file_hashes", Level::ERROR)
         .with_target("ploke", level)

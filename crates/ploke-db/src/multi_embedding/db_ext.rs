@@ -939,7 +939,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         //     embedding_set_id == {set_id}
         // "
         //         );
-        info!(target: "cozo-script", ?query);
+        info!(target: "cozo-script", %query);
 
         let result = self
             .run_script(
@@ -1209,16 +1209,25 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
         }
     }?;
 
+    // // need to drop hnsw indices before loading backup
+    // db.clear_hnsw_idx().await?;
+
     let prior_rels_vec = db.relations_vec()?;
     debug!("prior rels for import: {:#?}", prior_rels_vec);
     db.import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    crate::create_index_primary(&db)?;
-    // .inspect_err(|e| e.emit_error())?;
+    // NOTE: We don't need to clear the hnsw_idx as initially thougth when loading from the
+    // database. Previously we thought we needed to drop the hnsw index before importing the
+    // backup database, but it seems like we do not need to do that, and so we end up getting an
+    // error wyhen we ty to recreate the hnsw index again.
+    // - This might change if we were to try loading a database which had a non-default hnsw index
+    // on a non-default vector embedding set, but I'm not sure. Will need more testing later.
+    crate::create_index_primary_with_index(db)?;
+    // crate::create_index_primary(db)?;
 
     // get count for sanity and user feedback
-    return match db.count_relations().await {
+    match db.count_relations().await {
         Ok(count) if count > 0 => {
             {
                 let script = format!(
@@ -1247,7 +1256,7 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
         }
         Ok(_count) => Ok(()),
         Err(e) => Err(e),
-    };
+    }?;
 
     pub async fn find_file_by_prefix(
         dir: impl AsRef<std::path::Path>,
@@ -1419,7 +1428,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_backup() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
+        // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
+
         let db = Database::new(setup_db()?);
         let embedding_set = &db.active_embedding_set;
         let vector_rel = &embedding_set.rel_name();
@@ -1797,7 +1807,7 @@ mod tests {
         let count_common_nodes = common_nodes_result.rows.len();
 
         assert_eq!(
-            136, count_common_nodes,
+            140, count_common_nodes,
             r#"
 Should match the number of expected nodes (more means the syn_parser has likely become more
 sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
@@ -1977,7 +1987,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
             "{}: {}",
             "count_pending_embeddings".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
         assert_eq!(
-            136, count_all_embeddable,
+            140, count_all_embeddable,
             "Expect all nodes present (flaky, add better count later)"
         );
 
@@ -1993,7 +2003,7 @@ sensitive/accurate, less is likely bad)\nTotal count was: {count_common_nodes}"#
         info!(target: "cozo-script",
             "{}: {}",
             "count_unembedded_nonfiles".log_step(), "Total nodes found without embeddings using new method:\n\t{count}");
-        assert_eq!(126, count_unembedded_nonfiles, "Expect all nodes present");
+        assert_eq!(130, count_unembedded_nonfiles, "Expect all nodes present");
 
         assert!(
             count_all_embeddable == (count_unembedded_nonfiles + count_unembedded_files),
