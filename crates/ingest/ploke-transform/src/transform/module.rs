@@ -1,6 +1,3 @@
-#[cfg(not(feature = "multi_embedding_schema"))]
-use crate::schema::primary_nodes::ModuleNodeSchema;
-#[cfg(feature = "multi_embedding_schema")]
 use crate::schema::primary_nodes_multi::ModuleNodeSchema;
 
 use std::path::PathBuf;

@@ -1,6 +1,3 @@
-#[cfg(not(feature = "multi_embedding_schema"))]
-use crate::schema::primary_nodes::UnionNodeSchema;
-#[cfg(feature = "multi_embedding_schema")]
 use crate::schema::primary_nodes_multi::UnionNodeSchema;
 
 use crate::{macro_traits::CommonFields, schema::secondary_nodes::FieldNodeSchema};

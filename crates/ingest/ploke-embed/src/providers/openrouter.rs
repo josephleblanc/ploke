@@ -12,7 +12,9 @@ use crate::{
 use ploke_llm::embeddings::{
     EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest, HasEmbeddings,
 };
-use ploke_llm::router_only::openrouter::embed::OpenRouterEmbeddingError;
+use ploke_llm::router_only::openrouter::embed::{
+    OpenRouterEmbeddingError, OpenRouterEmbeddingFields,
+};
 use ploke_llm::router_only::openrouter::{embed::OpenRouterEmbeddingVector, OpenRouter};
 use ploke_llm::ModelId;
 
@@ -147,14 +149,26 @@ impl OpenRouterBackend {
         }
     }
 
+    // TODO:ploke-remote 2025-12-15
+    // Either here or elsewhere add a method for `with_provider`, so we can propogate the
+    // configuration that the user might make to use specific provider preferences
+    // - c.f. `EmbeddingProviderPrefs` in ploke-llm/src/router_only/openrouter/mod.rs
     fn build_request(&self, snippets: Vec<String>) -> EmbeddingRequest<OpenRouter> {
-        let mut req: EmbeddingRequest<OpenRouter> = Default::default();
-        req.model = self.model.clone();
-        req.input = EmbeddingInput::Batch(snippets);
-        req.encoding_format = Some(EmbeddingEncodingFormat::Float);
-        req.router.dimensions = self.request_dimensions;
-        req.router.input_type = self.input_type.clone();
-        req
+        EmbeddingRequest::<OpenRouter>::default()
+            .with_model(self.model.clone())
+            .with_input(EmbeddingInput::Batch(snippets))
+            .with_encoding_format(EmbeddingEncodingFormat::Float)
+            .with_router_bundle(OpenRouterEmbeddingFields {
+                dimensions: self.request_dimensions,
+                input_type: self.input_type.clone(),
+                // provider: todo!(),
+                ..Default::default()
+            })
+        // req.model = self.model.clone();
+        // req.input = EmbeddingInput::Batch(snippets);
+        // req.encoding_format = Some(EmbeddingEncodingFormat::Float);
+        // req.router.dimensions = self.request_dimensions;
+        // req.router.input_type = self.input_type.clone();
     }
 
     fn validate_and_reorder(
@@ -389,10 +403,13 @@ mod tests {
 
     fn set_env(url: &str) {
         // Env mutation is process-global; restrict to tests.
-        unsafe {
+        let have_key = std::env::var("OPENROUTER_API_KEY")
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if !have_key {
             std::env::set_var("OPENROUTER_API_KEY", "test-key");
-            std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
         }
+        std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
     }
 
     fn cfg(model: &str, dims: usize) -> OpenRouterConfig {
@@ -491,5 +508,240 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    mod live_api_tests {
+        use super::*;
+        use serde::{Deserialize, Serialize};
+        use std::{
+            collections::HashMap,
+            fs,
+            path::{Path, PathBuf},
+            time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+        };
+
+        #[derive(Debug, Deserialize)]
+        struct FixtureModels {
+            data: Vec<FixtureModel>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct FixtureModel {
+            id: String,
+            architecture: FixtureArchitecture,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct FixtureArchitecture {
+            modality: String,
+            input_modalities: Vec<String>,
+            output_modalities: Vec<String>,
+        }
+
+        #[derive(Debug, Clone, Copy)]
+        struct LiveModelCase {
+            model: &'static str,
+            dims: usize,
+        }
+
+        const LIVE_MODEL_CASES: &[LiveModelCase] = &[
+            LiveModelCase {
+                model: "sentence-transformers/all-minilm-l6-v2",
+                dims: 384,
+            },
+            LiveModelCase {
+                model: "thenlper/gte-base",
+                dims: 768,
+            },
+            LiveModelCase {
+                model: "intfloat/e5-large-v2",
+                dims: 1024,
+            },
+        ];
+
+        #[derive(Debug, Serialize)]
+        struct LiveRunArtifact {
+            model: String,
+            dims: usize,
+            batch_size: usize,
+            elapsed_ms: u128,
+            vectors_head8: Vec<Vec<f32>>,
+        }
+
+        fn require_live_gate() {
+            let key_ok = std::env::var("OPENROUTER_API_KEY")
+                .ok()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if !key_ok {
+                panic!(
+                    "live gate not satisfied: set OPENROUTER_API_KEY (live embeddings hit OpenRouter)"
+                );
+            }
+            if std::env::var("OPENROUTER_EMBEDDINGS_URL").is_ok() {
+                panic!(
+                    "live gate not satisfied: OPENROUTER_EMBEDDINGS_URL is set; unset it to hit real OpenRouter"
+                );
+            }
+        }
+
+        fn repo_root() -> PathBuf {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../..")
+                .canonicalize()
+                .expect("repo root canonicalization failed")
+        }
+
+        fn fixture_path() -> PathBuf {
+            repo_root().join("fixtures/openrouter/embeddings_models.json")
+        }
+
+        fn artifact_dir() -> PathBuf {
+            repo_root()
+                .join("target")
+                .join("test-output")
+                .join("openrouter_backend_live")
+        }
+
+        fn ts_slug() -> String {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::from_secs(0));
+            format!("{}-{}", now.as_secs(), now.subsec_nanos())
+        }
+
+        fn sanitize_path_component(raw: &str) -> String {
+            raw.replace('/', "_slash_").replace('\\', "_")
+        }
+
+        fn load_fixture_models() -> Result<FixtureModels, Box<dyn std::error::Error>> {
+            let bytes = fs::read(fixture_path())?;
+            let fixture: FixtureModels = serde_json::from_slice(&bytes)?;
+            Ok(fixture)
+        }
+
+        fn openrouter_live_cfg(model: &str, dims: usize) -> OpenRouterConfig {
+            OpenRouterConfig {
+                model: model.to_string(),
+                dimensions: Some(dims),
+                max_in_flight: 2,
+                requests_per_second: None,
+                max_attempts: 4,
+                initial_backoff_ms: 500,
+                max_backoff_ms: 10_000,
+                input_type: Some("code-snippet".into()),
+                timeout_secs: 40,
+            }
+        }
+
+        fn write_artifact(
+            path: &Path,
+            artifact: &LiveRunArtifact,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let bytes = serde_json::to_vec_pretty(artifact)?;
+            fs::write(path, bytes)?;
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn live_openrouter_embeddings_for_fixture_models(
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let _env_guard = ENV_MUTEX.lock().await;
+            std::env::remove_var("OPENROUTER_EMBEDDINGS_URL");
+            require_live_gate();
+
+            let fixture = load_fixture_models()?;
+            let mut fixture_lookup: HashMap<&str, &FixtureModel> = HashMap::new();
+            for model in &fixture.data {
+                fixture_lookup.insert(model.id.as_str(), model);
+            }
+
+            let sample_inputs = vec![
+                "fn distance(a: usize, b: usize) -> usize { a.abs_diff(b) }".to_string(),
+                "struct Node { id: u64, edges: usize }".to_string(),
+                "Explain Rust ownership in one sentence.".to_string(),
+            ];
+
+            for case in LIVE_MODEL_CASES {
+                let fixture_model = fixture_lookup.get(case.model).unwrap_or_else(|| {
+                    panic!(
+                        "fixture missing model {}; add it to fixtures/openrouter/embeddings_models.json",
+                        case.model
+                    )
+                });
+
+                assert_eq!(
+                    fixture_model.architecture.modality, "text->embeddings",
+                    "fixture modality mismatch for {}",
+                    case.model
+                );
+                assert!(
+                    fixture_model
+                        .architecture
+                        .output_modalities
+                        .iter()
+                        .any(|m| m == "embeddings"),
+                    "fixture output modalities missing embeddings for {}",
+                    case.model
+                );
+
+                let backend = OpenRouterBackend::new(&openrouter_live_cfg(case.model, case.dims))?;
+                let started = Instant::now();
+                let vectors = backend
+                    .compute_batch(sample_inputs.clone(), None)
+                    .await
+                    .map_err(|e| {
+                        EmbedError::Embedding(format!(
+                            "live embedding call failed for {}: {e}",
+                            case.model
+                        ))
+                    })?;
+                let elapsed_ms = started.elapsed().as_millis();
+
+                assert_eq!(
+                    vectors.len(),
+                    sample_inputs.len(),
+                    "vector count mismatch for {}",
+                    case.model
+                );
+                for v in &vectors {
+                    assert_eq!(
+                        v.len(),
+                        case.dims,
+                        "dimension mismatch for {} (expected {}, got {})",
+                        case.model,
+                        case.dims,
+                        v.len()
+                    );
+                    assert!(
+                        v.iter().all(|f| f.is_finite()),
+                        "non-finite float returned for {}",
+                        case.model
+                    );
+                }
+
+                let head = vectors
+                    .iter()
+                    .map(|v| v.iter().copied().take(8).collect::<Vec<f32>>())
+                    .collect::<Vec<Vec<f32>>>();
+                let artifact = LiveRunArtifact {
+                    model: case.model.to_string(),
+                    dims: case.dims,
+                    batch_size: sample_inputs.len(),
+                    elapsed_ms,
+                    vectors_head8: head,
+                };
+                let artifact_path = artifact_dir()
+                    .join(sanitize_path_component(case.model))
+                    .join(format!("{}.json", ts_slug()));
+                write_artifact(&artifact_path, &artifact)?;
+            }
+
+            Ok(())
+        }
     }
 }

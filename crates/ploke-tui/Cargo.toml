@@ -118,7 +118,6 @@ flakey_test = ["live_api_tests"]
 long_test = ["live_api_tests"]
 multi_embedding_ui = [
     "ploke-embed/multi_embedding_embedder",
-    "ploke-transform/multi_embedding_schema",
     "ploke-test-utils/multi_embedding_test",
     "ploke-db/multi_embedding_db",
     "ploke-rag/multi_embedding_rag",

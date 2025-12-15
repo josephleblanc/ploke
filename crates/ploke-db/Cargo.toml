@@ -51,7 +51,6 @@ criterion = "0.7"
 default = ["multi_embedding_db"]
 type_bearing_ids = []
 multi_embedding_db = [
-    "ploke-transform/multi_embedding_schema",
     "ploke-test-utils/multi_embedding_test",
     "ploke-embed/multi_embedding_embedder",
 ]

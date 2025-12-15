@@ -73,6 +73,8 @@ This is a list of known fixes that I will want to make but are not terribly urge
 const that serves as a common reference for creating the cozo scripts, or a
 rule that is loaded into the cozo database and then may be assumed to be loaded
 by the functions which would otherwise re-create these scripts.
+  * [ ] In particular, address the following files
+    * [ ] ploke/crates/ploke-db/src/helpers.rs
 * [ ] Add a field for `ty` or `node_ty` that holds the discriminant for the
 `NodeType` variant of the item in the database.
   * [ ] Add a `From<cozo::DataValue> for FunctionNode`, or maybe

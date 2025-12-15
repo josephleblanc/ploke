@@ -1,5 +1,4 @@
 #![allow(clippy::result_large_err)]
-#![cfg(feature = "multi_embedding_db")]
 
 use std::{collections::BTreeMap, ops::Deref};
 

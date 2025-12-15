@@ -3,7 +3,6 @@ use std::{ops::Deref, panic::Location, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-#[cfg(feature = "multi_embedding_db")]
 use crate::multi_embedding::db_ext::EmbeddingExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
 use crate::NodeType;
@@ -21,14 +20,12 @@ use uuid::Uuid;
 
 // cfg items
 
-#[cfg(feature = "multi_embedding_db")]
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 
 pub(crate) const TRACKING_HASH_TARGET: &str = "tracking-hash";
 
-#[cfg(feature = "multi_embedding_db")]
 lazy_static! {
     static ref DEFAULT_EMBEDDING_SET: EmbeddingSet = EmbeddingSet::new(
         EmbeddingProviderSlug::new_from_str("local"),
@@ -52,7 +49,6 @@ pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
-    #[cfg(feature = "multi_embedding_db")]
     pub active_embedding_set: EmbeddingSet,
 }
 
@@ -290,32 +286,24 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
-        #[cfg(not(feature = "multi_embedding_db"))]
-        {
-            Self { db }
-        }
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            Self {
-                db,
-                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
-            }
+        Self {
+            db,
+            // TODO:migrate-multi-embed-full
+            // Update to not use hardcoded active_embedding_set in new and update callsites.
+            // Replace those taht use default model with call to `default()` instead
+            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
         }
     }
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        #[cfg(not(feature = "multi_embedding_db"))]
-        {
-            Ok(Self { db })
-        }
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            Ok(Self {
-                db,
-                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
-            })
-        }
+        // TODO:migrate-multi-embed-full
+        // Update to not use hardcoded active_embedding_set in new and update callsites.
+        // Replace those taht use default model with call to `default()` instead
+        Ok(Self {
+            db,
+            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+        })
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -325,17 +313,10 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        #[cfg(not(feature = "multi_embedding_db"))]
-        {
-            Ok(Self { db })
-        }
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            Ok(Self {
-                db,
-                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
-            })
-        }
+        Ok(Self {
+            db,
+            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+        })
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
@@ -785,17 +766,10 @@ impl Database {
     pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        #[cfg(not(feature = "multi_embedding_db"))]
-        {
-            Ok(Self { db: new_db })
-        }
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            Ok(Self {
-                db: new_db,
-                active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
-            })
-        }
+        Ok(Self {
+            db: new_db,
+            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+        })
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, PlokeError> {
@@ -848,17 +822,10 @@ impl Database {
         let rel = ty.relation_str();
         let keys: String = ty.keys().join(", ");
         let vals: String = ty.vals().join(", ");
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
-                        *module{{ {keys}, {vals} @ 'NOW' }},
-                        target_path = \"{path}\",
-                        is_embedding_null = is_null(embedding)
-        ");
         let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
                         *module{{ {keys}, {vals} @ 'NOW' }},
                         target_path = \"{path}\"
         ");
-        #[cfg(feature = "multi_embedding_db")]
         tracing::info!(target: "file_hashes", "using script\n{}", &script);
         let res = self.raw_query(&script)?;
         Ok(res)
@@ -954,8 +921,6 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<Vec<TypedEmbedData>, PlokeError> {
-        // #[cfg(feature = "multi_embedding_db")]
-        // self.deref().get
         let mut unembedded_data = Vec::new();
         let mut count = 0;
         // TODO: Awkward. Improve this.
@@ -1014,25 +979,6 @@ impl Database {
         self.deref().count_unembedded_files(embedding_set_id)
     }
 
-    #[cfg(not(feature = "multi_embedding_db"))]
-    pub fn get_common_nodes(&self) -> Result<QueryResult, PlokeError> {
-        let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
-            let rel = ty.relation_str();
-            format!(r#"
-            has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span, embedding @ 'NOW' }}, !is_null(embedding)
-            "#)
-        }).join("\n");
-        let script = format!(
-            r#"
-        {has_embedding_rule}
-
-        ?[id, name, hash, span] := has_embedding[id, name, hash, span]
-        "#
-        );
-
-        self.raw_query(&script).map_err(PlokeError::from)
-    }
-
     /// Retrieves ordered embedding data for a list of target nodes.
     ///
     /// This method fetches the embedding data for a specific set of nodes identified by their UUIDs,
@@ -1049,130 +995,23 @@ impl Database {
     /// or an error if the query fails.
     /// This is useful for retrieving the `EmbeddingData` required to retrieve code snippets from
     /// files after finding the Ids via a search method (dense embedding search, bm25 search)
+    // TODO:migrate-multi-embed-full
+    // Update callsites to use new API without relying on wrapper function
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            return self
-                .deref()
-                .get_nodes_ordered_for_set(nodes, &self.active_embedding_set);
-        }
-
-        let ancestor_rules = Self::ANCESTOR_RULES;
-        let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
-            let rel = ty.relation_str();
-            format!(r#"
-            has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span, embedding @ 'NOW' }}, !is_null(embedding)
-            "#)
-        }).join("\n");
-
-        let script = format!(
-            r#"
-        target_ids[id, ordering] <- $data
-
-        {ancestor_rules}
-
-        {has_embedding_rule}
-
-    batch[id, name, file_path, file_hash, hash, span, namespace, ordering] := 
-        has_embedding[id, name, hash, span],
-        ancestor[id, mod_id],
-        *module{{id: mod_id, tracking_hash: file_hash}},
-        *file_mod {{ owner_id: mod_id, file_path, namespace }},
-        target_ids[id, ordering]
-
-    ?[id, name, file_path, file_hash, hash, span, namespace, ordering] := 
-        batch[id, name, file_path, file_hash, hash, span, namespace, ordering]
-        :sort ordering
-     "#
-        );
-
-        let ids_data: Vec<DataValue> = nodes
-            .into_iter()
-            .enumerate()
-            .map(|(i, id)| {
-                DataValue::List(vec![
-                    DataValue::Uuid(UuidWrapper(id)),
-                    DataValue::from(i as i64),
-                ])
-            })
-            .collect();
-        let limit = ids_data.len();
-
-        // Create parameters map
-        let mut params = BTreeMap::new();
-        params.insert("data".into(), DataValue::List(ids_data));
-
-        let query_result = self
-            .db
-            .run_script(&script, params, cozo::ScriptMutability::Immutable)
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        let embedding_data = QueryResult::from(query_result).to_embedding_nodes()?;
-        Ok(embedding_data)
+        self.deref()
+            .get_nodes_ordered_for_set(nodes, &self.active_embedding_set)
     }
 
+    // TODO:migrate-multi-embed-full
+    // Update callsites to use new API without relying on wrapper function
     pub fn get_unembed_rel(
         &self,
         node_type: NodeType,
         limit: usize,
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
-        #[cfg(feature = "multi_embedding_db")]
-        return self.deref().get_unembed_rel(
-            node_type,
-            limit,
-            cursor,
-            self.active_embedding_set.clone(),
-        );
-        let mut base_script = String::new();
-        // TODO: Add pre-registered fixed rules to the system.
-        let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
-
-    ancestor[desc, asc] := parent_of[desc, asc]
-    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-
-    needs_embedding[id, name, hash, span] := *"#;
-        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
-
-    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
-
-    batch[id, name, file_path, file_hash, hash, span, namespace] := 
-        needs_embedding[id, name, hash, span],
-        ancestor[id, mod_id],
-        is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
-
-    ?[id, name, file_path, file_hash, hash, span, namespace] := 
-        batch[id, name, file_path, file_hash, hash, span, namespace]
-        :sort id
-        :limit $limit
-     "#;
-        let rel_name = node_type.relation_str();
-
-        base_script.push_str(base_script_start);
-        base_script.push_str(rel_name);
-        base_script.push_str(base_script_end);
-
-        // Create parameters map
-        let mut params = BTreeMap::new();
-        params.insert("limit".into(), DataValue::from(limit as i64));
-        params.insert("cursor".into(), DataValue::from(cursor as i64));
-
-        let query_result = self
-            .db
-            .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        let count_more_flat = query_result.rows.iter().flatten().count();
-        let count_less_flat = query_result.rows.len();
-        tracing::info!("== more_flat: {count_more_flat} | less_flat: {count_less_flat} ==");
-        let more_flat_row = query_result.rows.iter().flatten().next();
-        let less_flat_row = query_result.rows.first();
-        tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
-        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
-        v.truncate(limit.min(count_less_flat));
-        let ty_embed = TypedEmbedData { v, ty: node_type };
-        Ok(ty_embed)
+        self.deref()
+            .get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
     }
 
     pub fn get_embed_rel(
@@ -1233,7 +1072,8 @@ impl Database {
         Ok(ty_embed)
     }
 
-    #[instrument(target = "specific_target", skip_all, fields(limit = 0))]
+    // TODO:migrate-multi-embed-full
+    // Update callsites to use new API without relying on wrapper function
     pub fn get_rel_with_cursor(
         &self,
         node_type: NodeType,
@@ -1247,12 +1087,8 @@ impl Database {
             cursor = %cursor,
             "delegating get_rel_with_cursor to multi_embedding_db impl",
         );
-        return self.deref().get_rel_with_cursor(
-            node_type,
-            limit,
-            cursor,
-            &self.active_embedding_set,
-        );
+        self.deref()
+            .get_rel_with_cursor(node_type, limit, cursor, &self.active_embedding_set)
     }
 
     /// Gets the primary node typed embed data needed to update the nodes in the database
@@ -1262,6 +1098,8 @@ impl Database {
     /// previously parsed and inserted files.
     // WARN: This needs to be tested
     #[allow(unreachable_code)]
+    // TODO:migrate-multi-embed-full
+    // Decide if this needs to exist or if it has been fully supplanted
     pub fn get_nodes_by_file_with_cursor(
         &self,
         node_type: NodeType,
@@ -1360,34 +1198,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
             .count_unembedded_nonfiles(&self.active_embedding_set.clone())
     }
 
-    // ASDF
-    #[cfg(not(feature = "multi_embedding_db"))]
-    pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        let lhs = r#"?[count(id)] := 
-        "#;
-        let mut query: String = String::new();
-
-        query.push_str(lhs);
-        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
-            query.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span @ 'NOW' }}",
-                primary_node.relation_str()
-            ));
-            if i + 1 < NodeType::primary_nodes().len() {
-                query.push_str(" or ")
-            }
-        }
-        tracing::info!("count nodes with query:\n{}", query);
-        let result = self
-            .db
-            .run_script_read_only(&query, Default::default())
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        tracing::info!("result of query:\n{:?}", result);
-
-        Self::into_usize(result)
-    }
-
-    #[cfg(feature = "multi_embedding_db")]
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
         use crate::multi_embedding::db_ext::EmbeddingExt;
         let embedding_set = self.active_embedding_set.clone();
@@ -1407,49 +1217,28 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            use crate::multi_embedding::db_ext::EmbeddingExt;
-            let mut rows = Vec::new();
-            let limit: usize = 10_000;
-            for node_type in NodeType::primary_nodes() {
-                let typed = self
-                    .deref()
-                    .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
-                    .map_err(|e| DbError::QueryExecution(e.to_string()))?;
-                for emb in typed.v {
-                    // Order: [id, at (placeholder), name] to match the indexer's expectations.
-                    rows.push(vec![
-                        DataValue::Uuid(UuidWrapper(emb.id)),
-                        DataValue::Str("NOW".into()), // placeholder for 'at' timestamp
-                        DataValue::Str(emb.name.clone().into()),
-                    ]);
-                }
-            }
-            return Ok(NamedRows {
-                headers: vec!["id".into(), "at".into(), "name".into()],
-                rows,
-                next: None,
-            });
-        }
-        let lhs = r#"?[ at, name, id] := 
-        "#;
-        let mut query2: String = String::new();
-        query2.push_str(lhs);
-        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
-            query2.push_str(&format!(
-                "*{} {{ id, at, embedding: null, tracking_hash, span, name @ 'NOW' }}",
-                primary_node.relation_str()
-            ));
-            if i + 1 < NodeType::primary_nodes().len() {
-                query2.push_str(" or ")
+        use crate::multi_embedding::db_ext::EmbeddingExt;
+        let mut rows = Vec::new();
+        let limit: usize = 10_000;
+        for node_type in NodeType::primary_nodes() {
+            let typed = self
+                .deref()
+                .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
+                .map_err(|e| DbError::QueryExecution(e.to_string()))?;
+            for emb in typed.v {
+                // Order: [id, at (placeholder), name] to match the indexer's expectations.
+                rows.push(vec![
+                    DataValue::Uuid(UuidWrapper(emb.id)),
+                    DataValue::Str("NOW".into()), // placeholder for 'at' timestamp
+                    DataValue::Str(emb.name.clone().into()),
+                ]);
             }
         }
-        let result2 = self
-            .db
-            .run_script_read_only(&query2, Default::default())
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(result2)
+        Ok(NamedRows {
+            headers: vec!["id".into(), "at".into(), "name".into()],
+            rows,
+            next: None,
+        })
     }
 
     /// Upsert BM25 document metadata in a batch transaction
@@ -1571,9 +1360,6 @@ mod tests {
     // ASDF
     async fn test_get_file_data() -> Result<(), PlokeError> {
         // Initialize the logger to see output from Cozo
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1615,9 +1401,6 @@ mod tests {
     #[tokio::test]
     async fn test_count_nodes_for_embedding() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1630,9 +1413,6 @@ mod tests {
     async fn test_get_nodes_two() -> Result<(), PlokeError> {
         // Initialize the logger to see output from Cozo
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::INFO);
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1648,9 +1428,6 @@ mod tests {
     async fn test_get_nodes_for_embedding() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::ERROR);
         // Initialize the logger to see output from Cozo
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1726,9 +1503,6 @@ mod tests {
     async fn test_unembedded_counts() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing(Level::TRACE);
         // Initialize the logger to see output from Cozo
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
-        #[cfg(feature = "multi_embedding_db")]
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
@@ -1847,13 +1621,6 @@ mod tests {
         assert!(update_count <= 10);
 
         // 4. Create mock embeddings for the batch
-        #[cfg(not(feature = "multi_embedding_db"))]
-        let updates: Vec<(uuid::Uuid, Vec<f32>)> = nodes_to_update
-            .into_iter()
-            .map(|node| (node.id, vec![1.0; 384]))
-            .collect();
-
-        #[cfg(feature = "multi_embedding_db")]
         let updates: Vec<(uuid::Uuid, Vec<f64>)> = nodes_to_update
             .into_iter()
             .map(|node| (node.id, vec![1.0; 384]))
@@ -1861,24 +1628,21 @@ mod tests {
 
         // 5. Call the function to update the batch
 
-        #[cfg(feature = "multi_embedding_db")]
-        {
-            let embedding_set = db.active_embedding_set.clone();
-            let relation_name = embedding_set.rel_name.clone();
-            if !db.deref().is_relation_registered(&relation_name)? {
-                use crate::multi_embedding::schema::EmbeddingVector;
+        let embedding_set = db.active_embedding_set.clone();
+        let relation_name = embedding_set.rel_name.clone();
+        if !db.deref().is_relation_registered(&relation_name)? {
+            use crate::multi_embedding::schema::EmbeddingVector;
 
-                let create_rel_script = EmbeddingVector::script_create_from_set(&embedding_set);
-                db.run_script(
-                    &create_rel_script,
-                    BTreeMap::new(),
-                    ScriptMutability::Mutable,
-                )
-                .map_err(DbError::from)?;
-            }
-            db.deref()
-                .update_embeddings_batch(updates, &embedding_set)?;
+            let create_rel_script = EmbeddingVector::script_create_from_set(&embedding_set);
+            db.run_script(
+                &create_rel_script,
+                BTreeMap::new(),
+                ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?;
         }
+        db.deref()
+            .update_embeddings_batch(updates, &embedding_set)?;
         // assert_eq!(update_count, updated_ct);
 
         // 6. Verify the update

@@ -1,6 +1,3 @@
-#[cfg(not(feature = "multi_embedding_schema"))]
-use crate::schema::primary_nodes::ImplNodeSchema;
-#[cfg(feature = "multi_embedding_schema")]
 use crate::schema::primary_nodes_multi::ImplNodeSchema;
 
 use crate::{macro_traits::CommonFields, schema::assoc_nodes::MethodNodeSchema};
@@ -98,8 +95,6 @@ fn process_impl(imple: &ImplNode) -> BTreeMap<String, DataValue> {
         (schema.span().to_string(), cozo_span),
         (schema.trait_type().to_string(), cozo_trait_id_ty),
         (schema.cfgs().to_string(), cozo_cfgs),
-        #[cfg(not(feature = "multi_embedding_schema"))]
-        (schema.embedding().to_string(), DataValue::Null),
     ])
 }
 
