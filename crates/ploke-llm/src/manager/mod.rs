@@ -9,8 +9,6 @@ use crate::router_only::HasEndpoint;
 
 use ploke_core::ArcStr;
 
-use ploke_rag::TokenCounter as _;
-use ploke_rag::context::ApproxCharTokenizer;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +18,25 @@ use uuid::Uuid;
 use super::router_only::openrouter::OpenRouter;
 use super::router_only::openrouter::OpenRouterModelId;
 use super::*;
+
+/// Trait for counting tokens. Implementations can be provided by consumers.
+///
+/// NOTE: This mirrors `ploke-rag`'s abstraction but lives in `ploke-llm` to avoid
+/// dependency cycles (`ploke-embed -> ploke-llm -> ploke-rag -> ploke-embed`).
+pub trait TokenCounter: Send + Sync + std::fmt::Debug {
+    fn count(&self, text: &str) -> usize;
+}
+
+/// A simple, deterministic tokenizer suitable for approximate budgeting:
+/// approximates tokens as ceil(chars / 4).
+#[derive(Default, Debug)]
+pub struct ApproxCharTokenizer;
+
+impl TokenCounter for ApproxCharTokenizer {
+    fn count(&self, text: &str) -> usize {
+        text.chars().count().div_ceil(4)
+    }
+}
 
 #[derive(Serialize, Debug, Clone, Deserialize, PartialEq, PartialOrd, Eq)]
 pub struct RequestMessage {

@@ -7,6 +7,7 @@ edition = "2021"
 ploke-db = { path = "../../ploke-db" }
 ploke-io = { path = "../../ploke-io" }
 ploke-core = { path = "../../ploke-core" }
+ploke-llm = { path = "../../ploke-llm" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
@@ -42,6 +43,8 @@ ploke-test-utils = { path = "../../test-utils" }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
+httpmock = "0.7"
+once_cell = "1"
 
 
 [features]
@@ -53,3 +56,5 @@ multi_embedding_embedder = [
 ]
 debug = []
 update_embeds = []
+live_api_tests = []
+parity_live_tests = []

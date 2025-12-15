@@ -7,8 +7,6 @@ edition = "2024"
 # local crates
 ploke-core = { path = "../ploke-core", features = ["json"] }
 ploke-error = { path = "../ploke-error", features = ["serde"] }
-ploke-rag = { path = "../ploke-rag" }
-ploke-test-utils = { path = "../test-utils" }
 
 # concurrency
 futures = { workspace = true } # For .fuse() on streams
@@ -47,6 +45,7 @@ once_cell = "1.19"
 # e.g. OPENROUTER_API_KEY
 dotenvy = "0.15"
 httpmock = "0.7"
+ploke-test-utils = { path = "../test-utils" }
 
 [features]
 default = ["live_api_tests"]

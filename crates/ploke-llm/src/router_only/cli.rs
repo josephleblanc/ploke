@@ -27,9 +27,17 @@ pub(crate) const COMPLETION_JSON_SIMPLE_DIR: &str = "crates/ploke-tui/data/chat_
 
 use super::*;
 
-async fn simple_query_models() -> Result<()> {
-    use ploke_test_utils::workspace_root;
+fn workspace_root() -> std::path::PathBuf {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // crates/ploke-llm -> crates -> workspace root
+    manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or(manifest_dir)
+}
 
+async fn simple_query_models() -> Result<()> {
     let url = OpenRouter::MODELS_URL;
     let key = OpenRouter::resolve_api_key()?;
 
@@ -56,7 +64,7 @@ async fn simple_query_models() -> Result<()> {
 pub(crate) mod test_data {
     use once_cell::sync::Lazy;
 
-    use ploke_test_utils::workspace_root;
+    use super::workspace_root;
 
     use super::{MODELS_JSON_ARCH, MODELS_JSON_PRICING, MODELS_TXT_IDS};
 
