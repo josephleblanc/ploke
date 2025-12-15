@@ -1,10 +1,11 @@
+#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
 use fxhash::FxHashMap as HashMap;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Author, EndpointKey, LLMParameters, ModelKey, ModelSlug, ProviderKey, SupportedParameters,
+    Author, EndpointKey, LLMParameters, ModelKey, ModelSlug,
     router_only::{RouterVariants, openrouter::ProviderPreferences},
     types::model_types::ModelVariant,
 };
@@ -15,7 +16,7 @@ pub(crate) static DEFAULT_MODEL: Lazy<ModelKey> = Lazy::new(|| ModelKey {
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, PartialOrd)]
-pub(crate) struct ProfileName(String);
+pub struct ProfileName(String);
 
 impl Default for ProfileName {
     fn default() -> Self {

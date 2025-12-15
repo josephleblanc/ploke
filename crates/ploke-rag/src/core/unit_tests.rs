@@ -25,11 +25,6 @@ mod tests {
     use std::sync::Once;
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
-        #[cfg(not(feature = "multi_embedding_rag"))]
-        TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing(tracing::Level::ERROR);
-        });
-        #[cfg(feature = "multi_embedding_rag")]
         TEST_TRACING.call_once(|| {
             ploke_test_utils::init_test_tracing_with_target("", tracing::Level::ERROR);
         });
@@ -42,7 +37,6 @@ mod tests {
         Ok(Arc::new(new_db))
     }
 
-    #[cfg(feature = "multi_embedding_rag")]
     fn default_test_db_setup() -> Result<Arc<Database>, Error> {
         use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
         use tracing::info;
@@ -93,7 +87,6 @@ mod tests {
         // let database = Database::from(db);
     }
 
-    #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
     async fn test_fixture_embeddings_loaded_into_active_set() -> Result<(), Error> {
         use tracing::info;
@@ -126,7 +119,6 @@ mod tests {
 
     /// Ensure dense search hits multi-embedding relations (and not legacy `function.embedding`).
     /// This mirrors loading a multi-embedding backup then issuing a vector search.
-    #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
     async fn dense_context_uses_multi_embedding_relations() {
         use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
@@ -174,7 +166,6 @@ mod tests {
             "expected legacy embedding column error; got: {err}"
         );
     }
-    #[cfg(feature = "multi_embedding_rag")]
     #[tokio::test]
     async fn test_db_nodes_setup() -> Result<(), Error> {
         let db = default_test_db_setup()?;
@@ -354,7 +345,7 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 

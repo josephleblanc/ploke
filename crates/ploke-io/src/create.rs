@@ -146,19 +146,16 @@ pub(crate) async fn create_file(
 
     // Existence policy
     let exists = tokio::fs::metadata(&target_path).await.is_ok();
-    match (exists, req.on_exists) {
-        (true, OnExists::Error) => {
-            return Err(IoError::FileOperation {
-                operation: "create",
-                path: target_path.clone(),
-                kind: std::io::ErrorKind::AlreadyExists,
-                source: Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::AlreadyExists,
-                    "file already exists",
-                )),
-            });
-        }
-        _ => {}
+    if let (true, OnExists::Error) = (exists, req.on_exists) {
+        return Err(IoError::FileOperation {
+            operation: "create",
+            path: target_path.clone(),
+            kind: std::io::ErrorKind::AlreadyExists,
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "file already exists",
+            )),
+        });
     }
 
     // Compute hash from intended content

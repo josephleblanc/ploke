@@ -1,7 +1,7 @@
+use ploke_core::ArcStr;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use url::Url;
-use ploke_core::ArcStr;
 
 use super::{
     Quant,
@@ -135,7 +135,9 @@ impl EmbeddingResponseId {
             return Err(IdError::Invalid("embedding response id"));
         }
         if s.contains(' ') {
-            return Err(IdError::Invalid("embedding response id contains whitespace"));
+            return Err(IdError::Invalid(
+                "embedding response id contains whitespace",
+            ));
         }
         Ok(Self(ArcStr::from(s)))
     }

@@ -129,11 +129,8 @@ async fn test_duplicate_request_detection() {
 
     // Check for any tool call failed events
     while let Ok(event) = event_rx.try_recv() {
-        match event {
-            AppEvent::System(system_event) => {
-                println!("DEBUG: Captured system event: {:?}", system_event);
-            }
-            _ => {}
+        if let AppEvent::System(system_event) = event {
+            println!("DEBUG: Captured system event: {:?}", system_event);
         }
     }
 

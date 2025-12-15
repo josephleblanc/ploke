@@ -235,9 +235,7 @@ mod tests {
     use super::*;
     use crate::{Database, DbError, NodeType};
 
-    #[cfg(feature = "multi_embedding_db")]
     use ploke_test_utils::init_test_tracing_with_target;
-    #[cfg(feature = "multi_embedding_db")]
     use ploke_test_utils::setup_db_full_multi_embedding;
 
     struct MockDb;

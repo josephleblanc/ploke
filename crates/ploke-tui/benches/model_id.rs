@@ -43,7 +43,7 @@ fn gen_repeated_inputs(unique: usize, factor: usize) -> Vec<String> {
         .map(|i| format!("author{}/model{}:free", i % 1_003, i))
         .collect();
     base.into_iter()
-        .flat_map(|s| std::iter::repeat(s).take(factor))
+        .flat_map(|s| std::iter::repeat_n(s, factor))
         .collect()
 }
 

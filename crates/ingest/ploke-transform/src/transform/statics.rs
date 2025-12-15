@@ -1,6 +1,3 @@
-#[cfg(not(feature = "multi_embedding_schema"))]
-use crate::schema::primary_nodes::StaticNodeSchema;
-#[cfg(feature = "multi_embedding_schema")]
 use crate::schema::primary_nodes_multi::StaticNodeSchema;
 
 use crate::macro_traits::CommonFields;

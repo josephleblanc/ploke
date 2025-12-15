@@ -23,7 +23,8 @@ use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, op
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::ArcStr;
-use ploke_llm::manager::events::models;
+use ploke_llm::embeddings::{EmbClientConfig, HasEmbeddingModels};
+use ploke_llm::manager::events::{embedding_models, models};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,6 +54,13 @@ pub fn execute(app: &mut App, command: Command) {
         }
         Command::ModelSearchHelp => {
             show_model_search_help(app);
+        }
+        Command::EmbeddingSearch(keyword) => {
+            app.open_embedding_browser(keyword.clone(), Vec::new());
+            open_embedding_search(app, &keyword);
+        }
+        Command::EmbeddingSearchHelp => {
+            show_embedding_search_help(app);
         }
         Command::ModelProviders(model_id) => {
             list_model_providers_async(app, &model_id);
@@ -503,6 +511,17 @@ This opens an interactive model browser:\n  ↑/↓ or j/k to navigate, Enter/Sp
     });
 }
 
+fn show_embedding_search_help(app: &App) {
+    let msg = "Usage: embedding search <keyword>\n\
+Examples:\n  embedding search text\n  embedding search jina\n\
+Opens the embedding model browser:\n  ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close.";
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg: msg.to_string(),
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
+}
+
 /// List available provider endpoints for a model and highlight tool support.
 /// Example: :model providers qwen/qwen-2.5-72b-instruct
 #[instrument(skip(app, model_id))]
@@ -648,6 +667,63 @@ fn open_model_search(app: &mut App, keyword: &str) {
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
                         msg: format!("Failed to query OpenRouter models: {}", e),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
+        }
+    });
+}
+
+fn open_embedding_search(app: &mut App, keyword: &str) {
+    let cmd_tx = app.cmd_tx.clone();
+    let keyword_str = keyword.to_string();
+
+    tokio::spawn(async move {
+        let span = debug_span!("open_embedding_search", keyword = keyword_str.as_str());
+        let _guard = span.enter();
+
+        let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+        if api_key.is_empty() {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: "Missing OPENROUTER_API_KEY. Set it and try again (e.g., export OPENROUTER_API_KEY=...)".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+
+        let client = Client::new();
+        match <OpenRouter as HasEmbeddingModels>::fetch_embedding_models(
+            &client,
+            EmbClientConfig::default(),
+        )
+        .await
+        {
+            Ok(models_resp) => {
+                let total_models = models_resp.data.len();
+                let models_arc = Arc::new(models_resp);
+                let search_kw = ArcStr::from(keyword_str);
+                emit_app_event(AppEvent::Llm(LlmEvent::EmbeddingModels(
+                    embedding_models::Event::Response {
+                        models: Some(models_arc),
+                        search_keyword: Some(search_kw.clone()),
+                    },
+                )))
+                .await;
+                debug!(
+                    ?search_kw,
+                    total = total_models,
+                    "embedding model search results enqueued on event bus"
+                );
+            }
+            Err(e) => {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Failed to query OpenRouter embedding models: {}", e),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     })

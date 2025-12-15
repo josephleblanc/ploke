@@ -11,7 +11,7 @@ pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, req
         chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
     };
     let reg = state.proposals.write().await;
-    let Some(mut proposal) = reg.get(&request_id).cloned() else {
+    let Some(proposal) = reg.get(&request_id).cloned() else {
         let msg = format!(
             "No staged edit proposal found for request_id {}",
             request_id

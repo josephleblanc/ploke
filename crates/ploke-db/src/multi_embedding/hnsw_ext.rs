@@ -570,7 +570,6 @@ mod tests {
             schema::CozoEmbeddingSetExt,
             test_utils::{eprint_relations, setup_db, setup_empty_db},
         },
-        query::builder::EMBEDDABLE_NODES_NOW_LEGACY_RHS,
         run_script_params,
     };
 
@@ -1013,7 +1012,6 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         );
         script
     }
-    #[cfg(feature = "multi_embedding_db")]
     #[test]
     fn test_load_db() -> Result<(), Error> {
         use crate::create_index_primary;

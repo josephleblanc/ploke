@@ -156,6 +156,35 @@ pub mod models {
     }
 }
 
+pub mod embedding_models {
+    use ploke_core::ArcStr;
+
+    use crate::request;
+
+    use super::*;
+    #[derive(Clone, Debug)]
+    pub enum Event {
+        /// A request to the `embeddings/models` endpoint for a router
+        Request { router: RouterVariants },
+        /// Response with the full returned values for the models.
+        Response {
+            /// The information on all models, can be used to update the cached model info and/or
+            /// persisted into the database.
+            /// - Caches the owned deserialized values in-memory, then persist with 12-hour update
+            ///   cycles.
+            // Larger response, make an Arc to hold it
+            models: Option<Arc<request::models::Response>>,
+            /// Optional search keyword that initiated this response, so consumers can drop stale
+            /// payloads when a newer search is already in-flight.
+            search_keyword: Option<ArcStr>,
+        },
+        Error {
+            request_id: Uuid,
+            error: LlmError, // Structured error type
+        },
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ToolEvent {
     Requested {

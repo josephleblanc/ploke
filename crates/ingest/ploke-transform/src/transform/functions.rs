@@ -1,9 +1,6 @@
 use cozo::Num;
 use itertools::Itertools;
 // crate-local imports
-#[cfg(not(feature = "multi_embedding_schema"))]
-use crate::schema::primary_nodes::FunctionNodeSchema;
-#[cfg(feature = "multi_embedding_schema")]
 use crate::schema::primary_nodes_multi::FunctionNodeSchema;
 
 use crate::schema::secondary_nodes::{AttributeNodeSchema, ParamNodeSchema};
@@ -151,8 +148,6 @@ fn process_func(
         // May remove this. Might be useful for debugging, less sure about in queries vs. the
         // `Contains` edge. Needs testing in `ploke-db`
         (schema.module_id().to_string(), module_id.into()),
-        #[cfg(not(feature = "multi_embedding_schema"))]
-        (schema.embedding().to_string(), DataValue::Null),
     ]);
     func_params
 }

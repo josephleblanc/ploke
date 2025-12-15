@@ -13,7 +13,6 @@ mod result;
 mod span;
 pub(crate) mod utils;
 
-#[cfg(feature = "multi_embedding_db")]
 pub mod multi_embedding;
 
 pub use database::{to_usize, to_uuid, Database, QueryContext, TypedEmbedData};

@@ -110,6 +110,7 @@ mod read_tokio {
 
     use crate::file_hash::{FileHash, HashOutcome, LargeFilePolicy};
 
+    #[allow(dead_code)]
     pub async fn hash_file_bounded_async(
         path: &Path,
         max_in_memory_bytes: u64,

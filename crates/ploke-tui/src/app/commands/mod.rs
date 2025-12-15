@@ -30,6 +30,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
     model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
     model search <keyword> - Search OpenRouter models and open interactive browser
+    embedding search <keyword> - Search OpenRouter embedding models and open interactive browser
     model providers <model_id> - List provider endpoints for a model and show tool support and slugs
     provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
     provider tools-only <on|off> - Enforce using only models/providers that support tool calls
@@ -77,6 +78,12 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
       ↑/↓ or j/k - Navigate
       Enter/Space - Expand/collapse details
       s - Select and set active model
+      q/Esc - Close
+
+    Embedding Browser (opened via 'embedding search <keyword>'):
+      ↑/↓ or j/k - Navigate
+      Enter/Space - Expand/collapse details
+      s - Select embedding model (records selection in UI log)
       q/Esc - Close
 
     Insert mode history:

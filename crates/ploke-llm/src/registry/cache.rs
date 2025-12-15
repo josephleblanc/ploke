@@ -1,11 +1,13 @@
+#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
+
 use futures::stream::{self, StreamExt, TryStreamExt};
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    EndpointsResponse, ModelId, ModelKey,
+    EndpointsResponse, ModelKey,
     request::{
         endpoint::{Endpoint, EndpointData},
         models,
@@ -282,11 +284,8 @@ impl ApiCache for EndpointCache {
             let er: EndpointsResponse = resp.into();
             let EndpointData {
                 id,
-                name,
-                created,
-                description,
-                architecture,
                 endpoints,
+                ..
             } = er.data;
             self.cache_mut().entry(id.key).and_modify(|entry| {
                 entry.extend(endpoints.into_iter().map(Arc::new));

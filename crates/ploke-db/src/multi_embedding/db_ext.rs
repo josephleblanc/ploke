@@ -1,5 +1,4 @@
 #![allow(clippy::result_large_err)]
-#![cfg(feature = "multi_embedding_db")]
 
 use std::{collections::BTreeMap, ops::Deref};
 
@@ -801,17 +800,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
     }
 
     fn setup_multi_embedding(&self) -> Result<(), ploke_error::Error> {
-        tracing::info!("{}: create embedding set", "Db".log_step());
-        let create_rel_script = EmbeddingSet::script_create();
-        let relation_name = EmbeddingSet::embedding_set_relation_name();
-        let db_result = self
-            .run_script(
-                create_rel_script,
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )
-            .map_err(DbError::from)?;
-        tracing::info!(?db_result.rows);
+        // Ensure the embedding-set relation exists (idempotent).
+        self.ensure_embedding_set_relation()?;
 
         tracing::info!(
             "{}: New multi_embedding relations created in the database
@@ -819,33 +809,22 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             "Setup".log_step()
         );
 
+        // Always ensure the default local embedding set exists for backwards compatibility.
         tracing::info!("{}: put default embedding set", "Db".log_step());
-        let embedding_set = EmbeddingSet::new(
+        let default_set = EmbeddingSet::new(
             EmbeddingProviderSlug::new_from_str("local"),
             EmbeddingModelId::new_from_str("sentence-transformers/all-MiniLM-L6-v2"),
             EmbeddingShape::new_dims_default(384),
         );
 
-        let script_put = embedding_set.script_put();
-        let db_result = self
-            .run_script(&script_put, BTreeMap::new(), ScriptMutability::Mutable)
-            .map_err(DbError::from)?;
-        tracing::info!(put_embedding_set = ?db_result.rows);
+        self.put_embedding_set(&default_set)?;
 
         tracing::info!(
             "{}: create default vector embedding relation",
             "Db".log_step()
         );
-        let create_vector_script = EmbeddingVector::script_create_from_set(&embedding_set);
-        let step_msg = format!("create {} relation", embedding_set.vector_relation_name());
-        let db_result = self
-            .run_script(
-                &create_vector_script,
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            )
-            .map_err(DbError::from)?;
-        tracing::info!(create_embedding_vector = ?db_result.rows);
+
+        self.ensure_vector_embedding_relation(&default_set)?;
         Ok(())
     }
 

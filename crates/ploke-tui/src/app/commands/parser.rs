@@ -35,6 +35,8 @@ pub enum Command {
     },
     ModelSearch(String),
     ModelSearchHelp,
+    EmbeddingSearch(String),
+    EmbeddingSearchHelp,
     ModelProviders(String),
     ProviderStrictness(ModelRegistryStrictness),
     ProviderToolsOnly(bool),
@@ -117,6 +119,18 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Command::ModelSearchHelp
             } else {
                 Command::ModelSearch(kw)
+            }
+        }
+        "embedding search" => Command::EmbeddingSearchHelp,
+        s if s.starts_with("embedding search") => {
+            let kw = s
+                .trim_start_matches("embedding search")
+                .trim()
+                .to_string();
+            if kw.is_empty() {
+                Command::EmbeddingSearchHelp
+            } else {
+                Command::EmbeddingSearch(kw)
             }
         }
         s if s.starts_with("model providers") => {

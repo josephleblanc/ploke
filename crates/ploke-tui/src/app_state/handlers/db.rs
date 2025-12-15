@@ -22,7 +22,6 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     )
     .await;
 
-    #[cfg(feature = "multi_embedding_ui")]
     match create_index_warn(&state.db) {
         Ok(_) => {
             tracing::info!("Database index updated by create_index_warn for rel",);
@@ -46,31 +45,6 @@ pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
         }
     }
 
-    #[cfg(not(feature = "multi_embedding_ui"))]
-    for ty in NodeType::primary_nodes() {
-        match create_index_warn(&state.db, ty) {
-            Ok(_) => {
-                tracing::info!(
-                    "Database index updated by create_index_warn for rel: {}",
-                    ty.relation_str()
-                );
-            }
-            Err(e) => match replace_index_warn(&state.db, ty) {
-                Ok(_) => {
-                    tracing::info!(
-                        "Database index updated by replace_index_warn for rel: {}\nPrevious attempt to create index failed with err msg: {e}",
-                        ty.relation_str()
-                    );
-                }
-                Err(nested_e) => {
-                    tracing::warn!(
-                        "The attempt to replace the index at the database failed for rel: {}\nnested_e: {nested_e}",
-                        ty.relation_str()
-                    );
-                }
-            },
-        }
-    }
     let after = time::Instant::now();
     let msg = format!(
         "..finished in {} millis",

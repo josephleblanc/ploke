@@ -4,7 +4,7 @@ use crate::app::view::components::context_browser::{
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
-use crate::llm::{EndpointKey, LlmEvent, ModelKey, ModelVariant, ProviderKey};
+use crate::llm::{EndpointKey, LlmEvent, ModelId, ModelKey, ModelVariant, ProviderKey};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 use ploke_llm::manager::events::endpoint;
 pub mod commands;
@@ -51,6 +51,10 @@ use tracing::instrument;
 use view::components::approvals::{
     ApprovalListItem, ApprovalsFilter, ApprovalsState, ProposalKind, filtered_items,
     render_approvals_overlay,
+};
+use view::components::embedding_browser::{
+    EmbeddingBrowserItem, EmbeddingBrowserState, compute_embedding_browser_scroll,
+    render_embedding_browser,
 };
 use view::components::model_browser::{
     ModelBrowserItem, ModelBrowserState, ModelProviderRow, compute_browser_scroll,
@@ -117,6 +121,8 @@ pub struct App {
     show_context_preview: bool,
     // Modal overlay for interactive model discovery/selection
     model_browser: Option<ModelBrowserState>,
+    // Modal overlay for embedding model discovery/selection
+    embedding_browser: Option<EmbeddingBrowserState>,
     // Context Search overlay for interactive exploration of code context
     context_browser: Option<ContextSearchState>,
     // Modal overlay for approvals list
@@ -156,6 +162,7 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             model_browser: None,
+            embedding_browser: None,
             approvals: None,
             input_history: Vec::new(),
             input_history_pos: None,
@@ -616,6 +623,44 @@ impl App {
                     .block(Block::default().style(overlay_style));
                 frame.render_widget(hint, footer_area);
             }
+        } else if let Some(eb) = &mut self.embedding_browser {
+            let (body_area, footer_area, overlay_style, lines) =
+                render_embedding_browser(frame, eb);
+
+            compute_embedding_browser_scroll(body_area, eb);
+
+            let widget = Paragraph::new(lines)
+                .style(overlay_style)
+                .block(
+                    Block::bordered()
+                        .title(format!(
+                            " Embedding Models — {} results for \"{}\" ",
+                            eb.items.len(),
+                            eb.keyword
+                        ))
+                        .style(overlay_style),
+                )
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .scroll((eb.vscroll, 0));
+            frame.render_widget(widget, body_area);
+
+            if eb.help_visible {
+                let help = Paragraph::new(
+                    "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
+                     Command:\n\
+                     - embedding search <keyword>",
+                )
+                .style(overlay_style)
+                .block(Block::bordered().title(" Help ").style(overlay_style))
+                .wrap(ratatui::widgets::Wrap { trim: true });
+                frame.render_widget(help, footer_area);
+            } else {
+                let hint = Paragraph::new(" ? Help ")
+                    .style(overlay_style)
+                    .alignment(ratatui::layout::Alignment::Right)
+                    .block(Block::default().style(overlay_style));
+                frame.render_widget(hint, footer_area);
+            }
         } else if let Some(cb) = &mut self.context_browser {
             let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
 
@@ -851,6 +896,10 @@ impl App {
             input::model_browser::handle_model_browser_input(self, key);
             self.needs_redraw = true;
             return;
+        } else if self.embedding_browser.is_some() {
+            input::embedding_browser::handle_embedding_browser_input(self, key);
+            self.needs_redraw = true;
+            return;
         // Intercept keys for context browser overlay when visible
         } else if self.context_browser.is_some() {
             input::context_browser::handle_context_browser_input(self, key);
@@ -929,6 +978,15 @@ impl App {
         self.send_cmd(StateCommand::SelectModelProvider {
             model_id_string,
             provider_key,
+        });
+        self.needs_redraw = true;
+    }
+
+    fn apply_embedding_model_selection(&mut self, model_id: ModelId) {
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: format!("Selected embedding model {model_id}"),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
         });
         self.needs_redraw = true;
     }
@@ -1240,6 +1298,20 @@ impl App {
         self.needs_redraw = true;
     }
 
+    fn open_embedding_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
+        let items = Self::build_embedding_browser_items(items);
+        self.embedding_browser = Some(EmbeddingBrowserState {
+            visible: true,
+            keyword,
+            selected: 0,
+            items,
+            help_visible: false,
+            vscroll: 0,
+            viewport_height: 0,
+        });
+        self.needs_redraw = true;
+    }
+
     #[instrument(skip(self),
         level = "debug",
         fields(
@@ -1338,8 +1410,27 @@ impl App {
             .collect::<Vec<_>>()
     }
 
+    fn build_embedding_browser_items(items: Vec<models::ResponseItem>) -> Vec<EmbeddingBrowserItem> {
+        items
+            .into_iter()
+            .map(|m| EmbeddingBrowserItem {
+                id: m.id.clone(),
+                name: m.name,
+                context_length: m.context_length.or(m.top_provider.context_length),
+                prompt_cost: Some(m.pricing.prompt * 1_000_000.0),
+                description: m.description.clone(),
+                expanded: false,
+            })
+            .collect::<Vec<_>>()
+    }
+
     fn close_model_browser(&mut self) {
         self.model_browser = None;
+        self.needs_redraw = true;
+    }
+
+    fn close_embedding_browser(&mut self) {
+        self.embedding_browser = None;
         self.needs_redraw = true;
     }
 

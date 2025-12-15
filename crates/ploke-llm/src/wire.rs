@@ -1,9 +1,9 @@
-use std::str::FromStr;
+#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
 
 use url::Url;
 
 use super::manager::RequestMessage;
-use super::router_only::openrouter::{self, OpenRouterModelId, ProviderPreferences};
+use super::router_only::openrouter::OpenRouterModelId;
 use super::router_only::{ChatCompRequest, openrouter::OpenRouter};
 use super::*;
 

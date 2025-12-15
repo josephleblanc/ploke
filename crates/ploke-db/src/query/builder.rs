@@ -5,13 +5,6 @@ use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
 
-// WARN: These schema are different for the ploke-transform feature flag "multi_embedding_schema",
-// which has been set as the default feature flag for that crate.
-// See the ploke-db Cargo.toml for the related configuration of ploke-db, which wants to only have
-// the "multi_embedding_schema" version on for ploke-transform when the ploke-db flag for
-// "multi_embedding_db" is on (as is default right now for linting purposes).
-// TODO:multi_embedding
-// Delete above warning after finishing new feature implementation for multi_embedding
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
     MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
@@ -171,72 +164,12 @@ impl NodeType {
             .join(" or ");
         rhs
     }
-    #[cfg(not(feature = "multi_embedding_db"))]
-    pub fn embeddable_nodes_now() -> String {
-        let star: &'static str = " *";
-        let left: &'static str = " {";
-        let right: &'static str = " @ 'NOW' }";
-        let hash: &'static str = "hash";
-        let rhs = NodeType::primary_nodes()
-            .iter()
-            .map(|n| {
-                [star]
-                    .iter()
-                    .chain(&[n.relation_str()])
-                    .chain(&[left])
-                    .chain(
-                        n.fields()
-                            .iter()
-                            .filter(|s| {
-                                ["id", "name", "tracking_hash", "span", "embedding"].contains(s)
-                            })
-                            // replace tracking_hash for simplicity in `get_nodes_ordered`
-                            .map(|th| if *th == "tracking_hash" { &hash } else { th })
-                            .intersperse(&", "),
-                    )
-                    .chain(&[right])
-                    .join("")
-            })
-            .join(" or ");
-        rhs
-    }
 
-    #[cfg(feature = "multi_embedding_db")]
     pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [&'static str; 5] =
         ["id", "name", "tracking_hash", "span", "embedding"];
 
-    #[cfg(feature = "multi_embedding_db")]
     pub const EMBEDDABLE_NODE_FIELDS: [&'static str; 4] = ["id", "name", "tracking_hash", "span"];
 
-    #[cfg(feature = "multi_embedding_db")]
-    pub fn legacy_embeddable_nodes_now_rhs() -> String {
-        let star: &'static str = " *";
-        let left: &'static str = " {";
-        let right: &'static str = " @ 'NOW' }";
-        let hash: &'static str = "hash";
-        let rhs = NodeType::primary_nodes()
-            .iter()
-            .map(|n| {
-                [star]
-                    .iter()
-                    .chain(&[n.relation_str()])
-                    .chain(&[left])
-                    .chain(
-                        n.fields()
-                            .iter()
-                            .filter(|s| Self::LEGACY_EMBEDDABLE_NODE_FIELDS.contains(s))
-                            // // replace tracking_hash for simplicity in `get_nodes_ordered`
-                            // .map(|th| if *th == "tracking_hash" { &hash } else { th })
-                            .intersperse(&", "),
-                    )
-                    .chain(&[right])
-                    .join("")
-            })
-            .join(" or ");
-        rhs
-    }
-
-    #[cfg(feature = "multi_embedding_db")]
     pub fn embeddable_nodes_now() -> String {
         let star: &'static str = " *";
         let left: &'static str = " {";
@@ -250,12 +183,13 @@ impl NodeType {
                     .chain(&[n.relation_str()])
                     .chain(&[left])
                     .chain(
-                        n.fields()
+                        // changed to method call due to warning from rustc that the `intersperse`
+                        // name may be taken over by an std method. Keep here until something
+                        // happens that makes me want to adjust it again - e.g. update to rustc,
+                        // breaking change from Itertools
+                        Itertools::intersperse(n.fields()
                             .iter()
-                            .filter(|s| ["id", "name", "tracking_hash", "span"].contains(s))
-                            // // replace tracking_hash for simplicity in `get_nodes_ordered`
-                            // .map(|th| if *th == "tracking_hash" { &hash } else { th })
-                            .intersperse(&", "),
+                            .filter(|s| ["id", "name", "tracking_hash", "span"].contains(s)), &", "),
                     )
                     .chain(&[right])
                     .join("")
@@ -271,9 +205,6 @@ lazy_static::lazy_static! {
     };
     pub static ref EMBEDDABLE_NODES_NOW: String = {
         NodeType::embeddable_nodes_now()
-    };
-    pub static ref EMBEDDABLE_NODES_NOW_LEGACY_RHS: String = {
-        NodeType::legacy_embeddable_nodes_now_rhs()
     };
 }
 

@@ -1,7 +1,6 @@
-use std::time::Duration;
+use std::{str::FromStr as _, time::Duration};
 
 use crate::{
-    ModelId,
     error::LlmError,
     request::endpoint::FallbackMarker,
     router_only::{
@@ -9,7 +8,6 @@ use crate::{
         openrouter::{MiddleOutMarker, OpenRouter, OpenRouterModelId, Transform},
     },
 };
-use std::{path::PathBuf, str::FromStr as _};
 
 mod builder_tests;
 
@@ -204,7 +202,7 @@ fn test_names_vs_ids() -> Result<()> {
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
 async fn test_default_query_endpoints() -> Result<()> {
-    use std::{path::PathBuf, str::FromStr as _};
+    use std::str::FromStr as _;
 
     use ploke_test_utils::workspace_root;
 
@@ -303,15 +301,13 @@ async fn test_free_query_endpoints() -> Result<()> {
 }
 
 #[tokio::test]
-#[cfg(all(feature = "live_api_tests", feature = "long_test"))]
+#[cfg(feature = "live_api_tests")]
 async fn test_default_post_completions() -> Result<()> {
-    use crate::{ModelId, router_only::cli::COMPLETION_JSON_SIMPLE_DIR};
-    use openrouter::OpenRouterModelId;
-    use std::path::PathBuf;
-
+    use crate::router_only::cli::COMPLETION_JSON_SIMPLE_DIR;
     use ploke_test_utils::workspace_root;
 
-    let model_id = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
+    // use openrouter::OpenRouterModelId;
+    // let model_id = OpenRouterModelId::from_str("qwen/qwen3-30b-a3b-thinking-2507")?;
     let key = OpenRouter::resolve_api_key()?;
     let url = OpenRouter::COMPLETION_URL;
     let mut dir = workspace_root();

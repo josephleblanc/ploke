@@ -4,6 +4,7 @@ mod unit_tests;
 use crate::local::{EmbeddingConfig, LocalEmbedder};
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
+use crate::providers::openrouter::OpenRouterBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
 use ploke_core::EmbeddingData;
@@ -20,7 +21,10 @@ use tokio::time::{self, Instant};
 use tracing::{info_span, instrument};
 use uuid::Uuid;
 
-use crate::{cancel_token::CancellationToken, error::EmbedError};
+use crate::{
+    cancel_token::{CancellationListener, CancellationToken},
+    error::EmbedError,
+};
 use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
 
 #[derive(Debug)]
@@ -33,6 +37,7 @@ pub enum EmbeddingSource {
     Local(LocalEmbedder),
     HuggingFace(HuggingFaceBackend),
     OpenAI(OpenAIBackend),
+    OpenRouter(OpenRouterBackend),
     Cozo(CozoBackend),
 }
 
@@ -60,6 +65,14 @@ impl EmbeddingProcessor {
         &self,
         snippets: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.generate_embeddings_with_cancel(snippets, None).await
+    }
+
+    pub async fn generate_embeddings_with_cancel(
+        &self,
+        snippets: Vec<String>,
+        cancel: Option<&CancellationListener>,
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         tracing::trace!("Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
             self.dimensions(),
             snippets.len(),
@@ -83,6 +96,7 @@ impl EmbeddingProcessor {
             }
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
             EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
+            EmbeddingSource::OpenRouter(backend) => backend.compute_batch(snippets, cancel).await,
             EmbeddingSource::Cozo(backend) => backend.compute_batch(snippets).await,
         }
     }
@@ -92,6 +106,7 @@ impl EmbeddingProcessor {
             EmbeddingSource::Local(backend) => backend.dimensions(),
             EmbeddingSource::HuggingFace(backend) => backend.dimensions,
             EmbeddingSource::OpenAI(backend) => backend.dimensions,
+            EmbeddingSource::OpenRouter(backend) => backend.dimensions,
             EmbeddingSource::Cozo(backend) => backend.dimensions,
         }
     }
@@ -385,12 +400,6 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
-        #[cfg(not(feature = "multi_embedding_embedder"))]
-        for ty in NodeType::primary_nodes() {
-            let db_ret = ploke_db::create_index_warn(&db_clone, ty);
-            tracing::info!("db_ret = {:?}", db_ret);
-        }
-        #[cfg(feature = "multi_embedding_embedder")]
         let db_ret = ploke_db::create_index_warn(&db_clone)?;
 
         tracing::info!("Ending index_workspace: {workspace_dir}");
@@ -410,6 +419,14 @@ impl IndexerTask {
         progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
         mut control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), EmbedError> {
+        // Ensure the active embedding set is ready (relations exist) before any batch writes.
+        // This is critical for remote embeddings where provider/model/dims differ from defaults.
+        use ploke_db::multi_embedding::db_ext::EmbeddingExt as _;
+        self.db.ensure_embedding_set_relation()?;
+        self.db.put_embedding_set(&self.db.active_embedding_set)?;
+        self.db
+            .ensure_vector_embedding_relation(&self.db.active_embedding_set)?;
+
         let num_not_proc = self.db.count_unembedded_nonfiles()?;
         tracing::info!("Starting indexing with {} unembedded nodes", num_not_proc);
         let mut state = IndexingStatus {
@@ -745,7 +762,10 @@ impl IndexerTask {
 
         let embeddings = self
             .embedding_processor
-            .generate_embeddings(valid_snippets)
+            .generate_embeddings_with_cancel(
+                valid_snippets,
+                Some(&self.cancellation_token.listener()),
+            )
             .await?;
         tracing::trace!(
             "Processed embeddings {} with dimension {:?}",

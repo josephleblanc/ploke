@@ -1,15 +1,12 @@
 use crate::{
     EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
-    embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddingModels, HasEmbeddings},
-    router_only::{
-        ApiRoute, Router,
-        openrouter::{EmbeddingProviderPrefs, ProviderPreferences},
-    },
+    embeddings::{EmbeddingRequest, HasEmbeddingModels, HasEmbeddings},
+    router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
 };
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use thiserror::Error;
 
 impl EmbeddingModelName {
     /// OpenRouter may echo only the slug (e.g., `text-embedding-3-small`) even if the request used
@@ -30,69 +27,67 @@ impl HasEmbeddings for super::OpenRouter {
 
     const EMBEDDINGS_URL: &str = "https://openrouter.ai/api/v1/embeddings";
 
-    fn fetch_embeddings(
+    async fn fetch_embeddings(
         client: &reqwest::Client,
         req: &EmbeddingRequest<Self>,
-    ) -> impl std::future::Future<Output = color_eyre::Result<Self::EmbeddingsResponse>> + Send
+    ) -> color_eyre::Result<Self::EmbeddingsResponse>
     where
         Self: Sized,
         <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
     {
-        async {
-            let api_key = Self::resolve_api_key()?;
-            let url = std::env::var("OPENROUTER_EMBEDDINGS_URL")
-                .unwrap_or_else(|_| Self::EMBEDDINGS_URL.to_string());
+        let api_key = Self::resolve_api_key()?;
+        let url = std::env::var("OPENROUTER_EMBEDDINGS_URL")
+            .unwrap_or_else(|_| Self::EMBEDDINGS_URL.to_string());
 
-            let resp = client
-                .post(&url)
-                .bearer_auth(api_key)
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
-                .json(req)
-                .send()
-                .await
-                .map_err(|e| OpenRouterEmbeddingError::Transport {
-                    message: e.to_string(),
-                    url: url.clone(),
-                })?;
-
-            let status = resp.status();
-            let request_id = resp
-                .headers()
-                .get("x-request-id")
-                .and_then(|h| h.to_str().ok())
-                .map(|s| s.to_string());
-
-            if !status.is_success() {
-                let retry_after = resp
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(Duration::from_secs);
-                let body = resp.text().await.unwrap_or_default();
-                let err = OpenRouterEmbeddingError::from_status(
-                    status,
-                    body,
-                    url.clone(),
-                    req.model.clone(),
-                    request_id,
-                    retry_after,
-                );
-                return Err(err.into());
-            }
-
-            let parsed = resp.json::<Self::EmbeddingsResponse>().await.map_err(|e| {
-                OpenRouterEmbeddingError::Transport {
-                    message: e.to_string(),
-                    url: url.clone(),
-                }
+        let resp = client
+            .post(&url)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
+            .header("X-Title", "Ploke TUI")
+            .json(req)
+            .send()
+            .await
+            .map_err(|e| OpenRouterEmbeddingError::Transport {
+                message: e.to_string(),
+                url: url.clone(),
             })?;
 
-            Ok(parsed)
+        let status = resp.status();
+        let request_id = resp
+            .headers()
+            .get("x-request-id")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        if !status.is_success() {
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(Duration::from_secs);
+            let body = resp.text().await.unwrap_or_default();
+            let err = OpenRouterEmbeddingError::from_status(
+                status,
+                body,
+                url.clone(),
+                req.model.clone(),
+                request_id,
+                retry_after,
+            );
+            return Err(err.into());
         }
+
+        let parsed = resp.json::<Self::EmbeddingsResponse>().await.map_err(|e| {
+            OpenRouterEmbeddingError::Transport {
+                message: e.to_string(),
+                url: url.clone(),
+            }
+        })?;
+
+        Ok(parsed)
     }
 }
 
@@ -166,23 +161,21 @@ pub struct Usage {
 #[cfg(test)]
 mod error_mapping_tests {
     use super::*;
-    use crate::{
-        embeddings::EmbeddingRequest,
-        router_only::openrouter::OpenRouter,
-    };
+    use crate::{embeddings::{EmbeddingInput, EmbeddingRequest}, router_only::openrouter::OpenRouter};
     use httpmock::prelude::*;
     use once_cell::sync::Lazy;
     use reqwest::Client;
-    use tokio::sync::Mutex;
     use std::str::FromStr;
+    use tokio::sync::Mutex;
 
     static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     fn base_request() -> EmbeddingRequest<OpenRouter> {
-        let mut req: EmbeddingRequest<OpenRouter> = Default::default();
-        req.model = ModelId::from_str("openai/text-embedding-3-small").unwrap();
-        req.input = EmbeddingInput::Single("hello".into());
-        req
+        EmbeddingRequest::<OpenRouter> {
+            model: ModelId::from_str("openai/text-embedding-3-small").unwrap(),
+            input: EmbeddingInput::Single("hello".into()),
+            ..Default::default()
+        }
     }
 
     fn set_env(url: &str) {
@@ -258,13 +251,10 @@ mod error_mapping_tests {
     async fn maps_rate_limited_with_retry_after() {
         let _guard = TEST_MUTEX.lock().await;
         let server = MockServer::start();
-        let _m = server
-            .mock(|when, then| {
-                when.method(POST).path("/v1/embeddings");
-                then.status(429)
-                    .header("Retry-After", "2")
-                    .body("too many");
-            });
+        let _m = server.mock(|when, then| {
+            when.method(POST).path("/v1/embeddings");
+            then.status(429).header("Retry-After", "2").body("too many");
+        });
         set_env(&server.url("/v1/embeddings"));
         let req = base_request();
         let err = OpenRouter::fetch_embeddings(&Client::new(), &req)
@@ -320,11 +310,10 @@ mod error_mapping_tests {
             }
         })
         .to_string();
-        let _m = server
-            .mock(|when, then| {
-                when.method(POST).path("/v1/embeddings");
-                then.status(200).body(body);
-            });
+        let _m = server.mock(|when, then| {
+            when.method(POST).path("/v1/embeddings");
+            then.status(200).body(body);
+        });
         set_env(&server.url("/v1/embeddings"));
         let req = base_request();
         let resp = OpenRouter::fetch_embeddings(&Client::new(), &req)
@@ -332,10 +321,7 @@ mod error_mapping_tests {
             .expect("success");
         assert_eq!(resp.data.len(), 1);
         assert!(resp.model.matches_request(&req.model));
-        assert_eq!(
-            resp.id.as_ref().map(|i| i.as_str()),
-            Some("req-123")
-        );
+        assert_eq!(resp.id.as_ref().map(|i| i.as_str()), Some("req-123"));
     }
 }
 
@@ -350,13 +336,20 @@ pub enum OpenRouterEmbeddingError {
     #[error("embedding model not found: {model} (url={url})")]
     NotFound { model: ModelId, url: String },
     #[error("rate limited for embeddings (url={url}, retry_after={retry_after:?})")]
-    RateLimited { url: String, retry_after: Option<Duration> },
+    RateLimited {
+        url: String,
+        retry_after: Option<Duration>,
+    },
     #[error("provider overloaded (url={url})")]
     ProviderOverloaded { url: String },
     #[error("transport error for embeddings (url={url}): {message}")]
     Transport { message: String, url: String },
     #[error("unexpected embedding error status={status} url={url} body={body}")]
-    Unexpected { status: u16, url: String, body: String },
+    Unexpected {
+        status: u16,
+        url: String,
+        body: String,
+    },
 }
 
 impl OpenRouterEmbeddingError {
@@ -394,15 +387,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        ModelId, ProviderSlug, SupportedParameters,
         embeddings::{
             EmbClientConfig, EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest,
             HasEmbeddingModels,
-        },
-        router_only::openrouter::OpenRouter,
-        utils::{
+        }, router_only::openrouter::{OpenRouter, ProviderPreferences}, utils::{
             const_settings::test_consts::EMBEDDING_MODELS_JSON_FULL, test_helpers::openrouter_env,
-        },
+        }, ModelId, ProviderSlug
     };
     use color_eyre::Result;
     use fxhash::FxHashSet as HashSet;
@@ -418,12 +408,6 @@ mod tests {
         read_file.push(EMBEDDING_MODELS_JSON_FULL);
         let file_string = std::fs::read_to_string(read_file).expect("fixture must exist");
         serde_json::from_str(&file_string).expect("valid embeddings models fixture")
-    });
-
-    static EMBEDDING_MODELS_FIXTURE_STRING: Lazy<String> = Lazy::new(|| {
-        let mut read_file = workspace_root();
-        read_file.push(EMBEDDING_MODELS_JSON_FULL);
-        std::fs::read_to_string(read_file).expect("fixture must exist")
     });
 
     static EMBEDDING_MODELS_ONCE: OnceCell<crate::request::models::Response> = OnceCell::new();
@@ -452,10 +436,11 @@ mod tests {
     }
 
     fn base_embedding_request() -> EmbeddingRequest<OpenRouter> {
-        let mut req: EmbeddingRequest<OpenRouter> = Default::default();
-        req.model = cheap_model_id();
-        req.input = EmbeddingInput::Single("ploke embed smoke".into());
-        req
+        EmbeddingRequest::<OpenRouter> {
+            model: cheap_model_id(),
+            input: EmbeddingInput::Single("ploke embed smoke".into()),
+            ..Default::default()
+        }
     }
 
     fn serialize_request(req: &EmbeddingRequest<OpenRouter>) -> serde_json::Value {
@@ -507,7 +492,10 @@ mod tests {
         )
         .await
         .inspect_err(|err| error!(?err, "unable to reach OpenRouter for embedding models"))?;
-        assert!(!resp.data.is_empty(), "live embedding model list should not be empty");
+        assert!(
+            !resp.data.is_empty(),
+            "live embedding model list should not be empty"
+        );
         Ok(())
     }
 
@@ -594,7 +582,7 @@ mod tests {
     }
     #[tokio::test]
     async fn embedding_field_model() -> Result<()> {
-        let mut req = base_embedding_request();
+        let req = base_embedding_request();
         let serialized = serialize_request(&req);
         assert_eq!(serialized["model"], json!("thenlper/gte-base"));
 
@@ -677,16 +665,18 @@ mod tests {
     // - new fields
     #[tokio::test]
     async fn embedding_field_provider_preferences() -> Result<()> {
-        let mut prefs = ProviderPreferences::default();
-        prefs.allow_fallbacks = Some(false);
-        prefs.order = Some(vec![
-            ProviderSlug::new("openai"),
-            ProviderSlug::new("anthropic"),
-        ]);
-
         let mut only = HashSet::default();
         only.insert(ProviderSlug::new("openai"));
-        prefs.only = Some(only);
+
+        let prefs = ProviderPreferences {
+            allow_fallbacks: Some(false),
+            order: Some(vec![
+                ProviderSlug::new("openai"),
+                ProviderSlug::new("anthropic"),
+            ]),
+            only: Some(only),
+            ..Default::default()
+        };
 
         let provider = EmbeddingProviderPrefs {
             base_provider_prefs: prefs,
@@ -721,7 +711,6 @@ mod tests {
     struct EmbeddingModelCaps {
         id: ModelId,
         context_length: Option<u32>,
-        supported_parameters: HashSet<SupportedParameters>,
     }
 
     fn fixture_model_caps() -> Vec<EmbeddingModelCaps> {
@@ -731,11 +720,6 @@ mod tests {
             .map(|item| EmbeddingModelCaps {
                 id: item.id.clone(),
                 context_length: item.context_length.or(item.top_provider.context_length),
-                supported_parameters: item
-                    .supported_parameters
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect(),
             })
             .collect()
     }
@@ -760,7 +744,10 @@ mod tests {
             })
             .next()
             .unwrap_or_else(|| {
-                error!(min_context, "no embedding model meets context length requirement");
+                error!(
+                    min_context,
+                    "no embedding model meets context length requirement"
+                );
                 panic!("no embedding model meets context length requirement");
             })
     }
@@ -791,11 +778,16 @@ mod tests {
             "async fn fetch_url(url: &str) -> Result<String, reqwest::Error> { reqwest::get(url).await?.text().await }".to_string(),
         ];
 
-        let mut request: EmbeddingRequest<OpenRouter> = Default::default();
-        request.model = openai_small.id.clone();
-        request.input = EmbeddingInput::Batch(snippets.clone());
-        request.router.dimensions = Some(256);
-        request.router.input_type = Some("code-snippet".into());
+        let request = EmbeddingRequest::<OpenRouter> {
+            model: openai_small.id.clone(),
+            input: EmbeddingInput::Batch(snippets.clone()),
+            router: OpenRouterEmbeddingFields {
+                dimensions: Some(256),
+                input_type: Some("code-snippet".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let resp = <OpenRouter as HasEmbeddings>::fetch_embeddings(&Client::new(), &request)
             .await
@@ -842,21 +834,33 @@ mod tests {
             .to_string(),
         ];
 
-        let mut request: EmbeddingRequest<OpenRouter> = Default::default();
-        request.model = long_context_model.clone();
-        request.input = EmbeddingInput::Batch(snippets.clone());
-        request.router.input_type = Some("code-snippet".into());
+        let request = EmbeddingRequest::<OpenRouter> {
+            model: long_context_model.clone(),
+            input: EmbeddingInput::Batch(snippets.clone()),
+            router: OpenRouterEmbeddingFields {
+                input_type: Some("code-snippet".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let resp = <OpenRouter as HasEmbeddings>::fetch_embeddings(&Client::new(), &request)
             .await
-            .inspect_err(|err| error!(?err, model = %request.model, "long-context batch embeddings failed"))?;
+            .inspect_err(
+                |err| error!(?err, model = %request.model, "long-context batch embeddings failed"),
+            )?;
 
         assert_eq!(
             resp.data.len(),
             batch_len(&request.input),
             "response entries should match batch size"
         );
-        let first_len = match &resp.data.first().expect("embedding response not empty").embedding {
+        let first_len = match &resp
+            .data
+            .first()
+            .expect("embedding response not empty")
+            .embedding
+        {
             OpenRouterEmbeddingVector::Float(v) => v.len(),
             OpenRouterEmbeddingVector::Base64(_) => {
                 error!("expected float embeddings but received base64 payload");

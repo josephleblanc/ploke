@@ -1,7 +1,8 @@
+use ploke_core::ArcStr;
 use ploke_core::tool_types::ToolName;
 use ploke_llm::{
     LLMMetadata, LlmError, RequestMessage,
-    manager::events::{ToolEvent, UsageMetrics, endpoint, models, status},
+    manager::events::{ToolEvent, UsageMetrics, embedding_models, endpoint, models, status},
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ pub enum LlmEvent {
     Tool(ToolEvent),
     Endpoint(endpoint::Event),
     Models(models::Event),
+    EmbeddingModels(embedding_models::Event),
     Status(status::Event),
 }
 
