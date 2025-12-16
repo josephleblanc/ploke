@@ -13,9 +13,12 @@ use ploke_core::embeddings::{
 };
 use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
 use ploke_llm::router_only::openrouter::OpenRouter;
+use ploke_embed::config::OpenRouterConfig;
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
+use ploke_embed::providers::openrouter::OpenRouterBackend;
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use tracing::trace_span;
+use tracing::{trace_span, warn};
 
 use super::commands::StateCommand;
 use super::core::AppState;
@@ -421,7 +424,54 @@ pub async fn state_manager(
                 let emb_model_id = EmbeddingModelId::new_from_str(&m);
                 let shape = EmbeddingShape::new_dims_default(dims as u32);
                 let embedding_set = EmbeddingSet::new(emb_provider, emb_model_id.clone(), shape);
-                match state.db.set_active_set(embedding_set) {
+                // Rebuild or reuse embedder based on provider selection.
+                let new_embedder = if provider.as_ref().contains("openrouter") {
+                    let or_cfg = OpenRouterConfig {
+                        model: m.clone(),
+                        dimensions: Some(dims as usize),
+                        ..Default::default()
+                    };
+                    match OpenRouterBackend::new(&or_cfg) {
+                        Ok(backend) => Arc::new(EmbeddingProcessor::new(
+                            EmbeddingSource::OpenRouter(backend),
+                        )),
+                        Err(e) => {
+                            let err_msg = format!(
+                                "Failed to build OpenRouter embedder for {m} ({dims} dims): {e}"
+                            );
+                            add_msg_shortcut(&err_msg).await;
+                            e.emit_error();
+                            continue;
+                        }
+                    }
+                } else {
+                    match state.embedder.current_processor() {
+                        Ok(proc_arc) => proc_arc,
+                        Err(e) => {
+                            let err_msg = format!(
+                                "Failed to read current embedder while switching to {emb_model_id:?}: {e}"
+                            );
+                            add_msg_shortcut(&err_msg).await;
+                            continue;
+                        }
+                    }
+                };
+
+                // WARN if indexing is currently running; hot-swap during runs is risky.
+                if matches!(
+                    *state.indexing_state.read().await,
+                    Some(IndexingStatus {
+                        status: IndexStatus::Running,
+                        ..
+                    })
+                ) {
+                    warn!("Embedding set changed while indexing is Running; vectors may mix providers unless rerun.");
+                }
+
+                match state
+                    .embedder
+                    .activate(&state.db, embedding_set, Arc::clone(&new_embedder))
+                {
                     Ok(()) => {
                         let msg = format!(
                             "Database active_embedding_set from previous value {old_set_string} to new value {emb_model_id:?}"
@@ -430,7 +480,7 @@ pub async fn state_manager(
                     }
                     Err(e) => {
                         let err_msg = format!(
-                            "Database error setting active_embedding_set from {old_set_string} to {emb_model_id:?}"
+                            "Runtime error setting active_embedding_set from {old_set_string} to {emb_model_id:?}: {e}"
                         );
                         add_msg_shortcut(&err_msg).await;
                         e.emit_error();

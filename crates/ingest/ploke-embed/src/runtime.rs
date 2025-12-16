@@ -72,7 +72,7 @@ impl EmbeddingRuntime {
         &self,
         db: &Database,
         new_set: EmbeddingSet,
-        new_embedder: EmbeddingProcessor,
+        new_embedder: Arc<EmbeddingProcessor>,
     ) -> Result<(), EmbedError> {
         db.ensure_embedding_set_relation()?;
         db.ensure_vector_embedding_relation(&new_set)?;
@@ -91,7 +91,7 @@ impl EmbeddingRuntime {
                 .embedder
                 .write()
                 .map_err(|_| EmbedError::State("embedder handle poisoned".into()))?;
-            *embedder_guard = Arc::new(new_embedder);
+            *embedder_guard = new_embedder;
         }
 
         Ok(())
