@@ -89,13 +89,13 @@ impl EmbeddingSet {
         self.shape.dimension
     }
 
-    pub fn vector_relation_name(&self) -> &EmbRelName {
+    pub fn vector_relation_name(&self) -> EmbRelName {
         // NOTE: I'm not sure if we need this sanitization or not.
         // For now, going to comment it out, and just use the string itself, then bring back the
         // sanitization if we run into issues with tests trying to insert rows into cozo.
         // let model = sanitize_relation_component(self.embedding_model.as_ref());
         // format!("emb_{}_{}", model, self.dims())
-        &self.rel_name
+        self.rel_name.clone()
     }
 
     // pub fn script_identity(&self) -> &'static str {

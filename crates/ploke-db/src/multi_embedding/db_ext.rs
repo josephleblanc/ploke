@@ -682,7 +682,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
 
         // Check that the given relation already has a specific relation_name in the database.
         let vector_rel_name = embedding_set.vector_relation_name();
-        if !self.is_relation_registered(vector_rel_name)? {
+        if !self.is_relation_registered(&vector_rel_name)? {
             EmbeddingVector::script_create_from_set(&embedding_set);
         }
         Ok(())
@@ -1045,8 +1045,12 @@ impl EmbeddingExt for Database {
         cursor: usize,
         embedding_set: EmbeddingSet,
     ) -> Result<TypedEmbedData, PlokeError> {
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
-            .get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
+            .get_unembed_rel(node_type, limit, cursor, active_embedding_set)
     }
 
     fn is_embedding_id_present(&self, embedding_set_id: EmbeddingSetId) -> Result<bool, DbError> {
@@ -1410,9 +1414,12 @@ mod tests {
         // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
 
         let db = Database::new(setup_db()?);
-        let embedding_set = &db.active_embedding_set;
-        let vector_rel = &embedding_set.rel_name();
-        let hnsw_rel = &embedding_set.hnsw_rel_name();
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone())?;
+        let vector_rel = &active_embedding_set.rel_name();
+        let hnsw_rel = &active_embedding_set.hnsw_rel_name();
         info!("count rels = {:?}", db.count_relations().await);
         info!("count pending = {}", db.count_pending_embeddings()?);
         info!("count pending files = {}", db.count_unembedded_files()?);
@@ -1426,12 +1433,12 @@ mod tests {
         );
         info!(
             "is_embedding_set_row_present: {} - ({})",
-            db.is_embedding_set_row_present(embedding_set)?,
+            db.is_embedding_set_row_present(&active_embedding_set)?,
             vector_rel
         );
         info!(
             "is_hnsw_relation: {} - ({})",
-            db.is_hnsw_index_registered(embedding_set)?,
+            db.is_hnsw_index_registered(&active_embedding_set)?,
             hnsw_rel
         );
         // info!("{}", db.is_hnsw_relation_registered(hnsw_rel)?);
@@ -1450,12 +1457,12 @@ mod tests {
         );
         info!(
             "is_embedding_set_row_present: {} - ({})",
-            db.is_embedding_set_row_present(embedding_set)?,
+            db.is_embedding_set_row_present(&active_embedding_set)?,
             vector_rel
         );
         info!(
             "is_hnsw_relation: {} - ({})",
-            db.is_hnsw_index_registered(embedding_set)?,
+            db.is_hnsw_index_registered(&active_embedding_set)?,
             hnsw_rel
         );
 

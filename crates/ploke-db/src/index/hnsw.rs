@@ -61,7 +61,11 @@ pub fn hnsw_of_type(
     k: usize,
     ef: usize,
 ) -> Result<Vec<Embedding>, ploke_error::Error> {
-    db.hnsw_neighbors_for_type(ty, &db.active_embedding_set, k, ef)
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.hnsw_neighbors_for_type(ty, &active_embedding_set, k, ef)
 }
 
 // TODO:migrate-multi-embed-full
@@ -74,7 +78,11 @@ pub fn search_similar(
     ef: usize,
     ty: NodeType,
 ) -> Result<TypedEmbedData, ploke_error::Error> {
-    db.search_similar_for_set(&db.active_embedding_set, ty, vector_query, k, ef, 100, None)
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.search_similar_for_set(&active_embedding_set, ty, vector_query, k, ef, 100, None)
         .map(|res| res.typed_data)
 }
 
@@ -102,8 +110,13 @@ pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_
     } = args;
     use tracing::info;
     info!("running search_similar args");
+
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
     db.search_similar_for_set(
-        &db.active_embedding_set,
+        &active_embedding_set,
         ty,
         vector_query.clone(),
         k,
@@ -172,7 +185,12 @@ pub fn search_similar_test(
 // Update the call sites to use new API
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     let _ = ty;
-    db.create_embedding_index(&db.active_embedding_set)
+
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.create_embedding_index(&active_embedding_set)
 }
 
 // TODO:docs Add doc comments
@@ -183,11 +201,15 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
     tracing::info!(create_embedding_set_relation = ?r1);
     r1.unwrap_or_else(|_| panic!());
 
-    let r2 = db.ensure_embedding_relation(&db.active_embedding_set);
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    let r2 = db.ensure_embedding_relation(&active_embedding_set);
     tracing::info!(ensure_embedding_relation = ?r2);
     r2.unwrap_or_else(|_| panic!());
 
-    let r3 = db.ensure_vector_embedding_relation(&db.active_embedding_set);
+    let r3 = db.ensure_vector_embedding_relation(&active_embedding_set);
     tracing::info!(ensure_vector_embedding_relation = ?r3);
     r3.unwrap_or_else(|_| panic!());
     Ok(())
@@ -198,7 +220,11 @@ pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
     use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
     create_index_primary(db)?;
-    db.create_embedding_index(&db.active_embedding_set.clone())
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.create_embedding_index(&active_embedding_set.clone())
 }
 
 /// Temporary wrapper function to replace current API
@@ -207,7 +233,11 @@ pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
 pub fn create_index_warn(db: &Database) -> Result<(), ploke_error::Error> {
     use crate::multi_embedding::hnsw_ext::HnswExt;
 
-    db.create_embedding_index(&db.active_embedding_set)
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.create_embedding_index(&active_embedding_set)
         .map_err(ploke_error::Error::from)
 }
 
@@ -217,7 +247,11 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
     use crate::multi_embedding::hnsw_ext::HnswExt;
 
     let _ = ty;
-    db.create_embedding_index(&db.active_embedding_set)
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.create_embedding_index(&active_embedding_set)
         .map_err(ploke_error::Error::from)
 }
 

@@ -1,4 +1,7 @@
-#![allow(dead_code, reason = "evolving api surface, may be useful, written 2025-12-15")]
+#![allow(
+    dead_code,
+    reason = "evolving api surface, may be useful, written 2025-12-15"
+)]
 
 use once_cell::sync::OnceCell;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};

@@ -386,7 +386,10 @@ impl IoManager {
         };
         let hash = match hashed_result {
             Ok(hash) => hash,
-            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
+            Err(IoError::FileOperation {
+                kind: ErrorKind::NotFound,
+                ..
+            }) => {
                 return Ok(missing_response(&path));
             }
             Err(err) => return Err(err.into()),
@@ -404,9 +407,10 @@ impl IoManager {
                     file_hash: Some(hash),
                 })
             }
-            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
-                Ok(missing_response(&path))
-            }
+            Err(IoError::FileOperation {
+                kind: ErrorKind::NotFound,
+                ..
+            }) => Ok(missing_response(&path)),
             Err(err) => Err(err.into()),
         }
     }
@@ -445,7 +449,10 @@ impl IoManager {
                     file_hash: None,
                 })
             }
-            Err(IoError::FileOperation { kind: ErrorKind::NotFound, .. }) => {
+            Err(IoError::FileOperation {
+                kind: ErrorKind::NotFound,
+                ..
+            }) => {
                 Ok(ReadFileResponse {
                     exists: false,
                     file_path: path,

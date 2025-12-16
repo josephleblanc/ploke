@@ -49,7 +49,13 @@ type CallHelper = (
 impl CallbackManager {
     pub fn new_bounded(db: Arc<Database>, n: usize) -> Result<CallHelper, DbError> {
         let (s, r) = crossbeam_channel::bounded(n);
-        let vec_relation = db.active_embedding_set.vector_relation_name();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone())?;
+
+        let vec_relation = active_embedding_set.vector_relation_name();
         let (unreg_code, db_rx) = db.register_callback(vec_relation.as_ref(), Some(n));
         let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
 
@@ -70,7 +76,12 @@ impl CallbackManager {
         db: Arc<Database>,
     ) -> Result<(CallbackManager, Receiver<Result<Call, DbError>>), DbError> {
         let (s, r) = crossbeam_channel::unbounded();
-        let vec_relation = db.active_embedding_set.vector_relation_name();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone())?;
+        let vec_relation = active_embedding_set.vector_relation_name();
         let (unreg_code, db_rx) = db.register_callback(vec_relation.as_ref(), None);
 
         let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
@@ -133,19 +144,19 @@ impl CallbackManager {
 
 impl Drop for CallbackManager {
     fn drop(&mut self) {
-        let vec_rel_name = self
-            .db_arc
-            .active_embedding_set
-            .vector_relation_name()
-            .as_ref();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let vec_rel_name = self.db_arc.with_active_set(|set| set.vector_relation_name().clone()).expect("Un-Poisoned db set");
         tracing::info!(
             "Unregistering callback for relation {} with code {}",
-            vec_rel_name,
+            &vec_rel_name,
             self.unregister_code
         );
         tracing::debug!(
             "Unregistering callback for relation {} | unregistered? {}",
-            vec_rel_name,
+            &vec_rel_name,
             self.db_arc
                 .unregister_callback(self.unregister_code)
                 .then(|| {

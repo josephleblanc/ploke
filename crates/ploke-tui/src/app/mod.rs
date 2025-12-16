@@ -53,7 +53,7 @@ use view::components::approvals::{
     render_approvals_overlay,
 };
 use view::components::embedding_browser::{
-    EmbeddingBrowserItem, EmbeddingBrowserState, compute_embedding_browser_scroll,
+    EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail, compute_embedding_browser_scroll,
     render_embedding_browser,
 };
 use view::components::model_browser::{
@@ -468,7 +468,7 @@ impl App {
         let selected_index_opt = self
             .list
             .selected()
-            .map(|i| i.min(path_len.saturating_sub(1)));
+            .map(|i: usize| -> usize { i.min(path_len.saturating_sub(1)) });
 
         // Prepare and render conversation via ConversationView
         self.conversation.prepare(
@@ -982,11 +982,15 @@ impl App {
         self.needs_redraw = true;
     }
 
-    fn apply_embedding_model_selection(&mut self, model_id: ModelId) {
+    fn apply_embedding_model_selection(&mut self, model_id: ModelId, provider: Option< ArcStr >) {
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: format!("Selected embedding model {model_id}"),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
+        });
+        self.send_cmd(StateCommand::SelectEmbeddingModel {
+            model_id,
+            provider: provider.unwrap_or(ArcStr::from("openrouter_temp_empty")),
         });
         self.needs_redraw = true;
     }
@@ -1410,16 +1414,29 @@ impl App {
             .collect::<Vec<_>>()
     }
 
-    fn build_embedding_browser_items(items: Vec<models::ResponseItem>) -> Vec<EmbeddingBrowserItem> {
+    fn build_embedding_browser_items(
+        items: Vec<models::ResponseItem>,
+    ) -> Vec<EmbeddingBrowserItem> {
         items
             .into_iter()
-            .map(|m| EmbeddingBrowserItem {
-                id: m.id.clone(),
-                name: m.name,
-                context_length: m.context_length.or(m.top_provider.context_length),
-                prompt_cost: Some(m.pricing.prompt * 1_000_000.0),
-                description: m.description.clone(),
-                expanded: false,
+            .map(|m| {
+                let top_provider = m.top_provider.clone();
+                let context_length = m.context_length.or(top_provider.context_length);
+                EmbeddingBrowserItem {
+                    id: m.id.clone(),
+                    name: m.name,
+                    created: m.created,
+                    architecture: m.architecture.clone(),
+                    top_provider,
+                    pricing: m.pricing,
+                    canonical: m.canonical.clone(),
+                    context_length,
+                    hugging_face_id: m.hugging_face_id.clone(),
+                    per_request_limits: m.per_request_limits.clone(),
+                    supported_parameters: m.supported_parameters.clone(),
+                    description: m.description.clone(),
+                    detail: EmbeddingDetail::Collapsed,
+                }
             })
             .collect::<Vec<_>>()
     }

@@ -1,7 +1,5 @@
 use crate::{
-    EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
-    embeddings::{EmbeddingRequest, HasEmbeddingModels, HasEmbeddings},
-    router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
+    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings}, router_only::{openrouter::EmbeddingProviderPrefs, ApiRoute, Router}, EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -87,6 +85,7 @@ impl HasEmbeddings for super::OpenRouter {
             }
         })?;
 
+
         Ok(parsed)
     }
 }
@@ -137,6 +136,21 @@ pub struct OpenRouterEmbeddingsResponse {
     pub usage: Option<Usage>,
 }
 
+impl HasDims for OpenRouterEmbeddingsResponse {
+    fn dims(&self) -> Option< u64 > {
+        use OpenRouterEmbeddingVector::*;
+        self.data.first().map(|data| { 
+            match &data.embedding{
+                Float(items) => items.len() as u64,
+                Base64(base_64) => { 
+                    let len = base_64.len() / 4;
+                    len as u64
+                },
+            } 
+        })
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct OpenRouterEmbeddingsData {
     // pub object: EmbeddingMarker,
@@ -161,7 +175,10 @@ pub struct Usage {
 #[cfg(test)]
 mod error_mapping_tests {
     use super::*;
-    use crate::{embeddings::{EmbeddingInput, EmbeddingRequest}, router_only::openrouter::OpenRouter};
+    use crate::{
+        embeddings::{EmbeddingInput, EmbeddingRequest},
+        router_only::openrouter::OpenRouter,
+    };
     use httpmock::prelude::*;
     use once_cell::sync::Lazy;
     use reqwest::Client;
@@ -387,12 +404,15 @@ mod tests {
 
     use super::*;
     use crate::{
+        ModelId, ProviderSlug,
         embeddings::{
             EmbClientConfig, EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest,
             HasEmbeddingModels,
-        }, router_only::openrouter::{OpenRouter, ProviderPreferences}, utils::{
+        },
+        router_only::openrouter::{OpenRouter, ProviderPreferences},
+        utils::{
             const_settings::test_consts::EMBEDDING_MODELS_JSON_FULL, test_helpers::openrouter_env,
-        }, ModelId, ProviderSlug
+        },
     };
     use color_eyre::Result;
     use fxhash::FxHashSet as HashSet;

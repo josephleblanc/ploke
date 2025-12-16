@@ -194,18 +194,27 @@ async fn run_fixture_tracking_hash_index(
     let cozo_db = ploke_test_utils::setup_db_full_multi_embedding(fixture)?;
     let mut db = Database::new(cozo_db);
 
-    db.active_embedding_set = EmbeddingSet::new(
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let new_set = EmbeddingSet::new(
         EmbeddingProviderSlug::new_from_str("openrouter"),
         EmbeddingModelId::new_from_str(model),
         EmbeddingShape::new_dims_default(dims as u32),
     );
+    db.set_active_set(new_set);
 
     // IMPORTANT: Cozo will error on queries that reference an embedding relation that doesn't exist.
     // IndexerTask::run does this setup internally, but the test harness also queries counts *before*
     // running the indexer. Ensure the active embedding set + vector relation exist first.
     db.ensure_embedding_set_relation()?;
-    db.put_embedding_set(&db.active_embedding_set)?;
-    db.ensure_vector_embedding_relation(&db.active_embedding_set)?;
+
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    db.put_embedding_set(&active_embedding_set)?;
+    db.ensure_vector_embedding_relation(&active_embedding_set)?;
 
     let pending_before_nonfiles = db.count_unembedded_nonfiles()?;
 
@@ -273,7 +282,10 @@ async fn run_fixture_tracking_hash_index(
 
     let elapsed_ms = started.elapsed().as_millis();
 
-    let active = db.active_embedding_set.clone();
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active = db.with_active_set(|set| set.clone())?;
 
     // Build HNSW for the active set.
     let hnsw_before = db.is_hnsw_index_registered(&active)?;
@@ -474,11 +486,13 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
 
     let cozo_db = ploke_test_utils::setup_db_full_multi_embedding(fixture)?;
     let mut db = Database::new(cozo_db);
-    db.active_embedding_set = EmbeddingSet::new(
+
+    let new_set = EmbeddingSet::new(
         EmbeddingProviderSlug::new_from_str("openrouter"),
         EmbeddingModelId::new_from_str(model),
         EmbeddingShape::new_dims_default(dims as u32),
     );
+    db.set_active_set(new_set);
 
     // Index once (remote embeddings).
     let backend = OpenRouterBackend::new(&openrouter_cfg(model, dims))?;
@@ -519,8 +533,13 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
     }
     handle.await??;
 
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+
     // Pull one stored vector and assert it is 256 dims.
-    let rel = db.active_embedding_set.rel_name.as_ref();
+    let rel = active_embedding_set.rel_name.as_ref();
     let script = format!("?[vector] := *{rel}{{ vector @ 'NOW' }} :limit 1");
     let rows = db.raw_query(&script).map_err(PlokeError::from)?;
     let first = rows

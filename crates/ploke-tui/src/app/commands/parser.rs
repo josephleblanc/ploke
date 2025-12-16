@@ -123,10 +123,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
         }
         "embedding search" => Command::EmbeddingSearchHelp,
         s if s.starts_with("embedding search") => {
-            let kw = s
-                .trim_start_matches("embedding search")
-                .trim()
-                .to_string();
+            let kw = s.trim_start_matches("embedding search").trim().to_string();
             if kw.is_empty() {
                 Command::EmbeddingSearchHelp
             } else {

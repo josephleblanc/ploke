@@ -721,7 +721,11 @@ mod tests {
         // Use fixture DB with multi-embedding schema and default embedding set.
         let cozo_db = setup_db()?;
         let db = Database::new(cozo_db);
-        let embedding_set = db.active_embedding_set.clone();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         // Ensure vector relation exists.
         db.ensure_embedding_relation(&embedding_set)?;
@@ -844,7 +848,10 @@ mod tests {
         // init_tracing_once("cozo-script", tracing::Level::DEBUG);
         let cozo_db = setup_db()?;
         let db = Database::new(cozo_db);
-        let embedding_set = db.active_embedding_set.clone();
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         // Prepare embeddings and index using the public API.
         db.ensure_embedding_relation(&embedding_set)?;
@@ -914,6 +921,10 @@ mod tests {
         let db = Database::new(cozo_db);
         let embedding_set = db.active_embedding_set.clone();
 
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
         db.ensure_embedding_relation(&embedding_set)?;
         let seeded_ids = seed_function_vectors(&db, &embedding_set, 4)?;
 
@@ -1024,7 +1035,11 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
 
         let db = Database::init_with_schema()?;
         // use default active embedding set of sentence-transformers...
-        let embedding_set = db.active_embedding_set.clone();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         // clear hnsw relations before importing from backup (as specified by cozo docs)
         // TODO: needs citation for cozo docs
@@ -1073,11 +1088,15 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         tracing::info!(create_embedding_set_relation = ?r1);
         r1?;
 
-        let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone());
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone())?;
+        let r2 = db.ensure_embedding_relation(&active_embedding_set);
         tracing::info!(ensure_embedding_relation = ?r2);
         r2?;
 
-        let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
+        let r3 = db.create_embedding_index(&active_embedding_set);
         tracing::info!(create_embedding_index = ?r3);
         r3?;
 
@@ -1108,7 +1127,11 @@ embedding  @ 'NOW' }} or  *type_alias {{id, name, span, tracking_hash, embedding
         // init_tracing_once("cozo-script", tracing::Level::INFO);
         let db = helper_load_db()?;
 
-        let embedding_set = &db.active_embedding_set;
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+
         let rel = NodeType::Const.relation_str();
         let embed_rel = embedding_set.hnsw_rel_name();
         let run_query_with_count = |script: &str| -> Result<(), Error> {

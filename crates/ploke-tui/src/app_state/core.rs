@@ -22,6 +22,8 @@ pub struct AppState {
     pub chat: ChatState,
     pub config: ConfigState,
     pub system: SystemState,
+    // TODO:multi-router 2025-12-15
+    // Add router field for <dyn Router> or wrapper type or something
 
     // crate-external processes
     pub indexing_state: RwLock<Option<IndexingStatus>>,

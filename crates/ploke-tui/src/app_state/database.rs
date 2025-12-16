@@ -1180,7 +1180,11 @@ mod test {
         // Set global event bus for error handling
         set_global_event_bus(event_bus.clone()).await;
 
-        let embedding_set = db_handle.active_embedding_set.clone();
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db_handle.with_active_set(|set| set.clone())?;
+        let embedding_set = active_embedding_set.clone();
         let vec_rel = embedding_set.rel_name.clone();
         // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
         let script = format!(

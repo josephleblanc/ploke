@@ -1,4 +1,8 @@
-#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
+#![allow(
+    dead_code,
+    unused_variables,
+    reason = "evolving api surface, may be useful, written 2025-12-15"
+)]
 
 use lasso::{Spur, ThreadedRodeo};
 use once_cell::sync::Lazy;

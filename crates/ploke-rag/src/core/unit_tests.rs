@@ -97,7 +97,10 @@ mod tests {
             .expect("Must set up TEST_DB_NODES correctly.");
         ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
 
-        let rel = db.active_embedding_set.rel_name.clone();
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let rel = db.with_active_set(|set| set.rel_name.clone())?;
         let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
         let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
         info!(?rows);
@@ -136,7 +139,13 @@ mod tests {
 
         // Note: if the backup lacks vectors, we still expect the legacy-path error; this test
         // asserts on that specific failure mode.
-        let embed_rel = db.active_embedding_set.rel_name.clone();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone()).expect("Un-Poisoned active_embedding_set");
+
+        let embed_rel = active_embedding_set.rel_name.clone();
         let count_script = format!("?[count(node_id)] := *{embed_rel}{{ node_id @ 'NOW' }}");
         let rows = db.raw_query(&count_script).expect("count query");
         let _count = rows
@@ -147,10 +156,10 @@ mod tests {
             .unwrap_or(0);
 
         // Issue a dense search directly through hnsw to surface any legacy-path errors.
-        let dims = db.active_embedding_set.dims() as usize;
+        let dims = active_embedding_set.dims() as usize;
         let query_vec = vec![0.1f32; dims];
         let err = match db.search_similar_for_set(
-            &db.active_embedding_set,
+            &active_embedding_set,
             ploke_db::NodeType::Function,
             query_vec,
             5,
@@ -473,19 +482,24 @@ mod tests {
         let db = TEST_DB_NODES
             .as_ref()
             .expect("Must set up TEST_DB_NODES correctly.");
-        let debug_output = db.is_embedding_info_all(&db.active_embedding_set)?;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = db.with_active_set(|set| set.clone())?;
+        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
         debug_output.tracing_print_all(Level::DEBUG);
         // Ensure the fixture backup is only loaded when the dense index has not been built yet.
         {
             use ploke_db::multi_embedding::hnsw_ext::HnswExt;
             let db_ref: &Database = db.as_ref();
-            let has_index = db_ref.is_hnsw_index_registered(&db_ref.active_embedding_set)?;
+            let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
             debug!(target: "hnsw-already-present", ?has_index);
             if !has_index {
                 ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
             }
         }
-        let debug_output = db.is_embedding_info_all(&db.active_embedding_set)?;
+        let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
         debug_output.tracing_print_all(Level::DEBUG);
         // When this test is run in isolation we still need a dense index.
         // create_index_primary_with_index(db)?;

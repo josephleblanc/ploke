@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, RwLock};
 use std::{ops::Deref, panic::Location, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
@@ -21,7 +22,7 @@ use uuid::Uuid;
 // cfg items
 
 use ploke_core::embeddings::{
-    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    EmbRelName, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 
 pub(crate) const TRACKING_HASH_TARGET: &str = "tracking-hash";
@@ -49,7 +50,7 @@ pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
-    pub active_embedding_set: EmbeddingSet,
+    pub active_embedding_set: Arc<RwLock<EmbeddingSet>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -171,6 +172,36 @@ pub struct FileInfo {
 }
 
 impl Database {
+    /// Read-only access via closure (keeps lock scope tiny).
+    pub fn with_active_set<R>(&self, f: impl FnOnce(&EmbeddingSet) -> R) -> Result<R, DbError> {
+        let guard = self
+            .active_embedding_set
+            .read()
+            .map_err(|_| DbError::ActiveSetPoisoned)?;
+        Ok(f(&*guard))
+    }
+
+    pub fn active_model_id(&self) -> Result<EmbeddingModelId, DbError> {
+        self.with_active_set(|s| s.model.clone())
+    }
+
+    /// Mutate via closure (single write lock, tiny scope).
+    pub fn update_active_set<R>(
+        &self,
+        f: impl FnOnce(&mut EmbeddingSet) -> R,
+    ) -> Result<R, DbError> {
+        let mut guard = self
+            .active_embedding_set
+            .write()
+            .map_err(|_| DbError::ActiveSetPoisoned)?;
+        Ok(f(&mut *guard))
+    }
+
+    /// Common convenience: replace the whole set.
+    pub fn set_active_set(&self, new_set: EmbeddingSet) -> Result<(), DbError> {
+        self.update_active_set(|slot| *slot = new_set).map(|_| ())
+    }
+
     pub fn rel_names_with_tracking_hash<'a>(&'a self) -> Result<Vec<String>, DbError> {
         fn filter_is_th(db: &Database, rel_name: &str) -> Result<bool, DbError> {
             let script_th_col = format!("::columns {rel_name}");
@@ -208,7 +239,10 @@ impl Database {
                 node_id = to_uuid("{node_id}")"#
             );
         }
-        let vec_rel = self.active_embedding_set.vector_relation_name();
+        // let active_embedding_set = self.active_embedding_set.lock();
+        let vec_rel: EmbRelName = self
+            .with_active_set(EmbeddingSet::vector_relation_name)
+            .ok()?;
         let mut debug_rel_rhs: Vec<(String, String)> = Vec::new();
         let rels_with_th_rhs = self
             .rel_names_with_tracking_hash()
@@ -291,7 +325,7 @@ impl Database {
             // TODO:migrate-multi-embed-full
             // Update to not use hardcoded active_embedding_set in new and update callsites.
             // Replace those taht use default model with call to `default()` instead
-            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
         }
     }
     pub fn new_init() -> Result<Self, PlokeError> {
@@ -302,7 +336,7 @@ impl Database {
         // Replace those taht use default model with call to `default()` instead
         Ok(Self {
             db,
-            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
         })
     }
 
@@ -315,7 +349,7 @@ impl Database {
 
         Ok(Self {
             db,
-            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
         })
     }
 
@@ -409,9 +443,8 @@ impl Database {
         let keys = ty.keys().join(", ");
         let vals = ty.vals().join(", ");
         trace!(%ty_rel_name, %keys, %vals);
-        let embedding_set = &self.active_embedding_set;
-        let set_id = embedding_set.hash_id().into_inner() as i64;
-        let vector_set_name = embedding_set.vector_relation_name();
+        let set_id = self.with_active_set(|set| set.hash_id().into_inner() as i64)?;
+        let vector_set_name = self.with_active_set(|set| set.vector_relation_name())?;
         let vector_fields = EmbeddingVector::script_fields();
         let _script_old = format!(
             "
@@ -763,12 +796,20 @@ impl Database {
         ];
         Ok(mock_nodes)
     }
-    pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+    pub async fn create_new_backup_default(path: impl AsRef<Path>) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
         Ok(Self {
             db: new_db,
-            active_embedding_set: DEFAULT_EMBEDDING_SET.clone(),
+            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
+        })
+    }
+    pub async fn create_new_backup(active_embedding_set: EmbeddingSet, path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+        let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
+        new_db.restore_backup(&path).map_err(DbError::from)?;
+        Ok(Self {
+            db: new_db,
+            active_embedding_set: Arc::new(RwLock::new(active_embedding_set)),
         })
     }
 
@@ -891,12 +932,16 @@ impl Database {
             return Ok(());
         }
         // Use multi-embedding path; active_embedding_set is validated at Database construction.
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref().update_embeddings_batch(
             updates
                 .into_iter()
                 .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
                 .collect(),
-            &self.active_embedding_set,
+            &active_embedding_set,
         )
     }
 
@@ -923,13 +968,18 @@ impl Database {
     ) -> Result<Vec<TypedEmbedData>, PlokeError> {
         let mut unembedded_data = Vec::new();
         let mut count = 0;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
             let nodes_of_type = self.deref().get_unembed_rel(
                 t,
                 limit.saturating_sub(count),
                 cursor,
-                self.active_embedding_set.clone(),
+                active_embedding_set.clone(),
             )?;
             count += nodes_of_type.len();
             tracing::info!("=== {count} ===");
@@ -975,8 +1025,11 @@ impl Database {
     }
 
     pub fn count_unembedded_files(&self) -> Result<usize, DbError> {
-        let embedding_set_id = &self.active_embedding_set;
-        self.deref().count_unembedded_files(embedding_set_id)
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = self.with_active_set(|set| set.clone())?;
+        self.deref().count_unembedded_files(&embedding_set)
     }
 
     /// Retrieves ordered embedding data for a list of target nodes.
@@ -998,8 +1051,13 @@ impl Database {
     // TODO:migrate-multi-embed-full
     // Update callsites to use new API without relying on wrapper function
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
-            .get_nodes_ordered_for_set(nodes, &self.active_embedding_set)
+            .get_nodes_ordered_for_set(nodes, &active_embedding_set)
     }
 
     // TODO:migrate-multi-embed-full
@@ -1010,8 +1068,12 @@ impl Database {
         limit: usize,
         cursor: usize,
     ) -> Result<TypedEmbedData, PlokeError> {
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
-            .get_unembed_rel(node_type, limit, cursor, self.active_embedding_set.clone())
+            .get_unembed_rel(node_type, limit, cursor, active_embedding_set)
     }
 
     pub fn get_embed_rel(
@@ -1087,8 +1149,12 @@ impl Database {
             cursor = %cursor,
             "delegating get_rel_with_cursor to multi_embedding_db impl",
         );
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
-            .get_rel_with_cursor(node_type, limit, cursor, &self.active_embedding_set)
+            .get_rel_with_cursor(node_type, limit, cursor, &active_embedding_set)
     }
 
     /// Gets the primary node typed embed data needed to update the nodes in the database
@@ -1194,13 +1260,22 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         self.deref()
-            .count_unembedded_nonfiles(&self.active_embedding_set.clone())
+            .count_unembedded_nonfiles(&active_embedding_set)
     }
 
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
         use crate::multi_embedding::db_ext::EmbeddingExt;
-        let embedding_set = self.active_embedding_set.clone();
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = self.with_active_set(|set| set.clone())?;
         let inner_db = &self.db;
         inner_db.count_pending_embeddings(&embedding_set)
     }
@@ -1220,10 +1295,15 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         use crate::multi_embedding::db_ext::EmbeddingExt;
         let mut rows = Vec::new();
         let limit: usize = 10_000;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone())?;
         for node_type in NodeType::primary_nodes() {
             let typed = self
                 .deref()
-                .get_rel_with_cursor(node_type, limit, Uuid::nil(), &self.active_embedding_set)
+                .get_rel_with_cursor(node_type, limit, Uuid::nil(), &active_embedding_set)
                 .map_err(|e| DbError::QueryExecution(e.to_string()))?;
             for emb in typed.v {
                 // Order: [id, at (placeholder), name] to match the indexer's expectations.
@@ -1318,7 +1398,11 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     ///
     /// See `debug_print_counts` for the more general version that accepts a given embedding set.
     pub fn debug_print_counts_active(&self) {
-        self.debug_print_counts(&self.active_embedding_set);
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.with_active_set(|set| set.clone()).unwrap();
+        self.debug_print_counts(&active_embedding_set);
     }
 }
 
@@ -1465,7 +1549,10 @@ mod tests {
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
-        let emb_set = db.active_embedding_set.clone();
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let emb_set = db.with_active_set(|set| set.clone())?;
         db.is_embedding_info_all(&emb_set)?;
         let common_query_result = db.get_common_nodes()?;
         let common_nodes_count = common_query_result.rows.len();
@@ -1628,7 +1715,10 @@ mod tests {
 
         // 5. Call the function to update the batch
 
-        let embedding_set = db.active_embedding_set.clone();
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
         let relation_name = embedding_set.rel_name.clone();
         if !db.deref().is_relation_registered(&relation_name)? {
             use crate::multi_embedding::schema::EmbeddingVector;
@@ -1715,12 +1805,16 @@ mod tests {
     }
 
     fn debug_print_counts(db: &Database) -> Result<(), PlokeError> {
-        let embedding_set = &db.active_embedding_set;
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
+
         let unembedded_files = db.count_unembedded_files()?;
         let unembedded_non_files = db.count_unembedded_nonfiles()?;
         let all_pending = db.count_pending_embeddings()?;
-        let all_emb_complete = db.count_complete_embeddings(embedding_set)?;
-        let all_embedded_rows = db.count_embeddings_for_set(embedding_set)?;
+        let all_emb_complete = db.count_complete_embeddings(&embedding_set)?;
+        let all_embedded_rows = db.count_embeddings_for_set(&embedding_set)?;
         debug!(
             "Counts:
             unembedded_files = {unembedded_files}
@@ -1738,7 +1832,10 @@ mod tests {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
-        let embedding_set = &db.active_embedding_set;
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         debug_print_counts(&db)?;
 
@@ -1784,13 +1881,16 @@ mod tests {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
-        let embedding_set = &db.active_embedding_set;
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         // debug_print_counts(&db)?;
         crate::create_index_primary(&db)?;
         // debug_print_counts(&db)?;
 
-        let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
+        let initial_embedded = db.count_embeddings_for_set(&embedding_set)?;
         assert!(
             initial_embedded > 0,
             "expect all embeddings present initially"
@@ -1819,7 +1919,7 @@ mod tests {
             }
         }
 
-        let final_embedded = db.count_embeddings_for_set(embedding_set)?;
+        let final_embedded = db.count_embeddings_for_set(&embedding_set)?;
         assert!(
             final_embedded == 0,
             "expect no registered embeddings after retracting all of them"
@@ -1835,7 +1935,11 @@ mod tests {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
-        let embedding_set = &db.active_embedding_set;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let embedding_set = db.with_active_set(|set| set.clone())?;
 
         debug_print_counts(&db)?;
         db.clear_hnsw_idx().await?;
@@ -1843,7 +1947,7 @@ mod tests {
         crate::create_index_primary_with_index(&db)?;
         debug_print_counts(&db)?;
 
-        let initial_embedded = db.count_embeddings_for_set(embedding_set)?;
+        let initial_embedded = db.count_embeddings_for_set(&embedding_set)?;
         assert!(
             initial_embedded > 0,
             "expect all embeddings present initially"
@@ -1872,7 +1976,7 @@ mod tests {
             }
         }
 
-        let partial_embedded = db.count_embeddings_for_set(embedding_set)?;
+        let partial_embedded = db.count_embeddings_for_set(&embedding_set)?;
         assert!(
             initial_embedded > partial_embedded,
             "expect fewer embeddings after retracting some of them"
@@ -1904,7 +2008,7 @@ mod tests {
             }
         }
 
-        let ending_embedded = db.count_embeddings_for_set(embedding_set)?;
+        let ending_embedded = db.count_embeddings_for_set(&embedding_set)?;
         assert!(
             initial_embedded > ending_embedded,
             "expect fewer embeddings after retracting some of them"

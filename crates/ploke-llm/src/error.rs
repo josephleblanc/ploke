@@ -46,6 +46,10 @@ pub enum LlmError {
     /// An unexpected or unknown error occurred.
     #[error("An unknown error occurred: {0}")]
     Unknown(String),
+
+    /// Failed to deserialize the API response.
+    #[error("Embedding Error: {0}")]
+    Embedding(String),
 }
 
 impl From<LlmError> for ploke_error::Error {
@@ -95,6 +99,9 @@ impl From<LlmError> for ploke_error::Error {
             ),
             LlmError::Unknown(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            ),
+            err_ev @ LlmError::Embedding(_) => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(err_ev)),
             ),
         }
     }

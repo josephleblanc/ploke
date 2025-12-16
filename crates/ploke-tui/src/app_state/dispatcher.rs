@@ -1,12 +1,18 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::error::ErrorExt;
 use crate::llm::ProviderSlug;
 use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
 use crate::llm::router_only::RouterVariants;
 use crate::llm::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
+use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
+use ploke_llm::router_only::openrouter::OpenRouter;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::trace_span;
@@ -273,7 +279,7 @@ pub async fn state_manager(
             // StateCommand::RagAssembleContext {
             //     req_id,
             //     user_query,
-            //     top_k,
+            //     top_k,dimension
             //     budget,
             //     strategy,
             // } => {
@@ -381,6 +387,55 @@ pub async fn state_manager(
             StateCommand::DecrementChatTtl => {
                 let mut chat_history = state.chat.write().await;
                 chat_history.decrement_ttl();
+            }
+            StateCommand::SelectEmbeddingModel { model_id, provider } => {
+                // TODO:multi-router 2025-12-15
+                // Add handling of different routers, match on selected state.router once we add a
+                // `router` field to `AppState`
+                let client = reqwest::Client::new();
+                let embedding_input = EmbeddingInput::Single("test for dims".to_string());
+                let req = EmbeddingRequest::<OpenRouter> {
+                    model: model_id.clone(),
+                    input: embedding_input,
+                    ..Default::default()
+                };
+                let dims =
+                    match <OpenRouter as HasEmbeddings>::fetch_validate_dims(&client, &req).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            e.emit_warning();
+                            add_msg_shortcut(&e.to_string()).await;
+                            continue;
+                        }
+                    };
+                let old_set_string =
+                    match state.db.with_active_set(|old_set| format!("{:?}", old_set)) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            e.emit_error();
+                            continue;
+                        }
+                    };
+                let emb_provider = EmbeddingProviderSlug::new_from_str(provider.as_ref());
+                let m = model_id.to_string();
+                let emb_model_id = EmbeddingModelId::new_from_str(&m);
+                let shape = EmbeddingShape::new_dims_default(dims as u32);
+                let embedding_set = EmbeddingSet::new(emb_provider, emb_model_id.clone(), shape);
+                match state.db.set_active_set(embedding_set) {
+                    Ok(()) => {
+                        let msg = format!(
+                            "Database active_embedding_set from previous value {old_set_string} to new value {emb_model_id:?}"
+                        );
+                        add_msg_shortcut(&msg).await;
+                    }
+                    Err(e) => {
+                        let err_msg = format!(
+                            "Database error setting active_embedding_set from {old_set_string} to {emb_model_id:?}"
+                        );
+                        add_msg_shortcut(&err_msg).await;
+                        e.emit_error();
+                    }
+                };
             }
 
             _ => {}

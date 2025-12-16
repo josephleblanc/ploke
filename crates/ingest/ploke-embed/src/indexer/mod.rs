@@ -423,9 +423,14 @@ impl IndexerTask {
         // This is critical for remote embeddings where provider/model/dims differ from defaults.
         use ploke_db::multi_embedding::db_ext::EmbeddingExt as _;
         self.db.ensure_embedding_set_relation()?;
-        self.db.put_embedding_set(&self.db.active_embedding_set)?;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.db.with_active_set(|set| set.clone())?;
+        self.db.put_embedding_set(&active_embedding_set)?;
         self.db
-            .ensure_vector_embedding_relation(&self.db.active_embedding_set)?;
+            .ensure_vector_embedding_relation(&active_embedding_set)?;
 
         let num_not_proc = self.db.count_unembedded_nonfiles()?;
         tracing::info!("Starting indexing with {} unembedded nodes", num_not_proc);

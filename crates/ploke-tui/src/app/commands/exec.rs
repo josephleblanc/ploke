@@ -696,6 +696,8 @@ fn open_embedding_search(app: &mut App, keyword: &str) {
             return;
         }
 
+        // TODO:multi-routers 2025-12-15
+        // Add framework to match on different structs that implement Router
         let client = Client::new();
         match <OpenRouter as HasEmbeddingModels>::fetch_embedding_models(
             &client,

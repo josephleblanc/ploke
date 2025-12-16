@@ -1,9 +1,13 @@
 use std::time::Duration;
 
+use color_eyre::eyre::{eyre, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    request::models, router_only::{openrouter, ApiRoute, HasModelId}, types::model_types::serialize_model_id_as_request_string, ModelId, Router, HTTP_REFERER, HTTP_TITLE
+    HTTP_REFERER, HTTP_TITLE, LlmError, ModelId, Router,
+    request::models,
+    router_only::{ApiRoute, HasModelId},
+    types::model_types::serialize_model_id_as_request_string,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,12 +29,16 @@ impl Default for EmbClientConfig {
     }
 }
 
+pub trait HasDims {
+    fn dims(&self) -> Option<u64>;
+}
+
 pub trait HasEmbeddings: Router {
     /// Router-specific fields for the `/embeddings` request body (often empty).
     type EmbeddingFields: ApiRoute + Serialize + Default;
 
     /// Typed response for the `/embeddings` endpoint.
-    type EmbeddingsResponse: for<'a> Deserialize<'a> + Send + Sync;
+    type EmbeddingsResponse: for<'a> Deserialize<'a> + Send + Sync + HasDims;
 
     type Error;
 
@@ -55,7 +63,7 @@ pub trait HasEmbeddings: Router {
         Self: Sized,
         <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
     {
-        async {
+        async move {
             let api_key = Self::resolve_api_key()?;
 
             let resp = client
@@ -71,6 +79,26 @@ pub trait HasEmbeddings: Router {
                 .error_for_status()?;
 
             Ok(resp.json::<Self::EmbeddingsResponse>().await?)
+        }
+    }
+
+    fn fetch_validate_dims(
+        client: &reqwest::Client,
+        req: &EmbeddingRequest<Self>,
+    ) -> impl std::future::Future<Output = color_eyre::Result<u64>> + Send
+    where
+        Self: Sized,
+        <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
+    {
+        async move {
+            let resp = <Self as HasEmbeddings>::fetch_embeddings(client, req).await?;
+            let dims = resp
+                .dims()
+                .ok_or_else(|| eyre!("Received empty vector embedding"))?;
+                // .map_err(|e| {
+                //     LlmError::Embedding(e.wrap_err("invalid embedding response"))
+                // })?;
+            Ok( dims )
         }
     }
 }
