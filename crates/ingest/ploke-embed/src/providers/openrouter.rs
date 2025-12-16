@@ -82,7 +82,7 @@ impl OpenRouterBackend {
         Ok(Self {
             model,
             dimensions: dims,
-            request_dimensions: cfg.dimensions.map(|d| d as u32),
+            request_dimensions: cfg.request_dimensions.map(|d| d as u32),
             input_type: cfg.input_type.clone(),
             client,
             in_flight: Arc::new(Semaphore::new(cfg.max_in_flight.max(1))),
@@ -364,6 +364,83 @@ impl OpenRouterBackend {
                                     url
                                 )));
                             }
+                            OpenRouterEmbeddingError::ApiError {
+                                url,
+                                http_status,
+                                api_code,
+                                request_id,
+                                content_type,
+                                message,
+                                body_snippet,
+                            } => {
+                                // Backwards-compat safety valve: if we're only sending `dimensions`
+                                // redundantly (request == expected), retry once without it.
+                                if attempt == 1
+                                    && api_code == &Some(404)
+                                    && message.contains("No successful provider responses")
+                                    && self.request_dimensions == Some(self.dimensions as u32)
+                                {
+                                    tracing::warn!(
+                                        "OpenRouter reported no provider responses; retrying once without request `dimensions` (model={}, expected_dims={})",
+                                        self.model,
+                                        self.dimensions
+                                    );
+                                    let mut retry_req = req.clone();
+                                    retry_req.router.dimensions = None;
+                                    let retry_res =
+                                        <OpenRouter as HasEmbeddings>::fetch_embeddings(
+                                            &self.client,
+                                            &retry_req,
+                                        )
+                                        .await;
+                                    if let Ok(resp) = retry_res {
+                                        return self.validate_and_reorder(
+                                            &retry_req,
+                                            resp,
+                                            expected_len,
+                                        );
+                                    }
+                                }
+                                let status = api_code.unwrap_or(*http_status);
+                                let mut body = format!(
+                                    "model={} {}",
+                                    req.model,
+                                    truncate_string(message, 200)
+                                );
+                                if let Some(snippet) = body_snippet.as_ref() {
+                                    body.push_str("; body_snippet=");
+                                    body.push_str(&truncate_string(snippet, 200));
+                                }
+                                if request_id.is_some() || content_type.is_some() {
+                                    body.push_str(&format!(
+                                        " (request_id={:?}, content_type={:?})",
+                                        request_id, content_type
+                                    ));
+                                }
+                                last_err = Some(EmbedError::HttpError {
+                                    status,
+                                    body,
+                                    url: url.clone(),
+                                });
+                            }
+                            OpenRouterEmbeddingError::Decode {
+                                message,
+                                url,
+                                status,
+                                request_id,
+                                content_type,
+                                body_snippet,
+                            } => {
+                                last_err = Some(EmbedError::Network(format!(
+                                    "OpenRouter decode error: {} (status={}, request_id={:?}, content_type={:?}, body_snippet={}) (url={})",
+                                    truncate_string(message, 160),
+                                    status,
+                                    request_id,
+                                    content_type,
+                                    truncate_string(body_snippet, 200),
+                                    url
+                                )));
+                            }
                             OpenRouterEmbeddingError::Unexpected { status, url, body } => {
                                 last_err = Some(EmbedError::HttpError {
                                     status: *status,
@@ -418,6 +495,7 @@ mod tests {
         OpenRouterConfig {
             model: model.to_string(),
             dimensions: Some(dims),
+            request_dimensions: None,
             max_in_flight: 4,
             requests_per_second: None,
             max_attempts: 1,
@@ -627,6 +705,7 @@ mod tests {
             OpenRouterConfig {
                 model: model.to_string(),
                 dimensions: Some(dims),
+                request_dimensions: None,
                 max_in_flight: 2,
                 requests_per_second: None,
                 max_attempts: 4,

@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use color_eyre::eyre::{eyre, Context};
+use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    HTTP_REFERER, HTTP_TITLE, LlmError, ModelId, Router,
+    HTTP_REFERER, HTTP_TITLE, ModelId, Router,
     request::models,
     router_only::{ApiRoute, HasModelId},
     types::model_types::serialize_model_id_as_request_string,

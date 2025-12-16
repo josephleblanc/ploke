@@ -524,6 +524,17 @@ impl IndexerTask {
 
                     // Log with full context for diagnostics
                     tracing::error!("Batch process failed: {e:?}");
+
+                    // Fail fast: if a batch cannot be processed, the UI should surface failure
+                    // rather than appearing to "stall" at 0% with repeated batch errors.
+                    let msg = state
+                        .errors
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| "batch process failed".to_string());
+                    state.status = IndexStatus::Failed(msg);
+                    progress_tx.send(state.clone())?;
+                    return Err(e);
                 }
             }
 

@@ -93,6 +93,7 @@ fn openrouter_cfg(model: &str, dims: usize) -> OpenRouterConfig {
     OpenRouterConfig {
         model: model.to_string(),
         dimensions: Some(dims),
+        request_dimensions: None,
         max_in_flight: 2,
         requests_per_second: None,
         max_attempts: 5,
