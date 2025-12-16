@@ -216,6 +216,8 @@ pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
 }
 
 // TODO:docs Add doc comments
+// TODO:ploke-db 2025-12-16
+// Replace this function with a Database method
 pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
     use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
@@ -224,6 +226,7 @@ pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
     // update the active embedding set functions to correctly use Arc<RwLock<>> within these
     // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    tracing::debug!(?active_embedding_set);
     db.create_embedding_index(&active_embedding_set.clone())
 }
 

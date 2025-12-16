@@ -243,6 +243,7 @@ impl IndexerTask {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
         let db_clone = Arc::clone(&task.db);
+        ploke_db::create_index_primary(&db_clone)?;
         let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
 
         let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
@@ -400,7 +401,7 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
-        let db_ret = ploke_db::create_index_warn(&db_clone)?;
+        ploke_db::create_index_primary_with_index(&db_clone)?;
 
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
