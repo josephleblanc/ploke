@@ -19,7 +19,7 @@ pub struct OpenAIConfig {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct OpenRouterConfig {
     /// OpenRouter model id, e.g. `openai/text-embedding-3-small`.
     pub model: String,
@@ -48,6 +48,22 @@ pub struct OpenRouterConfig {
     pub timeout_secs: u64,
 }
 
+impl Default for OpenRouterConfig {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            dimensions: None,
+            max_in_flight: default_openrouter_max_in_flight(),
+            requests_per_second: None,
+            max_attempts: default_openrouter_max_attempts(),
+            initial_backoff_ms: default_openrouter_initial_backoff_ms(),
+            max_backoff_ms: default_openrouter_max_backoff_ms(),
+            input_type: None,
+            timeout_secs: default_openrouter_timeout_secs(),
+        }
+    }
+}
+
 fn default_openrouter_max_in_flight() -> usize {
     2
 }
@@ -67,4 +83,19 @@ fn default_openrouter_timeout_secs() -> u64 {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
 pub struct CozoConfig {
     pub api_key: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn openrouter_config_default_is_safe_for_runtime_use() {
+        let cfg = OpenRouterConfig::default();
+        assert_eq!(cfg.max_in_flight, 2);
+        assert_eq!(cfg.max_attempts, 5);
+        assert_eq!(cfg.initial_backoff_ms, 250);
+        assert_eq!(cfg.max_backoff_ms, 10_000);
+        assert_eq!(cfg.timeout_secs, 30);
+    }
 }
