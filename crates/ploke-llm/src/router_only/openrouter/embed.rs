@@ -25,6 +25,7 @@ impl HasEmbeddings for super::OpenRouter {
 
     const EMBEDDINGS_URL: &str = "https://openrouter.ai/api/v1/embeddings";
 
+    #[tracing::instrument(skip(client), fields(req), target = "embed-pipeline")]
     async fn fetch_embeddings(
         client: &reqwest::Client,
         req: &EmbeddingRequest<Self>,

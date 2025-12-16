@@ -75,6 +75,8 @@ impl EmbeddingRuntime {
         new_embedder: Arc<EmbeddingProcessor>,
     ) -> Result<(), EmbedError> {
         db.ensure_embedding_set_relation()?;
+        // Persist metadata for the embedding set so DB lookups by id can succeed immediately,
+        db.put_embedding_set(&new_set)?;
         db.ensure_vector_embedding_relation(&new_set)?;
         db.set_active_set(new_set.clone())?;
 

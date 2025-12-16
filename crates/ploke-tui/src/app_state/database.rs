@@ -1124,11 +1124,13 @@ mod test {
         // TODO:
         // 1 Implement the cancellation token propagation in IndexerTask
         // 2 Add error handling for embedder initialization failures
+        let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&embedding_runtime), // Use configured processor
-            CancellationToken::new().0,
+            index_cancellation_token,
+            index_cancel_handle,
             8,
         );
 

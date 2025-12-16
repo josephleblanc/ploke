@@ -2,6 +2,7 @@ use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{self, MissedTickBehavior};
+use tracing::instrument;
 
 use crate::{
     cancel_token::CancellationListener,
@@ -266,6 +267,7 @@ impl OpenRouterBackend {
             .collect()
     }
 
+    #[instrument(skip_all, fields(expected_len), target = "embed-pipeline")]
     pub async fn compute_batch(
         &self,
         snippets: Vec<String>,

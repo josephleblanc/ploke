@@ -228,13 +228,14 @@ async fn run_fixture_tracking_hash_index(
     let db = std::sync::Arc::new(db);
     let io = IoManagerHandle::new();
 
-    let (cancellation_token, _cancel_handle) = CancellationToken::new();
+    let (cancellation_token, cancel_handle) = CancellationToken::new();
 
     let idx = IndexerTask::new(
         std::sync::Arc::clone(&db),
         io,
         embedding_runtime,
         cancellation_token,
+        cancel_handle,
         8,
     );
 
@@ -504,12 +505,13 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
     ));
     let db = Arc::new(db);
     let io = IoManagerHandle::new();
-    let (cancellation_token, _cancel_handle) = CancellationToken::new();
+    let (cancellation_token, cancel_handle) = CancellationToken::new();
     let idx = IndexerTask::new(
         Arc::clone(&db),
         io,
         embedding_runtime,
         cancellation_token,
+        cancel_handle,
         8,
     );
 

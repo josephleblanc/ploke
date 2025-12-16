@@ -303,6 +303,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         io,
         Arc::clone(&embedding_runtime),
         cancellation_token,
+        cancel_handle,
         batch_size,
     )
     .with_bm25_tx(bm25_cmd.clone());
@@ -573,6 +574,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
         io,
         Arc::clone(&embedding_runtime),
         cancellation_token,
+        cancel_handle,
         batch_size,
     )
     .with_bm25_tx(bm25_cmd.clone());

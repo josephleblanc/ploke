@@ -184,6 +184,10 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)?;
 
+    // Indexer cancellation channel: keep the handle alive in the IndexerTask so remote embedding
+    // requests don't get spuriously cancelled due to the sender being dropped.
+    let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();
+
     // TODO:
     // 1 Implement the cancellation token propagation in IndexerTask
     // 2 Add error handling for embedder initialization failures
@@ -191,7 +195,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         db_handle.clone(),
         io_handle.clone(),
         Arc::clone(&embedding_runtime), // Use configured processor
-        CancellationToken::new().0,
+        index_cancellation_token,
+        index_cancel_handle,
         8,
     )
     .with_bm25_tx(bm25_cmd);

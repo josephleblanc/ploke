@@ -14,6 +14,7 @@ pub struct CancellationListener {
 }
 
 /// Handle to trigger cancellation
+#[derive(Debug)]
 pub struct CancellationHandle {
     sender: watch::Sender<bool>,
 }

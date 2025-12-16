@@ -12,7 +12,7 @@ use ploke_core::EmbeddingData;
 use ploke_error::Error as PlokeError;
 use syn_parser::utils::LogStyle as _;
 use tokio::fs;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -772,6 +772,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         Ok(())
     }
 
+    #[instrument(skip(self), fields(embedding_set, ret, count))]
     fn is_vector_embedding_registered(
         &self,
         embedding_set: &EmbeddingSet,
@@ -779,7 +780,6 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         let set_id = embedding_set.hash_id().into_inner() as i64;
         let rel_name = embedding_set.rel_name();
         let get_rel_name_script = format!("?[count( node_id)] := *{rel_name}{{ node_id @ 'NOW'}}");
-        info!(?get_rel_name_script);
         let result = self
             .run_script(
                 &get_rel_name_script,
@@ -788,7 +788,6 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
             )
             .map_err(|e| DbError::Cozo(e.to_string()));
 
-        info!(get_rel_name_result = ?result);
         let expected_err_msg = format!(r#"Cannot find requested stored relation '{rel_name}'"#);
         match result {
             Ok(count) => Ok(true),

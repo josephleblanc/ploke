@@ -458,8 +458,6 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
                 cozo::ScriptMutability::Immutable,
             )
             .map_err(DbError::from);
-        debug!(%script_check_indices);
-        debug!(?db_res);
         let expect_err_msg = format!("Cannot find requested stored relation '{hnsw_rel_name}'");
         match db_res {
             // the script succeeds, finding the item in the database

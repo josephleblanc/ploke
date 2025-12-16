@@ -87,11 +87,13 @@ impl AppHarness {
         );
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
             .expect("start bm25 service");
+        let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
             Arc::clone(&embedding_runtime),
-            CancellationToken::new().0,
+            index_cancellation_token,
+            index_cancel_handle,
             8,
         )
         .with_bm25_tx(bm25_cmd);

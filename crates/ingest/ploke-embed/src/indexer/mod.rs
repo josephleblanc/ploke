@@ -26,6 +26,7 @@ use crate::{
     cancel_token::{CancellationListener, CancellationToken},
     error::EmbedError,
 };
+use crate::cancel_token::CancellationHandle;
 use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
 
 #[derive(Debug)]
@@ -69,12 +70,13 @@ impl EmbeddingProcessor {
         self.generate_embeddings_with_cancel(snippets, None).await
     }
 
+    #[instrument(skip_all, fields(source = ?self.source, target = "embed-pipeline"))]
     pub async fn generate_embeddings_with_cancel(
         &self,
         snippets: Vec<String>,
         cancel: Option<&CancellationListener>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        tracing::trace!("Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
+        tracing::trace!(target: "embed-pipeline", "Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
             self.dimensions(),
             snippets.len(),
             snippets.first(),
@@ -179,6 +181,11 @@ pub struct IndexerTask {
     pub io: IoManagerHandle,
     pub embedding_runtime: Arc<EmbeddingRuntime>,
     pub cancellation_token: CancellationToken,
+    // Keep the cancellation channel sender alive for the duration of the IndexerTask.
+    // Without this, `CancellationListener::cancelled()` completes immediately (sender dropped),
+    // which incorrectly cancels remote embedding requests.
+    #[allow(dead_code)]
+    cancellation_handle: CancellationHandle,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
@@ -191,6 +198,7 @@ impl IndexerTask {
         io: IoManagerHandle,
         embedding_runtime: Arc<EmbeddingRuntime>,
         cancellation_token: CancellationToken,
+        cancellation_handle: CancellationHandle,
         batch_size: usize,
     ) -> Self {
         Self {
@@ -198,6 +206,7 @@ impl IndexerTask {
             io,
             embedding_runtime,
             cancellation_token,
+            cancellation_handle,
             batch_size,
             bm25_tx: None,
             cursors: Mutex::new(HashMap::new()),
@@ -685,7 +694,7 @@ impl IndexerTask {
     ) -> Result<(), EmbedError> {
         let node_count = nodes.iter().fold(0, |acc, b| acc + b.v.len());
         let mut counter = 0;
-        tracing::info!(
+        tracing::debug!(target: "embed-pipeline",
             "process_batch with {} relations and {} nodes of EmbeddingData",
             nodes.len(),
             node_count
@@ -699,7 +708,6 @@ impl IndexerTask {
             .flat_map(|n| n.v.into_iter().map(move |emb| (n.ty, emb)))
             .unzip();
         let num_to_embed = emb_vec.len();
-        tracing::warn!("-- -- -- num to embed {} nodes -- -- --", num_to_embed);
         let snippet_results = self
             .io
             .get_snippets_batch(emb_vec.clone())
