@@ -13,6 +13,7 @@ use ploke_core::embeddings::{
 };
 use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
 use ploke_llm::router_only::openrouter::OpenRouter;
+use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
@@ -473,6 +474,25 @@ pub async fn state_manager(
                     .activate(&state.db, embedding_set, Arc::clone(&new_embedder))
                 {
                     Ok(()) => {
+                        // Ensure the vector relation exists for the new set before any search/index calls.
+                        if let Ok(active_set) = state.embedder.current_active_set() {
+                            // Best-effort; errors logged to help diagnose missing relations.
+                            if let Err(e) = state
+                                .db
+                                .ensure_embedding_set_relation()
+                                .and_then(|_| {
+                                    state
+                                        .db
+                                        .ensure_vector_embedding_relation(&active_set)
+                                        .map_err(ploke_error::Error::from)
+                                })
+                            {
+                                warn!(
+                                    "Failed to ensure embedding relations for {:?}: {}",
+                                    active_set, e
+                                );
+                            }
+                        }
                         let msg = format!(
                             "Database active_embedding_set from previous value {old_set_string} to new value {emb_model_id:?}"
                         );
