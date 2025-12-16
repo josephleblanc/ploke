@@ -13,6 +13,7 @@ mod tests {
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
+        runtime::EmbeddingRuntime,
     };
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
@@ -85,6 +86,13 @@ mod tests {
         // r3?;
         //
         // let database = Database::from(db);
+    }
+
+    fn runtime_for(db: &Arc<Database>, processor: EmbeddingProcessor) -> Arc<EmbeddingRuntime> {
+        Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            processor,
+        ))
     }
 
     #[tokio::test]
@@ -286,8 +294,11 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15).await?;
         assert!(
@@ -311,8 +322,11 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Should not error
         rag.bm25_rebuild().await?;
@@ -332,8 +346,11 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(source),
+        ));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Trigger a rebuild to ensure index is fresh, then retry a few times in case it's async.
         rag.bm25_rebuild().await?;
@@ -375,8 +392,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
         // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
         rag.bm25_rebuild().await?;
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
@@ -404,8 +421,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Intentionally do not call bm25_rebuild or index anything; fallback should kick in.
         let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
@@ -432,8 +449,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -459,8 +476,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -508,8 +525,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
 
@@ -561,8 +578,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -588,8 +605,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -615,8 +632,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -642,8 +659,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -669,8 +686,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(
@@ -696,8 +713,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
         // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
         rag.bm25_rebuild().await?;
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
@@ -724,8 +741,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         // Ensure BM25 index is populated
         rag.bm25_rebuild().await?;
@@ -762,8 +779,8 @@ mod tests {
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
-        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-        let rag = RagService::new(db.clone(), embedding_processor)?;
+        let embedding_runtime = runtime_for(&db, EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_runtime)?;
 
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
         assert!(

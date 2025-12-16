@@ -13,6 +13,7 @@ use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::{
     indexer::EmbeddingSource,
     local::{EmbeddingConfig, LocalEmbedder},
+    runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagService, TokenBudget};
@@ -28,7 +29,10 @@ fn mock_embedder() -> EmbeddingProcessor {
 async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
     // App state with no crate_focus and a valid (empty) DB + RAG service
     let db = Arc::new(Database::new_init().expect("init db"));
-    let embedder = Arc::new(mock_embedder());
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        mock_embedder(),
+    ));
     let rag =
         Arc::new(RagService::new(Arc::clone(&db), Arc::clone(&embedder)).expect("rag service"));
     let io_handle = IoManagerHandle::new();

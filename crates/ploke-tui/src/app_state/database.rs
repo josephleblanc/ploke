@@ -1099,7 +1099,15 @@ mod test {
             .unwrap_or_else(|_| crate::user_config::UserConfig::default());
 
         debug!("Registry prefs loaded: {:#?}", config.registry);
-        let new_db = ploke_db::Database::new(cozo_db);
+        let processor = config.load_embedding_processor()?;
+        let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
+            processor,
+        ));
+
+        let new_db = ploke_db::Database::new_with_active_set(
+            cozo_db,
+            embedding_runtime.active_set_handle(),
+        );
         let db_handle = Arc::new(new_db);
 
         // Initial parse is now optional - user can run indexing on demand
@@ -1113,21 +1121,19 @@ mod test {
         let event_bus_caps = EventBusCaps::default();
         let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
-        let processor = config.load_embedding_processor()?;
-        let proc_arc = Arc::new(processor);
-
         // TODO:
         // 1 Implement the cancellation token propagation in IndexerTask
         // 2 Add error handling for embedder initialization failures
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
-            Arc::clone(&proc_arc), // Use configured processor
+            Arc::clone(&embedding_runtime), // Use configured processor
             CancellationToken::new().0,
             8,
         );
 
-        let rag = RagService::new(Arc::clone(&db_handle), Arc::clone(&proc_arc))?;
+        let rag =
+            RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;
         let state = Arc::new(AppState {
             chat: ChatState::new(ChatHistory::new()),
             config: ConfigState::default(),
@@ -1136,7 +1142,7 @@ mod test {
             indexer_task: Some(Arc::new(indexer_task)),
             indexing_control: Arc::new(Mutex::new(None)),
             db: db_handle.clone(),
-            embedder: Arc::clone(&proc_arc),
+            embedder: Arc::clone(&embedding_runtime),
             io_handle: io_handle.clone(),
             proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),

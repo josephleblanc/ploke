@@ -320,24 +320,26 @@ impl Database {
 
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
+        Self::new_with_active_set(db, Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())))
+    }
+
+    pub fn new_with_active_set(
+        db: Db<MemStorage>,
+        active_set: Arc<RwLock<EmbeddingSet>>,
+    ) -> Self {
         Self {
             db,
-            // TODO:migrate-multi-embed-full
-            // Update to not use hardcoded active_embedding_set in new and update callsites.
-            // Replace those taht use default model with call to `default()` instead
-            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
+            active_embedding_set: active_set,
         }
     }
+
     pub fn new_init() -> Result<Self, PlokeError> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        // TODO:migrate-multi-embed-full
-        // Update to not use hardcoded active_embedding_set in new and update callsites.
-        // Replace those taht use default model with call to `default()` instead
-        Ok(Self {
+        Ok(Self::new_with_active_set(
             db,
-            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
-        })
+            Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
+        ))
     }
 
     pub fn init_with_schema() -> Result<Self, PlokeError> {
@@ -347,10 +349,10 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        Ok(Self {
+        Ok(Self::new_with_active_set(
             db,
-            active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
-        })
+            Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
+        ))
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.

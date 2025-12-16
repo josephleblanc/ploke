@@ -2,6 +2,7 @@
 mod unit_tests;
 
 use crate::local::{EmbeddingConfig, LocalEmbedder};
+use crate::runtime::EmbeddingRuntime;
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::providers::openrouter::OpenRouterBackend;
@@ -176,7 +177,7 @@ pub enum IndexerCommand {
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
-    pub embedding_processor: Arc<EmbeddingProcessor>,
+    pub embedding_runtime: Arc<EmbeddingRuntime>,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
@@ -188,14 +189,14 @@ impl IndexerTask {
     pub fn new(
         db: Arc<Database>,
         io: IoManagerHandle,
-        embedding_processor: Arc<EmbeddingProcessor>,
+        embedding_runtime: Arc<EmbeddingRuntime>,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
         Self {
             db,
             io,
-            embedding_processor,
+            embedding_runtime,
             cancellation_token,
             batch_size,
             bm25_tx: None,
@@ -428,7 +429,7 @@ impl IndexerTask {
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
-        let active_embedding_set = self.db.with_active_set(|set| set.clone())?;
+        let active_embedding_set = self.embedding_runtime.current_active_set()?;
         self.db.put_embedding_set(&active_embedding_set)?;
         self.db
             .ensure_vector_embedding_relation(&active_embedding_set)?;
@@ -767,7 +768,7 @@ impl IndexerTask {
         }
 
         let embeddings = self
-            .embedding_processor
+            .embedding_runtime
             .generate_embeddings_with_cancel(
                 valid_snippets,
                 Some(&self.cancellation_token.listener()),
@@ -779,7 +780,7 @@ impl IndexerTask {
             embeddings.first().map(|v| v.len())
         );
 
-        let dims = self.embedding_processor.dimensions();
+        let dims = self.embedding_runtime.dimensions()?;
         for embedding in &embeddings {
             if embedding.len() != dims {
                 return Err(EmbedError::DimensionMismatch {

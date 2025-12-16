@@ -43,10 +43,10 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
-//! use ploke_embed::indexer::EmbeddingProcessor;
+//! use ploke_embed::runtime::EmbeddingRuntime;
 //! use ploke_db::{Database};
 //!
-//! # async fn doc_example(mut db: Arc<Database>, embedder: Arc<EmbeddingProcessor>) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn doc_example(mut db: Arc<Database>, embedder: Arc<EmbeddingRuntime>) -> Result<(), Box<dyn std::error::Error>> {
 //! // Construct the service (BM25 actor is started internally).
 //! let rag = RagService::new(db.clone(), embedder.clone())?;
 //!

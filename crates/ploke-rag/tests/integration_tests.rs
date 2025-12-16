@@ -6,6 +6,7 @@ use ploke_db::{create_index_primary, Database};
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::{EmbeddingConfig, LocalEmbedder},
+    runtime::EmbeddingRuntime,
 };
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
@@ -35,8 +36,12 @@ async fn setup_rag() -> Result<RagService, Error> {
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
-    RagService::new(db.clone(), embedding_processor).map_err(Into::into)
+    let embedding_processor = EmbeddingProcessor::new(source);
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        embedding_processor,
+    ));
+    RagService::new(db.clone(), embedding_runtime).map_err(Into::into)
 }
 
 async fn fetch_snippet_containing(

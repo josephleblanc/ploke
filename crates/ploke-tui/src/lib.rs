@@ -161,8 +161,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // llm: registry prefs are used directly; model lists/capabilities fetched via router APIs.
     tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
-    let new_db = ploke_db::Database::init_with_schema()?;
+
+    let processor = config.load_embedding_processor()?;
+    let embedding_runtime =
+        Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(processor));
+
+    let mut new_db = ploke_db::Database::init_with_schema()?;
     new_db.setup_multi_embedding()?;
+    new_db.active_embedding_set = embedding_runtime.active_set_handle();
     let db_handle = Arc::new(new_db);
 
     // Initial parse is now optional - user can run indexing on demand
@@ -176,8 +182,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let event_bus_caps = EventBusCaps::default();
     let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
-    let processor = config.load_embedding_processor()?;
-    let proc_arc = Arc::new(processor);
     let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)?;
 
     // TODO:
@@ -186,7 +190,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let indexer_task = IndexerTask::new(
         db_handle.clone(),
         io_handle.clone(),
-        Arc::clone(&proc_arc), // Use configured processor
+        Arc::clone(&embedding_runtime), // Use configured processor
         CancellationToken::new().0,
         8,
     )
@@ -196,7 +200,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // Initialize RAG orchestration service with full capabilities (BM25 + dense + IoManager)
     let rag = match ploke_rag::RagService::new_full(
         db_handle.clone(),
-        Arc::clone(&proc_arc),
+        Arc::clone(&embedding_runtime),
         io_handle.clone(),
         ploke_rag::RagConfig::default(),
     ) {
@@ -220,7 +224,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         indexer_task: Some(Arc::clone(&indexer_task)),
         indexing_control: Arc::new(Mutex::new(None)),
         db: db_handle,
-        embedder: Arc::clone(&proc_arc),
+        embedder: Arc::clone(&embedding_runtime),
         io_handle: io_handle.clone(),
         proposals: RwLock::new(HashMap::new()),
         create_proposals: RwLock::new(HashMap::new()),

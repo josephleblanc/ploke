@@ -18,6 +18,7 @@ use ploke_embed::{
     config::OpenRouterConfig,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerCommand, IndexerTask},
     providers::openrouter::OpenRouterBackend,
+    runtime::EmbeddingRuntime,
 };
 use ploke_error::Error as PlokeError;
 use ploke_io::IoManagerHandle;
@@ -202,7 +203,7 @@ async fn run_fixture_tracking_hash_index(
         EmbeddingModelId::new_from_str(model),
         EmbeddingShape::new_dims_default(dims as u32),
     );
-    db.set_active_set(new_set);
+    db.set_active_set(new_set)?;
 
     // IMPORTANT: Cozo will error on queries that reference an embedding relation that doesn't exist.
     // IndexerTask::run does this setup internally, but the test harness also queries counts *before*
@@ -219,9 +220,10 @@ async fn run_fixture_tracking_hash_index(
     let pending_before_nonfiles = db.count_unembedded_nonfiles()?;
 
     let backend = OpenRouterBackend::new(&openrouter_cfg(model, dims))?;
-    let embedding_processor = Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
-        backend,
-    )));
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend)),
+    ));
 
     let db = std::sync::Arc::new(db);
     let io = IoManagerHandle::new();
@@ -231,7 +233,7 @@ async fn run_fixture_tracking_hash_index(
     let idx = IndexerTask::new(
         std::sync::Arc::clone(&db),
         io,
-        embedding_processor,
+        embedding_runtime,
         cancellation_token,
         8,
     );
@@ -492,20 +494,21 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
         EmbeddingModelId::new_from_str(model),
         EmbeddingShape::new_dims_default(dims as u32),
     );
-    db.set_active_set(new_set);
+    db.set_active_set(new_set)?;
 
     // Index once (remote embeddings).
     let backend = OpenRouterBackend::new(&openrouter_cfg(model, dims))?;
-    let embedding_processor = Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
-        backend,
-    )));
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend)),
+    ));
     let db = Arc::new(db);
     let io = IoManagerHandle::new();
     let (cancellation_token, _cancel_handle) = CancellationToken::new();
     let idx = IndexerTask::new(
         Arc::clone(&db),
         io,
-        embedding_processor,
+        embedding_runtime,
         cancellation_token,
         8,
     );

@@ -35,6 +35,7 @@ use crate::{
     error::EmbedError,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask, IndexingStatus},
     local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
+    runtime::EmbeddingRuntime,
 };
 
 /// Gate long-running tests behind per-test env flags.
@@ -283,7 +284,10 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor { source },
+    ));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -297,7 +301,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_runtime),
         cancellation_token,
         batch_size,
     )
@@ -551,7 +555,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor { source },
+    ));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -564,7 +571,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     let mut idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_runtime),
         cancellation_token,
         batch_size,
     )

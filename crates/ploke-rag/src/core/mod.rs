@@ -16,6 +16,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::trace;
+use ploke_embed::indexer::EmbeddingProcessor;
+use ploke_embed::runtime::EmbeddingRuntime;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {
@@ -129,7 +131,7 @@ impl Reranker for NoopReranker {
 #[derive(Debug)]
 pub struct RagService {
     db: Arc<Database>,
-    dense_embedder: Arc<EmbeddingProcessor>,
+    dense_embedder: Arc<EmbeddingRuntime>,
     bm_embedder: mpsc::Sender<Bm25Cmd>,
     cfg: RagConfig,
     io: Option<Arc<IoManagerHandle>>,
@@ -139,7 +141,7 @@ impl RagService {
     /// Construct a new RAG service, starting the BM25 service actor.
     pub fn new(
         db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingProcessor>,
+        dense_embedder: Arc<EmbeddingRuntime>,
     ) -> Result<Self, RagError> {
         // ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
@@ -155,7 +157,7 @@ impl RagService {
     /// Construct with explicit configuration (no IoManager).
     pub fn new_with_config(
         db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingProcessor>,
+        dense_embedder: Arc<EmbeddingRuntime>,
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
@@ -171,7 +173,7 @@ impl RagService {
     /// Construct with an IoManager and default configuration.
     pub fn new_with_io(
         db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingProcessor>,
+        dense_embedder: Arc<EmbeddingRuntime>,
         io: IoManagerHandle,
     ) -> Result<Self, RagError> {
         Self::new_full(db, dense_embedder, io, RagConfig::default())
@@ -180,7 +182,7 @@ impl RagService {
     /// Construct with both IoManager and explicit configuration.
     pub fn new_full(
         db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingProcessor>,
+        dense_embedder: Arc<EmbeddingRuntime>,
         io: IoManagerHandle,
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
@@ -197,7 +199,7 @@ impl RagService {
     /// Construct with both IoManager and rebuild avgld from db contents.
     pub fn new_rebuilt(
         db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingProcessor>,
+        dense_embedder: Arc<EmbeddingRuntime>,
         io: IoManagerHandle,
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
@@ -214,7 +216,10 @@ impl RagService {
     /// Convenience constructor for tests with an in-memory database and mock embedder.
     pub fn new_mock() -> Self {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("init test db"));
-        let dense_embedder = Arc::new(ploke_embed::indexer::EmbeddingProcessor::new_mock());
+        let dense_embedder =
+            Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
+                ploke_embed::indexer::EmbeddingProcessor::new_mock(),
+            ));
         let bm_embedder = bm25_service::start_default(db.clone()).expect("start bm25");
         Self {
             db,

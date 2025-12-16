@@ -13,6 +13,7 @@ use super::*;
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::LocalEmbedder,
+    runtime::EmbeddingRuntime,
 };
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
@@ -44,12 +45,15 @@ impl MockTrait for ploke_io::IoManagerHandle {
 #[ignore = "needs refactor"]
 async fn test_race_condition_without_oneshot() {
     let db = Arc::new(ploke_db::Database::new_init().unwrap());
-    let mock_proc = Arc::new(EmbeddingProcessor::mock());
-    let rag = Arc::new(RagService::new(db.clone(), mock_proc).unwrap());
+    let mock_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor::mock(),
+    ));
+    let rag = Arc::new(RagService::new(db.clone(), Arc::clone(&mock_runtime)).unwrap());
     let (rag_tx, _) = mpsc::channel::<RagEvent>(100);
     let state = Arc::new(AppState::new(
         db.clone(),
-        Arc::new(EmbeddingProcessor::mock()),
+        Arc::clone(&mock_runtime),
         ploke_io::IoManagerHandle::mock(),
         rag,
         TokenBudget::default(),
@@ -108,12 +112,15 @@ async fn test_race_condition_without_oneshot() {
 #[tokio::test]
 async fn test_fix_with_oneshot() {
     let db = Arc::new(ploke_db::Database::new_init().unwrap());
-    let mock_proc = Arc::new(EmbeddingProcessor::mock());
-    let rag = Arc::new(RagService::new(db.clone(), mock_proc).unwrap());
+    let mock_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor::mock(),
+    ));
+    let rag = Arc::new(RagService::new(db.clone(), Arc::clone(&mock_runtime)).unwrap());
     let (rag_tx, _) = mpsc::channel::<RagEvent>(100);
     let state = Arc::new(AppState::new(
         db.clone(),
-        Arc::new(EmbeddingProcessor::mock()),
+        Arc::clone(&mock_runtime),
         ploke_io::IoManagerHandle::mock(),
         rag,
         TokenBudget::default(),
