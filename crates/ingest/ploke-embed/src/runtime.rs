@@ -123,3 +123,42 @@ impl EmbeddingRuntime {
         Ok(embedder.dimensions())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
+
+    #[test]
+    fn activate_creates_vector_relation_and_updates_active_set() {
+        let db = Database::init_with_schema().expect("init db");
+        db.setup_multi_embedding().expect("setup multi embedding");
+
+        let runtime = EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        );
+
+        let new_set = EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("openrouter"),
+            EmbeddingModelId::new_from_str("test/model"),
+            EmbeddingShape::new_dims_default(384),
+        );
+        let new_embedder = Arc::new(EmbeddingProcessor::new_mock());
+
+        runtime
+            .activate(&db, new_set.clone(), new_embedder)
+            .expect("activate");
+
+        // Active set updated
+        let active = runtime.current_active_set().expect("active set");
+        assert_eq!(active.model, new_set.model);
+
+        // Relations exist for the new set
+        assert!(
+            db.is_vector_embedding_registered(&new_set)
+                .expect("relation check"),
+            "vector relation should be created for activated set"
+        );
+    }
+}
