@@ -1,4 +1,8 @@
-#![allow(dead_code, unused_variables, reason = "evolving api surface, may be useful, written 2025-12-15")]
+#![allow(
+    dead_code,
+    unused_variables,
+    reason = "evolving api surface, may be useful, written 2025-12-15"
+)]
 
 use futures::stream::{self, StreamExt, TryStreamExt};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -282,11 +286,7 @@ impl ApiCache for EndpointCache {
         // Convert to a common EndpointsResponse and flatten the endpoints
         for resp in responses {
             let er: EndpointsResponse = resp.into();
-            let EndpointData {
-                id,
-                endpoints,
-                ..
-            } = er.data;
+            let EndpointData { id, endpoints, .. } = er.data;
             self.cache_mut().entry(id.key).and_modify(|entry| {
                 entry.extend(endpoints.into_iter().map(Arc::new));
             });

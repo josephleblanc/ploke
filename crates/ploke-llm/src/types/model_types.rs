@@ -11,8 +11,7 @@ use crate::{
     registry::user_prefs::DEFAULT_MODEL,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-#[serde(try_from = "&str")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 /// The ModelKey is in the form {author}/{model}, and does not contain the `:{variant}` convention
 /// that may vary across routers/providers, e.g. for OpenRouter
 /// - ModelKey might be: deepseek/deepseek-r1
@@ -21,6 +20,43 @@ use crate::{
 pub struct ModelKey {
     pub author: Author,  // e.g. "openai", "nousresearch"
     pub slug: ModelSlug, // e.g. "gpt-5", "deephermes-3-llama-3-8b-preview"
+}
+
+impl serde::Serialize for ModelKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ModelKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Fields {
+            author: Author,
+            slug: ModelSlug,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Str(String),
+            Obj(Fields),
+        }
+
+        match Repr::deserialize(deserializer)? {
+            Repr::Str(s) => ModelKey::try_from(s.as_str()).map_err(serde::de::Error::custom),
+            Repr::Obj(fields) => Ok(ModelKey {
+                author: fields.author,
+                slug: fields.slug,
+            }),
+        }
+    }
 }
 
 impl Display for ModelKey {
@@ -54,10 +90,19 @@ impl<'a> TryFrom<&'a str> for ModelKey {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Default, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub struct ModelId {
     pub key: ModelKey,
     pub variant: Option<ModelVariant>,
+}
+
+impl serde::Serialize for ModelId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_request_string())
+    }
 }
 
 impl From<ModelKey> for ModelId {
@@ -144,8 +189,52 @@ impl<'de> serde::Deserialize<'de> for ModelId {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        FromStr::from_str(&s).map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum VariantRepr {
+            Known(ModelVariant),
+            Raw(String),
+        }
+
+        impl VariantRepr {
+            fn into_variant(self) -> ModelVariant {
+                match self {
+                    VariantRepr::Known(v) => v,
+                    VariantRepr::Raw(raw) => match raw.as_str() {
+                        "free" => ModelVariant::Free,
+                        "beta" => ModelVariant::Beta,
+                        "extended" => ModelVariant::Extended,
+                        "thinking" => ModelVariant::Thinking,
+                        "online" => ModelVariant::Online,
+                        "nitro" => ModelVariant::Nitro,
+                        "floor" => ModelVariant::Floor,
+                        other => ModelVariant::Other(ArcStr::from(other)),
+                    },
+                }
+            }
+        }
+
+        #[derive(Deserialize)]
+        struct Fields {
+            key: ModelKey,
+            #[serde(default)]
+            variant: Option<VariantRepr>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Str(String),
+            Obj(Fields),
+        }
+
+        match Repr::deserialize(deserializer)? {
+            Repr::Str(s) => FromStr::from_str(&s).map_err(serde::de::Error::custom),
+            Repr::Obj(fields) => Ok(ModelId {
+                key: fields.key,
+                variant: fields.variant.map(VariantRepr::into_variant),
+            }),
+        }
     }
 }
 
@@ -523,5 +612,32 @@ mod tests {
         let mid: ModelId = serde_json::from_value(raw).expect("deserialize ModelId");
         assert!(matches!(mid.variant, Some(ModelVariant::Beta)));
         assert_eq!(mid.to_string(), "openai/gpt-4o:beta");
+    }
+
+    #[test]
+    fn test_model_id_serializes_as_string() {
+        let mid = ModelId::from_str("openai/gpt-4o:beta").expect("parse");
+        let out = serde_json::to_value(&mid).expect("serialize");
+        assert_eq!(out, json!("openai/gpt-4o:beta"));
+    }
+
+    #[test]
+    fn test_model_key_roundtrip_string() {
+        let mk = ModelKey::try_from("openai/gpt-4o").expect("parse");
+        let out = serde_json::to_value(&mk).expect("serialize");
+        assert_eq!(out, json!("openai/gpt-4o"));
+        let back: ModelKey = serde_json::from_value(out).expect("deserialize");
+        assert_eq!(back, mk);
+    }
+
+    #[test]
+    fn test_model_id_deserialize_from_object_shape() {
+        // Historical shape written by fixtures/serialization: { key: { author, slug }, variant: null }
+        let raw = json!({
+            "key": { "author": "openai", "slug": "gpt-4o" },
+            "variant": null
+        });
+        let mid: ModelId = serde_json::from_value(raw).expect("deserialize");
+        assert_eq!(mid.to_string(), "openai/gpt-4o");
     }
 }

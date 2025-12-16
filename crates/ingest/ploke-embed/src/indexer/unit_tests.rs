@@ -35,6 +35,7 @@ use crate::{
     error::EmbedError,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask, IndexingStatus},
     local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
+    runtime::EmbeddingRuntime,
 };
 
 /// Gate long-running tests behind per-test env flags.
@@ -283,7 +284,10 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor { source },
+    ));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -297,8 +301,9 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_runtime),
         cancellation_token,
+        cancel_handle,
         batch_size,
     )
     .with_bm25_tx(bm25_cmd.clone());
@@ -551,7 +556,10 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
     let model = LocalEmbedder::new(EmbeddingConfig::default())?;
     let source = EmbeddingSource::Local(model);
-    let embedding_processor = EmbeddingProcessor { source };
+    let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        EmbeddingProcessor { source },
+    ));
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let batch_size = 8;
@@ -564,8 +572,9 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     let mut idx_tag = IndexerTask::new(
         Arc::clone(&db),
         io,
-        Arc::new(embedding_processor),
+        Arc::clone(&embedding_runtime),
         cancellation_token,
+        cancel_handle,
         batch_size,
     )
     .with_bm25_tx(bm25_cmd.clone());
@@ -711,7 +720,11 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
     use ploke_db::multi_embedding::{hnsw_ext::HnswExt, schema::EmbeddingSetExt};
 
     let db_ret = ploke_db::create_index_warn(&db);
-    let is_hnsw_registered = db.is_hnsw_index_registered(&db.active_embedding_set)?;
+    // TODO:active-embedding-set 2025-12-15
+    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+    // functions.
+    let active_embedding_set = db.with_active_set(|set| set.clone())?;
+    let is_hnsw_registered = db.is_hnsw_index_registered(&active_embedding_set)?;
     tracing::info!(?is_hnsw_registered);
     assert!(
         is_hnsw_registered,

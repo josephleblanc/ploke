@@ -1,15 +1,25 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::error::ErrorExt;
 use crate::llm::ProviderSlug;
 use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
 use crate::llm::router_only::RouterVariants;
 use crate::llm::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
 use crate::{EventBus, RagEvent, rag};
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
+use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
+use ploke_llm::router_only::openrouter::OpenRouter;
+use ploke_db::multi_embedding::db_ext::EmbeddingExt;
+use ploke_embed::config::OpenRouterConfig;
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
+use ploke_embed::providers::openrouter::OpenRouterBackend;
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use tracing::trace_span;
+use tracing::{trace_span, warn};
 
 use super::commands::StateCommand;
 use super::core::AppState;
@@ -273,7 +283,7 @@ pub async fn state_manager(
             // StateCommand::RagAssembleContext {
             //     req_id,
             //     user_query,
-            //     top_k,
+            //     top_k,dimension
             //     budget,
             //     strategy,
             // } => {
@@ -381,6 +391,121 @@ pub async fn state_manager(
             StateCommand::DecrementChatTtl => {
                 let mut chat_history = state.chat.write().await;
                 chat_history.decrement_ttl();
+            }
+            StateCommand::SelectEmbeddingModel { model_id, provider } => {
+                // TODO:multi-router 2025-12-15
+                // Add handling of different routers, match on selected state.router once we add a
+                // `router` field to `AppState`
+                let client = reqwest::Client::new();
+                let embedding_input = EmbeddingInput::Single("test for dims".to_string());
+                let req = EmbeddingRequest::<OpenRouter> {
+                    model: model_id.clone(),
+                    input: embedding_input,
+                    ..Default::default()
+                };
+                let dims =
+                    match <OpenRouter as HasEmbeddings>::fetch_validate_dims(&client, &req).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            e.emit_warning();
+                            add_msg_shortcut(&e.to_string()).await;
+                            continue;
+                        }
+                    };
+                let old_set_string =
+                    match state.db.with_active_set(|old_set| format!("{:?}", old_set)) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            e.emit_error();
+                            continue;
+                        }
+                    };
+                let emb_provider = EmbeddingProviderSlug::new_from_str(provider.as_ref());
+                let m = model_id.to_string();
+                let emb_model_id = EmbeddingModelId::new_from_str(&m);
+                let shape = EmbeddingShape::new_dims_default(dims as u32);
+                let embedding_set = EmbeddingSet::new(emb_provider, emb_model_id.clone(), shape);
+                // Rebuild or reuse embedder based on provider selection.
+                let new_embedder = if provider.as_ref().contains("openrouter") {
+                    let or_cfg = OpenRouterConfig {
+                        model: m.clone(),
+                        dimensions: Some(dims as usize),
+                        ..Default::default()
+                    };
+                    match OpenRouterBackend::new(&or_cfg) {
+                        Ok(backend) => Arc::new(EmbeddingProcessor::new(
+                            EmbeddingSource::OpenRouter(backend),
+                        )),
+                        Err(e) => {
+                            let err_msg = format!(
+                                "Failed to build OpenRouter embedder for {m} ({dims} dims): {e}"
+                            );
+                            add_msg_shortcut(&err_msg).await;
+                            e.emit_error();
+                            continue;
+                        }
+                    }
+                } else {
+                    match state.embedder.current_processor() {
+                        Ok(proc_arc) => proc_arc,
+                        Err(e) => {
+                            let err_msg = format!(
+                                "Failed to read current embedder while switching to {emb_model_id:?}: {e}"
+                            );
+                            add_msg_shortcut(&err_msg).await;
+                            continue;
+                        }
+                    }
+                };
+
+                // WARN if indexing is currently running; hot-swap during runs is risky.
+                if matches!(
+                    *state.indexing_state.read().await,
+                    Some(IndexingStatus {
+                        status: IndexStatus::Running,
+                        ..
+                    })
+                ) {
+                    warn!("Embedding set changed while indexing is Running; vectors may mix providers unless rerun.");
+                }
+
+                match state
+                    .embedder
+                    .activate(&state.db, embedding_set, Arc::clone(&new_embedder))
+                {
+                    Ok(()) => {
+                        // Ensure the vector relation exists for the new set before any search/index calls.
+                        if let Ok(active_set) = state.embedder.current_active_set() {
+                            // Best-effort; errors logged to help diagnose missing relations.
+                            if let Err(e) = state
+                                .db
+                                .ensure_embedding_set_relation()
+                                .and_then(|_| {
+                                    state
+                                        .db
+                                        .ensure_vector_embedding_relation(&active_set)
+                                        .map_err(ploke_error::Error::from)
+                                })
+                            {
+                                warn!(
+                                    "Failed to ensure embedding relations for {:?}: {}",
+                                    active_set, e
+                                );
+                            }
+                        }
+                        let msg = format!(
+                            "Database active_embedding_set from previous value {old_set_string} to new value {emb_model_id:?}"
+                        );
+                        add_msg_shortcut(&msg).await;
+                    }
+                    Err(e) => {
+                        let err_msg = format!(
+                            "Runtime error setting active_embedding_set from {old_set_string} to {emb_model_id:?}: {e}"
+                        );
+                        add_msg_shortcut(&err_msg).await;
+                        e.emit_error();
+                    }
+                };
             }
 
             _ => {}

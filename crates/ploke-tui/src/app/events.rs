@@ -327,10 +327,7 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
     }
 }
 
-fn handle_llm_embedding_models_response(
-    app: &mut App,
-    models_event: embedding_models::Event,
-) {
+fn handle_llm_embedding_models_response(app: &mut App, models_event: embedding_models::Event) {
     let embedding_models::Event::Response {
         models,
         search_keyword,
@@ -346,18 +343,17 @@ fn handle_llm_embedding_models_response(
     };
 
     let Some(eb) = app.embedding_browser.as_ref() else {
-        debug!("Received embedding model list response without open browser");
+        error!("Received embedding model list response without open browser");
         return;
     };
 
-    let Some(keyword_snapshot) = app.embedding_browser.as_ref().map(|eb| eb.keyword.clone())
-    else {
-        debug!("Received embedding model list response without an open browser; ignoring");
+    let Some(keyword_snapshot) = app.embedding_browser.as_ref().map(|eb| eb.keyword.clone()) else {
+        error!("Received embedding model list response without an open browser; ignoring");
         return;
     };
 
     if let Some(kw) = search_keyword.as_deref().filter(|k| *k != eb.keyword) {
-        debug!(
+        error!(
             "Dropping stale embedding results, expected '{}', got '{}')",
             eb.keyword, kw
         );

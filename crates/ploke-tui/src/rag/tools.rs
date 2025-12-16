@@ -575,8 +575,8 @@ pub async fn apply_ns_code_edit_tool(
     } = tool_call_params.clone();
     let crate_root = { state.system.read().await.crate_focus.clone() };
     let editing_cfg = { state.config.read().await.editing.clone() };
-    let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
-    let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
+    let files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     let count = typed_req.edits.len();
     let mut patches = typed_req.edits.into_iter().filter_map(|ed| match ed {
         Edit::Patch {

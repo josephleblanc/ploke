@@ -47,6 +47,9 @@ pub enum EmbedError {
     },
     #[error("Join handle failed for thread: {0}")]
     JoinFailed(String),
+
+    #[error("Runtime state error: {0}")]
+    State(String),
 }
 
 impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>> for EmbedError {

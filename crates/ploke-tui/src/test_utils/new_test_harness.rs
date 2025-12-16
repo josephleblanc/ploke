@@ -79,14 +79,21 @@ impl AppHarness {
         let processor = config
             .load_embedding_processor()
             .expect("load embedding processor");
-        let proc_arc = Arc::new(processor);
+        let embedding_runtime = Arc::new(
+            ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+                Arc::clone(&db_handle.active_embedding_set),
+                processor,
+            ),
+        );
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
             .expect("start bm25 service");
+        let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
-            Arc::clone(&proc_arc),
-            CancellationToken::new().0,
+            Arc::clone(&embedding_runtime),
+            index_cancellation_token,
+            index_cancel_handle,
             8,
         )
         .with_bm25_tx(bm25_cmd);
@@ -95,7 +102,7 @@ impl AppHarness {
         // RAG service (optional)
         let rag = match RagService::new_full(
             db_handle.clone(),
-            Arc::clone(&proc_arc),
+            Arc::clone(&embedding_runtime),
             io_handle.clone(),
             RagConfig::default(),
         ) {
@@ -118,7 +125,7 @@ impl AppHarness {
             indexer_task: Some(Arc::clone(&indexer_task)),
             indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
             db: db_handle,
-            embedder: Arc::clone(&proc_arc),
+            embedder: Arc::clone(&embedding_runtime),
             io_handle,
             proposals: RwLock::new(std::collections::HashMap::new()),
             create_proposals: RwLock::new(std::collections::HashMap::new()),

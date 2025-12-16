@@ -53,7 +53,18 @@ lazy_static! {
         // Ensure primary index exists for consistent behavior in tests using Rag/DB lookups
         create_index_primary(&db).expect("create primary index");
 
-        let db_handle = Arc::new(db);
+        // Embedder (from config) and shared runtime
+        let processor = config
+            .load_embedding_processor()
+            .expect("load embedding processor");
+        let embedding_runtime =
+            Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(processor));
+        // Share the active set handle with the database
+        let db_handle = Arc::new({
+            let mut db = db;
+            db.active_embedding_set = embedding_runtime.active_set_handle();
+            db
+        });
 
         // IO manager
         let io_handle = ploke_io::IoManagerHandle::new();
@@ -61,22 +72,18 @@ lazy_static! {
         // Event bus for the app
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
 
-        // Embedder (from config)
-        let processor = config
-            .load_embedding_processor()
-            .expect("load embedding processor");
-        let proc_arc = Arc::new(processor);
-
         // BM25 service (used by indexer/RAG)
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
             .expect("start bm25 service");
 
         // Indexer task
+        let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();
         let indexer_task = IndexerTask::new(
             db_handle.clone(),
             io_handle.clone(),
-            Arc::clone(&proc_arc),
-            CancellationToken::new().0,
+            Arc::clone(&embedding_runtime),
+            index_cancellation_token,
+            index_cancel_handle,
             8,
         )
         .with_bm25_tx(bm25_cmd);
@@ -85,7 +92,7 @@ lazy_static! {
         // RAG service (optional)
         let rag = match RagService::new_full(
             db_handle.clone(),
-            Arc::clone(&proc_arc),
+            Arc::clone(&embedding_runtime),
             io_handle.clone(),
             RagConfig::default(),
         ) {
@@ -102,7 +109,7 @@ lazy_static! {
             indexer_task: Some(Arc::clone(&indexer_task)),
             indexing_control: Arc::new(Mutex::new(None)),
             db: db_handle,
-            embedder: Arc::clone(&proc_arc),
+            embedder: Arc::clone(&embedding_runtime),
             io_handle: io_handle.clone(),
             proposals: RwLock::new(std::collections::HashMap::new()),
             create_proposals: RwLock::new(std::collections::HashMap::new()),

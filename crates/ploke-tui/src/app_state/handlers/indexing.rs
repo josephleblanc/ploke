@@ -4,7 +4,8 @@ use ploke_io::path_policy::SymlinkPolicy;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::app_state::AppState;
+use crate::app_state::{AppState, handlers};
+use crate::chat_history::MessageKind;
 use crate::parser::run_parse;
 use crate::{AppEvent, EventBus};
 
@@ -16,6 +17,15 @@ pub async fn index_workspace(
     workspace: String,
     needs_parse: bool,
 ) {
+    let add_msg_shortcut = |msg: &str| {
+        handlers::chat::add_msg_immediate(
+            &state,
+            &event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            MessageKind::SysInfo,
+        )
+    };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
         match state.system.read().await.crate_focus.clone() {
@@ -111,10 +121,9 @@ pub async fn index_workspace(
                 tracing::info!("Sending Indexing Completed");
             }
             Err(e) => {
-                tracing::warn!(
-                    "Sending Indexing Failed with error message: {}",
-                    e.to_string()
-                );
+                let err_msg = e.to_string();
+                add_msg_shortcut(&err_msg).await;
+                tracing::warn!("Sending Indexing Failed with error message: {}", err_msg);
             }
         }
         tracing::info!("Indexer task returned");

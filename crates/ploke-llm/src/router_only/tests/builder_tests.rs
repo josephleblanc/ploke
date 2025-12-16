@@ -1,7 +1,5 @@
 use crate::{
-    LLMParameters, ModelKey,
-    manager::RequestMessage,
-    router_only::openrouter::OpenRouter,
+    LLMParameters, ModelKey, manager::RequestMessage, router_only::openrouter::OpenRouter,
     types::model_types::ModelId,
 };
 use color_eyre::Result;

@@ -27,7 +27,7 @@ pub struct LoggingGuards {
 pub fn init_tracing() -> LoggingGuards {
     // -------- Main app log (unchanged from your version) --------
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("debug,debug_dup=error,read_file=error,scan_change=trace,ploke_db=debug,cozo=error,tokenizer=error"));
+        .unwrap_or_else(|_| EnvFilter::new("debug,embed-pipeline=trace,debug_dup=error,read_file=error,scan_change=trace,ploke_db=debug,cozo=error,tokenizer=error,reqwest=error,hyper_util=error"));
 
     let mut log_dir = workspace_root();
     log_dir.push("crates/ploke-tui/logs");

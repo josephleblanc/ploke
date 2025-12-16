@@ -1,7 +1,5 @@
 use crate::{
-    EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
-    embeddings::{EmbeddingRequest, HasEmbeddingModels, HasEmbeddings},
-    router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
+    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings}, router_only::{openrouter::EmbeddingProviderPrefs, ApiRoute, Router}, EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -27,6 +25,7 @@ impl HasEmbeddings for super::OpenRouter {
 
     const EMBEDDINGS_URL: &str = "https://openrouter.ai/api/v1/embeddings";
 
+    #[tracing::instrument(skip(client), fields(req), target = "embed-pipeline")]
     async fn fetch_embeddings(
         client: &reqwest::Client,
         req: &EmbeddingRequest<Self>,
@@ -35,6 +34,11 @@ impl HasEmbeddings for super::OpenRouter {
         Self: Sized,
         <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
     {
+        fn snippet_lossy(bytes: &[u8], max: usize) -> String {
+            let end = bytes.len().min(max);
+            String::from_utf8_lossy(&bytes[..end]).to_string()
+        }
+
         let api_key = Self::resolve_api_key()?;
         let url = std::env::var("OPENROUTER_EMBEDDINGS_URL")
             .unwrap_or_else(|_| Self::EMBEDDINGS_URL.to_string());
@@ -80,14 +84,85 @@ impl HasEmbeddings for super::OpenRouter {
             return Err(err.into());
         }
 
-        let parsed = resp.json::<Self::EmbeddingsResponse>().await.map_err(|e| {
-            OpenRouterEmbeddingError::Transport {
-                message: e.to_string(),
-                url: url.clone(),
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        let bytes = resp.bytes().await.map_err(|e| OpenRouterEmbeddingError::Transport {
+            message: e.to_string(),
+            url: url.clone(),
+        })?;
+
+        let parsed = parse_openrouter_embeddings_response(
+            &bytes,
+            status.as_u16(),
+            &url,
+            request_id.clone(),
+            content_type,
+        )
+        .map_err(|e| {
+            // Preserve the rich decode metadata when we can, so callers get actionable output.
+            match e {
+                OpenRouterEmbeddingError::Decode { .. } => e,
+                other => other.with_body_snippet(snippet_lossy(&bytes, 8 * 1024)),
             }
         })?;
 
+
         Ok(parsed)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenRouterErrorEnvelope {
+    error: OpenRouterErrorPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OpenRouterErrorPayload {
+    message: String,
+    #[serde(default)]
+    code: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum OpenRouterEmbeddingsEnvelope {
+    Ok(OpenRouterEmbeddingsResponse),
+    Err(OpenRouterErrorEnvelope),
+}
+
+fn parse_openrouter_embeddings_response(
+    bytes: &[u8],
+    http_status: u16,
+    url: &str,
+    request_id: Option<String>,
+    content_type: Option<String>,
+) -> Result<OpenRouterEmbeddingsResponse, OpenRouterEmbeddingError> {
+    let envelope = serde_json::from_slice::<OpenRouterEmbeddingsEnvelope>(bytes).map_err(|e| {
+        OpenRouterEmbeddingError::Decode {
+            message: e.to_string(),
+            url: url.to_string(),
+            status: http_status,
+            request_id: request_id.clone(),
+            content_type: content_type.clone(),
+            body_snippet: String::from_utf8_lossy(&bytes[..bytes.len().min(8 * 1024)]).to_string(),
+        }
+    })?;
+
+    match envelope {
+        OpenRouterEmbeddingsEnvelope::Ok(ok) => Ok(ok),
+        OpenRouterEmbeddingsEnvelope::Err(err) => Err(OpenRouterEmbeddingError::ApiError {
+            url: url.to_string(),
+            http_status,
+            api_code: err.error.code,
+            request_id,
+            content_type,
+            message: err.error.message,
+            body_snippet: None,
+        }),
     }
 }
 
@@ -137,6 +212,21 @@ pub struct OpenRouterEmbeddingsResponse {
     pub usage: Option<Usage>,
 }
 
+impl HasDims for OpenRouterEmbeddingsResponse {
+    fn dims(&self) -> Option< u64 > {
+        use OpenRouterEmbeddingVector::*;
+        self.data.first().map(|data| { 
+            match &data.embedding{
+                Float(items) => items.len() as u64,
+                Base64(base_64) => { 
+                    let len = base_64.len() / 4;
+                    len as u64
+                },
+            } 
+        })
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct OpenRouterEmbeddingsData {
     // pub object: EmbeddingMarker,
@@ -161,7 +251,10 @@ pub struct Usage {
 #[cfg(test)]
 mod error_mapping_tests {
     use super::*;
-    use crate::{embeddings::{EmbeddingInput, EmbeddingRequest}, router_only::openrouter::OpenRouter};
+    use crate::{
+        embeddings::{EmbeddingInput, EmbeddingRequest},
+        router_only::openrouter::OpenRouter,
+    };
     use httpmock::prelude::*;
     use once_cell::sync::Lazy;
     use reqwest::Client;
@@ -344,6 +437,29 @@ pub enum OpenRouterEmbeddingError {
     ProviderOverloaded { url: String },
     #[error("transport error for embeddings (url={url}): {message}")]
     Transport { message: String, url: String },
+    #[error(
+        "OpenRouter embedding API error (url={url}, http_status={http_status}, api_code={api_code:?}, request_id={request_id:?}, content_type={content_type:?}): {message}; body_snippet={body_snippet:?}"
+    )]
+    ApiError {
+        url: String,
+        http_status: u16,
+        api_code: Option<u16>,
+        request_id: Option<String>,
+        content_type: Option<String>,
+        message: String,
+        body_snippet: Option<String>,
+    },
+    #[error(
+        "error decoding embeddings response (url={url}, status={status}, request_id={request_id:?}, content_type={content_type:?}): {message}; body_snippet={body_snippet}"
+    )]
+    Decode {
+        message: String,
+        url: String,
+        status: u16,
+        request_id: Option<String>,
+        content_type: Option<String>,
+        body_snippet: String,
+    },
     #[error("unexpected embedding error status={status} url={url} body={body}")]
     Unexpected {
         status: u16,
@@ -353,6 +469,15 @@ pub enum OpenRouterEmbeddingError {
 }
 
 impl OpenRouterEmbeddingError {
+    fn with_body_snippet(mut self, snippet: String) -> Self {
+        if let OpenRouterEmbeddingError::ApiError { body_snippet, .. } = &mut self {
+            if body_snippet.is_none() {
+                *body_snippet = Some(snippet);
+            }
+        }
+        self
+    }
+
     fn from_status(
         status: StatusCode,
         body: String,
@@ -381,18 +506,53 @@ impl OpenRouterEmbeddingError {
 }
 
 #[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_error_envelope_with_http_200() {
+        let body = br#"{"error":{"message":"No successful provider responses.","code":404}}"#;
+        let err = parse_openrouter_embeddings_response(
+            body,
+            200,
+            "https://openrouter.ai/api/v1/embeddings",
+            None,
+            Some("application/json".to_string()),
+        )
+        .expect_err("should return api error");
+
+        match err {
+            OpenRouterEmbeddingError::ApiError {
+                http_status,
+                api_code,
+                message,
+                ..
+            } => {
+                assert_eq!(http_status, 200);
+                assert_eq!(api_code, Some(404));
+                assert_eq!(message, "No successful provider responses.");
+            }
+            other => panic!("unexpected error variant {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
 #[cfg(feature = "live_api_tests")]
 mod tests {
     use std::{str::FromStr, time::Duration};
 
     use super::*;
     use crate::{
+        ModelId, ProviderSlug,
         embeddings::{
             EmbClientConfig, EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest,
             HasEmbeddingModels,
-        }, router_only::openrouter::{OpenRouter, ProviderPreferences}, utils::{
+        },
+        router_only::openrouter::{OpenRouter, ProviderPreferences},
+        utils::{
             const_settings::test_consts::EMBEDDING_MODELS_JSON_FULL, test_helpers::openrouter_env,
-        }, ModelId, ProviderSlug
+        },
     };
     use color_eyre::Result;
     use fxhash::FxHashSet as HashSet;
@@ -427,10 +587,18 @@ mod tests {
             .expect("fixture data array")
             .iter()
             .map(|entry| {
-                entry["id"]
-                    .as_str()
-                    .expect("id stored as string in fixture")
-                    .to_string()
+                let id_value = entry
+                    .get("id")
+                    .expect("fixture entry has id field")
+                    .clone();
+                match id_value.as_str() {
+                    Some(id) => id.to_string(),
+                    None => {
+                        let parsed: ModelId =
+                            serde_json::from_value(id_value).expect("fixture id parses into ModelId");
+                        parsed.to_string()
+                    }
+                }
             })
             .collect()
     }

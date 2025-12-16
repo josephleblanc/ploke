@@ -2,6 +2,7 @@
 mod unit_tests;
 
 use crate::local::{EmbeddingConfig, LocalEmbedder};
+use crate::runtime::EmbeddingRuntime;
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::providers::openrouter::OpenRouterBackend;
@@ -25,6 +26,7 @@ use crate::{
     cancel_token::{CancellationListener, CancellationToken},
     error::EmbedError,
 };
+use crate::cancel_token::CancellationHandle;
 use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
 
 #[derive(Debug)]
@@ -68,12 +70,13 @@ impl EmbeddingProcessor {
         self.generate_embeddings_with_cancel(snippets, None).await
     }
 
+    #[instrument(skip_all, fields(source = ?self.source, target = "embed-pipeline"))]
     pub async fn generate_embeddings_with_cancel(
         &self,
         snippets: Vec<String>,
         cancel: Option<&CancellationListener>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        tracing::trace!("Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
+        tracing::trace!(target: "embed-pipeline", "Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
             self.dimensions(),
             snippets.len(),
             snippets.first(),
@@ -176,8 +179,13 @@ pub enum IndexerCommand {
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
-    pub embedding_processor: Arc<EmbeddingProcessor>,
+    pub embedding_runtime: Arc<EmbeddingRuntime>,
     pub cancellation_token: CancellationToken,
+    // Keep the cancellation channel sender alive for the duration of the IndexerTask.
+    // Without this, `CancellationListener::cancelled()` completes immediately (sender dropped),
+    // which incorrectly cancels remote embedding requests.
+    #[allow(dead_code)]
+    cancellation_handle: CancellationHandle,
     pub batch_size: usize,
     pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
@@ -188,15 +196,17 @@ impl IndexerTask {
     pub fn new(
         db: Arc<Database>,
         io: IoManagerHandle,
-        embedding_processor: Arc<EmbeddingProcessor>,
+        embedding_runtime: Arc<EmbeddingRuntime>,
         cancellation_token: CancellationToken,
+        cancellation_handle: CancellationHandle,
         batch_size: usize,
     ) -> Self {
         Self {
             db,
             io,
-            embedding_processor,
+            embedding_runtime,
             cancellation_token,
+            cancellation_handle,
             batch_size,
             bm25_tx: None,
             cursors: Mutex::new(HashMap::new()),
@@ -243,6 +253,7 @@ impl IndexerTask {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
         let db_clone = Arc::clone(&task.db);
+        ploke_db::create_index_primary(&db_clone)?;
         let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
 
         let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
@@ -400,7 +411,7 @@ impl IndexerTask {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
 
-        let db_ret = ploke_db::create_index_warn(&db_clone)?;
+        ploke_db::create_index_primary_with_index(&db_clone)?;
 
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
@@ -423,9 +434,14 @@ impl IndexerTask {
         // This is critical for remote embeddings where provider/model/dims differ from defaults.
         use ploke_db::multi_embedding::db_ext::EmbeddingExt as _;
         self.db.ensure_embedding_set_relation()?;
-        self.db.put_embedding_set(&self.db.active_embedding_set)?;
+
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let active_embedding_set = self.embedding_runtime.current_active_set()?;
+        self.db.put_embedding_set(&active_embedding_set)?;
         self.db
-            .ensure_vector_embedding_relation(&self.db.active_embedding_set)?;
+            .ensure_vector_embedding_relation(&active_embedding_set)?;
 
         let num_not_proc = self.db.count_unembedded_nonfiles()?;
         tracing::info!("Starting indexing with {} unembedded nodes", num_not_proc);
@@ -508,6 +524,17 @@ impl IndexerTask {
 
                     // Log with full context for diagnostics
                     tracing::error!("Batch process failed: {e:?}");
+
+                    // Fail fast: if a batch cannot be processed, the UI should surface failure
+                    // rather than appearing to "stall" at 0% with repeated batch errors.
+                    let msg = state
+                        .errors
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| "batch process failed".to_string());
+                    state.status = IndexStatus::Failed(msg);
+                    progress_tx.send(state.clone())?;
+                    return Err(e);
                 }
             }
 
@@ -678,7 +705,7 @@ impl IndexerTask {
     ) -> Result<(), EmbedError> {
         let node_count = nodes.iter().fold(0, |acc, b| acc + b.v.len());
         let mut counter = 0;
-        tracing::info!(
+        tracing::debug!(target: "embed-pipeline",
             "process_batch with {} relations and {} nodes of EmbeddingData",
             nodes.len(),
             node_count
@@ -692,7 +719,6 @@ impl IndexerTask {
             .flat_map(|n| n.v.into_iter().map(move |emb| (n.ty, emb)))
             .unzip();
         let num_to_embed = emb_vec.len();
-        tracing::warn!("-- -- -- num to embed {} nodes -- -- --", num_to_embed);
         let snippet_results = self
             .io
             .get_snippets_batch(emb_vec.clone())
@@ -761,7 +787,7 @@ impl IndexerTask {
         }
 
         let embeddings = self
-            .embedding_processor
+            .embedding_runtime
             .generate_embeddings_with_cancel(
                 valid_snippets,
                 Some(&self.cancellation_token.listener()),
@@ -773,7 +799,7 @@ impl IndexerTask {
             embeddings.first().map(|v| v.len())
         );
 
-        let dims = self.embedding_processor.dimensions();
+        let dims = self.embedding_runtime.dimensions()?;
         for embedding in &embeddings {
             if embedding.len() != dims {
                 return Err(EmbedError::DimensionMismatch {

@@ -74,6 +74,9 @@ pub enum DbError {
 
     #[error("Warning: Empty list of vectors passed as updates to database")]
     EmbeddingUpdateEmpty,
+
+    #[error("Error: Active Embedding Set Poisoned")]
+    ActiveSetPoisoned
 }
 
 impl DbError {

@@ -72,7 +72,6 @@ pub enum ApprovalsFilter {
     All,
 }
 
-
 impl ApprovalsFilter {
     fn matches_status(self, status: &EditProposalStatus) -> bool {
         use ApprovalsFilter::*;

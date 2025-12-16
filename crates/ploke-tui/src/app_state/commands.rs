@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use crate::ModelId;
 use crate::chat_history::MessageKind;
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
+use ploke_core::embeddings::EmbeddingProviderSlug;
 use ploke_core::ArcStr;
+use ploke_llm::ProviderName;
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -206,6 +208,12 @@ pub enum StateCommand {
         model_id_string: String,
         provider_key: Option<ProviderKey>,
     },
+    SelectEmbeddingModel {
+        // TODO:ploke-llm 2025-12-15
+        // Replace this with an EmbeddingModelId instead
+        model_id: ModelId,
+        provider: ArcStr,
+    }
 }
 
 impl StateCommand {
@@ -262,6 +270,7 @@ impl StateCommand {
             DenyCreations { .. } => "DenyCreations",
             SelectModelProvider { .. } => "SelectModelProvider",
             DecrementChatTtl => "DecrementChatTtl",
+            SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
         }
     }
 }

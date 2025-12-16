@@ -12,7 +12,8 @@ use crate::llm::{ModelId, ModelKey};
 use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
-use ploke_embed::indexer::{EmbeddingProcessor, IndexerCommand, IndexerTask, IndexingStatus};
+use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::{IoManagerHandle, NsWriteSnippetData, PatchApplyOptions};
 use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -22,6 +23,8 @@ pub struct AppState {
     pub chat: ChatState,
     pub config: ConfigState,
     pub system: SystemState,
+    // TODO:multi-router 2025-12-15
+    // Add router field for <dyn Router> or wrapper type or something
 
     // crate-external processes
     pub indexing_state: RwLock<Option<IndexingStatus>>,
@@ -29,7 +32,7 @@ pub struct AppState {
     pub indexing_control: Arc<Mutex<Option<mpsc::Sender<IndexerCommand>>>>,
 
     pub db: Arc<Database>,
-    pub embedder: Arc<EmbeddingProcessor>,
+    pub embedder: Arc<EmbeddingRuntime>,
     pub io_handle: IoManagerHandle,
 
     // In-memory registry for staged code-edit proposals (M1)
@@ -278,7 +281,7 @@ pub struct CreateProposal {
 impl AppState {
     pub fn new(
         db: Arc<Database>,
-        embedder: Arc<EmbeddingProcessor>,
+        embedder: Arc<EmbeddingRuntime>,
         io_handle: IoManagerHandle,
         rag: Arc<RagService>,
         budget: TokenBudget,

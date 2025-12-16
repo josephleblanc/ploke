@@ -313,20 +313,21 @@ fn local_request_code_context(hint: Option<&str>, token_budget: u32) -> String {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata()
                 && meta.is_file()
-                && let Ok(body) = fs::read_to_string(entry.path()) {
-                    let h = hint.unwrap_or("SimpleStruct");
-                    if body.contains(h) {
-                        // Return up to token_budget/4 chars from the first match vicinity
-                        let idx = body.find(h).unwrap_or(0);
-                        let start = idx.saturating_sub(120);
-                        let end = (idx + h.len() + 120).min(body.len());
-                        let snippet = body[start..end].to_string();
-                        hits.push((
-                            entry.file_name().to_string_lossy().to_string(),
-                            snippet.chars().take(token_budget as usize / 4).collect(),
-                        ));
-                    }
+                && let Ok(body) = fs::read_to_string(entry.path())
+            {
+                let h = hint.unwrap_or("SimpleStruct");
+                if body.contains(h) {
+                    // Return up to token_budget/4 chars from the first match vicinity
+                    let idx = body.find(h).unwrap_or(0);
+                    let start = idx.saturating_sub(120);
+                    let end = (idx + h.len() + 120).min(body.len());
+                    let snippet = body[start..end].to_string();
+                    hits.push((
+                        entry.file_name().to_string_lossy().to_string(),
+                        snippet.chars().take(token_budget as usize / 4).collect(),
+                    ));
                 }
+            }
         }
     }
 
