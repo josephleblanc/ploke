@@ -949,7 +949,32 @@ mod tests {
         );
 
         let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir]);
+        println!("{discovery_result:#?}");
         discovery_result?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_toml_real_codex() -> Result<(), DiscoveryError> {
+        let workspace_root = PathBuf::from("/home/brasides/code/codex/codex-rs/"); // Use workspace root for context
+
+        assert!(
+            workspace_root.is_dir(),
+            "target fixture workspace expected to be a directory"
+        );
+
+        let mut crate_dir = workspace_root.clone();
+        crate_dir.push("apply-patch/");
+
+        assert!(
+            crate_dir.is_dir(),
+            "target fixture crate expected to be a directory"
+        );
+
+        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir]);
+        println!("{discovery_result:#?}");
+        discovery_result?;
+
         Ok(())
     }
 
