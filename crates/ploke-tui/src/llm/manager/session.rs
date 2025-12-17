@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
 use chrono::DateTime;
 use ploke_llm::ChatHttpConfig;
@@ -22,6 +20,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
+use crate::llm::ChatHistoryTarget;
 use crate::tools::ToolDefinition;
 use crate::tools::ToolName;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
@@ -32,8 +31,11 @@ use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
 use ploke_llm::LlmError;
+use crate::tools::error::ToolErrorWire;
 
+const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
+const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
@@ -48,14 +50,22 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
                 Err(LlmError::Api {
                     status: code as u16,
                     message: msg.to_string(),
+                    url: None,
+                    body_snippet: Some(truncate_for_error(body_text, 4_096)),
                 })
             } else {
-                Err(LlmError::Deserialization("No choices".into()))
+                Err(LlmError::Deserialization {
+                    message: "No choices".into(),
+                    body_snippet: Some(truncate_for_error(body_text, 512)),
+                })
             }
         }
         Err(e) => {
             let err_msg = format!("Failed to Deserialize to json: {e}");
-            Err(LlmError::Deserialization(err_msg))
+            Err(LlmError::Deserialization {
+                message: err_msg,
+                body_snippet: Some(truncate_for_error(body_text, 512)),
+            })
         }
     }
 }
@@ -91,10 +101,10 @@ type ToolCallTimeout = Duration;
 impl Default for TuiToolPolicy {
     fn default() -> Self {
         Self {
-            tool_call_timeout: Duration::from_secs(10),
+            tool_call_timeout: Duration::from_secs(30),
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
-            tool_call_chain_limit: 15,
+            tool_call_chain_limit: 100,
             retry_without_tools_on_404: false,
         }
     }
@@ -116,11 +126,21 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for _chain in 0..policy.tool_call_chain_limit {
         let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
+        // match ploke_llm::chat_step(client, &req, &cfg).await {
+        //     Ok(chat_step_outcome) => chat_step_outcome,
+        //     Err(e) => {}
+        // };
 
         match outcome {
             ChatStepOutcome::Content(text) => return Ok(text),
 
             ChatStepOutcome::ToolCalls { calls, content, .. } => {
+                req.core
+                    .messages
+                    .push(RequestMessage::new_assistant_with_tool_calls(
+                        content.clone(),
+                        calls.clone(),
+                    ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
                 if !initial_message_updated {
@@ -132,6 +152,16 @@ pub async fn run_chat_session<R: Router>(
                     )
                     .await;
                     initial_message_updated = is_updated;
+                } else {
+                    let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
+                    state_cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg,
+                            kind: MessageKind::Assistant,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await
+                        .expect("state manager must be running");
                 }
 
                 // 2) run tools (EventBus + waiting is TUI concern)
@@ -145,12 +175,21 @@ pub async fn run_chat_session<R: Router>(
                 .await;
 
                 // 3) append tool results into req.core.messages for the next step
-                for (call_id, tool_json_result) in results {
+                for (call_id, tool_json_result) in results.into_iter() {
                     match tool_json_result {
                         Ok(tool_json) => {
                             req.core
                                 .messages
-                                .push(RequestMessage::new_tool(tool_json, call_id));
+                                .push(RequestMessage::new_tool(tool_json.clone(), call_id.clone()));
+                            state_cmd_tx
+                                .send(StateCommand::AddMessageTool {
+                                    new_msg_id: Uuid::new_v4(),
+                                    msg: tool_json,
+                                    kind: MessageKind::Tool,
+                                    tool_call_id: call_id,
+                                })
+                                .await
+                                .expect("state manager must be running");
                         }
                         Err(err_string) => {
                             let content = json!({ "ok": false, "error": err_string }).to_string();
@@ -175,7 +214,7 @@ pub async fn run_chat_session<R: Router>(
 
                 // loop again
             }
-        }
+        };
     }
 
     Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
@@ -309,6 +348,18 @@ pub async fn execute_tools_via_event_bus(
 
 use tracing::info;
 
+fn log_api_request_json(url: &str, payload: &str, rel_path: &str) -> color_eyre::Result<()> {
+    info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
+    write_payload(rel_path, payload);
+    Ok(())
+}
+
+fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Result<()> {
+    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{body}\n");
+    write_payload(OPENROUTER_RESPONSE_LOG_RAW, body);
+    Ok(())
+}
+
 async fn log_api_parsed_json_response(
     url: &str,
     status: u16,
@@ -316,7 +367,27 @@ async fn log_api_parsed_json_response(
 ) -> color_eyre::Result<()> {
     let payload: String = serde_json::to_string_pretty(parsed)?;
     info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
+    write_payload(OPENROUTER_RESPONSE_LOG_PARSED, &payload);
     Ok(())
+}
+
+fn write_payload(rel_path: &str, payload: &str) {
+    let mut path = workspace_root();
+    path.push(rel_path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, payload);
+}
+
+fn truncate_for_error(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let head = &s[..max.saturating_sub(200)];
+        let tail = &s[s.len().saturating_sub(200)..];
+        format!("{head}…<snip>…{tail}")
+    }
 }
 
 impl<'a, R> RequestSession<'a, R>
@@ -337,8 +408,11 @@ where
 
         // Use router-level constants for URL and API key
         let url = R::COMPLETION_URL;
-        let api_key = R::resolve_api_key()
-            .map_err(|e| LlmError::Request(format!("missing api key: {}", e)))?;
+        let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
+            message: format!("missing api key: {}", e),
+            url: None,
+            is_timeout: false,
+        })?;
 
         // Determine whether to include tools
         let mut use_tools = self.req.tools.is_some();
@@ -356,6 +430,9 @@ where
             }
 
             let _ = self.log_request().await;
+            if let Ok(req_json) = serde_json::to_string_pretty(&self.req) {
+                let _ = log_api_request_json(url, &req_json, OPENROUTER_REQUEST_LOG);
+            }
             let response = self
                 .client
                 .post(url)
@@ -367,16 +444,25 @@ where
                 .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
                 .send()
                 .await
-                .map_err(|e| LlmError::Request(e.to_string()))?;
+                .map_err(|e| LlmError::Request {
+                    message: format!("sending request to {url}: {e}"),
+                    url: Some(url.to_string()),
+                    is_timeout: e.is_timeout(),
+                })?;
 
-            if !response.status().is_success() {
-                let error_code = response.status();
+            let resp_url = response.url().to_string();
+            let resp_status = response.status();
+
+            if !resp_status.is_success() {
+                let error_code = resp_status;
                 tracing::error!(status_code = ?error_code, "Error status returned from API");
-                let status = response.status().as_u16();
+                let status = resp_status.as_u16();
                 let text = response
                     .text()
                     .await
                     .unwrap_or_else(|_| "<no error body>".into());
+                let snippet = truncate_for_error(&text, 4_096);
+                let _ = log_api_raw_response(&resp_url, status, &text);
 
                 if status == 404
                     && use_tools
@@ -399,20 +485,26 @@ where
                 return Err(LlmError::Api {
                     status,
                     message: text,
+                    url: Some(resp_url),
+                    body_snippet: Some(snippet),
                 });
             }
 
-            let log_url = response.url().to_string();
-            let log_status = response.status().as_u16();
+            let log_url = resp_url.clone();
+            let log_status = resp_status.as_u16();
             let body_text = response
                 .text()
                 .await
-                .map_err(|e| LlmError::Request(e.to_string()))?;
+                .map_err(|e| LlmError::Request {
+                    message: format!("while reading response body (status {log_status}): {e}"),
+                    url: Some(log_url.clone()),
+                    is_timeout: e.is_timeout(),
+                })?;
+
+            let _ = log_api_raw_response(&log_url, log_status, &body_text);
 
             // Attempt to log parsed response; fall back to provider-embedded error detection
             if let Ok(parsed) = serde_json::from_str::<OpenAiResponse>(&body_text) {
-                let mut log_dir = workspace_root();
-                log_dir.push(OPENROUTER_RESPONSE_LOG_PARSED);
                 let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
             } else if let Err(err) = check_provider_error(&body_text) {
                 return Err(err);
@@ -506,8 +598,12 @@ where
                                             error,
                                             ..
                                         }) if rid == request_id && cid == call_id => {
-                                            add_sysinfo_message(&call_id, &cmd_tx, "tool call error").await;
-                                            return Err(error);
+                                            let user_msg = ToolErrorWire::parse(&error)
+                                                .map(|wire| wire.user)
+                                                .unwrap_or(error.clone());
+                                            let status = format!("error: {user_msg}");
+                                            add_sysinfo_message(&call_id, &cmd_tx, &status).await;
+                                            return Err(user_msg);
                                         }
                                         _ => {}
                                     }
@@ -556,12 +652,23 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                             }
                             Ok((cid, Err(err_string))) => {
                                 tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
-                                let content = json!({"ok": false, "error": err_string}).to_string();
+                                let parsed = ToolErrorWire::parse(&err_string);
+                                let llm_payload = parsed
+                                    .as_ref()
+                                    .map(|w| w.llm.clone())
+                                    .unwrap_or_else(|| json!({"message": err_string}));
+                                let user_msg = parsed
+                                    .as_ref()
+                                    .map(|w| w.user.clone())
+                                    .unwrap_or_else(|| err_string.clone());
+
+                                let content = json!({"ok": false, "error": llm_payload}).to_string();
                                 self.req
                                     .core
                                     .messages
                                     .push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{err_string:?}");
+                                let err_msg =
+                                    format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
                                 state_cmd_tx
                                     .send(StateCommand::AddMessageTool {
                                         new_msg_id: Uuid::new_v4(),

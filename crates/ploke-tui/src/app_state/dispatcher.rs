@@ -11,12 +11,12 @@ use crate::{EventBus, RagEvent, rag};
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
-use ploke_llm::router_only::openrouter::OpenRouter;
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
+use ploke_llm::embeddings::{EmbeddingInput, EmbeddingRequest, HasEmbeddings};
+use ploke_llm::router_only::openrouter::OpenRouter;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{trace_span, warn};
@@ -276,22 +276,6 @@ pub async fn state_manager(
                 query,
                 top_k,
             } => rag::search::dense_search(&state, &event_bus, req_id, query, top_k).await,
-            // NOTE: I think this is no longer being used. Commenting out to look for errors if
-            // absent, delete later.
-            // - 2025-08-28
-            //
-            // StateCommand::RagAssembleContext {
-            //     req_id,
-            //     user_query,
-            //     top_k,dimension
-            //     budget,
-            //     strategy,
-            // } => {
-            //     rag::context::assemble_context(
-            //         &state, &event_bus, req_id, user_query, top_k, &budget, strategy,
-            //     )
-            //     .await
-            // }
             StateCommand::ApproveEdits { request_id } => {
                 rag::editing::approve_edits(&state, &event_bus, request_id).await;
             }
@@ -466,7 +450,9 @@ pub async fn state_manager(
                         ..
                     })
                 ) {
-                    warn!("Embedding set changed while indexing is Running; vectors may mix providers unless rerun.");
+                    warn!(
+                        "Embedding set changed while indexing is Running; vectors may mix providers unless rerun."
+                    );
                 }
 
                 match state
@@ -477,10 +463,8 @@ pub async fn state_manager(
                         // Ensure the vector relation exists for the new set before any search/index calls.
                         if let Ok(active_set) = state.embedder.current_active_set() {
                             // Best-effort; errors logged to help diagnose missing relations.
-                            if let Err(e) = state
-                                .db
-                                .ensure_embedding_set_relation()
-                                .and_then(|_| {
+                            if let Err(e) =
+                                state.db.ensure_embedding_set_relation().and_then(|_| {
                                     state
                                         .db
                                         .ensure_vector_embedding_relation(&active_set)

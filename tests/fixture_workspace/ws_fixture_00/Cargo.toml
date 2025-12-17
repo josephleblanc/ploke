@@ -1,0 +1,26 @@
+[workspace]
+members = ["fixture_toml"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
+
+edition = "2024"
+license = "GPL-3.0"
+
+[workspace.dependencies]
+fixture-toml = { path = "fixture_toml" }
+
+tokio = "1"
+pretty_assertions = "1.4.1"
+
+[workspace.lints]
+rust = {}
+
+[workspace.lints.clippy]
+needless_borrow = "deny"
+
+[profile.ci-test]
+debug = 1
+inherits = "test"
+opt-level = 0

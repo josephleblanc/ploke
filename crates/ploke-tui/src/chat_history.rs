@@ -430,7 +430,9 @@ impl ChatHistory {
                         .expect("Tool calls must have Some tool_call_id"),
                 )),
                 // UI/system info messages are not part of the API payload; omit.
-                MessageKind::SysInfo => None,
+                // NOTE: 2025-12-16
+                // Adding the sysinfo messages for now, want to try this out.
+                MessageKind::SysInfo => Some( ReqMsg::new_system(m.content.clone()) ),
             })
             .collect()
     }

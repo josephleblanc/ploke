@@ -168,7 +168,11 @@ async fn test_simple_query_models() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+        .map_err(|e| LlmError::Request {
+            message: e.to_string(),
+            url: Some(url.to_string()),
+            is_timeout: e.is_timeout(),
+        })?;
 
     let response_json = response.text().await?;
 
@@ -227,12 +231,16 @@ async fn test_default_query_endpoints() -> Result<()> {
     dir.push(cli::ENDPOINTS_JSON_DIR);
 
     let response = Client::new()
-        .get(url)
+        .get(&url)
         .bearer_auth(key)
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+        .map_err(|e| LlmError::Request {
+            message: e.to_string(),
+            url: Some(url.to_string()),
+            is_timeout: e.is_timeout(),
+        })?;
 
     let is_success = response.status().is_success();
     eprintln!("is_success: {}", is_success);
@@ -273,13 +281,19 @@ async fn test_free_query_endpoints() -> Result<()> {
     let mut dir = workspace_root();
     dir.push(cli::ENDPOINTS_JSON_DIR);
 
+    let url_for_req = url.clone();
+    let url_for_err = url.clone();
     let response = Client::new()
-        .get(url)
+        .get(url_for_req)
         .bearer_auth(key)
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+        .map_err(|e| LlmError::Request {
+            message: e.to_string(),
+            url: Some(url_for_err),
+            is_timeout: e.is_timeout(),
+        })?;
 
     let is_success = response.status().is_success();
     eprintln!("is_success: {}", is_success);
@@ -318,6 +332,7 @@ async fn test_default_post_completions() -> Result<()> {
         role: Role::User,
         content,
         tool_call_id: None,
+        tool_calls: None,
     };
 
     let req = ChatCompRequest::<OpenRouter> {
@@ -343,7 +358,11 @@ async fn test_default_post_completions() -> Result<()> {
         .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+        .map_err(|e| LlmError::Request {
+            message: e.to_string(),
+            url: Some(url.to_string()),
+            is_timeout: e.is_timeout(),
+        })?;
     let is_success = response.status().is_success();
     eprintln!("is_success: {}", is_success);
     eprintln!("status: {}", response.status());

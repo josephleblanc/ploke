@@ -252,6 +252,7 @@ pub fn default_messages() -> Vec<RequestMessage> {
                 content: "You are a helpful assistant, please help the user with their requests."
                     .to_string(),
                 tool_call_id: None,
+                tool_calls: None,
             }]
         })
         .clone()
