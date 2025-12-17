@@ -35,6 +35,10 @@ pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod create_file;
 pub mod ns_patch;
 pub mod ns_read;
+pub mod error;
+pub mod validators;
+
+pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
 
 // NOTE:ploke-llm
 // Moved ToolName and its `as_str` implementation into `ploke-core` for now so `ploke-llm` and
@@ -124,30 +128,6 @@ pub struct ToolResult {
     pub content: String,
 }
 
-// Tool errors
-#[derive(Debug, thiserror::Error)]
-pub enum ToolError {
-    #[error("Deserialization Error: {0}")]
-    DeserializationError(String),
-    #[error("Execution Error: {0}")]
-    ExecutionError(String),
-}
-
-#[allow(clippy::from_over_into)]
-impl Into<ploke_error::Error> for ToolError {
-    fn into(self) -> ploke_error::Error {
-        use ToolError::*;
-        match self {
-            DeserializationError(s) => {
-                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
-            }
-            ExecutionError(s) => {
-                ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(s))
-            }
-        }
-    }
-}
-
 // potential alternative for static dispatch, might be helpful for macro
 pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::Result<()> {
     // TODO: Implement this as the Clone method for Ctx
@@ -169,10 +149,17 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
-            let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
-                .inspect_err(|err| {
-                    request_code_context::RequestCodeContextGat::emit_err(&ctx, err.to_string());
-                })?;
+            let params =
+                request_code_context::RequestCodeContextGat::deserialize_params(&args).map_err(
+                    |err| {
+                        let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
+                        request_code_context::RequestCodeContextGat::emit_err(
+                            &ctx,
+                            terr.to_wire_string(),
+                        );
+                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    },
+                )?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
@@ -180,7 +167,13 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let ToolResult { content } =
                 request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
                     .await
-                    .inspect_err(|e| RequestCodeContextGat::emit_err(&ctx, e.to_string()))?;
+                    .map_err(|e| {
+                        let terr = request_code_context::RequestCodeContextGat::adapt_error(
+                            ToolInvocationError::Exec(e),
+                        );
+                        RequestCodeContextGat::emit_err(&ctx, terr.to_wire_string());
+                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -189,8 +182,10 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
-            let params = code_edit::GatCodeEdit::deserialize_params(&args).inspect_err(|err| {
-                code_edit::GatCodeEdit::emit_err(&ctx, err.to_string());
+            let params = code_edit::GatCodeEdit::deserialize_params(&args).map_err(|err| {
+                let terr = code_edit::GatCodeEdit::adapt_error(err);
+                code_edit::GatCodeEdit::emit_err(&ctx, terr.to_wire_string());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -198,7 +193,12 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             );
             let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
-                .inspect_err(|e| GatCodeEdit::emit_err(&ctx, e.to_string()))?;
+                .map_err(|e| {
+                    let terr =
+                        code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
+                    GatCodeEdit::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -207,8 +207,10 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::CreateFile => {
-            let params = create_file::CreateFile::deserialize_params(&args).inspect_err(|err| {
-                create_file::CreateFile::emit_err(&ctx, err.to_string());
+            let params = create_file::CreateFile::deserialize_params(&args).map_err(|err| {
+                let terr = create_file::CreateFile::adapt_error(err);
+                create_file::CreateFile::emit_err(&ctx, terr.to_wire_string());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -216,7 +218,12 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             );
             let ToolResult { content } = create_file::CreateFile::execute(params, ctx.clone())
                 .await
-                .inspect_err(|e| create_file::CreateFile::emit_err(&ctx, e.to_string()))?;
+                .map_err(|e| {
+                    let terr =
+                        create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
+                    create_file::CreateFile::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -225,8 +232,10 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::NsPatch => {
-            let params = ns_patch::NsPatch::deserialize_params(&args).inspect_err(|err| {
-                ns_patch::NsPatch::emit_err(&ctx, err.to_string());
+            let params = ns_patch::NsPatch::deserialize_params(&args).map_err(|err| {
+                let terr = ns_patch::NsPatch::adapt_error(err);
+                ns_patch::NsPatch::emit_err(&ctx, terr.to_wire_string());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -234,7 +243,11 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             );
             let ToolResult { content } = ns_patch::NsPatch::execute(params, ctx.clone())
                 .await
-                .inspect_err(|e| ns_patch::NsPatch::emit_err(&ctx, e.to_string()))?;
+                .map_err(|e| {
+                    let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
+                    ns_patch::NsPatch::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -243,8 +256,10 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             Ok(())
         }
         ToolName::NsRead => {
-            let params = ns_read::NsRead::deserialize_params(&args).inspect_err(|err| {
-                ns_read::NsRead::emit_err(&ctx, err.to_string());
+            let params = ns_read::NsRead::deserialize_params(&args).map_err(|err| {
+                let terr = ns_read::NsRead::adapt_error(err);
+                ns_read::NsRead::emit_err(&ctx, terr.to_wire_string());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
@@ -252,7 +267,11 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             );
             let ToolResult { content } = ns_read::NsRead::execute(params, ctx.clone())
                 .await
-                .inspect_err(|e| ns_read::NsRead::emit_err(&ctx, e.to_string()))?;
+                .map_err(|e| {
+                    let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
+                    ns_read::NsRead::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -285,6 +304,11 @@ pub trait Tool {
         Self: Sized;
 
     fn into_owned<'de>(params: &Self::Params<'de>) -> Self::OwnedParams;
+
+    /// Map transport/validation/exec errors into a structured ToolError.
+    fn adapt_error(err: ToolInvocationError) -> ToolError {
+        err.into_tool_error(Self::name())
+    }
 
     fn tool_def() -> ToolDefinition {
         ToolFunctionDef {
@@ -319,8 +343,11 @@ pub trait Tool {
     }
 
     // Helper for deserializing the arguments JSON string
-    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolError> {
-        serde_json::from_str(json).map_err(|e| ToolError::DeserializationError(e.to_string()))
+    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolInvocationError> {
+        serde_json::from_str(json).map_err(|e| ToolInvocationError::Deserialize {
+            source: e,
+            raw: Some(json.to_string()),
+        })
     }
 
     fn execute<'de>(

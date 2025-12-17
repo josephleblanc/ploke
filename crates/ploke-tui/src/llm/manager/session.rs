@@ -31,6 +31,7 @@ use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
 use ploke_llm::LlmError;
+use crate::tools::error::ToolErrorWire;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -597,8 +598,12 @@ where
                                             error,
                                             ..
                                         }) if rid == request_id && cid == call_id => {
-                                            add_sysinfo_message(&call_id, &cmd_tx, "tool call error").await;
-                                            return Err(error);
+                                            let user_msg = ToolErrorWire::parse(&error)
+                                                .map(|wire| wire.user)
+                                                .unwrap_or(error.clone());
+                                            let status = format!("error: {user_msg}");
+                                            add_sysinfo_message(&call_id, &cmd_tx, &status).await;
+                                            return Err(user_msg);
                                         }
                                         _ => {}
                                     }
@@ -647,12 +652,23 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                             }
                             Ok((cid, Err(err_string))) => {
                                 tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
-                                let content = json!({"ok": false, "error": err_string}).to_string();
+                                let parsed = ToolErrorWire::parse(&err_string);
+                                let llm_payload = parsed
+                                    .as_ref()
+                                    .map(|w| w.llm.clone())
+                                    .unwrap_or_else(|| json!({"message": err_string}));
+                                let user_msg = parsed
+                                    .as_ref()
+                                    .map(|w| w.user.clone())
+                                    .unwrap_or_else(|| err_string.clone());
+
+                                let content = json!({"ok": false, "error": llm_payload}).to_string();
                                 self.req
                                     .core
                                     .messages
                                     .push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{err_string:?}");
+                                let err_msg =
+                                    format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
                                 state_cmd_tx
                                     .send(StateCommand::AddMessageTool {
                                         new_msg_id: Uuid::new_v4(),

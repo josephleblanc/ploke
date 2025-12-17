@@ -3,20 +3,22 @@
 ## Status
 Accepted (2025-12-17)
 
+Signed off by JL 2025-12-17
+
 ## Context
 - Tool calls need actionable, audience-specific diagnostics (User e.g. convo history vs LLM vs System e.g. logging) instead of opaque deserialization errors.
 - We must avoid tightening coupling between `ploke-llm` and tool implementations as the tool set grows.
 - Common validation cases (e.g., token/context limits) and tool-specific checks (e.g., unified diff format) should share a consistent error surface and serialization for LLM feedback.
 
 ## Decision
-- Introduce an audience-aware error type in the tools layer (not in `ploke-llm`):
+- Introduce an audience-aware error type in the tools layer (not in `ploke-llm`), implemented in the current `ploke_tui::tools` module (future `ploke-tools` crate):
   - `Audience` enum `{ User, Llm, System }`
   - `ToolErrorCode` covering shared and tool-specific cases (e.g., `FieldTooLarge`, `WrongType`, `MalformedDiff`, `InvalidFormat`, `Io`, `Internal`).
-  - `ToolError` struct `{ tool: ToolName, code, field, expected, received, snippet, audience }` with `render(audience)` and `to_llm_payload()`.
+  - `ToolError` struct `{ tool: ToolName, code, field, expected, received, snippet, audience }`, deriving `thiserror::Error` and implementing `From<ploke_error::Error>`, with `format_for_audience(audience)` (avoid “render” naming collisions) and `to_llm_payload()`. Optionally implement `RenderMsg` from `crates/ploke-tui/src/app/types.rs` if UI integration requires it.
 - Add an adapter hook to the `Tool` trait: `fn adapt_error(err: ToolInvocationError) -> ToolError` (default implementation keeps tools decoupled from transport errors; tools override for richer hints).
 - Provide shared validators in the tools crate (e.g., bounded integer, token/context limits, unified diff format) that return `ToolError`.
 - Chat loop maps transport/serde failures into `ToolInvocationError`, then calls the tool’s `adapt_error`, emitting:
-  - User/System surfaces: `render(Audience::User/System)`
+  - User/System surfaces: `format_for_audience(Audience::User/System)`
   - LLM payload: `to_llm_payload()` embedded in tool result JSON for corrective guidance.
 
 ## Core Structures / Files
