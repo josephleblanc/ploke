@@ -79,6 +79,50 @@ pub enum DiscoveryError {
     /// Multiple non-fatal errors occurred during discovery.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
+    /// Failed to read a workspace manifest needed to resolve package version inheritance.
+    #[error(
+        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+    )]
+    WorkspaceManifestRead {
+        crate_path: PathBuf,
+        manifest_path: PathBuf,
+        #[source]
+        source: Arc<std::io::Error>,
+    },
+    /// Failed to parse a workspace manifest needed to resolve package version inheritance.
+    #[error(
+        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+    )]
+    WorkspaceManifestParse {
+        crate_path: PathBuf,
+        manifest_path: PathBuf,
+        #[source]
+        source: Arc<toml::de::Error>,
+    },
+    /// Could not find a workspace manifest when attempting to resolve `package.version.workspace = true`.
+    #[error(
+        "Unable to locate workspace Cargo.toml when resolving crate at {crate_path}; starting hint was {hint_path}"
+    )]
+    WorkspaceManifestNotFound {
+        crate_path: PathBuf,
+        hint_path: PathBuf,
+    },
+    /// Workspace manifest exists, but `workspace.package.version` is missing.
+    #[error(
+        "workspace.package.version missing in workspace Cargo.toml at {manifest_path} (required by crate at {crate_path})"
+    )]
+    WorkspacePackageVersionMissing {
+        crate_path: PathBuf,
+        manifest_path: PathBuf,
+    },
+    /// `package.version.workspace` was set to `false`, which is unsupported.
+    #[error(
+        "`package.version.workspace` must be true when inheriting version for crate at {crate_path} (manifest {manifest_path})"
+    )]
+    WorkspaceVersionFlagDisabled {
+        crate_path: PathBuf,
+        manifest_path: PathBuf,
+    },
 }
 
 impl TryFrom<DiscoveryError> for SynParserError {
@@ -114,6 +158,48 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 path: path.display().to_string(),
                 source_string: "walkdir".to_string(),
             },
+            WorkspaceManifestRead {
+                crate_path,
+                manifest_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: crate_path.display().to_string(),
+                path: manifest_path.display().to_string(),
+                source_string: "WorkspaceManifestRead".to_string(),
+            },
+            WorkspaceManifestParse {
+                crate_path,
+                manifest_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: crate_path.display().to_string(),
+                path: manifest_path.display().to_string(),
+                source_string: "WorkspaceManifestParse".to_string(),
+            },
+            WorkspaceManifestNotFound {
+                crate_path,
+                hint_path,
+            } => SynParserError::ComplexDiscovery {
+                name: crate_path.display().to_string(),
+                path: hint_path.display().to_string(),
+                source_string: "WorkspaceManifestNotFound".to_string(),
+            },
+            WorkspacePackageVersionMissing {
+                crate_path,
+                manifest_path,
+            } => SynParserError::ComplexDiscovery {
+                name: crate_path.display().to_string(),
+                path: manifest_path.display().to_string(),
+                source_string: "WorkspacePackageVersionMissing".to_string(),
+            },
+            WorkspaceVersionFlagDisabled {
+                crate_path,
+                manifest_path,
+            } => SynParserError::ComplexDiscovery {
+                name: crate_path.display().to_string(),
+                path: manifest_path.display().to_string(),
+                source_string: "WorkspaceVersionFlagDisabled".to_string(),
+            },
             NonFatalErrors(..) => todo!("Decide what to do with this one later."),
         })
     }
@@ -125,7 +211,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 #[derive(Deserialize, Debug, Clone)]
 struct PackageInfo {
     name: String,
-    version: String,
+    version: PackageVersion,
     // edition: Option<String>, // Could be useful later
 }
 
@@ -133,6 +219,153 @@ impl fmt::Display for PackageInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.name, self.version)
     }
+}
+
+/// Describes where a crate's version string originates.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+enum PackageVersion {
+    /// Version is specified directly in the crate's `Cargo.toml`.
+    Explicit(String),
+    /// Version is inherited from the workspace via `version.workspace = true`.
+    Workspace(WorkspaceVersionLink),
+}
+
+/// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
+/// treats `workspace = true` as the only supported value, so we surface explicit errors for other
+/// values to keep the type system honest.
+#[derive(Deserialize, Debug, Clone)]
+struct WorkspaceVersionLink {
+    workspace: bool,
+}
+
+impl fmt::Display for PackageVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Explicit(version) => write!(f, "{version}"),
+            Self::Workspace(_) => write!(f, "<workspace>"),
+        }
+    }
+}
+
+impl PackageVersion {
+    /// Produce the concrete version string, loading workspace metadata when needed.
+    ///
+    /// # Success
+    /// Returns a `String` borrowed from the crate manifest (`Explicit`) or from the workspace
+    /// (`Workspace`) once validation passes.
+    ///
+    /// # Errors
+    /// * [`DiscoveryError::WorkspaceVersionFlagDisabled`] if `workspace = false`.
+    /// * Any error emitted by [`resolve_workspace_version`] when escalation to a workspace lookup fails.
+    fn resolve(&self, crate_root: &Path, manifest_path: &Path) -> Result<String, DiscoveryError> {
+        match self {
+            PackageVersion::Explicit(version) => Ok(version.clone()),
+            PackageVersion::Workspace(link) => {
+                if !link.workspace {
+                    return Err(DiscoveryError::WorkspaceVersionFlagDisabled {
+                        crate_path: crate_root.to_path_buf(),
+                        manifest_path: manifest_path.to_path_buf(),
+                    });
+                }
+                resolve_workspace_version(crate_root, manifest_path)
+            }
+        }
+    }
+}
+
+/// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
+/// signals that the inspected manifest isn't a workspace boundary.
+#[derive(Deserialize, Debug, Clone)]
+struct WorkspaceManifestMetadata {
+    workspace: Option<WorkspaceMetadataSection>,
+}
+
+/// Captures the `[workspace]` table when parsing ancestor manifests.
+#[derive(Deserialize, Debug, Clone)]
+struct WorkspaceMetadataSection {
+    package: Option<WorkspacePackageMetadata>,
+}
+
+/// Captures the `[workspace.package]` metadata that may hold the shared version.
+#[derive(Deserialize, Debug, Clone)]
+struct WorkspacePackageMetadata {
+    version: Option<String>,
+}
+
+/// Resolve a workspace-inherited version by loading the nearest ancestor workspace manifest.
+///
+/// # Success
+/// Returns the `workspace.package.version` string discovered at or above `crate_root`.
+///
+/// # Errors
+/// * [`DiscoveryError::WorkspacePackageVersionMissing`] when the workspace manifest lacks a version.
+/// * Any error bubbled up from [`locate_workspace_manifest`].
+fn resolve_workspace_version(
+    crate_root: &Path,
+    manifest_path: &Path,
+) -> Result<String, DiscoveryError> {
+    let (workspace_manifest_path, workspace_metadata) =
+        locate_workspace_manifest(crate_root, manifest_path)?;
+
+    workspace_metadata
+        .workspace
+        .as_ref()
+        .and_then(|section| section.package.as_ref())
+        .and_then(|package| package.version.clone())
+        .ok_or_else(|| DiscoveryError::WorkspacePackageVersionMissing {
+            crate_path: crate_root.to_path_buf(),
+            manifest_path: workspace_manifest_path.clone(),
+        })
+}
+
+/// Search upwards from the crate root until a `[workspace]` manifest is found.
+///
+/// # Success
+/// Returns the manifest path and parsed metadata for the nearest ancestor that declares a
+/// `[workspace]` table, including the crate's own manifest.
+///
+/// # Errors
+/// * [`DiscoveryError::WorkspaceManifestRead`] on IO failures.
+/// * [`DiscoveryError::WorkspaceManifestParse`] on TOML parse failures.
+/// * [`DiscoveryError::WorkspaceManifestNotFound`] if no workspace manifests exist up to filesystem root.
+fn locate_workspace_manifest(
+    crate_root: &Path,
+    manifest_path: &Path,
+) -> Result<(PathBuf, WorkspaceManifestMetadata), DiscoveryError> {
+    let mut current_dir = Some(crate_root);
+    let crate_path = crate_root.to_path_buf();
+    let hint_path = manifest_path.to_path_buf();
+
+    while let Some(dir) = current_dir {
+        let candidate_manifest = dir.join("Cargo.toml");
+        if candidate_manifest.is_file() {
+            let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
+                DiscoveryError::WorkspaceManifestRead {
+                    crate_path: crate_path.clone(),
+                    manifest_path: candidate_manifest.clone(),
+                    source: Arc::new(err),
+                }
+            })?;
+
+            let metadata: WorkspaceManifestMetadata =
+                toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
+                    crate_path: crate_path.clone(),
+                    manifest_path: candidate_manifest.clone(),
+                    source: Arc::new(err),
+                })?;
+
+            if metadata.workspace.is_some() {
+                return Ok((candidate_manifest, metadata));
+            }
+        }
+        current_dir = dir.parent();
+    }
+
+    Err(DiscoveryError::WorkspaceManifestNotFound {
+        crate_path,
+        hint_path,
+    })
 }
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
@@ -500,7 +733,7 @@ struct CargoManifest {
 pub struct CrateContext {
     /// The simple name of the crate (e.g., "syn_parser").
     pub name: String,
-    /// The version string from Cargo.toml (e.g., "0.1.0").
+    /// The resolved version string for the crate (e.g., "0.1.0").
     pub version: String,
     /// The UUID namespace derived for this specific crate version using
     /// `Uuid::new_v5(&PROJECT_NAMESPACE_UUID, ...)`.
@@ -666,17 +899,21 @@ pub fn run_discovery_phase(
             }
         };
 
+        let CargoManifest {
+            package,
+            features,
+            dependencies,
+            dev_dependencies,
+        } = manifest;
+
         // --- Extract Package Info (Non-Fatal Errors) ---
         // Although PackageInfo deserialization requires name/version, we handle potential
         // future scenarios or direct struct manipulation by checking here.
         // For now, serde handles this, but let's keep the structure for robustness.
-        let crate_name = manifest.package.name.clone(); // Assume present due to serde
-        let crate_version = manifest.package.version.clone(); // Assume present due to serde
-
-        // --- Extract Optional Sections ---
-        let features = manifest.features; // Cloned implicitly by struct move/copy if needed later
-        let dependencies = manifest.dependencies;
-        let dev_dependencies = manifest.dev_dependencies;
+        let crate_name = package.name.clone(); // Assume present due to serde
+        let crate_version = package
+            .version
+            .resolve(crate_root_path, &cargo_toml_path)?;
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
@@ -884,6 +1121,68 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
+            DiscoveryError::WorkspaceManifestRead {
+                crate_path,
+                manifest_path,
+                source,
+            } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "Failed to read workspace manifest {} for crate {}",
+                    manifest_path.display(),
+                    crate_path.display()
+                ),
+                source: Some(source),
+            }
+            .into(),
+            DiscoveryError::WorkspaceManifestParse {
+                crate_path,
+                manifest_path,
+                source,
+            } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "Failed to parse workspace manifest {} for crate {}",
+                    manifest_path.display(),
+                    crate_path.display()
+                ),
+                source: Some(source),
+            }
+            .into(),
+            DiscoveryError::WorkspaceManifestNotFound {
+                crate_path,
+                hint_path,
+            } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "Workspace manifest not found for crate {} (searched from {})",
+                    crate_path.display(),
+                    hint_path.display()
+                ),
+                source: None,
+            }
+            .into(),
+            DiscoveryError::WorkspacePackageVersionMissing {
+                crate_path,
+                manifest_path,
+            } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "workspace.package.version missing in {} required by crate {}",
+                    manifest_path.display(),
+                    crate_path.display()
+                ),
+                source: None,
+            }
+            .into(),
+            DiscoveryError::WorkspaceVersionFlagDisabled {
+                crate_path,
+                manifest_path,
+            } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "`package.version.workspace` must be true in {} for crate {}",
+                    manifest_path.display(),
+                    crate_path.display()
+                ),
+                source: None,
+            }
+            .into(),
         }
     }
 }
@@ -948,9 +1247,17 @@ mod tests {
             "target fixture crate expected to be a directory"
         );
 
-        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir]);
+        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir.clone()]);
         println!("{discovery_result:#?}");
-        discovery_result?;
+        let output = discovery_result?;
+        let context = output
+            .crate_contexts
+            .get(&crate_dir)
+            .expect("fixture_toml context missing");
+        assert_eq!(
+            context.version, "0.0.0",
+            "version should be inherited from workspace"
+        );
         Ok(())
     }
 

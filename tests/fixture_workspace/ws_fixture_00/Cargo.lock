@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "fixture_toml"
-version = "0.1.0"
+version = "0.0.0"
