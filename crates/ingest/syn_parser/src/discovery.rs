@@ -277,19 +277,19 @@ impl PackageVersion {
 /// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
 /// signals that the inspected manifest isn't a workspace boundary.
 #[derive(Deserialize, Debug, Clone)]
-struct WorkspaceManifestMetadata {
+pub struct WorkspaceManifestMetadata {
     workspace: Option<WorkspaceMetadataSection>,
 }
 
 /// Captures the `[workspace]` table when parsing ancestor manifests.
 #[derive(Deserialize, Debug, Clone)]
-struct WorkspaceMetadataSection {
+pub struct WorkspaceMetadataSection {
     package: Option<WorkspacePackageMetadata>,
 }
 
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
 #[derive(Deserialize, Debug, Clone)]
-struct WorkspacePackageMetadata {
+pub struct WorkspacePackageMetadata {
     version: Option<String>,
 }
 
@@ -301,7 +301,40 @@ struct WorkspacePackageMetadata {
 /// # Errors
 /// * [`DiscoveryError::WorkspacePackageVersionMissing`] when the workspace manifest lacks a version.
 /// * Any error bubbled up from [`locate_workspace_manifest`].
-fn resolve_workspace_version(
+///
+/// # Examples
+/// Create a miniature workspace layout in a temporary directory to prove that inheritance works:
+/// ```
+/// use syn_parser::discovery::resolve_workspace_version;
+/// use tempfile::tempdir;
+/// use std::fs;
+///
+/// let tmp = tempdir().unwrap();
+/// let ws_root = tmp.path();
+/// fs::create_dir_all(ws_root.join("member/src")).unwrap();
+/// fs::write(
+///     ws_root.join("Cargo.toml"),
+///     r#"[workspace]
+/// members = ["member"]
+///
+/// [workspace.package]
+/// version = "7.8.9"
+/// "#,
+/// ).unwrap();
+/// fs::write(
+///     ws_root.join("member/Cargo.toml"),
+///     r#"[package]
+/// name = "member"
+/// version.workspace = true
+/// edition = "2021"
+/// "#,
+/// ).unwrap();
+///
+/// let member_root = ws_root.join("member");
+/// let version = resolve_workspace_version(&member_root, &member_root.join("Cargo.toml")).unwrap();
+/// assert_eq!(version, "7.8.9");
+/// ```
+pub fn resolve_workspace_version(
     crate_root: &Path,
     manifest_path: &Path,
 ) -> Result<String, DiscoveryError> {
@@ -329,7 +362,30 @@ fn resolve_workspace_version(
 /// * [`DiscoveryError::WorkspaceManifestRead`] on IO failures.
 /// * [`DiscoveryError::WorkspaceManifestParse`] on TOML parse failures.
 /// * [`DiscoveryError::WorkspaceManifestNotFound`] if no workspace manifests exist up to filesystem root.
-fn locate_workspace_manifest(
+///
+/// # Examples
+/// Demonstrate the missing-workspace error using a throwaway project tree:
+/// ```
+/// use syn_parser::discovery::{locate_workspace_manifest, DiscoveryError};
+/// use tempfile::tempdir;
+/// use std::fs;
+///
+/// let tmp = tempdir().unwrap();
+/// let crate_root = tmp.path().join("solo");
+/// fs::create_dir_all(crate_root.join("src")).unwrap();
+/// fs::write(
+///     crate_root.join("Cargo.toml"),
+///     r#"[package]
+/// name = "solo"
+/// version.workspace = true
+/// edition = "2021"
+/// "#,
+/// ).unwrap();
+///
+/// let err = locate_workspace_manifest(&crate_root, &crate_root.join("Cargo.toml")).unwrap_err();
+/// assert!(matches!(err, DiscoveryError::WorkspaceManifestNotFound { .. }));
+/// ```
+pub fn locate_workspace_manifest(
     crate_root: &Path,
     manifest_path: &Path,
 ) -> Result<(PathBuf, WorkspaceManifestMetadata), DiscoveryError> {
@@ -559,15 +615,17 @@ pub trait DependencyMap {
     /// Returns a reference to the dependency specification for the given crate name, if it exists.
     ///
     /// # Example
-    /// ```ignore
-    /// # use std::collections::HashMap;
-    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
-    /// # let mut map = HashMap::new();
-    /// # map.insert("serde".to_string(), DependencySpec::Version("1.0".to_string()));
-    /// # let deps = Dependencies(map);
-    /// if let Some(spec) = deps.get("serde") {
-    ///     // ... use spec ...
-    /// }
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut map = HashMap::new();
+    /// map.insert("serde".to_string(), DependencySpec::Version("1.0".to_string()));
+    /// let deps = Dependencies(map);
+    ///
+    /// // Walk the spec to pluck a version number similar to how later pipeline stages inspect manifests.
+    /// let spec = deps.get("serde").unwrap();
+    /// assert_eq!(spec.as_version(), Some(&"1.0".to_string()));
     /// ```
     fn get(&self, crate_name: &str) -> Option<&DependencySpec> {
         self.inner_map().get(crate_name)
@@ -576,13 +634,27 @@ pub trait DependencyMap {
     /// Returns `true` if the dependencies map contains the specified crate name.
     ///
     /// # Example
-    /// ```ignore
-    /// # use std::collections::HashMap;
-    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
-    /// # let deps = Dependencies(HashMap::new());
-    /// if deps.contains_crate("serde") {
-    ///     // ...
-    /// }
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([(
+    ///     "serde".to_string(),
+    ///     DependencySpec::Detailed {
+    ///         version: Some("1.0".to_string()),
+    ///         path: None,
+    ///         git: Some("https://github.com/serde-rs/serde".to_string()),
+    ///         branch: Some("main".to_string()),
+    ///         tag: None,
+    ///         rev: None,
+    ///         features: None,
+    ///         optional: Some(false),
+    ///         default_features: Some(true),
+    ///     },
+    /// )]));
+    ///
+    /// assert!(deps.contains_crate("serde"));
+    /// assert!(!deps.contains_crate("tokio"));
     /// ```
     fn contains_crate(&self, crate_name: &str) -> bool {
         self.inner_map().contains_key(crate_name)
@@ -592,13 +664,31 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the keys of the underlying map.
     ///
     /// # Example
-    /// ```ignore
-    /// # use std::collections::HashMap;
-    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
-    /// # let deps = Dependencies(HashMap::new());
-    /// for crate_name in deps.names() {
-    ///     println!("Dependency: {}", crate_name);
-    /// }
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([
+    ///     ("serde".to_string(), DependencySpec::Version("1.0".to_string())),
+    ///     (
+    ///         "tokio".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: Some("1.37".to_string()),
+    ///             path: None,
+    ///             git: None,
+    ///             branch: None,
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: Some(vec!["rt".into(), "macros".into()]),
+    ///             optional: None,
+    ///             default_features: Some(false),
+    ///         },
+    ///     ),
+    /// ]));
+    ///
+    /// let mut crate_names: Vec<_> = deps.names().map(|name| name.as_str()).collect();
+    /// crate_names.sort();
+    /// assert_eq!(crate_names, ["serde", "tokio"]);
     /// ```
     fn names(&self) -> impl Iterator<Item = &String> {
         self.inner_map().keys()
@@ -608,13 +698,47 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the values of the underlying map.
     ///
     /// # Example
-    /// ```ignore
-    /// # use std::collections::HashMap;
-    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
-    /// # let deps = Dependencies(HashMap::new());
-    /// for spec in deps.specs() {
-    ///     // ... inspect spec ...
-    /// }
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([
+    ///     (
+    ///         "serde".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: Some("1.0".to_string()),
+    ///             path: None,
+    ///             git: Some("https://github.com/serde-rs/serde".to_string()),
+    ///             branch: None,
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: Some(vec!["derive".into()]),
+    ///             optional: Some(false),
+    ///             default_features: Some(true),
+    ///         },
+    ///     ),
+    ///     (
+    ///         "tokio".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: Some("1.37".to_string()),
+    ///             path: None,
+    ///             git: None,
+    ///             branch: None,
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: Some(vec!["macros".into()]),
+    ///             optional: None,
+    ///             default_features: Some(false),
+    ///         },
+    ///     ),
+    /// ]));
+    ///
+    /// // Filter for dependencies that opt into additional features, similar to how we inspect manifests later.
+    /// let crates_with_features = deps
+    ///     .specs()
+    ///     .filter(|spec| spec.features().map_or(false, |f| !f.is_empty()))
+    ///     .count();
+    /// assert_eq!(crates_with_features, 2);
     /// ```
     fn specs(&self) -> impl Iterator<Item = &DependencySpec> {
         self.inner_map().values()
@@ -624,13 +748,37 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the items of the underlying map.
     ///
     /// # Example
-    /// ```ignore
-    /// # use std::collections::HashMap;
-    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
-    /// # let deps = Dependencies(HashMap::new());
-    /// for (name, spec) in deps.iter() {
-    ///     println!("Dep: {}, Spec: {:?}", name, spec);
-    /// }
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([
+    ///     (
+    ///         "serde".to_string(),
+    ///         DependencySpec::Version("1.0".to_string()),
+    ///     ),
+    ///     (
+    ///         "local-crate".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: None,
+    ///             path: Some("../local-crate".to_string()),
+    ///             git: None,
+    ///             branch: None,
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: None,
+    ///             optional: None,
+    ///             default_features: None,
+    ///         },
+    ///     ),
+    /// ]));
+    ///
+    /// // Partition dependencies by type (path vs registry) similar to discovery call sites.
+    /// let (path_deps, registry_deps): (Vec<_>, Vec<_>) =
+    ///     deps.iter().partition(|(_, spec)| spec.path().is_some());
+    ///
+    /// assert_eq!(path_deps[0].0.as_str(), "local-crate");
+    /// assert_eq!(registry_deps[0].0.as_str(), "serde");
     /// ```
     fn iter(&self) -> impl Iterator<Item = (&String, &DependencySpec)> {
         self.inner_map().iter()
@@ -650,6 +798,36 @@ pub trait DependencyMap {
 
     // /// Returns an iterator over dependencies specified by a local path.
     /// Returns an iterator over dependencies specified by a local path.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([
+    ///     (
+    ///         "workspace-helper".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: None,
+    ///             path: Some("../helper".to_string()),
+    ///             git: None,
+    ///             branch: None,
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: None,
+    ///             optional: Some(true),
+    ///             default_features: None,
+    ///         },
+    ///     ),
+    ///     (
+    ///         "serde".to_string(),
+    ///         DependencySpec::Version("1.0".to_string()),
+    ///     ),
+    /// ]));
+    ///
+    /// let path_deps: Vec<_> = deps.path_dependencies().collect();
+    /// assert_eq!(path_deps, [(&"workspace-helper".to_string(), "../helper")]);
+    /// ```
     fn path_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
         self.inner_map()
             .iter()
@@ -658,6 +836,39 @@ pub trait DependencyMap {
 
     // /// Returns an iterator over dependencies specified by a git repository.
     /// Returns an iterator over dependencies specified by a git repository.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::{Dependencies, DependencyMap, DependencySpec};
+    /// use std::collections::HashMap;
+    ///
+    /// let deps = Dependencies(HashMap::from([
+    ///     (
+    ///         "serde".to_string(),
+    ///         DependencySpec::Detailed {
+    ///             version: Some("1.0".to_string()),
+    ///             path: None,
+    ///             git: Some("https://github.com/serde-rs/serde".to_string()),
+    ///             branch: Some("main".to_string()),
+    ///             tag: None,
+    ///             rev: None,
+    ///             features: None,
+    ///             optional: None,
+    ///             default_features: Some(true),
+    ///         },
+    ///     ),
+    ///     (
+    ///         "tokio".to_string(),
+    ///         DependencySpec::Version("1.37".to_string()),
+    ///     ),
+    /// ]));
+    ///
+    /// let git_deps: Vec<_> = deps.git_dependencies().collect();
+    /// assert_eq!(
+    ///     git_deps,
+    ///     [(&"serde".to_string(), "https://github.com/serde-rs/serde")]
+    /// );
+    /// ```
     fn git_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
         self.inner_map()
             .iter()
@@ -817,21 +1028,122 @@ pub struct DiscoveryOutput {
 
 impl DiscoveryOutput {
     /// Returns a reference to the `CrateContext` for the given crate root path, if found.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::{run_discovery_phase, DiscoveryOutput};
+    /// use tempfile::tempdir;
+    /// use std::fs;
+    ///
+    /// let root = tempdir().unwrap();
+    /// let crate_root = root.path().join("demo");
+    /// fs::create_dir_all(crate_root.join("src")).unwrap();
+    /// fs::write(
+    ///     crate_root.join("Cargo.toml"),
+    ///     r#"[package]
+    /// name = "demo"
+    /// version = "0.1.0"
+    /// edition = "2021"
+    /// "#,
+    /// ).unwrap();
+    /// fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
+    ///
+    /// let discovery = run_discovery_phase(root.path(), &[crate_root.clone()]).unwrap();
+    /// let context = discovery.get_crate_context(&crate_root).unwrap();
+    /// assert_eq!(context.name, "demo");
+    /// ```
     pub fn get_crate_context(&self, crate_root_path: &Path) -> Option<&CrateContext> {
         self.crate_contexts.get(crate_root_path)
     }
 
     /// Returns an iterator over the crate root paths and their corresponding `CrateContext`.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::run_discovery_phase;
+    /// use tempfile::tempdir;
+    /// use std::fs;
+    ///
+    /// let root = tempdir().unwrap();
+    /// for (name, version) in [("crate_a", "0.1.0"), ("crate_b", "0.2.0")] {
+    ///     let crate_root = root.path().join(name);
+    ///     fs::create_dir_all(crate_root.join("src")).unwrap();
+    ///     fs::write(
+    ///         crate_root.join("Cargo.toml"),
+    ///         format!(
+    ///             "[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n",
+    ///             name, version
+    ///         ),
+    ///     )
+    ///     .unwrap();
+    ///     fs::write(crate_root.join("src/lib.rs"), format!("pub fn {}_fn() {{}}\n", name)).unwrap();
+    /// }
+    ///
+    /// let crate_paths = ["crate_a", "crate_b"]
+    ///     .into_iter()
+    ///     .map(|name| root.path().join(name))
+    ///     .collect::<Vec<_>>();
+    /// let discovery = run_discovery_phase(root.path(), &crate_paths).unwrap();
+    ///
+    /// let mut names: Vec<_> = discovery
+    ///     .iter_crate_contexts()
+    ///     .map(|(_, ctx)| ctx.name.as_str())
+    ///     .collect();
+    /// names.sort();
+    /// assert_eq!(names, ["crate_a", "crate_b"]);
+    /// ```
     pub fn iter_crate_contexts(&self) -> impl Iterator<Item = (&PathBuf, &CrateContext)> + '_ {
         self.crate_contexts.iter()
     }
 
     /// Returns a slice containing all non-fatal warnings collected during discovery.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::{DiscoveryError, DiscoveryOutput};
+    /// use std::collections::HashMap;
+    /// use std::path::PathBuf;
+    ///
+    /// let warning = DiscoveryError::MissingPackageName {
+    ///     path: PathBuf::from("/tmp/bad/Cargo.toml"),
+    /// };
+    /// let discovery = DiscoveryOutput {
+    ///     crate_contexts: HashMap::new(),
+    ///     warnings: vec![warning.clone()],
+    /// };
+    ///
+    /// assert!(matches!(
+    ///     discovery.warnings(),
+    ///     [DiscoveryError::MissingPackageName { .. }]
+    /// ));
+    /// ```
     pub fn warnings(&self) -> &[DiscoveryError] {
         &self.warnings
     }
 
     /// Returns `true` if any non-fatal warnings were collected during discovery.
+    ///
+    /// # Example
+    /// ```
+    /// use syn_parser::discovery::{DiscoveryError, DiscoveryOutput};
+    /// use std::collections::HashMap;
+    /// use std::path::PathBuf;
+    ///
+    /// let discovery = DiscoveryOutput {
+    ///     crate_contexts: HashMap::new(),
+    ///     warnings: vec![DiscoveryError::MissingPackageName {
+    ///         path: PathBuf::from("/tmp/bad/Cargo.toml"),
+    ///     }],
+    /// };
+    ///
+    /// assert!(discovery.has_warnings());
+    ///
+    /// let clean = DiscoveryOutput {
+    ///     crate_contexts: HashMap::new(),
+    ///     warnings: vec![],
+    /// };
+    /// assert!(!clean.has_warnings());
+    /// ```
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }

@@ -40,7 +40,7 @@ fn test_path_attribute_handling() -> Result<(), PlokeError> {
 
     let module_tree_result = merged_graph.build_module_tree();
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
-    let (tree, merged) = module_tree_result.expect("Module tree build failed unexpectedly");
+    let (tree, _merged) = module_tree_result.expect("Module tree build failed unexpectedly");
 
     // --- Test `logical_path_mod` (#[path = "renamed_path/actual_file.rs"]) ---
 
