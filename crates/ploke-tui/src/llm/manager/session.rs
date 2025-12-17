@@ -22,6 +22,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
+use crate::llm::ChatHistoryTarget;
 use crate::tools::ToolDefinition;
 use crate::tools::ToolName;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
@@ -116,11 +117,21 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for _chain in 0..policy.tool_call_chain_limit {
         let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
+        // match ploke_llm::chat_step(client, &req, &cfg).await {
+        //     Ok(chat_step_outcome) => chat_step_outcome,
+        //     Err(e) => {}
+        // };
 
         match outcome {
             ChatStepOutcome::Content(text) => return Ok(text),
 
             ChatStepOutcome::ToolCalls { calls, content, .. } => {
+                req.core
+                    .messages
+                    .push(RequestMessage::new_assistant_with_tool_calls(
+                        content.clone(),
+                        calls.clone(),
+                    ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
                 if !initial_message_updated {
@@ -132,6 +143,16 @@ pub async fn run_chat_session<R: Router>(
                     )
                     .await;
                     initial_message_updated = is_updated;
+                } else {
+                    let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
+                    state_cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg,
+                            kind: MessageKind::Assistant,
+                            new_msg_id: Uuid::new_v4(), 
+                        })
+                        .await
+                        .expect("state manager must be running");
                 }
 
                 // 2) run tools (EventBus + waiting is TUI concern)
@@ -145,12 +166,21 @@ pub async fn run_chat_session<R: Router>(
                 .await;
 
                 // 3) append tool results into req.core.messages for the next step
-                for (call_id, tool_json_result) in results {
+                for (call_id, tool_json_result) in results.into_iter() {
                     match tool_json_result {
                         Ok(tool_json) => {
                             req.core
                                 .messages
-                                .push(RequestMessage::new_tool(tool_json, call_id));
+                                .push(RequestMessage::new_tool(tool_json.clone(), call_id.clone()));
+                            state_cmd_tx
+                                .send(StateCommand::AddMessageTool {
+                                    new_msg_id: Uuid::new_v4(),
+                                    msg: tool_json,
+                                    kind: MessageKind::Tool,
+                                    tool_call_id: call_id,
+                                })
+                                .await
+                                .expect("state manager must be running");
                         }
                         Err(err_string) => {
                             let content = json!({ "ok": false, "error": err_string }).to_string();

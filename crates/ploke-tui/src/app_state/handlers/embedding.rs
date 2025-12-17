@@ -84,7 +84,7 @@ pub async fn handle_embed_message(
             };
         }
         Ok(None) => {
-            tracing::warn!("Could not retreive last user message from the conversation history");
+            tracing::warn!("Could not retrieve last user message from the conversation history");
         }
         Err(e) => {
             tracing::error!("Error accessing last user message: {:#}", e);

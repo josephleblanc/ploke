@@ -404,7 +404,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, distance] :=
             rel = rel,
             radius_clause = radius_clause,
         );
-        debug!(hnsw_script = %script);
+        debug!(target: "cozo-script", hnsw_script = %script);
 
         let query_result = match self.run_script(&script, params, ScriptMutability::Immutable) {
             Ok(rows) => Ok(QueryResult::from(rows)),

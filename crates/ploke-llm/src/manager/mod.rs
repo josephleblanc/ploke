@@ -5,6 +5,7 @@ pub use session::{ChatHttpConfig, ChatStepOutcome, chat_step, parse_chat_outcome
 
 use crate::error::LlmError;
 use crate::manager::events::endpoint;
+use crate::response::ToolCall;
 use crate::router_only::HasEndpoint;
 
 use ploke_core::ArcStr;
@@ -38,12 +39,14 @@ impl TokenCounter for ApproxCharTokenizer {
     }
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, PartialOrd, Eq)]
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, PartialOrd)]
 pub struct RequestMessage {
     pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<ArcStr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 // TODO: Add Role::Tool
@@ -84,6 +87,7 @@ impl RequestMessage {
             role: Role::System,
             content,
             tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -92,6 +96,7 @@ impl RequestMessage {
             role: Role::Tool,
             content,
             tool_call_id: Some(tool_call_id),
+            tool_calls: None,
         }
     }
 
@@ -100,6 +105,7 @@ impl RequestMessage {
             role: Role::User,
             content,
             tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -108,6 +114,30 @@ impl RequestMessage {
             role: Role::Assistant,
             content,
             tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn new_assistant_with_tool_calls(
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+    ) -> Self {
+        let placeholder_msg = "Calling tools...".to_string();
+        let non_empty_content = match content {
+            Some(s) => {
+                if s.is_empty() {
+                    placeholder_msg
+                } else {
+                    s
+                }
+            }
+            None => placeholder_msg,
+        };
+        Self {
+            role: Role::Assistant,
+            content: non_empty_content,
+            tool_call_id: None,
+            tool_calls: Some(tool_calls),
         }
     }
 
@@ -273,6 +303,7 @@ mod tests {
             role: Role::Tool,
             content: "content".to_string(),
             tool_call_id: None,
+            tool_calls: None,
         };
         assert!(invalid_tool.validate().is_err());
         assert!(

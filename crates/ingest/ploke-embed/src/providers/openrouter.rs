@@ -590,6 +590,28 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn cancels_before_sending_request() {
+        let _guard = ENV_MUTEX.lock().await;
+        let server = MockServer::start();
+        // Any attempt to hit the server would fail the test because no mock is registered.
+        set_env(&server.url("/v1/embeddings"));
+
+        let backend = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3)).unwrap();
+        let (token, handle) = crate::cancel_token::CancellationToken::new();
+        let listener = token.listener();
+        handle.cancel();
+
+        let err = backend
+            .compute_batch(vec!["unused".into()], Some(&listener))
+            .await
+            .expect_err("cancelled listener should short-circuit the request");
+        assert!(
+            matches!(err, EmbedError::Cancelled(_)),
+            "expected cancellation error, got {err:?}"
+        );
+    }
+
     #[cfg(feature = "live_api_tests")]
     mod live_api_tests {
         use super::*;

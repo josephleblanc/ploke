@@ -11,7 +11,7 @@ use super::marker::JsonObjMarker;
 
 /// Completion request for the OpenRouter url at
 /// - https://openrouter.ai/api/v1/chat/completions
-#[derive(Serialize, Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[derive(Serialize, Debug, Deserialize, Clone, Default, PartialEq)]
 pub struct ChatCompReqCore {
     // OpenRouter docs: "Either "messages" or "prompt" is required"
     // corresponding json: `messages?: Message[];`

@@ -62,7 +62,6 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
 ///
 /// Note: Until full policy is implemented, this defers to `path_within_roots_with_policy` which
 /// currently delegates to `path_within_roots`.
-#[tracing::instrument]
 pub(crate) fn normalize_against_roots_with_policy(
     path: &Path,
     roots: &[PathBuf],
