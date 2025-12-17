@@ -301,19 +301,15 @@ pub async fn process_llm_request(
             }
         }
         Err(e) => {
-            let err_string = e.to_string();
-            // Inform the user in-chat so the "Pending..." isn't left hanging without context.
-            let _ = cmd_tx
-                .send(StateCommand::AddMessageImmediate {
-                    msg: format!("LLM request failed: {}", err_string),
-                    kind: MessageKind::SysInfo,
-                    new_msg_id: Uuid::new_v4(),
-                })
-                .await;
+            let err_string = e.diagnostic();
+            tracing::error!(error = ?e, diagnostic = %err_string, "LLM request failed");
 
             // Avoid invalid status transition by finalizing the assistant message with a failure note.
             StateCommand::AddMessageImmediate {
-                msg: format!("Request failed: {}", err_string),
+                msg: format!(
+                    "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
+                    err_string
+                ),
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             }

@@ -629,7 +629,11 @@ mod tests {
             .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|e| LlmError::Request(e.to_string()))?;
+            .map_err(|e| LlmError::Request {
+                message: e.to_string(),
+                url: Some(url.to_string()),
+                is_timeout: e.is_timeout(),
+            })?;
 
         let response_json = response.text().await?;
         let pretty: serde_json::Value = serde_json::from_str(&response_json)?;

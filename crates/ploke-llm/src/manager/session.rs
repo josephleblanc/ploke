@@ -51,9 +51,16 @@ pub async fn chat_step<R: Router>(
     cfg: &ChatHttpConfig,
 ) -> Result<ChatStepOutcome, LlmError> {
     let url = R::COMPLETION_URL;
-    let api_key =
-        R::resolve_api_key().map_err(|e| LlmError::Request(format!("missing api key: {e}")))?;
+    let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
+        message: format!("missing api key: {e}"),
+        url: None,
+        is_timeout: false,
+    })?;
 
+    let request_json = serde_json::to_string_pretty(req).ok();
+    if let Some(body) = request_json.as_ref() {
+        let _ = log_api_request_json(url, body);
+    }
     let resp = client
         .post(url)
         .bearer_auth(api_key)
@@ -64,22 +71,32 @@ pub async fn chat_step<R: Router>(
         .timeout(cfg.timeout)
         .send()
         .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+        .map_err(|e| LlmError::Request {
+            message: format!("sending request to {url}: {e}"),
+            url: Some(url.to_string()),
+            is_timeout: e.is_timeout(),
+        })?;
 
+    let resp_url = resp.url().to_string();
     let status = resp.status().as_u16();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| LlmError::Request(e.to_string()))?;
+    let body = resp.text().await.map_err(|e| LlmError::Request {
+        message: format!("while reading response body (status {status}): {e}"),
+        url: Some(resp_url.clone()),
+        is_timeout: e.is_timeout(),
+    })?;
+
+    let _ = log_api_raw_response(&resp_url, status, &body);
 
     if let Ok(parsed) = &serde_json::from_str(&body) {
-        let _ = log_api_parsed_json_response(url, status, parsed).await;
+        let _ = log_api_parsed_json_response(&resp_url, status, parsed).await;
     }
 
     if !(200..300).contains(&status) {
         return Err(LlmError::Api {
             status,
-            message: body,
+            message: body.clone(),
+            url: Some(resp_url),
+            body_snippet: Some(truncate_for_error(&body, 4_096)),
         });
     }
 
@@ -93,6 +110,16 @@ async fn log_api_parsed_json_response(
 ) -> color_eyre::Result<()> {
     let payload: String = serde_json::to_string_pretty(parsed)?;
     tracing::info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
+    Ok(())
+}
+
+fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Result<()> {
+    tracing::info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{body}\n");
+    Ok(())
+}
+
+fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
+    tracing::info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
     Ok(())
 }
 
@@ -148,13 +175,18 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
         return Err(LlmError::Api {
             status,
             message: full_msg,
+            url: None,
+            body_snippet: Some(truncate_for_error(body_text, 4_096)),
         });
     }
 
     let parsed: OpenAiResponse = serde_json::from_str(body_text).map_err(|e| {
         // Avoid dumping arbitrarily large bodies into errors/logs.
         let excerpt = truncate_for_error(body_text, 2_000);
-        LlmError::Deserialization(format!("{e} — body excerpt: {excerpt}"))
+        LlmError::Deserialization {
+            message: format!("{e} — body excerpt: {excerpt}"),
+            body_snippet: Some(excerpt),
+        }
     })?;
 
     // We prefer the first choice that yields a usable outcome.
@@ -192,15 +224,17 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
 
         // Case 3: Streaming deltas (unsupported in this parser)
         if choice.delta.is_some() {
-            return Err(LlmError::Deserialization(
-                "Unexpected streaming delta in non-streaming parser".into(),
-            ));
+            return Err(LlmError::Deserialization {
+                message: "Unexpected streaming delta in non-streaming parser".into(),
+                body_snippet: Some(truncate_for_error(body_text, 512)),
+            });
         }
     }
 
-    Err(LlmError::Deserialization(
-        "No usable choice in LLM response (no message/text/tool_calls)".into(),
-    ))
+    Err(LlmError::Deserialization {
+        message: "No usable choice in LLM response (no message/text/tool_calls)".into(),
+        body_snippet: Some(truncate_for_error(body_text, 512)),
+    })
 }
 
 /// Truncate large response bodies so error strings remain bounded.
@@ -228,14 +262,22 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
                 Err(LlmError::Api {
                     status: code as u16,
                     message: msg.to_string(),
+                    url: None,
+                    body_snippet: Some(truncate_for_error(body_text, 4_096)),
                 })
             } else {
-                Err(LlmError::Deserialization("No choices".into()))
+                Err(LlmError::Deserialization {
+                    message: "No choices".into(),
+                    body_snippet: Some(truncate_for_error(body_text, 512)),
+                })
             }
         }
         Err(e) => {
             let err_msg = format!("Failed to Deserialize to json: {e}");
-            Err(LlmError::Deserialization(err_msg))
+            Err(LlmError::Deserialization {
+                message: err_msg,
+                body_snippet: Some(truncate_for_error(body_text, 512)),
+            })
         }
     }
 }

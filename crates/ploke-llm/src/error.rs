@@ -8,12 +8,25 @@ pub enum LlmError {
     #[error("Invalid Conversion: {0}")]
     Conversion(String),
     /// Error related to network connectivity or the HTTP request itself.
-    #[error("Network request failed: {0}")]
-    Request(String),
+    #[error("Network request failed: {message}")]
+    Request {
+        message: String,
+        /// Optional URL for additional context.
+        url: Option<String>,
+        /// Hint for retry logic/diagnostics.
+        is_timeout: bool,
+    },
 
     /// The API provider returned a non-success status code.
     #[error("API error (status {status}): {message}")]
-    Api { status: u16, message: String },
+    Api {
+        status: u16,
+        message: String,
+        /// Optional URL for correlation.
+        url: Option<String>,
+        /// Truncated body snippet for diagnostics.
+        body_snippet: Option<String>,
+    },
 
     /// The request was rejected due to rate limiting.
     #[error("Rate limit exceeded. Please wait and try again.")]
@@ -36,8 +49,12 @@ pub enum LlmError {
     Serialization(String),
 
     /// Failed to deserialize the API response.
-    #[error("Failed to deserialize response data: {0}")]
-    Deserialization(String),
+    #[error("Failed to deserialize response data: {message}")]
+    Deserialization {
+        message: String,
+        /// Optional truncated snippet of the offending body.
+        body_snippet: Option<String>,
+    },
 
     /// Failed to deserialize the API response.
     #[error("Tool call failed: {0}")]
@@ -52,15 +69,72 @@ pub enum LlmError {
     Embedding(String),
 }
 
+impl LlmError {
+    /// Returns a diagnostic string with contextual fields for UI/log surfaces.
+    pub fn diagnostic(&self) -> String {
+        match self {
+            LlmError::Request {
+                message,
+                url,
+                is_timeout,
+            } => {
+                let mut msg = format!("Network request failed: {message}");
+                if let Some(u) = url {
+                    msg.push_str(&format!("\nurl: {u}"));
+                }
+                if *is_timeout {
+                    msg.push_str("\ncontext: timed out");
+                }
+                msg
+            }
+            LlmError::Api {
+                status,
+                message,
+                url,
+                body_snippet,
+            } => {
+                let mut msg = format!("API error (status {status}): {message}");
+                if let Some(u) = url {
+                    msg.push_str(&format!("\nurl: {u}"));
+                }
+                if let Some(snippet) = body_snippet {
+                    msg.push_str("\nbody excerpt: ");
+                    msg.push_str(snippet);
+                }
+                msg
+            }
+            LlmError::Deserialization {
+                message,
+                body_snippet,
+            } => {
+                let mut msg = format!("Failed to deserialize response data: {message}");
+                if let Some(snippet) = body_snippet {
+                    if !message.contains(snippet) {
+                        msg.push_str("\nbody excerpt: ");
+                        msg.push_str(snippet);
+                    }
+                }
+                msg
+            }
+            LlmError::ToolCall(message) => {
+                format!("Tool call failed: {message}")
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
 impl From<LlmError> for ploke_error::Error {
     fn from(error: LlmError) -> Self {
         match error {
-            LlmError::Request(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
-                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, msg),
-                )),
+            LlmError::Request { message, is_timeout, .. } => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(if is_timeout {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, message)
+                } else {
+                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, message)
+                })),
             ),
-            LlmError::Api { status, message } => ploke_error::Error::Internal(
+            LlmError::Api { status, message, .. } => ploke_error::Error::Internal(
                 ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
                     std::io::Error::other(format!("API error {}: {}", status, message)),
                 )),
@@ -82,23 +156,26 @@ impl From<LlmError> for ploke_error::Error {
             LlmError::ContentFilter => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Content blocked by safety filter".to_string()),
             ),
-            LlmError::Serialization(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(format!("Serialization error: {}", msg)),
+            LlmError::Serialization(message) => ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(format!(
+                    "Serialization error: {}",
+                    message
+                )),
             ),
-            LlmError::Deserialization(msg) => {
+            LlmError::Deserialization { message, .. } => {
                 ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
                     "Deserialization error: {}",
-                    msg
+                    message
                 )))
             }
-            LlmError::ToolCall(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", msg)),
+            LlmError::ToolCall(message) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Tool Call error: {}", message)),
             ),
-            LlmError::Conversion(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::NotImplemented(msg.to_string()),
+            LlmError::Conversion(message) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(message.to_string()),
             ),
-            LlmError::Unknown(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            LlmError::Unknown(message) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", message)),
             ),
             err_ev @ LlmError::Embedding(_) => ploke_error::Error::Internal(
                 ploke_error::InternalError::EmbedderError(std::sync::Arc::new(err_ev)),
