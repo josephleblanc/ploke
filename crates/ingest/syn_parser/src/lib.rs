@@ -78,7 +78,7 @@ pub use resolve::module_tree::ModuleTree;
 pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(&project_root, std::slice::from_ref(&crate_path))
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =

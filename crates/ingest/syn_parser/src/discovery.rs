@@ -4,6 +4,14 @@
 //! parsing the `Cargo.toml` file, and generating a `CrateContext` for each
 //! crate. The `CrateContext` contains information about the crate, such as
 //! its name, version, and a list of all its source files.
+//!
+//! ## Workflow Overview
+//! 1. [`run_discovery_phase`] orchestrates manifest parsing, namespace derivation, and file crawling.
+//! 2. [`locate_workspace_manifest`] / [`resolve_workspace_version`] resolve workspace-inherited metadata.
+//! 3. [`CrateContext`] and [`DiscoveryOutput`] keep the resulting data immutable for Phase 2.
+//!
+//! These entry points are intentionally narrow so downstream phases can depend on strongly typed
+//! structs instead of re-reading `Cargo.toml` or the filesystem.
 
 use itertools::Itertools;
 use ploke_core::PROJECT_NAMESPACE_UUID;
@@ -200,7 +208,13 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 path: manifest_path.display().to_string(),
                 source_string: "WorkspaceVersionFlagDisabled".to_string(),
             },
-            NonFatalErrors(..) => todo!("Decide what to do with this one later."),
+            NonFatalErrors(errors) => {
+                let nested = errors
+                    .into_iter()
+                    .map(SynParserError::try_from)
+                    .collect::<Result<Vec<_>, _>>()?;
+                SynParserError::MultipleErrors(nested)
+            }
         })
     }
 }
@@ -1223,9 +1237,7 @@ pub fn run_discovery_phase(
         // future scenarios or direct struct manipulation by checking here.
         // For now, serde handles this, but let's keep the structure for robustness.
         let crate_name = package.name.clone(); // Assume present due to serde
-        let crate_version = package
-            .version
-            .resolve(crate_root_path, &cargo_toml_path)?;
+        let crate_version = package.version.resolve(crate_root_path, &cargo_toml_path)?;
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
@@ -1267,25 +1279,6 @@ pub fn run_discovery_phase(
                     }
                 }
             }
-            // Debugging:
-            // let env_vars = std::env::vars()
-            //     .filter(|(k, _)| k.starts_with("CARGO_"))
-            //     .collect::<Vec<_>>();
-            // println!("discovery: will parse files with std::env::vars() {:?}", env_vars);
-            // println!("discovery: will parse files (stripping prefix)");
-            // for file in &files {
-            //     let different_vars = std::env::vars()
-            //         .filter(|(k, _)| k.starts_with("CARGO_"))
-            //         .filter(|item| !env_vars.contains(item))
-            //         .collect::<Vec<_>>();
-            //     println!(
-            //         "\t{} with changed cfgs = {:?}",
-            //         file.strip_prefix(current_dir().expect("error getting current dir"))
-            //             .expect("error stripping prefix")
-            //             .display(),
-            //         different_vars
-            //     );
-            // }
         }
 
         // WARN: We are not including the main.rs file (and hopefully not its imports either) in
@@ -1409,7 +1402,7 @@ impl From<DiscoveryError> for ploke_error::Error {
             .into(),
             DiscoveryError::Walkdir { path, source } => {
                 // Convert walkdir::Error to std::io::Error using string representation
-                let io_error = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
+                let io_error = std::io::Error::other(source.to_string());
                 ploke_error::FatalError::FileOperation {
                     operation: "walk",
                     path,
@@ -1572,31 +1565,4 @@ mod tests {
         );
         Ok(())
     }
-
-    #[test]
-    fn test_toml_real_codex() -> Result<(), DiscoveryError> {
-        let workspace_root = PathBuf::from("/home/brasides/code/codex/codex-rs/"); // Use workspace root for context
-
-        assert!(
-            workspace_root.is_dir(),
-            "target fixture workspace expected to be a directory"
-        );
-
-        let mut crate_dir = workspace_root.clone();
-        crate_dir.push("apply-patch/");
-
-        assert!(
-            crate_dir.is_dir(),
-            "target fixture crate expected to be a directory"
-        );
-
-        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir]);
-        println!("{discovery_result:#?}");
-        discovery_result?;
-
-        Ok(())
-    }
-
-    // #[test]
-    // fn test_toml_version_map() {}
 }
