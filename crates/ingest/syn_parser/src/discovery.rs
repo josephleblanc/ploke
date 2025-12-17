@@ -890,6 +890,8 @@ impl From<DiscoveryError> for ploke_error::Error {
 
 #[cfg(test)]
 mod tests {
+    use ploke_common::workspace_root;
+
     use super::*;
 
     #[test]
@@ -929,4 +931,28 @@ mod tests {
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
     }
+
+    #[test]
+    // test basic toml parsing of target crate
+    fn test_toml_basic() -> Result<(), DiscoveryError> {
+        let workspace_root = workspace_root(); // Use workspace root for context
+        assert!(
+            workspace_root.is_dir(),
+            "target fixture workspace expected to be a directory"
+        );
+
+        let mut crate_dir = workspace_root.clone();
+        crate_dir.push("tests/fixture_workspace/ws_fixture_00/fixture_toml/");
+        assert!(
+            crate_dir.is_dir(),
+            "target fixture crate expected to be a directory"
+        );
+
+        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir]);
+        discovery_result?;
+        Ok(())
+    }
+
+    // #[test]
+    // fn test_toml_version_map() {}
 }

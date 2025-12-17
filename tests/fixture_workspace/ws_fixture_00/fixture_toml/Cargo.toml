@@ -1,0 +1,17 @@
+[package]
+name = "fixture_toml"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "fixture_toml"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
