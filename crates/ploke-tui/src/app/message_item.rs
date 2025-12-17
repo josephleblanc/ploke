@@ -106,7 +106,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
             MessageKind::Assistant => Style::new().green(),
             MessageKind::System => Style::new().cyan(),
             MessageKind::SysInfo => Style::new().magenta(),
-            _ => Style::new().white(),
+            MessageKind::Tool => Style::new().green().dim(),
         };
 
         if y_virtual + height <= clamped_offset_y {

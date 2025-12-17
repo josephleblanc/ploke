@@ -540,6 +540,7 @@ mod tests {
             role: Role::Tool,
             content: "content".to_string(),
             tool_call_id: None,
+            tool_calls: None,
         };
         assert!(invalid_tool.validate().is_err());
         assert!(

@@ -92,10 +92,10 @@ type ToolCallTimeout = Duration;
 impl Default for TuiToolPolicy {
     fn default() -> Self {
         Self {
-            tool_call_timeout: Duration::from_secs(10),
+            tool_call_timeout: Duration::from_secs(30),
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
-            tool_call_chain_limit: 15,
+            tool_call_chain_limit: 100,
             retry_without_tools_on_404: false,
         }
     }
@@ -149,7 +149,7 @@ pub async fn run_chat_session<R: Router>(
                         .send(StateCommand::AddMessageImmediate {
                             msg,
                             kind: MessageKind::Assistant,
-                            new_msg_id: Uuid::new_v4(), 
+                            new_msg_id: Uuid::new_v4(),
                         })
                         .await
                         .expect("state manager must be running");
@@ -205,7 +205,7 @@ pub async fn run_chat_session<R: Router>(
 
                 // loop again
             }
-        }
+        };
     }
 
     Err(LlmError::ToolCall("tool call chain limit exceeded".into()))

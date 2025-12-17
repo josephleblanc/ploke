@@ -318,6 +318,7 @@ async fn test_default_post_completions() -> Result<()> {
         role: Role::User,
         content,
         tool_call_id: None,
+        tool_calls: None,
     };
 
     let req = ChatCompRequest::<OpenRouter> {

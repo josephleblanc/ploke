@@ -72,6 +72,10 @@ pub async fn chat_step<R: Router>(
         .await
         .map_err(|e| LlmError::Request(e.to_string()))?;
 
+    if let Ok(parsed) = &serde_json::from_str(&body) {
+        let _ = log_api_parsed_json_response(url, status, parsed).await;
+    }
+
     if !(200..300).contains(&status) {
         return Err(LlmError::Api {
             status,
@@ -80,6 +84,16 @@ pub async fn chat_step<R: Router>(
     }
 
     parse_chat_outcome(&body)
+}
+
+async fn log_api_parsed_json_response(
+    url: &str,
+    status: u16,
+    parsed: &OpenAiResponse,
+) -> color_eyre::Result<()> {
+    let payload: String = serde_json::to_string_pretty(parsed)?;
+    tracing::info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
+    Ok(())
 }
 
 /// Parse a (non-streaming) OpenAI/OpenRouter-style response body into a normalized outcome.
