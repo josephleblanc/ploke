@@ -517,16 +517,16 @@ pub enum ChatHistoryTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use crate::EventBusCaps;
     use crate::app_state::commands::StateCommand;
     use crate::app_state::state_manager;
-    use crate::EventBusCaps;
     use crate::chat_history::MessageStatus;
     use ploke_db::Database;
     use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
     use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
     use ploke_embed::runtime::EmbeddingRuntime;
     use ploke_rag::RagService;
+    use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::{Duration, sleep, timeout};
     use uuid::Uuid;
@@ -649,9 +649,8 @@ mod tests {
                 LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder"),
             )),
         ));
-        let rag = Arc::new(
-            RagService::new(db.clone(), Arc::clone(&embedder)).expect("rag service init"),
-        );
+        let rag =
+            Arc::new(RagService::new(db.clone(), Arc::clone(&embedder)).expect("rag service init"));
         let (rag_tx, _rag_rx) = mpsc::channel::<crate::RagEvent>(4);
         let state = Arc::new(AppState::new(
             Arc::clone(&db),
@@ -690,7 +689,10 @@ mod tests {
             })
             .await
             .expect("send create assistant");
-        assert_eq!(responder_rx.await.expect("receive placeholder id"), placeholder_id);
+        assert_eq!(
+            responder_rx.await.expect("receive placeholder id"),
+            placeholder_id
+        );
 
         let final_text = "finalized assistant response".to_string();
         super::finalize_assistant_response(&cmd_tx, placeholder_id, Ok(final_text.clone())).await;

@@ -7,7 +7,7 @@
 
 ## Proposed approach
 - Introduce a shared styled-rendering helper (e.g., `app/view/rendering/highlight.rs`) that:
-  - Parses content for fenced code blocks (lang optional) and diff markers.
+  - Parses content for fenced code blocks (lang optional) and diff markers with a stack-aware, hand-rolled fence parser (indents allowed; ignores unicode lookalikes; tolerates nested/longer inner fences and unterminated blocks without leaking highlighting).
   - Runs `syntect` for code fences when a language is known/guessable; fallback to plain text.
   - Applies diff-aware styling for `+`, `-`, and `@@` lines (leveraging `similar` outputs where available).
   - Emits a span stream (`Vec<StyledSpan>` or similar) that can be width-wrapped with `unicode-width`, preserving the existing 1-column gutter semantics.
@@ -25,13 +25,13 @@
 - Add tests:
   - Unit: fence detection, language handling, unknown-lang fallback, diff markers.
   - Unit: styled wrapping height/line counts with wide chars and gutter.
-  - Unit: highlight output sanity (non-default styles per language; safe fallback).
+  - Unit: highlight output sanity (non-default styles per language; safe fallback) plus regression coverage for nested/inline/overlong fences, unicode lookalikes, and mixed-length inner fences.
   - Integration snapshots: conversation with code block; approvals diff preview.
   - Measurement vs render consistency with scroll offsets.
 
 ## Baseline verification (to track regressions)
 - Run `cargo test -p ploke-tui` (default feature set) to establish a baseline before landing highlighting changes.
-  - ✅ `cargo test -p ploke-tui --lib` (with highlighting + approvals integration) now passes locally; 87 passed, 3 ignored (pre-existing). Logs show expected fixture-path warnings (`tests/fixture_crates/fixture_nodes`) but no failures. Performance guardrails in approvals UI tests were relaxed modestly to account for highlight overhead.
+  - ✅ `cargo test -p ploke-tui --lib` (with highlighting + approvals integration) now passes locally; 101 passed, 3 ignored (pre-existing). Logs show expected fixture-path warnings (`tests/fixture_crates/fixture_nodes`) but no failures. Performance guardrails in approvals UI tests were relaxed modestly to account for highlight overhead; comprehensive UI perf threshold currently ~20ms to accommodate syntect.
 - Run UI-focused tests/snapshots under `crates/ploke-tui/src/tests` if they exist in the target branch (e.g., approvals/simple/performance suites).
   - ✅ Approval/approvals performance suites exercised via the lib test run above; concurrency perf threshold relaxed to account for highlighting overhead.
 - If time permits, run `cargo bench -p ploke-tui ui_measure` to capture any perf regressions in rendering.

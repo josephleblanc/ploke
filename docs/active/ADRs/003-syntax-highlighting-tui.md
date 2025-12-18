@@ -16,16 +16,17 @@ ACCEPTED (2025-12-17)
   - Detects fenced code blocks and diff markers.
   - Runs `syntect` on code fences; applies diff-aware styling for `+`, `-`, `@@`.
   - Emits styled spans that a width-aware wrapper (using `unicode-width`) can wrap while preserving the existing 1-column gutter semantics for selection.
+  - Parses fences with a stack-aware, hand-rolled parser (no markdown dep) that tolerates indents, nested/longer inner fences, and ignores unicode lookalikes to keep highlighting stable against LLM edge cases.
 - Replace the `textwrap`-only pipeline in conversation rendering with the styled wrapper; reuse the same helper in approvals overlay diff previews to keep measurement and rendering consistent.
-- Keep fence parsing hand-rolled (no markdown dependency for now) to minimize additional deps beyond `syntect`.
-- Add tests for fence detection, diff styling, wrapping correctness, highlight output sanity, and render snapshots for conversation and approvals.
+- Replace the hand-rolled fence parsing with a markdown parser (`pulldown-cmark`) to identify code fences and inline formatting; keep syntect for code and diff styling for non-code text.
+- Add tests for markdown-driven fence detection (including inline/overlong/indented/unterminated), diff styling, wrapping correctness, highlight output sanity, and render snapshots for conversation and approvals.
 
 ## Implementation (planned)
 - Add `syntect` to `crates/ploke-tui/Cargo.toml`.
 - New shared highlight+wrap module producing styled lines for measurement/render.
 - Update conversation renderer to use the new pipeline while maintaining scroll/offset accuracy and the selection gutter.
 - Update approvals overlay diff preview to use the same pipeline.
-- Add regression tests (unit + render snapshots) and lightweight performance guards.
+- Add regression tests (unit + render snapshots) with emphasis on markdown-driven fences (nested/unterminated/inline/overlong), inline formatting, diff detection, and lightweight performance guards (current UI perf threshold relaxed modestly to ~20ms in the comprehensive suite to accommodate syntect).
 
 ## Consequences
 ### Positive

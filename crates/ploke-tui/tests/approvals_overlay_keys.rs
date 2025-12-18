@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ploke_core::ArcStr;
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_tui::EventBus;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
@@ -32,7 +33,10 @@ async fn make_app_with_proposals() -> (
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
@@ -99,7 +103,10 @@ async fn make_app_with_proposals_and_editor(
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig::from(cfg.clone())),

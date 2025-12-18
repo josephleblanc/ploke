@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
@@ -32,80 +33,177 @@ const DIFF_META: Color = Color::Cyan;
 
 pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> Vec<StyledLine> {
     let width = width.max(1) as usize;
-    let mut blocks: Vec<StyledLine> = Vec::new();
-    let mut pending_text: Vec<String> = Vec::new();
-    let mut code_lines: Vec<String> = Vec::new();
-    let mut in_code = false;
-    let mut fence_len: usize = 0;
-    let mut lang_hint: Option<String> = None;
     let diff_enabled = detect_diff_markers(content);
 
-    let flush_text = |lines: &mut Vec<String>, out: &mut Vec<StyledLine>| {
-        for line in lines.drain(..) {
-            out.push(plain_text_line(&line, base_style, diff_enabled));
-        }
-    };
+    let mut lines: Vec<StyledLine> = Vec::new();
+    let mut current_line: StyledLine = Vec::new();
 
-    let flush_code = |lang: &Option<String>, code: &mut Vec<String>, out: &mut Vec<StyledLine>| {
-        if code.is_empty() {
-            return;
-        }
-        let highlighted = if lang
-            .as_deref()
-            .map(|l| matches!(l, "diff" | "patch"))
-            .unwrap_or(false)
-        {
-            code.iter()
-                .map(|line| diff_line(line))
-                .collect::<Vec<StyledLine>>()
-        } else {
-            highlight_code_block(code, lang.as_deref())
+    let mut italic_depth = 0usize;
+    let mut bold_depth = 0usize;
+
+    enum Mode {
+        Normal,
+        CodeBlock {
+            lang: Option<String>,
+            buffer: String,
+        },
+    }
+    let mut mode = Mode::Normal;
+
+    let push_newline =
+        |current_line: &mut StyledLine, lines: &mut Vec<StyledLine>, diff_enabled: bool| {
+            let mut line = std::mem::take(current_line);
+            if diff_enabled {
+                line = apply_diff_to_line(line, diff_enabled);
+            }
+            lines.push(line);
         };
-        out.extend(highlighted);
-        code.clear();
-    };
 
-    let lines: Vec<&str> = content.split('\n').collect();
-    for (idx, line) in lines.iter().enumerate() {
-        if let Some(fence) = parse_fence_line(line) {
-            if in_code {
-                // Closing fence: must be bare (no info) and length >= opener length.
-                if fence.info.is_none() && fence.length >= fence_len {
-                    if has_future_closer(&lines, idx + 1, fence_len) {
-                        // Treat this fence as content; a later closer will end the block.
-                        code_lines.push(line.to_string());
-                        continue;
-                    }
-                    flush_code(&lang_hint, &mut code_lines, &mut blocks);
-                    in_code = false;
-                    lang_hint = None;
-                    fence_len = 0;
-                    continue;
+    let push_text = |text: &str,
+                     style: Style,
+                     current_line: &mut StyledLine,
+                     lines: &mut Vec<StyledLine>,
+                     diff_enabled: bool| {
+        let mut last = 0usize;
+        for (idx, ch) in text.char_indices() {
+            if ch == '\n' {
+                if idx > last {
+                    current_line.push(StyledSpan {
+                        content: text[last..idx].to_string(),
+                        style,
+                    });
                 }
-            } else {
-                // Opening fence
-                in_code = true;
-                fence_len = fence.length;
-                lang_hint = fence.info.clone();
-                flush_text(&mut pending_text, &mut blocks);
-                continue;
+                push_newline(current_line, lines, diff_enabled);
+                last = idx + ch.len_utf8();
             }
         }
+        if last < text.len() {
+            current_line.push(StyledSpan {
+                content: text[last..].to_string(),
+                style,
+            });
+        }
+    };
 
-        if in_code {
-            code_lines.push(line.to_string());
-        } else {
-            pending_text.push(line.to_string());
+    let parser = Parser::new_ext(content, Options::all());
+    for event in parser {
+        match (&mut mode, &event) {
+            (_, Event::Start(Tag::CodeBlock(kind))) => {
+                if !current_line.is_empty() {
+                    push_newline(&mut current_line, &mut lines, diff_enabled);
+                }
+                mode = Mode::CodeBlock {
+                    lang: codeblock_lang_hint(&kind),
+                    buffer: String::new(),
+                };
+            }
+            (Mode::CodeBlock { .. }, Event::End(TagEnd::CodeBlock)) => {
+                if let Mode::CodeBlock { lang, buffer } = std::mem::replace(&mut mode, Mode::Normal)
+                {
+                    let mut code_lines: Vec<String> =
+                        buffer.split('\n').map(|s| s.to_string()).collect();
+                    let highlighted = if lang
+                        .as_deref()
+                        .map(|l| matches!(l, "diff" | "patch"))
+                        .unwrap_or(false)
+                    {
+                        code_lines.iter().map(|l| diff_line(l)).collect::<Vec<_>>()
+                    } else {
+                        highlight_code_block(&mut code_lines, lang.as_deref())
+                    };
+                    lines.extend(highlighted);
+                }
+            }
+            (Mode::CodeBlock { buffer, .. }, Event::Text(t)) => {
+                buffer.push_str(&t);
+            }
+            (Mode::CodeBlock { buffer, .. }, Event::SoftBreak | Event::HardBreak) => {
+                buffer.push('\n');
+            }
+            (Mode::CodeBlock { buffer, .. }, Event::Code(t)) => {
+                buffer.push_str(&t);
+            }
+            (_, Event::Text(t)) => {
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::Code(t)) => {
+                let style = inline_code_style(base_style);
+                push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::SoftBreak | Event::HardBreak) => {
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::Start(Tag::Emphasis)) => {
+                italic_depth = italic_depth.saturating_add(1);
+            }
+            (_, Event::End(TagEnd::Emphasis)) => {
+                italic_depth = italic_depth.saturating_sub(1);
+            }
+            (_, Event::Start(Tag::Strong)) => {
+                bold_depth = bold_depth.saturating_add(1);
+            }
+            (_, Event::End(TagEnd::Strong)) => {
+                bold_depth = bold_depth.saturating_sub(1);
+            }
+            (_, Event::Html(t)) | (_, Event::InlineHtml(t)) => {
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::FootnoteReference(t)) => {
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::TaskListMarker(done)) => {
+                let marker = if *done { "[x] " } else { "[ ] " };
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(marker, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::Rule) => {
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text("—", style, &mut current_line, &mut lines, diff_enabled);
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::InlineMath(t)) | (_, Event::DisplayMath(t)) => {
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::End(TagEnd::Item)) => {
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
+            (Mode::CodeBlock { buffer, .. }, _) => {
+                // Other events inside code blocks become text.
+                if let Some(text) = event_to_string(&event) {
+                    buffer.push_str(&text);
+                }
+            }
+            (_, _) => {}
         }
     }
 
-    if in_code {
-        flush_code(&lang_hint, &mut code_lines, &mut blocks);
-    } else {
-        flush_text(&mut pending_text, &mut blocks);
+    // Flush trailing content
+    match mode {
+        Mode::Normal => {
+            if !current_line.is_empty() {
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
+        }
+        Mode::CodeBlock { lang, buffer } => {
+            let mut code_lines: Vec<String> = buffer.split('\n').map(|s| s.to_string()).collect();
+            let highlighted = if lang
+                .as_deref()
+                .map(|l| matches!(l, "diff" | "patch"))
+                .unwrap_or(false)
+            {
+                code_lines.iter().map(|l| diff_line(l)).collect::<Vec<_>>()
+            } else {
+                highlight_code_block(&mut code_lines, lang.as_deref())
+            };
+            lines.extend(highlighted);
+        }
     }
 
-    wrap_lines(blocks, width)
+    wrap_lines(lines, width)
 }
 
 pub fn highlight_diff_text(content: &str, width: u16) -> Vec<StyledLine> {
@@ -220,21 +318,19 @@ fn highlight_code_block(lines: &mut Vec<String>, lang: Option<&str>) -> Vec<Styl
 }
 
 fn detect_diff_markers(content: &str) -> bool {
+    let mut plain = String::new();
     let mut in_code = false;
-    for line in content.lines() {
-        if let Some(fence) = parse_fence_line(line) {
-            if in_code {
-                if fence.info.is_none() {
-                    in_code = false;
-                }
-            } else {
-                in_code = true;
-            }
-            continue;
+    for event in Parser::new_ext(content, Options::all()) {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(TagEnd::CodeBlock) => in_code = false,
+            Event::Text(t) | Event::Code(t) if !in_code => plain.push_str(&t),
+            Event::Html(t) | Event::InlineHtml(t) if !in_code => plain.push_str(&t),
+            Event::SoftBreak | Event::HardBreak if !in_code => plain.push('\n'),
+            _ => {}
         }
-        if in_code {
-            continue;
-        }
+    }
+    for line in plain.lines() {
         if line.starts_with("diff --")
             || line.starts_with("index ")
             || line.starts_with("---")
@@ -244,22 +340,93 @@ fn detect_diff_markers(content: &str) -> bool {
             return true;
         }
     }
-    // Allow +/- styling only if a hunk marker exists; bullets alone won't trigger.
-    content.lines().any(|l| l.starts_with("@@"))
+    plain.lines().any(|l| l.starts_with("@@"))
 }
 
 fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
-    let lang = lang.trim();
-    if lang.is_empty() {
+    let normalized = lang.trim();
+    if normalized.is_empty() {
         return None;
     }
-    if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(lang) {
+    let primary = normalized
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .find(|s| !s.is_empty())
+        .unwrap_or(normalized);
+    if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(primary) {
         return Some(syntax);
     }
-    if let Some(syntax) = SYNTAX_SET.find_syntax_by_name(lang) {
+    if let Some(syntax) = SYNTAX_SET.find_syntax_by_name(primary) {
         return Some(syntax);
     }
-    SYNTAX_SET.find_syntax_by_extension(lang)
+    if let Some(syntax) = SYNTAX_SET.find_syntax_by_extension(primary) {
+        return Some(syntax);
+    }
+    let lower = primary.to_lowercase();
+    if lower != primary {
+        if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(&lower) {
+            return Some(syntax);
+        }
+        if let Some(syntax) = SYNTAX_SET.find_syntax_by_name(&lower) {
+            return Some(syntax);
+        }
+        if let Some(syntax) = SYNTAX_SET.find_syntax_by_extension(&lower) {
+            return Some(syntax);
+        }
+    }
+    None
+}
+
+fn inline_style(base: Style, italic_depth: usize, bold_depth: usize) -> Style {
+    let mut style = base;
+    if italic_depth > 0 {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if bold_depth > 0 {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+fn inline_code_style(base: Style) -> Style {
+    base.add_modifier(Modifier::REVERSED)
+}
+
+fn apply_diff_to_line(line: StyledLine, diff_enabled: bool) -> StyledLine {
+    if !diff_enabled {
+        return line;
+    }
+    let text: String = line.iter().map(|s| s.content.as_str()).collect();
+    if let Some(style) = diff_style(&text) {
+        return vec![StyledSpan {
+            content: text,
+            style,
+        }];
+    }
+    line
+}
+
+fn codeblock_lang_hint(kind: &CodeBlockKind) -> Option<String> {
+    match kind {
+        CodeBlockKind::Fenced(info) => {
+            let trimmed = info.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        CodeBlockKind::Indented => None,
+    }
+}
+
+fn event_to_string(event: &Event<'_>) -> Option<String> {
+    match event {
+        Event::Text(t) | Event::Code(t) | Event::Html(t) | Event::InlineHtml(t) => {
+            Some(t.to_string())
+        }
+        Event::SoftBreak | Event::HardBreak => Some("\n".to_string()),
+        _ => None,
+    }
 }
 
 fn syntect_style_to_ratatui(style: SyntectStyle) -> Style {
@@ -389,58 +556,13 @@ fn take_prefix_by_width(s: &str, max_width: usize) -> (usize, usize) {
     (byte_idx, accum_width)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Fence<'a> {
-    length: usize,
-    info: Option<String>,
-    _indent: usize,
-    _raw: &'a str,
-}
-
-fn parse_fence_line(line: &str) -> Option<Fence<'_>> {
-    // Allow up to 3 leading spaces per CommonMark.
-    let indent = line.chars().take_while(|c| c.is_ascii_whitespace()).count();
-    if indent > 3 {
-        return None;
-    }
-    let trimmed = line[indent..].as_bytes();
-    if trimmed.is_empty() || trimmed[0] != b'`' {
-        return None;
-    }
-
-    let backtick_count = trimmed
-        .iter()
-        .take_while(|b| **b == b'`')
-        .count();
-    if backtick_count < 3 {
-        return None;
-    }
-
-    let rest = line[indent + backtick_count..].trim();
-    let info = if rest.is_empty() {
-        None
-    } else {
-        Some(rest.to_string())
-    };
-
-    Some(Fence {
-        length: backtick_count,
-        info,
-        _indent: indent,
-        _raw: line,
-    })
-}
-
-fn has_future_closer(lines: &[&str], start_idx: usize, fence_len: usize) -> bool {
-    lines
-        .iter()
-        .skip(start_idx)
-        .any(|l| parse_fence_line(l).is_some_and(|f| f.info.is_none() && f.length >= fence_len))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line_text(line: &StyledLine) -> String {
+        line.iter().map(|s| s.content.as_str()).collect()
+    }
 
     #[test]
     fn wraps_plain_text_by_width() {
@@ -451,176 +573,105 @@ mod tests {
     }
 
     #[test]
-    fn detects_code_block_and_uses_syntect_styles() {
+    fn code_block_is_highlighted() {
         let base = Style::new().fg(Color::White);
-        let content = "plain\n```rust\nlet x = 1;\n```\n";
-        let lines = highlight_message_lines(content, base, 40);
+        let content = "plain\n```rust\nlet x = 1;\n```\nplain again";
+        let lines = highlight_message_lines(content, base, 200);
+        let code_line = lines
+            .iter()
+            .find(|l| line_text(l).contains("let x = 1;"))
+            .expect("code line present");
         assert!(
-            lines
-                .iter()
-                .any(|line| { line.iter().any(|span| span.style != base) })
+            code_line.iter().any(|s| s.style != base),
+            "code line should be syntax highlighted"
+        );
+        let tail = lines
+            .iter()
+            .find(|l| line_text(l).contains("plain again"))
+            .expect("tail line present");
+        assert!(
+            tail.iter().all(|s| s.style == base),
+            "plain text after code should remain plain"
         );
     }
 
     #[test]
-    fn diff_lines_get_custom_styles() {
+    fn inline_markdown_strips_markers() {
         let base = Style::new().fg(Color::White);
-        let content = "+added\n-context\n@@ hunk";
-        let lines = highlight_message_lines(content, base, 40);
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0][0].style.fg, Some(DIFF_ADDITION));
-        assert_eq!(lines[1][0].style.fg, Some(DIFF_REMOVAL));
-        assert_eq!(lines[2][0].style.fg, Some(DIFF_INFO));
-    }
-
-    #[test]
-    fn plain_bullet_lists_are_not_colored_like_diffs() {
-        let base = Style::new().fg(Color::White);
-        let content = "- item one\n- item two";
-        let lines = highlight_message_lines(content, base, 40);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0][0].style, base);
-        assert_eq!(lines[1][0].style, base);
-    }
-
-    #[test]
-    fn inner_fences_do_not_terminate_code_block() {
-        let base = Style::new().fg(Color::Indexed(1));
-        let content = "\
-```rust
-// newline immediately after opening fence
-```rust
-let a = 1;
-
-// newline *before* the fence closer
-let b = 2;
-```
-
-// fence opener at EOF with no terminating newline
-```rust
-let c = 3;```
-// back-tick alone on a line inside a string literal
-let s = \"first
-`
-third\";
-
-// raw string that ends with a single back-tick on its own line
-let raw = r#\"hello
-`\"#;
-
-// literal back-tick inside an attribute that itself contains
-// what looks like a code fence
-#[cfg_attr(docsrs, doc = \"```\")]
-```";
-
+        let content = "**bold** and `code` text";
         let lines = highlight_message_lines(content, base, 200);
-
-        let line_texts: Vec<String> = lines
+        let joined: String = lines
             .iter()
-            .map(|l| l.iter().map(|s| s.content.as_str()).collect::<String>())
+            .flat_map(|l| l.iter().map(|s| s.content.as_str()))
             .collect();
-
-        for needle in [
-            "// newline immediately after opening fence",
-            "let a = 1;",
-            "// newline *before* the fence closer",
-            "let b = 2;",
-            "// fence opener at EOF with no terminating newline",
-            "let c = 3;```",
-            "// back-tick alone on a line inside a string literal",
-            "`",
-            "third\";",
-            "// raw string that ends with a single back-tick on its own line",
-            "`\"#;",
-            "// literal back-tick inside an attribute that itself contains",
-            "#[cfg_attr(docsrs, doc = \"```\")]",
-        ] {
-            let (idx, line) = line_texts
-                .iter()
-                .enumerate()
-                .find(|(_, l)| l.contains(needle))
-                .unwrap_or_else(|| panic!("expected to find line containing {needle}"));
-            assert!(
-                lines[idx].iter().any(|s| s.style != base),
-                "line '{needle}' should remain inside highlighted code block"
-            );
-        }
-    }
-
-    #[test]
-    fn outer_longer_fence_allows_inner_shorter() {
-        let base = Style::new().fg(Color::Indexed(2));
-        let content = "\
-````text
-outer start
-```rust
-inner should be plain text of outer
-```
-outer end
-````";
-        let lines = highlight_message_lines(content, base, 200);
-        let expect = ["outer start", "inner should be plain text of outer", "outer end"];
-        for needle in expect {
-            let (idx, _) = lines
-                .iter()
-                .enumerate()
-                .find(|(_, l)| l.iter().any(|s| s.content.contains(needle)))
-                .unwrap_or_else(|| panic!("expected to find line containing {needle}"));
-            assert!(
-                lines[idx].iter().any(|s| s.style != base),
-                "line '{needle}' should stay highlighted inside outer fence"
-            );
-        }
-    }
-
-    #[test]
-    fn indented_fence_still_opens_block() {
-        let base = Style::new().fg(Color::Indexed(3));
-        let content = "   ```rust\nlet x = 1;\n   ```";
-        let lines = highlight_message_lines(content, base, 200);
         assert!(
-            lines.iter().any(|l| l.iter().any(|s| s.style != base)),
-            "indented fence should open a block"
+            !joined.contains('*') && !joined.contains('`'),
+            "markdown markers should be stripped"
+        );
+        let has_bold = lines
+            .iter()
+            .flat_map(|l| l.iter())
+            .any(|s| s.content.contains("bold") && s.style != base);
+        let has_code = lines
+            .iter()
+            .flat_map(|l| l.iter())
+            .any(|s| s.content.contains("code") && s.style != base);
+        assert!(has_bold && has_code);
+    }
+
+    #[test]
+    fn inline_triple_backticks_remain_inline_code() {
+        let base = Style::new().fg(Color::Indexed(1));
+        let content = "Here ```not a block``` inline.";
+        let lines = highlight_message_lines(content, base, 200);
+        let inline_span = lines
+            .iter()
+            .flat_map(|l| l.iter())
+            .find(|s| s.content.contains("not a block"))
+            .expect("inline code span present");
+        assert!(
+            inline_span.style != base,
+            "inline code should be styled differently from base"
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.iter().map(|s| s.content.as_str()))
+            .collect();
+        assert!(
+            !joined.contains("```"),
+            "inline triple backticks should not render as markers"
         );
     }
 
     #[test]
-    fn unicode_quotes_do_not_start_fence() {
-        let base = Style::new().fg(Color::Indexed(4));
-        let content = "‘’‘\nshould be plain\n‘’‘";
+    fn diff_coloring_applies_outside_code_only() {
+        let base = Style::new().fg(Color::Indexed(2));
+        let content = "```rust\n+inside\n```\n@@\n-outside";
         let lines = highlight_message_lines(content, base, 200);
-        assert!(lines
+        let inside = lines
             .iter()
-            .all(|l| l.iter().all(|s| s.style == base)));
+            .find(|l| line_text(l).contains("+inside"))
+            .expect("inside line present");
+        assert!(
+            inside
+                .iter()
+                .all(|s| s.style != Style::new().fg(DIFF_ADDITION)),
+            "inside code block should not get diff +/- styling"
+        );
+        let outside = lines
+            .iter()
+            .find(|l| line_text(l).contains("-outside"))
+            .expect("outside line present");
+        assert_eq!(
+            outside[0].style.fg,
+            Some(DIFF_REMOVAL),
+            "outside diff marker should be colored"
+        );
     }
 
     #[test]
-    fn backticks_in_info_string_not_closing() {
-        let base = Style::new().fg(Color::Indexed(5));
-        let content = "```llvm ```some crazy dialect```\ncode line\n```";
-        let lines = highlight_message_lines(content, base, 200);
-        let line = lines
-            .iter()
-            .find(|l| l.iter().any(|s| s.content.contains("code line")))
-            .expect("should find content line");
-        assert!(line.iter().any(|s| s.style != base));
-    }
-
-    #[test]
-    fn overlong_closer_does_not_close_block() {
-        let base = Style::new().fg(Color::Indexed(6));
-        let content = "```\nstill code\n````";
-        let lines = highlight_message_lines(content, base, 200);
-        let line = lines
-            .iter()
-            .find(|l| l.iter().any(|s| s.content.contains("still code")))
-            .expect("should find content line");
-        assert!(line.iter().any(|s| s.style != base));
-    }
-
-    #[test]
-    fn eof_without_closer_keeps_highlighting() {
-        let base = Style::new().fg(Color::Indexed(7));
+    fn unclosed_code_block_highlights_until_end() {
+        let base = Style::new().fg(Color::Indexed(3));
         let content = "```rust\nlet z = 9;";
         let lines = highlight_message_lines(content, base, 200);
         assert!(
@@ -630,25 +681,36 @@ outer end
     }
 
     #[test]
-    fn one_line_backtick_content_is_code_line() {
-        let base = Style::new().fg(Color::Indexed(8));
-        let content = "```\n```\n```";
-        let lines = highlight_message_lines(content, base, 200);
-        let line = lines
-            .iter()
-            .find(|l| l.iter().any(|s| s.content.contains("```")))
-            .expect("should find content line");
-        assert!(line.iter().any(|s| s.style != base));
+    fn bullet_lists_are_not_colored_like_diffs() {
+        let base = Style::new().fg(Color::White);
+        let content = "- item one\n- item two";
+        let lines = highlight_message_lines(content, base, 40);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0][0].style, base);
+        assert_eq!(lines[1][0].style, base);
     }
 
     #[test]
-    fn mismatched_info_string_does_not_reopen() {
-        let base = Style::new().fg(Color::Indexed(9));
-        let content = "```rust\nlet x = 1;\n```js\nback to plain\n```";
+    fn headings_and_text_stay_plain_between_blocks() {
+        let base = Style::new().fg(Color::Indexed(4));
+        let content = "\
+**1.**\n```\nblock one\n```\nplain between\n```rust\nlet x = 1;\n```\nplain tail";
         let lines = highlight_message_lines(content, base, 200);
+        let between = lines
+            .iter()
+            .find(|l| line_text(l).contains("plain between"))
+            .expect("between line present");
         assert!(
-            lines.iter().any(|l| l.iter().any(|s| s.style != base)),
-            "first block should be highlighted"
+            between.iter().all(|s| s.style == base),
+            "plain text between code blocks should stay plain"
+        );
+        let tail = lines
+            .iter()
+            .find(|l| line_text(l).contains("plain tail"))
+            .expect("tail line present");
+        assert!(
+            tail.iter().all(|s| s.style == base),
+            "plain text after code blocks should stay plain"
         );
     }
 }

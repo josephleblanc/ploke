@@ -1,5 +1,6 @@
 ---
 source: crates/ploke-tui/tests/approvals_overlay_render.rs
+assertion_line: 254
 expression: red
 ---
 ┌ Approvals ───────────────────────────────────────────────────────────────────┐
