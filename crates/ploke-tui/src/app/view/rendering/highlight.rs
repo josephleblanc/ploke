@@ -67,40 +67,27 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
 
     let lines: Vec<&str> = content.split('\n').collect();
     for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let backticks = trimmed.chars().take_while(|c| *c == '`').count();
-        let rest = trimmed.get(backticks..).unwrap_or_default().trim();
-
-        if backticks >= 3 {
+        if let Some(fence) = parse_fence_line(line) {
             if in_code {
-                if rest.is_empty() && backticks >= fence_len {
-                    let mut has_future_closer = false;
-                    for future in lines.iter().skip(idx + 1) {
-                        let ftrim = future.trim_start();
-                        let fb = ftrim.chars().take_while(|c| *c == '`').count();
-                        let frest = ftrim.get(fb..).unwrap_or_default().trim();
-                        if fb >= 3 {
-                            if frest.is_empty() && fb >= fence_len {
-                                has_future_closer = true;
-                            }
-                        }
-                    }
-                    // Close only if this is the last closer.
-                    if !has_future_closer {
-                        flush_code(&lang_hint, &mut code_lines, &mut blocks);
-                        in_code = false;
-                        lang_hint = None;
-                        fence_len = 0;
+                // Closing fence: must be bare (no info) and length >= opener length.
+                if fence.info.is_none() && fence.length >= fence_len {
+                    if has_future_closer(&lines, idx + 1, fence_len) {
+                        // Treat this fence as content; a later closer will end the block.
+                        code_lines.push(line.to_string());
                         continue;
                     }
+                    flush_code(&lang_hint, &mut code_lines, &mut blocks);
+                    in_code = false;
+                    lang_hint = None;
+                    fence_len = 0;
+                    continue;
                 }
             } else {
-                flush_text(&mut pending_text, &mut blocks);
+                // Opening fence
                 in_code = true;
-                fence_len = backticks;
-                if !rest.is_empty() {
-                    lang_hint = Some(rest.to_string());
-                }
+                fence_len = fence.length;
+                lang_hint = fence.info.clone();
+                flush_text(&mut pending_text, &mut blocks);
                 continue;
             }
         }
@@ -234,20 +221,14 @@ fn highlight_code_block(lines: &mut Vec<String>, lang: Option<&str>) -> Vec<Styl
 
 fn detect_diff_markers(content: &str) -> bool {
     let mut in_code = false;
-    let mut fence_len: usize = 0;
     for line in content.lines() {
-        let trimmed = line.trim_start();
-        let backticks = trimmed.chars().take_while(|c| *c == '`').count();
-        let rest = trimmed.get(backticks..).unwrap_or_default().trim();
-        if backticks >= 3 {
+        if let Some(fence) = parse_fence_line(line) {
             if in_code {
-                if rest.is_empty() && backticks >= fence_len {
+                if fence.info.is_none() {
                     in_code = false;
-                    fence_len = 0;
                 }
             } else {
                 in_code = true;
-                fence_len = backticks;
             }
             continue;
         }
@@ -408,6 +389,55 @@ fn take_prefix_by_width(s: &str, max_width: usize) -> (usize, usize) {
     (byte_idx, accum_width)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fence<'a> {
+    length: usize,
+    info: Option<String>,
+    _indent: usize,
+    _raw: &'a str,
+}
+
+fn parse_fence_line(line: &str) -> Option<Fence<'_>> {
+    // Allow up to 3 leading spaces per CommonMark.
+    let indent = line.chars().take_while(|c| c.is_ascii_whitespace()).count();
+    if indent > 3 {
+        return None;
+    }
+    let trimmed = line[indent..].as_bytes();
+    if trimmed.is_empty() || trimmed[0] != b'`' {
+        return None;
+    }
+
+    let backtick_count = trimmed
+        .iter()
+        .take_while(|b| **b == b'`')
+        .count();
+    if backtick_count < 3 {
+        return None;
+    }
+
+    let rest = line[indent + backtick_count..].trim();
+    let info = if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
+    };
+
+    Some(Fence {
+        length: backtick_count,
+        info,
+        _indent: indent,
+        _raw: line,
+    })
+}
+
+fn has_future_closer(lines: &[&str], start_idx: usize, fence_len: usize) -> bool {
+    lines
+        .iter()
+        .skip(start_idx)
+        .any(|l| parse_fence_line(l).is_some_and(|f| f.info.is_none() && f.length >= fence_len))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,5 +545,110 @@ let raw = r#\"hello
                 "line '{needle}' should remain inside highlighted code block"
             );
         }
+    }
+
+    #[test]
+    fn outer_longer_fence_allows_inner_shorter() {
+        let base = Style::new().fg(Color::Indexed(2));
+        let content = "\
+````text
+outer start
+```rust
+inner should be plain text of outer
+```
+outer end
+````";
+        let lines = highlight_message_lines(content, base, 200);
+        let expect = ["outer start", "inner should be plain text of outer", "outer end"];
+        for needle in expect {
+            let (idx, _) = lines
+                .iter()
+                .enumerate()
+                .find(|(_, l)| l.iter().any(|s| s.content.contains(needle)))
+                .unwrap_or_else(|| panic!("expected to find line containing {needle}"));
+            assert!(
+                lines[idx].iter().any(|s| s.style != base),
+                "line '{needle}' should stay highlighted inside outer fence"
+            );
+        }
+    }
+
+    #[test]
+    fn indented_fence_still_opens_block() {
+        let base = Style::new().fg(Color::Indexed(3));
+        let content = "   ```rust\nlet x = 1;\n   ```";
+        let lines = highlight_message_lines(content, base, 200);
+        assert!(
+            lines.iter().any(|l| l.iter().any(|s| s.style != base)),
+            "indented fence should open a block"
+        );
+    }
+
+    #[test]
+    fn unicode_quotes_do_not_start_fence() {
+        let base = Style::new().fg(Color::Indexed(4));
+        let content = "‘’‘\nshould be plain\n‘’‘";
+        let lines = highlight_message_lines(content, base, 200);
+        assert!(lines
+            .iter()
+            .all(|l| l.iter().all(|s| s.style == base)));
+    }
+
+    #[test]
+    fn backticks_in_info_string_not_closing() {
+        let base = Style::new().fg(Color::Indexed(5));
+        let content = "```llvm ```some crazy dialect```\ncode line\n```";
+        let lines = highlight_message_lines(content, base, 200);
+        let line = lines
+            .iter()
+            .find(|l| l.iter().any(|s| s.content.contains("code line")))
+            .expect("should find content line");
+        assert!(line.iter().any(|s| s.style != base));
+    }
+
+    #[test]
+    fn overlong_closer_does_not_close_block() {
+        let base = Style::new().fg(Color::Indexed(6));
+        let content = "```\nstill code\n````";
+        let lines = highlight_message_lines(content, base, 200);
+        let line = lines
+            .iter()
+            .find(|l| l.iter().any(|s| s.content.contains("still code")))
+            .expect("should find content line");
+        assert!(line.iter().any(|s| s.style != base));
+    }
+
+    #[test]
+    fn eof_without_closer_keeps_highlighting() {
+        let base = Style::new().fg(Color::Indexed(7));
+        let content = "```rust\nlet z = 9;";
+        let lines = highlight_message_lines(content, base, 200);
+        assert!(
+            lines.iter().any(|l| l.iter().any(|s| s.style != base)),
+            "unterminated block should keep highlighting"
+        );
+    }
+
+    #[test]
+    fn one_line_backtick_content_is_code_line() {
+        let base = Style::new().fg(Color::Indexed(8));
+        let content = "```\n```\n```";
+        let lines = highlight_message_lines(content, base, 200);
+        let line = lines
+            .iter()
+            .find(|l| l.iter().any(|s| s.content.contains("```")))
+            .expect("should find content line");
+        assert!(line.iter().any(|s| s.style != base));
+    }
+
+    #[test]
+    fn mismatched_info_string_does_not_reopen() {
+        let base = Style::new().fg(Color::Indexed(9));
+        let content = "```rust\nlet x = 1;\n```js\nback to plain\n```";
+        let lines = highlight_message_lines(content, base, 200);
+        assert!(
+            lines.iter().any(|l| l.iter().any(|s| s.style != base)),
+            "first block should be highlighted"
+        );
     }
 }
