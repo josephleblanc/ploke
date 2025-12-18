@@ -76,7 +76,7 @@ pub enum DbError {
     EmbeddingUpdateEmpty,
 
     #[error("Error: Active Embedding Set Poisoned")]
-    ActiveSetPoisoned
+    ActiveSetPoisoned,
 }
 
 impl DbError {

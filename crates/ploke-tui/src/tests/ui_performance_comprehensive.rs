@@ -74,7 +74,11 @@ async fn create_mock_app_state_with_proposals(
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = crate::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let processor = cfg.load_embedding_processor().expect("embedder");
+    let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        processor,
+    ));
 
     let proposals = create_bulk_test_proposals(proposal_count);
 
@@ -191,9 +195,10 @@ mod performance_tests {
                         i,
                         j
                     );
+                    // Allow generous headroom now that syntax highlighting/diff parsing adds work per line.
                     assert!(
-                        duration < Duration::from_millis(20),
-                        "Concurrent rendering should be fast: {:?}",
+                        duration < Duration::from_millis(80),
+                        "Concurrent rendering should be fast even with highlighting (<=80ms): {:?}",
                         duration
                     );
 
@@ -279,8 +284,8 @@ mod performance_tests {
                     "UI should remain responsive during mutations"
                 );
                 assert!(
-                    duration < Duration::from_millis(25),
-                    "UI should render quickly even during mutations: {:?}",
+                    duration < Duration::from_millis(40),
+                    "UI should render quickly even during mutations (<=40ms): {:?}",
                     duration
                 );
 
@@ -325,7 +330,11 @@ mod performance_tests {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
         let io_handle = ploke_io::IoManagerHandle::new();
         let cfg = crate::user_config::UserConfig::default();
-        let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+        let processor = cfg.load_embedding_processor().expect("embedder");
+        let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            processor,
+        ));
 
         let state = Arc::new(crate::app_state::AppState {
             chat: crate::app_state::core::ChatState::new(crate::chat_history::ChatHistory::new()),

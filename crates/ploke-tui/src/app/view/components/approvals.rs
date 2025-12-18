@@ -9,6 +9,9 @@ use ratatui::{
 };
 
 use crate::app::view::components::context_browser::StepEnum;
+use crate::app::view::rendering::highlight::{
+    StyledLine, StyledSpan, highlight_diff_text, styled_to_ratatui_lines,
+};
 use crate::app_state::AppState as _;
 use crate::app_state::core::{DiffPreview, EditProposalStatus}; // trait bounds
 
@@ -274,7 +277,8 @@ pub fn render_approvals_overlay(
 
     // Details
     let selected = items.get(selected_idx).map(|item| (item.kind, item.id));
-    let mut detail_lines: Vec<Line> = Vec::new();
+    let mut detail_lines: Vec<Line<'static>> = Vec::new();
+    let detail_width = cols[1].width.saturating_sub(2).max(1);
     if let Some((sel_kind, sel_id)) = selected {
         // Use the established pattern for accessing async data from sync context
         let (proposals_guard, create_guard) = tokio::task::block_in_place(|| {
@@ -284,89 +288,80 @@ pub fn render_approvals_overlay(
                 (p, c)
             })
         });
-        let mut render_preview = |status: &EditProposalStatus,
-                                  files_len: usize,
-                                  preview: &DiffPreview| {
-            detail_lines.push(Line::from(vec![Span::styled(
-                format!("request_id: {}", sel_id),
-                Style::new().fg(Color::Yellow),
-            )]));
-            detail_lines.push(Line::from(format!(
-                "status: {:?}  files:{}",
-                status, files_len
-            )));
+        let mut render_preview =
+            |status: &EditProposalStatus, files_len: usize, preview: &DiffPreview| {
+                detail_lines.push(Line::from(vec![Span::styled(
+                    format!("request_id: {}", sel_id),
+                    Style::new().fg(Color::Yellow),
+                )]));
+                detail_lines.push(Line::from(format!(
+                    "status: {:?}  files:{}",
+                    status, files_len
+                )));
 
-            // Determine line limit for display
-            let line_limit = if ui.view_lines == 0 {
-                usize::MAX
-            } else {
-                ui.view_lines
+                // Determine line limit for display
+                let line_limit = if ui.view_lines == 0 {
+                    usize::MAX
+                } else {
+                    ui.view_lines
+                };
+                let mut rendered_preview_lines = 0usize;
+
+                match preview {
+                    DiffPreview::UnifiedDiff { text } => {
+                        detail_lines.push(Line::from(vec![Span::styled(
+                            "Unified Diff:",
+                            Style::new().fg(Color::Green),
+                        )]));
+
+                        if push_highlighted_with_limit(
+                            &mut detail_lines,
+                            highlight_diff_text(text, detail_width),
+                            &mut rendered_preview_lines,
+                            line_limit,
+                        ) {
+                            detail_lines.push(truncation_line(line_limit));
+                        }
+                    }
+                    DiffPreview::CodeBlocks { per_file } => {
+                        detail_lines.push(Line::from(vec![Span::styled(
+                            "Before/After:",
+                            Style::new().fg(Color::Green),
+                        )]));
+
+                        for ba in per_file.iter().take(2) {
+                            if rendered_preview_lines >= line_limit {
+                                detail_lines.push(truncation_line(line_limit));
+                                break;
+                            }
+                            let mut chunk = String::new();
+                            chunk.push_str(&format!("--- {}\n", ba.file_path.display()));
+
+                            for ln in ba.before.lines() {
+                                chunk.push_str("- ");
+                                chunk.push_str(ln);
+                                chunk.push('\n');
+                            }
+
+                            for ln in ba.after.lines() {
+                                chunk.push_str("+ ");
+                                chunk.push_str(ln);
+                                chunk.push('\n');
+                            }
+
+                            if push_highlighted_with_limit(
+                                &mut detail_lines,
+                                highlight_diff_text(chunk.trim_end_matches('\n'), detail_width),
+                                &mut rendered_preview_lines,
+                                line_limit,
+                            ) {
+                                detail_lines.push(truncation_line(line_limit));
+                                break;
+                            }
+                        }
+                    }
+                }
             };
-
-            match preview {
-                DiffPreview::UnifiedDiff { text } => {
-                    let header = Line::from(vec![Span::styled(
-                        "Unified Diff:",
-                        Style::new().fg(Color::Green),
-                    )]);
-                    detail_lines.push(header);
-
-                    for (lines_added, ln) in text.lines().enumerate() {
-                        if lines_added >= line_limit {
-                            detail_lines.push(Line::from(format!(
-                                "... [truncated at {} lines, use +/- to adjust]",
-                                line_limit
-                            )));
-                            break;
-                        }
-                        detail_lines.push(Line::from(ln.to_string()));
-                    }
-                }
-                DiffPreview::CodeBlocks { per_file } => {
-                    let header = Line::from(vec![Span::styled(
-                        "Before/After:",
-                        Style::new().fg(Color::Green),
-                    )]);
-                    detail_lines.push(header);
-
-                    let mut total_lines_added = 0;
-                    for ba in per_file.iter().take(2) {
-                        if total_lines_added >= line_limit {
-                            detail_lines.push(Line::from(format!(
-                                "... [more files truncated at {} lines]",
-                                line_limit
-                            )));
-                            break;
-                        }
-
-                        detail_lines.push(Line::from(format!("--- {}", ba.file_path.display())));
-                        total_lines_added += 1;
-
-                        // Before section
-                        for ln in ba.before.lines() {
-                            if total_lines_added >= line_limit {
-                                detail_lines.push(Line::from(format!(
-                                    "... [truncated at {} lines, use +/- to adjust]",
-                                    line_limit
-                                )));
-                                break;
-                            }
-                            detail_lines.push(Line::from(format!("- {}", ln)));
-                            total_lines_added += 1;
-                        }
-
-                        // After section
-                        for ln in ba.after.lines() {
-                            if total_lines_added >= line_limit {
-                                break;
-                            }
-                            detail_lines.push(Line::from(format!("+ {}", ln)));
-                            total_lines_added += 1;
-                        }
-                    }
-                }
-            }
-        };
 
         match sel_kind {
             ProposalKind::Edit => {
@@ -435,4 +430,69 @@ pub fn render_approvals_overlay(
     }
 
     selected.map(|(_, id)| id)
+}
+
+fn push_highlighted_with_limit(
+    target: &mut Vec<Line<'static>>,
+    highlighted: Vec<StyledLine>,
+    rendered: &mut usize,
+    limit: usize,
+) -> bool {
+    if limit == usize::MAX {
+        let lines = styled_to_ratatui_lines(highlighted);
+        *rendered = (*rendered).saturating_add(lines.len());
+        target.extend(lines);
+        return false;
+    }
+
+    for line in styled_to_ratatui_lines(highlighted) {
+        if *rendered >= limit {
+            return true;
+        }
+        target.push(line);
+        *rendered += 1;
+    }
+    false
+}
+
+fn truncation_line(limit: usize) -> Line<'static> {
+    Line::from(format!(
+        "... [truncated at {} lines, use +/- to adjust]",
+        limit
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_line(txt: &str) -> StyledLine {
+        vec![StyledSpan {
+            content: txt.to_string(),
+            style: Style::default(),
+        }]
+    }
+
+    #[test]
+    fn push_highlighted_obeys_limit() {
+        let mut rendered = 0usize;
+        let mut out = Vec::new();
+        let highlighted = vec![make_line("one"), make_line("two"), make_line("three")];
+        let truncated = push_highlighted_with_limit(&mut out, highlighted, &mut rendered, 2);
+        assert!(truncated);
+        assert_eq!(out.len(), 2);
+        assert_eq!(rendered, 2);
+    }
+
+    #[test]
+    fn push_highlighted_unbounded_adds_all() {
+        let mut rendered = 0usize;
+        let mut out = Vec::new();
+        let highlighted = vec![make_line("a"), make_line("b")];
+        let truncated =
+            push_highlighted_with_limit(&mut out, highlighted.clone(), &mut rendered, usize::MAX);
+        assert!(!truncated);
+        assert_eq!(rendered, highlighted.len());
+        assert_eq!(out.len(), highlighted.len());
+    }
 }

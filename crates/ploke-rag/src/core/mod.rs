@@ -10,14 +10,14 @@
 mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
+use ploke_embed::indexer::EmbeddingProcessor;
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::trace;
-use ploke_embed::indexer::EmbeddingProcessor;
-use ploke_embed::runtime::EmbeddingRuntime;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RetrievalStrategy {
@@ -139,10 +139,7 @@ pub struct RagService {
 
 impl RagService {
     /// Construct a new RAG service, starting the BM25 service actor.
-    pub fn new(
-        db: Arc<Database>,
-        dense_embedder: Arc<EmbeddingRuntime>,
-    ) -> Result<Self, RagError> {
+    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingRuntime>) -> Result<Self, RagError> {
         // ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self {
@@ -216,10 +213,9 @@ impl RagService {
     /// Convenience constructor for tests with an in-memory database and mock embedder.
     pub fn new_mock() -> Self {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("init test db"));
-        let dense_embedder =
-            Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
-                ploke_embed::indexer::EmbeddingProcessor::new_mock(),
-            ));
+        let dense_embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
+            ploke_embed::indexer::EmbeddingProcessor::new_mock(),
+        ));
         let bm_embedder = bm25_service::start_default(db.clone()).expect("start bm25");
         Self {
             db,

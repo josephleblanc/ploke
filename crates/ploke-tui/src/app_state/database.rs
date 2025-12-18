@@ -1104,10 +1104,8 @@ mod test {
             processor,
         ));
 
-        let new_db = ploke_db::Database::new_with_active_set(
-            cozo_db,
-            embedding_runtime.active_set_handle(),
-        );
+        let new_db =
+            ploke_db::Database::new_with_active_set(cozo_db, embedding_runtime.active_set_handle());
         let db_handle = Arc::new(new_db);
 
         // Initial parse is now optional - user can run indexing on demand
@@ -1134,8 +1132,7 @@ mod test {
             8,
         );
 
-        let rag =
-            RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;
+        let rag = RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;
         let state = Arc::new(AppState {
             chat: ChatState::new(ChatHistory::new()),
             config: ConfigState::default(),

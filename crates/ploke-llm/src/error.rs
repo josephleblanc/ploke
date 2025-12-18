@@ -127,18 +127,25 @@ impl LlmError {
 impl From<LlmError> for ploke_error::Error {
     fn from(error: LlmError) -> Self {
         match error {
-            LlmError::Request { message, is_timeout, .. } => ploke_error::Error::Internal(
-                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(if is_timeout {
+            LlmError::Request {
+                message,
+                is_timeout,
+                ..
+            } => ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
+                std::sync::Arc::new(if is_timeout {
                     std::io::Error::new(std::io::ErrorKind::TimedOut, message)
                 } else {
                     std::io::Error::new(std::io::ErrorKind::ConnectionAborted, message)
-                })),
-            ),
-            LlmError::Api { status, message, .. } => ploke_error::Error::Internal(
-                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
-                    std::io::Error::other(format!("API error {}: {}", status, message)),
-                )),
-            ),
+                }),
+            )),
+            LlmError::Api {
+                status, message, ..
+            } => ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
+                std::sync::Arc::new(std::io::Error::other(format!(
+                    "API error {}: {}",
+                    status, message
+                ))),
+            )),
             LlmError::RateLimited => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Rate limit exceeded".to_string()),
             ),
@@ -156,12 +163,12 @@ impl From<LlmError> for ploke_error::Error {
             LlmError::ContentFilter => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Content blocked by safety filter".to_string()),
             ),
-            LlmError::Serialization(message) => ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(format!(
+            LlmError::Serialization(message) => {
+                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
                     "Serialization error: {}",
                     message
-                )),
-            ),
+                )))
+            }
             LlmError::Deserialization { message, .. } => {
                 ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
                     "Deserialization error: {}",

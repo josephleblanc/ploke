@@ -1,57 +1,18 @@
-use std::rc::Rc;
-
 use super::*;
 use crate::app::types::RenderMsg;
+use crate::app::view::rendering::highlight::{StyledSpan, highlight_message_lines};
 use crate::chat_history::MessageKind;
-// In app.rs, replace the List rendering with custom Paragraph-based rendering
 
-#[derive(Debug, Clone)]
-struct MessageItem {
-    id: Uuid,
-    kind: MessageKind,
-    content: String,
-    wrapped_lines: Vec<String>, // Pre-wrapped lines
-    height: u16,                // Calculated height
+fn base_style_for_kind(kind: MessageKind) -> Style {
+    match kind {
+        MessageKind::User => Style::new().blue(),
+        MessageKind::Assistant => Style::new().green(),
+        MessageKind::System => Style::new().cyan(),
+        MessageKind::SysInfo => Style::new().magenta(),
+        MessageKind::Tool => Style::new().green().dim(),
+    }
 }
 
-// Calculate message dimensions
-fn calculate_message_height(content: &str, width: u16) -> u16 {
-    let wrapped = textwrap::wrap(content, width as usize);
-    wrapped.len() as u16
-}
-
-// ---------- helpers ----------------------------------------------------------
-#[instrument(skip(content), level = "trace")]
-fn calc_height(content: &str, width: u16) -> u16 {
-    textwrap::wrap(content, width as usize).len() as u16
-}
-
-/// Returns `(lines_consumed, Vec<Line<'a>>)` borrowing the wrapped text
-#[instrument(skip(content))]
-fn render_one_message<'a>(
-    content: &'a str,
-    width: u16,
-    style: Style,
-    selected: bool,
-) -> (u16, Vec<Line<'a>>) {
-    let wrapped = textwrap::wrap(content, width.saturating_sub(2) as usize);
-    let bar = Span::styled("│", style.fg(Color::White));
-
-    let lines: Vec<Line<'a>> = wrapped
-        .into_iter()
-        .map(|s| {
-            let mut spans = Vec::with_capacity(2);
-            if selected {
-                spans.push(bar.clone());
-            }
-            spans.push(Span::raw(s));
-            Line::from(spans)
-        })
-        .collect();
-
-    (lines.len() as u16, lines)
-}
-// ---------- main replacement -------------------------------------------------
 #[instrument(skip(renderable_msg), level = "trace")]
 pub fn measure_messages<'a, I, T: RenderMsg + 'a>(
     renderable_msg: I,
@@ -66,10 +27,12 @@ where
     let mut total_height = 0u16;
     for msg in renderable_msg.into_iter() {
         // Always reserve a 1-column gutter for the selection bar to keep heights stable.
-        let eff_w = conversation_width.saturating_sub(1);
-        let h = calc_height(msg.content(), eff_w);
-        heights.push(h);
-        total_height = total_height.saturating_add(h);
+        let eff_w = conversation_width.saturating_sub(1).max(1);
+        let lines = highlight_message_lines(msg.content(), base_style_for_kind(msg.kind()), eff_w);
+        let h = lines.len() as u16;
+        let height = h.max(1);
+        heights.push(height);
+        total_height = total_height.saturating_add(height);
     }
     (total_height, heights)
 }
@@ -101,13 +64,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
     for (idx, msg) in renderable_msg.into_iter().enumerate() {
         let height = heights[idx];
         let is_selected = selected_index == Some(idx);
-        let base_style = match msg.kind() {
-            MessageKind::User => Style::new().blue(),
-            MessageKind::Assistant => Style::new().green(),
-            MessageKind::System => Style::new().cyan(),
-            MessageKind::SysInfo => Style::new().magenta(),
-            MessageKind::Tool => Style::new().green().dim(),
-        };
+        let base_style = base_style_for_kind(msg.kind());
 
         if y_virtual + height <= clamped_offset_y {
             y_virtual = y_virtual.saturating_add(height);
@@ -115,8 +72,8 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
         }
 
         // Use the same effective width as in height calc: always reserve 1-column gutter.
-        let eff_w = conversation_width.saturating_sub(1);
-        let wrapped = textwrap::wrap(msg.content(), eff_w as usize);
+        let eff_w = conversation_width.saturating_sub(1).max(1);
+        let wrapped = highlight_message_lines(msg.content(), base_style, eff_w);
         let bar = Span::styled("│", base_style.fg(Color::White));
 
         // If offset lands inside this message, skip top lines so we don’t waste space
@@ -124,12 +81,12 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
         if clamped_offset_y > y_virtual {
             start_line = (clamped_offset_y - y_virtual) as usize;
         }
-        for line in wrapped.iter().skip(start_line) {
-            let mut spans = Vec::with_capacity(2);
+        for line in wrapped.into_iter().skip(start_line) {
+            let mut spans = Vec::with_capacity(line.len() + 1);
             if is_selected {
                 spans.push(bar.clone());
             }
-            spans.push(Span::raw(line.as_ref()));
+            append_spans(&mut spans, line);
             let para = Paragraph::new(Line::from(spans)).style(base_style);
 
             let area = Rect::new(
@@ -145,5 +102,11 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
             }
         }
         y_virtual = y_virtual.saturating_add(height);
+    }
+}
+
+fn append_spans(spans: &mut Vec<Span<'static>>, line: Vec<StyledSpan>) {
+    for span in line {
+        spans.push(Span::styled(span.content, span.style));
     }
 }

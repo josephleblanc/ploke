@@ -163,8 +163,9 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let runtime_cfg: RuntimeConfig = config.clone().into();
 
     let processor = config.load_embedding_processor()?;
-    let embedding_runtime =
-        Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(processor));
+    let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
+        processor,
+    ));
 
     let mut new_db = ploke_db::Database::init_with_schema()?;
     new_db.setup_multi_embedding()?;

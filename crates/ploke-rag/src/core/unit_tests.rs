@@ -105,10 +105,10 @@ mod tests {
             .expect("Must set up TEST_DB_NODES correctly.");
         ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
 
-    // TODO:active-embedding-set 2025-12-15
-    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-    // functions.
-    let rel = db.with_active_set(|set| set.rel_name.clone())?;
+        // TODO:active-embedding-set 2025-12-15
+        // update the active embedding set functions to correctly use Arc<RwLock<>> within these
+        // functions.
+        let rel = db.with_active_set(|set| set.rel_name.clone())?;
         let script = format!("?[count(node_id)] := *{rel}{{ node_id @ 'NOW' }}");
         let rows = db.raw_query(&script).map_err(ploke_error::Error::from)?;
         info!(?rows);
@@ -151,7 +151,9 @@ mod tests {
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
-        let active_embedding_set = db.with_active_set(|set| set.clone()).expect("Un-Poisoned active_embedding_set");
+        let active_embedding_set = db
+            .with_active_set(|set| set.clone())
+            .expect("Un-Poisoned active_embedding_set");
 
         let embed_rel = active_embedding_set.rel_name.clone();
         let count_script = format!("?[count(node_id)] := *{embed_rel}{{ node_id @ 'NOW' }}");

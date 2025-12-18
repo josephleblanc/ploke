@@ -323,10 +323,7 @@ impl Database {
         Self::new_with_active_set(db, Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())))
     }
 
-    pub fn new_with_active_set(
-        db: Db<MemStorage>,
-        active_set: Arc<RwLock<EmbeddingSet>>,
-    ) -> Self {
+    pub fn new_with_active_set(db: Db<MemStorage>, active_set: Arc<RwLock<EmbeddingSet>>) -> Self {
         Self {
             db,
             active_embedding_set: active_set,
@@ -806,7 +803,10 @@ impl Database {
             active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
         })
     }
-    pub async fn create_new_backup(active_embedding_set: EmbeddingSet, path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+    pub async fn create_new_backup(
+        active_embedding_set: EmbeddingSet,
+        path: impl AsRef<Path>,
+    ) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
         Ok(Self {
@@ -1053,7 +1053,6 @@ impl Database {
     // TODO:migrate-multi-embed-full
     // Update callsites to use new API without relying on wrapper function
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
-
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
@@ -1262,7 +1261,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
-
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.

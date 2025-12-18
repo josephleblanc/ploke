@@ -9,7 +9,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape};
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
 use ploke_db::{multi_embedding::db_ext::EmbeddingExt as _, Database};
 use ploke_db::{multi_embedding::hnsw_ext::HnswExt as _, DbError};
 use ploke_embed::{
@@ -159,11 +161,13 @@ async fn live_openrouter_fixture_nodes_index_e2e() -> Result<(), Box<dyn std::er
         }
     }
     if ids.len() != total_unembedded_before {
-        return Err::<(), Box<dyn std::error::Error>>(format!(
-            "expected {total_unembedded_before} unique ids, got {}",
-            ids.len()
+        return Err::<(), Box<dyn std::error::Error>>(
+            format!(
+                "expected {total_unembedded_before} unique ids, got {}",
+                ids.len()
+            )
+            .into(),
         )
-        .into())
         .map(|_| ());
     }
 
@@ -231,7 +235,9 @@ async fn live_openrouter_fixture_nodes_index_e2e() -> Result<(), Box<dyn std::er
                         }
                         IndexStatus::Cancelled => {
                             last_status = Some(status.clone());
-                            break Err::<(), Box<dyn std::error::Error>>("indexing cancelled".into());
+                            break Err::<(), Box<dyn std::error::Error>>(
+                                "indexing cancelled".into(),
+                            );
                         }
                         _ => {
                             last_status = Some(status);
@@ -307,11 +313,13 @@ async fn live_openrouter_fixture_nodes_index_e2e() -> Result<(), Box<dyn std::er
         .map(|_| ());
     }
     if progress_messages < 2 {
-        return Err::<(), Box<dyn std::error::Error>>(format!(
-            "expected multiple progress messages; got {progress_messages} (artifact={})",
-            out.display()
+        return Err::<(), Box<dyn std::error::Error>>(
+            format!(
+                "expected multiple progress messages; got {progress_messages} (artifact={})",
+                out.display()
+            )
+            .into(),
         )
-        .into())
         .map(|_| ());
     }
 

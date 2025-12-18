@@ -1,5 +1,7 @@
 use crate::{
-    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings}, router_only::{openrouter::EmbeddingProviderPrefs, ApiRoute, Router}, EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId
+    EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
+    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings},
+    router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -90,10 +92,13 @@ impl HasEmbeddings for super::OpenRouter {
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
 
-        let bytes = resp.bytes().await.map_err(|e| OpenRouterEmbeddingError::Transport {
-            message: e.to_string(),
-            url: url.clone(),
-        })?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| OpenRouterEmbeddingError::Transport {
+                message: e.to_string(),
+                url: url.clone(),
+            })?;
 
         let parsed = parse_openrouter_embeddings_response(
             &bytes,
@@ -109,7 +114,6 @@ impl HasEmbeddings for super::OpenRouter {
                 other => other.with_body_snippet(snippet_lossy(&bytes, 8 * 1024)),
             }
         })?;
-
 
         Ok(parsed)
     }
@@ -213,16 +217,14 @@ pub struct OpenRouterEmbeddingsResponse {
 }
 
 impl HasDims for OpenRouterEmbeddingsResponse {
-    fn dims(&self) -> Option< u64 > {
+    fn dims(&self) -> Option<u64> {
         use OpenRouterEmbeddingVector::*;
-        self.data.first().map(|data| { 
-            match &data.embedding{
-                Float(items) => items.len() as u64,
-                Base64(base_64) => { 
-                    let len = base_64.len() / 4;
-                    len as u64
-                },
-            } 
+        self.data.first().map(|data| match &data.embedding {
+            Float(items) => items.len() as u64,
+            Base64(base_64) => {
+                let len = base_64.len() / 4;
+                len as u64
+            }
         })
     }
 }
@@ -587,15 +589,12 @@ mod tests {
             .expect("fixture data array")
             .iter()
             .map(|entry| {
-                let id_value = entry
-                    .get("id")
-                    .expect("fixture entry has id field")
-                    .clone();
+                let id_value = entry.get("id").expect("fixture entry has id field").clone();
                 match id_value.as_str() {
                     Some(id) => id.to_string(),
                     None => {
-                        let parsed: ModelId =
-                            serde_json::from_value(id_value).expect("fixture id parses into ModelId");
+                        let parsed: ModelId = serde_json::from_value(id_value)
+                            .expect("fixture id parses into ModelId");
                         parsed.to_string()
                     }
                 }

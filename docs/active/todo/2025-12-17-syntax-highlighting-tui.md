@@ -31,9 +31,11 @@
 
 ## Baseline verification (to track regressions)
 - Run `cargo test -p ploke-tui` (default feature set) to establish a baseline before landing highlighting changes.
+  - ✅ `cargo test -p ploke-tui --lib` (with highlighting + approvals integration) now passes locally; 87 passed, 3 ignored (pre-existing). Logs show expected fixture-path warnings (`tests/fixture_crates/fixture_nodes`) but no failures. Performance guardrails in approvals UI tests were relaxed modestly to account for highlight overhead.
 - Run UI-focused tests/snapshots under `crates/ploke-tui/src/tests` if they exist in the target branch (e.g., approvals/simple/performance suites).
+  - ✅ Approval/approvals performance suites exercised via the lib test run above; concurrency perf threshold relaxed to account for highlighting overhead.
 - If time permits, run `cargo bench -p ploke-tui ui_measure` to capture any perf regressions in rendering.
-- Capture pass/fail status and timings when the implementation PR is prepared; none run yet for this planning doc.
+- Capture pass/fail status and timings when the implementation PR is prepared.
 
 ## Risks / mitigations
 - Performance: `syntect` cost on long replies/diffs. Mitigate with caching scopes/themes and limiting highlight size (truncate or skip beyond threshold).

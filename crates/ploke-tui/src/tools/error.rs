@@ -84,8 +84,15 @@ impl ToolError {
 
         let base = match audience {
             Audience::User => format!("{}: {}", self.tool.as_str(), self.message),
-            Audience::Llm => format!("Tool `{}` arguments need correction: {}", self.tool.as_str(), self.message),
-            Audience::System => format!("tool={:?} code={:?}: {}", self.tool, self.code, self.message),
+            Audience::Llm => format!(
+                "Tool `{}` arguments need correction: {}",
+                self.tool.as_str(),
+                self.message
+            ),
+            Audience::System => format!(
+                "tool={:?} code={:?}: {}",
+                self.tool, self.code, self.message
+            ),
         };
         parts.push(base);
 
@@ -129,7 +136,8 @@ impl ToolError {
     }
 
     pub fn to_wire_string(&self) -> String {
-        serde_json::to_string(&self.to_wire()).unwrap_or_else(|_| self.format_for_audience(Audience::User))
+        serde_json::to_string(&self.to_wire())
+            .unwrap_or_else(|_| self.format_for_audience(Audience::User))
     }
 }
 

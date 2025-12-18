@@ -30,8 +30,8 @@ use ploke_llm::response::FinishReason;
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
-use ploke_llm::LlmError;
 use crate::tools::error::ToolErrorWire;
+use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -78,6 +78,7 @@ where
 {
     pub client: &'a Client,
     pub event_bus: Arc<EventBus>,
+    pub assistant_message_id: Uuid,
     pub parent_id: Uuid,
     pub req: ChatCompRequest<R>,
     pub fallback_on_404: bool,
@@ -114,6 +115,7 @@ pub async fn run_chat_session<R: Router>(
     client: &Client,
     mut req: ChatCompRequest<R>,
     parent_id: Uuid,
+    assistant_message_id: Uuid,
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
@@ -146,7 +148,7 @@ pub async fn run_chat_session<R: Router>(
                 if !initial_message_updated {
                     let is_updated = update_assistant_placeholder_once(
                         &state_cmd_tx,
-                        parent_id,
+                        assistant_message_id,
                         content,
                         initial_message_updated,
                     )
@@ -223,7 +225,7 @@ pub async fn run_chat_session<R: Router>(
 #[instrument(skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
 async fn update_assistant_placeholder_once(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
-    parent_id: Uuid,
+    assistant_message_id: Uuid,
     content: Option<String>,
     initial_message_updated: bool,
 ) -> bool {
@@ -232,7 +234,7 @@ async fn update_assistant_placeholder_once(
     if !initial_message_updated {
         state_cmd_tx
             .send(StateCommand::UpdateMessage {
-                id: parent_id,
+                id: assistant_message_id,
                 update: MessageUpdate {
                     content: Some(assistant_update),
                     status: Some(MessageStatus::Completed),
@@ -492,14 +494,11 @@ where
 
             let log_url = resp_url.clone();
             let log_status = resp_status.as_u16();
-            let body_text = response
-                .text()
-                .await
-                .map_err(|e| LlmError::Request {
-                    message: format!("while reading response body (status {log_status}): {e}"),
-                    url: Some(log_url.clone()),
-                    is_timeout: e.is_timeout(),
-                })?;
+            let body_text = response.text().await.map_err(|e| LlmError::Request {
+                message: format!("while reading response body (status {log_status}): {e}"),
+                url: Some(log_url.clone()),
+                is_timeout: e.is_timeout(),
+            })?;
 
             let _ = log_api_raw_response(&log_url, log_status, &body_text);
 
@@ -522,7 +521,7 @@ where
                     if !initial_message_updated {
                         state_cmd_tx
                             .send(StateCommand::UpdateMessage {
-                                id: self.parent_id,
+                                id: self.assistant_message_id,
                                 update: MessageUpdate {
                                     content: Some(assistant_update),
                                     status: Some(MessageStatus::Completed),
@@ -662,13 +661,13 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                                     .map(|w| w.user.clone())
                                     .unwrap_or_else(|| err_string.clone());
 
-                                let content = json!({"ok": false, "error": llm_payload}).to_string();
+                                let content =
+                                    json!({"ok": false, "error": llm_payload}).to_string();
                                 self.req
                                     .core
                                     .messages
                                     .push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg =
-                                    format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
+                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
                                 state_cmd_tx
                                     .send(StateCommand::AddMessageTool {
                                         new_msg_id: Uuid::new_v4(),

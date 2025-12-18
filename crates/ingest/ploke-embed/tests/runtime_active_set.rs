@@ -4,7 +4,9 @@ use httpmock::prelude::*;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 
-use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape};
+use ploke_core::embeddings::{
+    EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+};
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_db::Database;
 use ploke_embed::{
@@ -99,7 +101,9 @@ async fn runtime_swaps_active_set_and_embedder_dimensions() -> Result<(), Box<dy
     runtime.activate(
         &db,
         new_set.clone(),
-        Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(backend_b))),
+        Arc::new(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
+            backend_b,
+        ))),
     )?;
     set_env(&server_b.url("/v1/embeddings"));
 

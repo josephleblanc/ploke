@@ -38,6 +38,7 @@ use crate::{
     AppEvent, EventBus,
     app_state::{AppState, StateCommand},
     chat_history::MessageKind,
+    chat_history::{MessageStatus, MessageUpdate},
     tools::{
         self, Tool as _, ToolDefinition, code_edit::GatCodeEdit, create_file::CreateFile,
         ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
@@ -268,13 +269,14 @@ pub async fn process_llm_request(
         messages,
         event_bus.clone(),
         request_message_id,
+        parent_id,
         cmd_tx.clone(),
     )
     .await;
 
     // Build concise per-request outcome summary before consuming `result`
     // TODO: Add a typed return value that contains a summary and an option for the content
-    let summary = match &result {
+    let _summary = match &result {
         Ok(_msg) => "Request summary: [success]".to_string(),
         Err(LlmError::Api { status: 404, .. }) => {
             "Request summary: error 404 (endpoint/tool support?)".to_string()
@@ -283,40 +285,52 @@ pub async fn process_llm_request(
         Err(e) => format!("Request summary: error ({})", e),
     };
 
+    finalize_assistant_response(&cmd_tx, assistant_message_id, result).await;
+}
+
+async fn finalize_assistant_response(
+    cmd_tx: &mpsc::Sender<StateCommand>,
+    assistant_message_id: Uuid,
+    result: Result<String, LlmError>,
+) {
     let update_cmd = match result {
         Ok(content) => {
-            // Small preview for logs so tests / debug can observe the returned text.
             let preview = content.chars().take(200).collect::<String>();
             tracing::info!(
-                "LLM produced response for parent_id={} -> assistant_message_id={}. preview={}",
-                parent_id,
-                request_message_id,
+                "LLM produced response for assistant_message_id={}. preview={}",
+                assistant_message_id,
                 preview
             );
 
-            StateCommand::AddMessageImmediate {
-                msg: content,
-                kind: MessageKind::Assistant,
-                new_msg_id: Uuid::new_v4(),
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(content),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
             }
         }
         Err(e) => {
             let err_string = e.diagnostic();
             tracing::error!(error = ?e, diagnostic = %err_string, "LLM request failed");
 
-            // Avoid invalid status transition by finalizing the assistant message with a failure note.
-            StateCommand::AddMessageImmediate {
-                msg: format!(
-                    "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
-                    err_string
-                ),
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(format!(
+                        "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
+                        err_string
+                    )),
+                    status: Some(MessageStatus::Error {
+                        description: err_string,
+                    }),
+                    ..Default::default()
+                },
             }
         }
     };
 
-    // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
@@ -328,6 +342,7 @@ async fn prepare_and_run_llm_call(
     client: &Client,
     messages: Vec<RequestMessage>,
     event_bus: Arc<EventBus>,
+    assistant_message_id: Uuid,
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
 ) -> Result<String, LlmError> {
@@ -388,6 +403,7 @@ async fn prepare_and_run_llm_call(
         let session = session::RequestSession::<OpenRouter> {
             client,
             event_bus,
+            assistant_message_id,
             parent_id,
             req,
             fallback_on_404: false,
@@ -401,7 +417,16 @@ async fn prepare_and_run_llm_call(
     {
         use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
         let policy = TuiToolPolicy::default();
-        run_chat_session(client, req, parent_id, event_bus, cmd_tx.clone(), policy).await
+        run_chat_session(
+            client,
+            req,
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            cmd_tx.clone(),
+            policy,
+        )
+        .await
     }
 
     // Persist model output or error for later inspection
@@ -492,6 +517,19 @@ pub enum ChatHistoryTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use crate::app_state::commands::StateCommand;
+    use crate::app_state::state_manager;
+    use crate::EventBusCaps;
+    use crate::chat_history::MessageStatus;
+    use ploke_db::Database;
+    use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+    use ploke_embed::local::{EmbeddingConfig, LocalEmbedder};
+    use ploke_embed::runtime::EmbeddingRuntime;
+    use ploke_rag::RagService;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio::time::{Duration, sleep, timeout};
+    use uuid::Uuid;
 
     #[test]
     fn test_role_tool_serialization() {
@@ -600,5 +638,80 @@ mod tests {
         assert_eq!(kept_all[0].content, m1.content);
         assert_eq!(kept_all[1].content, m2.content);
         assert_eq!(kept_all[2].content, m3.content);
+    }
+
+    #[tokio::test]
+    async fn replaces_placeholder_in_place() {
+        let db = Arc::new(Database::new_init().unwrap());
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(db.clone(), Arc::clone(&embedder)).expect("rag service init"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel::<crate::RagEvent>(4);
+        let state = Arc::new(AppState::new(
+            Arc::clone(&db),
+            Arc::clone(&embedder),
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            crate::TokenBudget::default(),
+            rag_tx,
+        ));
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(32);
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            mpsc::channel(4).0,
+        ));
+
+        let user_id = Uuid::new_v4();
+        cmd_tx
+            .send(StateCommand::AddMessageImmediate {
+                msg: "hello".into(),
+                kind: MessageKind::User,
+                new_msg_id: user_id,
+            })
+            .await
+            .expect("send user message");
+
+        let placeholder_id = Uuid::new_v4();
+        let (responder_tx, responder_rx) = oneshot::channel();
+        cmd_tx
+            .send(StateCommand::CreateAssistantMessage {
+                parent_id: user_id,
+                responder: responder_tx,
+                new_assistant_msg_id: placeholder_id,
+            })
+            .await
+            .expect("send create assistant");
+        assert_eq!(responder_rx.await.expect("receive placeholder id"), placeholder_id);
+
+        let final_text = "finalized assistant response".to_string();
+        super::finalize_assistant_response(&cmd_tx, placeholder_id, Ok(final_text.clone())).await;
+
+        timeout(Duration::from_millis(200), async {
+            loop {
+                let chat = state.chat.0.read().await;
+                let placeholder = chat.messages.get(&placeholder_id).unwrap();
+                let parent = chat.messages.get(&user_id).unwrap();
+                if placeholder.content == final_text
+                    && placeholder.status == MessageStatus::Completed
+                    && parent.children == vec![placeholder_id]
+                    && placeholder.children.is_empty()
+                {
+                    break;
+                }
+                drop(chat);
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("placeholder should be updated in place");
     }
 }

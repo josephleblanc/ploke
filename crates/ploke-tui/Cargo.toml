@@ -17,6 +17,7 @@ crossterm = { version = "0.29", features = ["event-stream", "serde"] }
 textwrap = "0.16"
 similar = "2"
 unicode-width = "0.1"
+syntect = "5"
 
 # concurrency
 tokio = { workspace = true } # "full" for simplicity, you can narrow down later
