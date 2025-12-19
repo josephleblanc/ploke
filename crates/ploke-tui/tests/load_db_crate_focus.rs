@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
-use ploke_embed::runtime::EmbeddingRuntime;
 
 #[tokio::test]
 async fn crate_focus_assigns_absolute_root_from_db() {

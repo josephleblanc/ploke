@@ -10,6 +10,8 @@ use crate::manager::RequestMessage;
 use crate::manager::Role;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json;
+use tracing::warn;
 
 use ploke_core::tool_types::ToolDefinition;
 
@@ -59,7 +61,11 @@ pub trait HasModels: Router {
                 .await?
                 .error_for_status()?;
 
-            let parsed = resp.json::<Self::Response>().await?;
+            let body = resp.bytes().await?;
+            let parsed = serde_json::from_slice::<Self::Response>(&body).map_err(|err| {
+                log_models_decode_error(&body, &err);
+                err
+            })?;
 
             Ok(parsed)
         }
@@ -71,6 +77,68 @@ pub trait HasModels: Router {
         Output = color_eyre::Result<impl IntoIterator<Item = Self::Models>>,
     > + Send {
         async { Self::fetch_models(client).await.map(|r| r.into_iter()) }
+    }
+}
+
+const BODY_SNIPPET_MAX: usize = 4096;
+
+fn redact_body_snippet(body: &[u8]) -> String {
+    let (snippet, truncated) = if body.len() > BODY_SNIPPET_MAX {
+        (&body[..BODY_SNIPPET_MAX], true)
+    } else {
+        (body, false)
+    };
+
+    let mut text = String::from_utf8_lossy(snippet).to_string();
+    // Best-effort masking of key-like tokens that might show up unexpectedly.
+    for needle in ["sk-", "sess-", "api_key", "Authorization"] {
+        let mut start = 0;
+        while let Some(pos) = text[start..].find(needle) {
+            let abs_pos = start + pos;
+            let tail = &text[abs_pos..];
+            let end_rel = tail
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
+                .unwrap_or_else(|| tail.len());
+            text.replace_range(abs_pos..abs_pos + end_rel, "[redacted]");
+            start = abs_pos + "[redacted]".len();
+        }
+    }
+
+    if truncated {
+        text.push_str(" ...<truncated>");
+    }
+    text
+}
+
+fn log_models_decode_error(body: &[u8], err: &serde_json::Error) {
+    warn!(
+        ?err,
+        body_len = body.len(),
+        body_preview = redact_body_snippet(body),
+        "Failed to decode OpenRouter models response"
+    );
+}
+
+#[cfg(test)]
+mod decode_logging_tests {
+    use super::{BODY_SNIPPET_MAX, redact_body_snippet};
+
+    #[test]
+    fn redacts_key_like_tokens() {
+        let body = br#"{"api_key":"sk-test-secret-value","note":"ok"}"#;
+        let redacted = redact_body_snippet(body);
+        assert!(
+            !redacted.contains("sk-test-secret-value"),
+            "expected token to be redacted: {redacted}"
+        );
+        assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn truncates_long_bodies() {
+        let long_body = vec![b'a'; BODY_SNIPPET_MAX + 16];
+        let redacted = redact_body_snippet(&long_body);
+        assert!(redacted.ends_with("...<truncated>"));
     }
 }
 

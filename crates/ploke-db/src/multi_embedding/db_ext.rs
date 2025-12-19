@@ -16,8 +16,8 @@ use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
 use crate::{
-    database::HNSW_SUFFIX,
     create_index_for_set,
+    database::HNSW_SUFFIX,
     multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
     query::builder::EMBEDDABLE_NODES_NOW,
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
@@ -1278,6 +1278,9 @@ name_str.len() == prefix.len() + 1 + 36 | {}
 }
 
 #[cfg(test)]
+pub(crate) use tests::TEST_DB_IMMUTABLE;
+
+#[cfg(test)]
 mod tests {
     use lazy_static::lazy_static;
     use std::collections::BTreeMap;
@@ -1308,7 +1311,7 @@ mod tests {
         ///
         /// Note that cozo::Db implements Arc::clone under the hood, so cloning this static ref is
         /// cheap.
-        static ref TEST_DB_IMMUTABLE: cozo::Db<cozo::MemStorage> =
+        pub static ref TEST_DB_IMMUTABLE: cozo::Db<cozo::MemStorage> =
             ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
                 .expect("database must be set up correctly");
     }
@@ -1342,6 +1345,7 @@ mod tests {
     /// let db_result = run_script!(empty_db, cozo::ScriptMutability::Mutable, "Testing Script:", "create
     /// example_relation relation", create_rel_script)?;.
     /// ```
+    #[macro_export]
     macro_rules! run_script {
         ($db:expr, $mutability:expr, $label:expr, $name:expr, $script:expr) => {{
             let script = $script;

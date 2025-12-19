@@ -433,32 +433,38 @@ mod tests {
 
     #[test]
     fn test_architecture_invalid() {
-        // Invalid modality string
+        // Invalid modality string -> should map to Unknown, not fail
         let bad_modality = r#"{
             "input_modalities": ["text"],
             "modality": "text=>text",
             "output_modalities": ["text"],
             "tokenizer": "Qwen3"
         }"#;
-        assert!(serde_json::from_str::<Architecture>(bad_modality).is_err());
+        let arch = serde_json::from_str::<Architecture>(bad_modality).unwrap();
+        assert!(matches!(arch.modality, Modality::Unknown(_)));
 
-        // Invalid input modality value
+        // Invalid input modality value -> Unknown
         let bad_input = r#"{
             "input_modalities": ["txt"],
             "modality": "text->text",
             "output_modalities": ["text"],
             "tokenizer": "Qwen3"
         }"#;
-        assert!(serde_json::from_str::<Architecture>(bad_input).is_err());
+        let arch = serde_json::from_str::<Architecture>(bad_input).unwrap();
+        assert!(matches!(
+            arch.input_modalities.as_slice(),
+            [InputModality::Unknown(_)]
+        ));
 
-        // Invalid tokenizer value
+        // Invalid tokenizer value -> Unknown
         let bad_tok = r#"{
             "input_modalities": ["text"],
             "modality": "text->text",
             "output_modalities": ["text"],
             "tokenizer": "UnknownTokenizer"
         }"#;
-        assert!(serde_json::from_str::<Architecture>(bad_tok).is_err());
+        let arch = serde_json::from_str::<Architecture>(bad_tok).unwrap();
+        assert!(matches!(arch.tokenizer, Tokenizer::Unknown(_)));
     }
 
     #[test]

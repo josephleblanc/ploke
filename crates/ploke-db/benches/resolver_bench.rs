@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ploke_db::{helpers::resolve_nodes_by_canon_in_file, Database};
+use ploke_db::{helpers::graph_resolve_exact, Database};
 use std::path::{Path, PathBuf};
 
 fn bench_resolve_strict(c: &mut Criterion) {
@@ -26,7 +26,7 @@ fn bench_resolve_strict(c: &mut Criterion) {
 
     c.bench_function("resolve_strict_imports_fn", |b| {
         b.iter(|| {
-            let v = resolve_nodes_by_canon_in_file(
+            let v = graph_resolve_exact(
                 &db,
                 "function",
                 Path::new(black_box(&abs_file)),

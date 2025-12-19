@@ -1,5 +1,5 @@
-use fmt::format::FmtSpan;
 use chrono::Local;
+use fmt::format::FmtSpan;
 use ploke_test_utils::workspace_root;
 
 use tracing::Level;
@@ -43,8 +43,7 @@ pub fn init_tracing() -> LoggingGuards {
         Local::now().format("%Y%m%d_%H%M%S"),
         std::process::id()
     );
-    let file_appender =
-        tracing_appender::rolling::never(&log_dir, format!("ploke_{run_id}.log"));
+    let file_appender = tracing_appender::rolling::never(&log_dir, format!("ploke_{run_id}.log"));
     let (non_blocking_file, main_guard) = tracing_appender::non_blocking(file_appender);
 
     let common_fmt = fmt::layer()
@@ -81,8 +80,7 @@ pub fn init_tracing() -> LoggingGuards {
         filter::filter_fn(|meta| meta.target() == "api_json").and(LevelFilter::INFO); // optional: cap level if you want
 
     // -------- Chat-only log (conversational context, separate from API payloads) --------
-    let chat_appender =
-        tracing_appender::rolling::never(&log_dir, format!("chat_{run_id}.log"));
+    let chat_appender = tracing_appender::rolling::never(&log_dir, format!("chat_{run_id}.log"));
     let (chat_non_blocking, chat_guard) = tracing_appender::non_blocking(chat_appender);
     let chat_layer = fmt::layer()
         .with_writer(chat_non_blocking)

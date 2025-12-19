@@ -46,6 +46,7 @@ ploke-test-utils = { path = "../test-utils" }
 ploke-embed = { path = "../ingest/ploke-embed" }
 tokio-test = "0.4.4"
 criterion = "0.7"
+ploke-common = { path = "../common" }
 
 [features]
 default = []

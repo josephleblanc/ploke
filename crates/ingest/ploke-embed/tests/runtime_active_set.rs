@@ -18,14 +18,11 @@ use ploke_embed::{
 
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-fn set_env(url: &str) {
-    if std::env::var("OPENROUTER_API_KEY")
-        .map(|s| s.trim().is_empty())
-        .unwrap_or(true)
-    {
-        std::env::set_var("OPENROUTER_API_KEY", "test-key");
-    }
-    std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
+fn test_env(url: &str) -> ploke_llm::router_only::openrouter::embed::OpenRouterEmbedEnv {
+    ploke_llm::router_only::openrouter::embed::OpenRouterEmbedEnv::from_parts(
+        "test-key",
+        url.to_string(),
+    )
 }
 
 fn cfg(model: &str, dims: usize) -> OpenRouterConfig {
@@ -61,9 +58,9 @@ async fn runtime_swaps_active_set_and_embedder_dimensions() -> Result<(), Box<dy
         when.method(POST).path("/v1/embeddings");
         then.status(200).body(body_a.clone());
     });
-    set_env(&server_a.url("/v1/embeddings"));
-
-    let backend_a = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3))?;
+    let env_a = test_env(&server_a.url("/v1/embeddings"));
+    let backend_a =
+        OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-small", 3), env_a)?;
     let runtime = EmbeddingRuntime::with_default_set(EmbeddingProcessor::new(
         EmbeddingSource::OpenRouter(backend_a),
     ));
@@ -97,7 +94,9 @@ async fn runtime_swaps_active_set_and_embedder_dimensions() -> Result<(), Box<dy
         EmbeddingModelId::new_from_str("openai/text-embedding-3-large"),
         EmbeddingShape::new_dims_default(4),
     );
-    let backend_b = OpenRouterBackend::new(&cfg("openai/text-embedding-3-large", 4))?;
+    let env_b = test_env(&server_b.url("/v1/embeddings"));
+    let backend_b =
+        OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-large", 4), env_b)?;
     runtime.activate(
         &db,
         new_set.clone(),
@@ -105,7 +104,6 @@ async fn runtime_swaps_active_set_and_embedder_dimensions() -> Result<(), Box<dy
             backend_b,
         ))),
     )?;
-    set_env(&server_b.url("/v1/embeddings"));
 
     let out_b = runtime
         .generate_embeddings(vec!["beta".into()])

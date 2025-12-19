@@ -301,4 +301,104 @@ mod tests {
             assert!(model.created > 0);
         }
     }
+
+    #[test]
+    fn test_unknown_fields_emit_warning_and_parse() {
+        use std::sync::{Arc, Mutex};
+        use tracing::Level;
+        use tracing::subscriber::set_default;
+        use tracing_subscriber::fmt::format::FmtSpan;
+
+        #[derive(Clone)]
+        struct VecWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for VecWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let mut guard = self.0.lock().unwrap();
+                guard.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || VecWriter(writer.clone()))
+            .with_max_level(Level::WARN)
+            .with_span_events(FmtSpan::NONE)
+            .without_time()
+            .finish();
+        let _guard = set_default(subscriber);
+
+        let js = json!({
+          "data": [
+            {
+              "architecture": {
+                "input_modalities": ["text", "laser"],
+                "modality": "text->audio",
+                "output_modalities": ["text", "audio-ghost"],
+                "tokenizer": "FutureTok",
+                "instruct_type": "galactic"
+              },
+              "canonical_slug": "author/model",
+              "context_length": 42,
+              "created": 1,
+              "description": "Test model with unknown schema fields",
+              "hugging_face_id": null,
+              "id": "author/model",
+              "name": "Author Model",
+              "per_request_limits": null,
+              "pricing": {
+                "completion": "0",
+                "prompt": "0"
+              },
+              "supported_parameters": [
+                "tools",
+                "novel_param"
+              ],
+              "top_provider": {
+                "context_length": 42,
+                "is_moderated": false,
+                "max_completion_tokens": null
+              }
+            }
+          ]
+        });
+
+        let response: models::Response =
+            serde_json::from_value(js).expect("parse unknown-friendly");
+        let model = &response.data[0];
+
+        assert!(matches!(
+            model.architecture.input_modalities.as_slice(),
+            [InputModality::Text, InputModality::Unknown(_)]
+        ));
+        assert!(matches!(
+            model.architecture.output_modalities.as_slice(),
+            [OutputModality::Text, OutputModality::Unknown(_)]
+        ));
+        assert!(matches!(model.architecture.modality, Modality::Unknown(_)));
+        assert!(matches!(
+            model.architecture.tokenizer,
+            Tokenizer::Unknown(_)
+        ));
+        assert!(matches!(
+            model.architecture.instruct_type,
+            Some(crate::InstructType::Unknown(_))
+        ));
+        let params = model.supported_parameters.as_ref().unwrap();
+        assert!(
+            params
+                .iter()
+                .any(|p| matches!(p, SupportedParameters::Unknown(_)))
+        );
+
+        let logs = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.contains("Unknown OpenRouter schema value encountered"),
+            "expected warning about unknown values, logs: {logs}"
+        );
+    }
 }

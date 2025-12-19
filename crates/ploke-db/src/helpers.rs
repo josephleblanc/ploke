@@ -9,7 +9,7 @@ use std::path::Path;
 /// - file_path: absolute file path (string-equal match)
 /// - module_path: canonical module path segments, including leading "crate", e.g. ["crate","mod","submod"]
 /// - item_name: simple item name at the tail of the canonical path
-pub fn resolve_nodes_by_canon_in_file(
+pub fn graph_resolve_exact(
     db: &Database,
     relation: &str,
     file_path: &Path,
@@ -54,11 +54,157 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
     qr.to_embedding_nodes()
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
+#[cfg(test)]
+mod tests {
+    use std::ops::Deref;
+
+    use cozo::{DataValue, UuidWrapper};
+    use ploke_common::fixtures_crates_dir;
+    use ploke_core::ItemKind;
+    use ploke_test_utils::{nodes::ParanoidArgs, test_run_phases_and_collect};
+    use syn_parser::utils::LogStyle;
+    use tracing::info;
+
+    use crate::{
+        log_script, DbError,
+        multi_embedding::db_ext::{EmbeddingExt, TEST_DB_IMMUTABLE},
+        run_script, Database,
+    };
+
+    #[test]
+    fn resolve_exact_basic() -> Result<(), DbError> {
+        let cozo_db =
+            ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+                .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/const_static.rs");
+        let module_path = vec!["crate".to_string(), "const_static".to_string()];
+        let rows = super::graph_resolve_exact(
+            &db,
+            "const",
+            &file_path,
+            &module_path,
+            "TOP_LEVEL_BOOL",
+        )?;
+
+        assert_eq!(rows.len(), 1, "expected a single const result");
+        assert_eq!(rows[0].name, "TOP_LEVEL_BOOL");
+        assert_eq!(rows[0].file_path, file_path);
+        Ok(())
+    }
+
+    #[test]
+    fn graph_resolve_exact_matches_fixture_nodes_struct() -> Result<(), DbError> {
+        let cozo_db =
+            ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+                .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/structs.rs");
+        let module_path = vec!["crate".to_string(), "structs".to_string()];
+        let rows = super::graph_resolve_exact(
+            &db,
+            "struct",
+            &file_path,
+            &module_path,
+            "SampleStruct",
+        )?;
+
+        assert_eq!(rows.len(), 1, "expected a single struct result");
+        let row = &rows[0];
+        assert_eq!(row.name, "SampleStruct");
+        assert_eq!(row.file_path, file_path);
+        assert!(
+            row.start_byte < row.end_byte,
+            "byte span should be non-empty"
+        );
+
+        // Regenerate the expected ID using the same fixture metadata used by the paranoid tests.
+        let parsed = test_run_phases_and_collect("fixture_nodes");
+        let args = ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/structs.rs",
+            expected_path: &["crate", "structs"],
+            ident: "SampleStruct",
+            item_kind: ItemKind::Struct,
+            expected_cfg: None,
+        };
+        let test_info = args
+            .generate_pid(&parsed)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let expected_uuid = match test_info.test_pid().to_cozo_uuid() {
+            DataValue::Uuid(UuidWrapper(uuid)) => uuid,
+            other => panic!("unexpected id variant {other:?}"),
+        };
+        assert_eq!(
+            row.id, expected_uuid,
+            "resolved UUID should match the parser-generated ID"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_nodes_by_canon_falls_back_when_paths_differ() -> Result<(), DbError> {
+        let cozo_db =
+            ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+                .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixtures_root = fixtures_crates_dir();
+        let canonical_path = fixtures_root
+            .join("fixture_nodes")
+            .join("src/imports.rs");
+        let different_path = fixtures_root
+            .join("fixture_nodes_copy")
+            .join("src/imports.rs");
+        let module_path = vec!["crate".to_string(), "imports".to_string()];
+        let item_name = "use_imported_items";
+
+        let strict_hit = super::graph_resolve_exact(
+            &db,
+            "function",
+            &canonical_path,
+            &module_path,
+            item_name,
+        )?;
+        assert_eq!(strict_hit.len(), 1, "expected strict resolver to match");
+
+        let strict_miss = super::graph_resolve_exact(
+            &db,
+            "function",
+            &different_path,
+            &module_path,
+            item_name,
+        )?;
+        assert!(
+            strict_miss.is_empty(),
+            "path-sensitive resolver should refuse nodes from other absolute paths"
+        );
+
+        let canonical_rows =
+            super::resolve_nodes_by_canon(&db, "function", &module_path, item_name)?;
+        assert_eq!(canonical_rows.len(), 1, "canonical lookup should find the node");
+        assert_eq!(
+            canonical_rows[0].id, strict_hit[0].id,
+            "canonical lookup should return the same node id"
+        );
+        assert_eq!(
+            canonical_rows[0].file_path, canonical_path,
+            "file path should reflect the stored canonical location"
+        );
+
+        Ok(())
+    }
+}
 
 /// Resolve nodes by canonical module path and item name (no file_path equality).
 /// This relaxed resolver is intended for diagnostics and as a fallback when
 /// absolute file paths differ across environments. It mirrors the projection of
-/// `resolve_nodes_by_canon_in_file` but omits the `file_path == ...` filter.
+/// `graph_resolve_exact` but omits the `file_path == ...` filter.
 pub fn resolve_nodes_by_canon(
     db: &Database,
     relation: &str,

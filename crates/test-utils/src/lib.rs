@@ -9,8 +9,8 @@ pub mod nodes;
 
 use std::path::{Path, PathBuf};
 
-use cozo::MemStorage;
 use chrono::Local;
+use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
 use ploke_core::embeddings::EmbeddingSet;
 pub use ploke_core::NodeId;
@@ -340,7 +340,12 @@ fn test_log_dir() -> PathBuf {
     workspace_root().join("target").join("test-logs")
 }
 
-fn make_test_log_writer(prefix: &str) -> (tracing_appender::non_blocking::NonBlocking, Option<WorkerGuard>) {
+fn make_test_log_writer(
+    prefix: &str,
+) -> (
+    tracing_appender::non_blocking::NonBlocking,
+    Option<WorkerGuard>,
+) {
     if !should_write_test_log_file() {
         let (writer, guard) = tracing_appender::non_blocking(std::io::sink());
         return (writer, Some(guard));
@@ -353,8 +358,7 @@ fn make_test_log_writer(prefix: &str) -> (tracing_appender::non_blocking::NonBlo
         Local::now().format("%Y%m%d_%H%M%S"),
         std::process::id()
     );
-    let file_appender =
-        tracing_appender::rolling::never(log_dir, format!("{prefix}_{run_id}.log"));
+    let file_appender = tracing_appender::rolling::never(log_dir, format!("{prefix}_{run_id}.log"));
     let (writer, guard) = tracing_appender::non_blocking(file_appender);
     (writer, Some(guard))
 }
@@ -369,8 +373,7 @@ pub fn init_test_tracing_with_target(
     target: &'static str,
     level: tracing::Level,
 ) -> TestTracingGuard {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("")); // opt-in via RUST_LOG
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("")); // opt-in via RUST_LOG
 
     let targets = filter::Targets::new()
         .with_target("ploke", level)
@@ -439,8 +442,7 @@ pub fn init_tracing_tests(
         .with_target("cozo", Level::ERROR)
         .with_target(target_name, target_level);
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from("")); // opt-in via RUST_LOG
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from("")); // opt-in via RUST_LOG
 
     let console_layer = fmt::layer()
         .with_target(true)

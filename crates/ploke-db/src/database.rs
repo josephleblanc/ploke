@@ -832,10 +832,7 @@ impl Database {
         self.ensure_active_embedding_relation()?;
 
         let mut params = BTreeMap::new();
-        params.insert(
-            "crate_name".to_string(),
-            cozo::DataValue::from(crate_name),
-        );
+        params.insert("crate_name".to_string(), cozo::DataValue::from(crate_name));
         params.insert(
             "embedding_set_id".to_string(),
             cozo::DataValue::from(format!("{}", embedding_set.hash_id().into_inner())),
@@ -1764,11 +1761,13 @@ mod tests {
     use crate::bm25_index::DocData;
     use crate::multi_embedding::db_ext::EmbeddingExt;
     use crate::multi_embedding::schema::CozoEmbeddingSetExt;
-    use crate::RestoredEmbeddingSet;
     use crate::Database;
     use crate::DbError;
+    use crate::RestoredEmbeddingSet;
     use cozo::{Db, MemStorage, ScriptMutability};
-    use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape};
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
     use ploke_transform::schema::create_schema_all;
     use tracing::error;
     use tracing::info;

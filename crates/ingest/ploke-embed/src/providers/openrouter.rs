@@ -10,11 +10,9 @@ use crate::{
     error::{truncate_string, EmbedError},
 };
 
-use ploke_llm::embeddings::{
-    EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest, HasEmbeddings,
-};
+use ploke_llm::embeddings::{EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest};
 use ploke_llm::router_only::openrouter::embed::{
-    OpenRouterEmbeddingError, OpenRouterEmbeddingFields,
+    OpenRouterEmbedEnv, OpenRouterEmbeddingError, OpenRouterEmbeddingFields,
 };
 use ploke_llm::router_only::openrouter::{embed::OpenRouterEmbeddingVector, OpenRouter};
 use ploke_llm::ModelId;
@@ -48,10 +46,25 @@ pub struct OpenRouterBackend {
     in_flight: Arc<Semaphore>,
     rps_limiter: Option<Arc<Mutex<time::Interval>>>,
     retry: RetryConfig,
+    embed_env_override: Option<OpenRouterEmbedEnv>,
 }
 
 impl OpenRouterBackend {
     pub fn new(cfg: &OpenRouterConfig) -> Result<Self, EmbedError> {
+        Self::new_with_override(cfg, None)
+    }
+
+    pub fn new_with_env(
+        cfg: &OpenRouterConfig,
+        embed_env: OpenRouterEmbedEnv,
+    ) -> Result<Self, EmbedError> {
+        Self::new_with_override(cfg, Some(embed_env))
+    }
+
+    fn new_with_override(
+        cfg: &OpenRouterConfig,
+        embed_env_override: Option<OpenRouterEmbedEnv>,
+    ) -> Result<Self, EmbedError> {
         let model = ModelId::from_str(&cfg.model)
             .map_err(|e| EmbedError::Config(format!("invalid OpenRouter model id: {e}")))?;
         let dims = cfg.dimensions.ok_or_else(|| {
@@ -92,6 +105,7 @@ impl OpenRouterBackend {
                 initial_backoff: Duration::from_millis(cfg.initial_backoff_ms.max(1)),
                 max_backoff: Duration::from_millis(cfg.max_backoff_ms.max(cfg.initial_backoff_ms)),
             },
+            embed_env_override,
         })
     }
 
@@ -148,6 +162,13 @@ impl OpenRouterBackend {
             interval.tick().await;
             Ok(())
         }
+    }
+
+    fn resolve_env(&self) -> Result<OpenRouterEmbedEnv, EmbedError> {
+        if let Some(env) = &self.embed_env_override {
+            return Ok(env.clone());
+        }
+        OpenRouterEmbedEnv::from_env().map_err(|e| EmbedError::Config(e.to_string()))
     }
 
     // TODO:ploke-remote 2025-12-15
@@ -283,10 +304,11 @@ impl OpenRouterBackend {
 
         let expected_len = snippets.len();
         let req = self.build_request(snippets);
+        let env = self.resolve_env()?;
 
         let mut last_err: Option<EmbedError> = None;
         for attempt in 1..=self.retry.max_attempts {
-            let result = <OpenRouter as HasEmbeddings>::fetch_embeddings(&self.client, &req).await;
+            let result = OpenRouter::fetch_embeddings_with_env(&self.client, &req, &env).await;
 
             match result {
                 Ok(resp) => return self.validate_and_reorder(&req, resp, expected_len),
@@ -387,12 +409,12 @@ impl OpenRouterBackend {
                                     );
                                     let mut retry_req = req.clone();
                                     retry_req.router.dimensions = None;
-                                    let retry_res =
-                                        <OpenRouter as HasEmbeddings>::fetch_embeddings(
-                                            &self.client,
-                                            &retry_req,
-                                        )
-                                        .await;
+                                    let retry_res = OpenRouter::fetch_embeddings_with_env(
+                                        &self.client,
+                                        &retry_req,
+                                        &env,
+                                    )
+                                    .await;
                                     if let Ok(resp) = retry_res {
                                         return self.validate_and_reorder(
                                             &retry_req,
@@ -480,15 +502,8 @@ mod tests {
 
     static ENV_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
-    fn set_env(url: &str) {
-        // Env mutation is process-global; restrict to tests.
-        let have_key = std::env::var("OPENROUTER_API_KEY")
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-        if !have_key {
-            std::env::set_var("OPENROUTER_API_KEY", "test-key");
-        }
-        std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
+    fn test_env(url: &str) -> OpenRouterEmbedEnv {
+        OpenRouterEmbedEnv::from_parts("test-key", url.to_string())
     }
 
     fn cfg(model: &str, dims: usize) -> OpenRouterConfig {
@@ -523,9 +538,10 @@ mod tests {
             when.method(POST).path("/v1/embeddings");
             then.status(200).body(body);
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
 
-        let backend = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3)).unwrap();
+        let backend =
+            OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-small", 3), env).unwrap();
         let out = backend
             .compute_batch(vec!["a".into(), "b".into()], None)
             .await
@@ -550,9 +566,10 @@ mod tests {
             when.method(POST).path("/v1/embeddings");
             then.status(200).body(body);
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
 
-        let backend = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3)).unwrap();
+        let backend =
+            OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-small", 3), env).unwrap();
         let err = backend
             .compute_batch(vec!["a".into()], None)
             .await
@@ -576,9 +593,10 @@ mod tests {
             when.method(POST).path("/v1/embeddings");
             then.status(200).body(body);
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
 
-        let backend = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3)).unwrap();
+        let backend =
+            OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-small", 3), env).unwrap();
         let err = backend
             .compute_batch(vec!["a".into()], None)
             .await
@@ -595,9 +613,10 @@ mod tests {
         let _guard = ENV_MUTEX.lock().await;
         let server = MockServer::start();
         // Any attempt to hit the server would fail the test because no mock is registered.
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
 
-        let backend = OpenRouterBackend::new(&cfg("openai/text-embedding-3-small", 3)).unwrap();
+        let backend =
+            OpenRouterBackend::new_with_env(&cfg("openai/text-embedding-3-small", 3), env).unwrap();
         let (token, handle) = crate::cancel_token::CancellationToken::new();
         let listener = token.listener();
         handle.cancel();
