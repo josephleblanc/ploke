@@ -43,7 +43,13 @@ lazy_static::lazy_static! {
             "item_name": { "type": "string", "description": ITEM_NAME },
             "file_path": { "type": "string", "description": FILE_DESC },
             "node_kind": { "type": "string", "description": NODE_KIND },
-            "module_path": { "type": "string", "description": MODULE_PATH },
+            "module_path": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "diff": { "type": "string", "description": MODULE_PATH },
+                }
+            }
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -59,7 +65,7 @@ pub struct LookupParams<'a> {
     #[serde(default)]
     pub node_kind: std::borrow::Cow<'a, str>, // "error" | "overwrite"
     #[serde(default)]
-    pub module_path: std::borrow::Cow<'a, str>,
+    pub module_path: Vec<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for LookupParams<'a> {
@@ -73,7 +79,7 @@ pub struct LookupParamsOwned {
     pub item_name: String,
     pub file_path: String,
     pub node_kind: String,
-    pub module_path: String,
+    pub module_path: Vec<String>,
 }
 
 pub struct CodeItemLookup;
@@ -108,11 +114,16 @@ impl Tool for CodeItemLookup {
     }
 
     fn into_owned<'de>(params: &Self::Params<'de>) -> Self::OwnedParams {
+        let module_path: Vec<String> = params
+            .module_path
+            .iter()
+            .map(|s| s.to_owned().to_string())
+            .collect();
         Self::OwnedParams {
             file_path: params.file_path.clone().into_owned(),
             item_name: params.item_name.clone().into_owned(),
             node_kind: params.node_kind.clone().into_owned(),
-            module_path: params.module_path.clone().into_owned(),
+            module_path,
         }
     }
 
@@ -124,9 +135,9 @@ impl Tool for CodeItemLookup {
 
         // validate inputs and produce helpful error messages to help llm recover.
         check_empty(
-            &params.file_path,
-            &params.item_name,
-            &params.node_kind,
+            params.file_path.clone(),
+            params.item_name.clone(),
+            params.node_kind.clone(),
             &params.module_path,
         )?;
 
@@ -137,8 +148,18 @@ impl Tool for CodeItemLookup {
         };
 
         let allowed_kinds = [
-            "function", "const", "enum", "impl", "import", "macro", "module", "static", "struct",
-            "trait", "type_alias", "union",
+            "function",
+            "const",
+            "enum",
+            "impl",
+            "import",
+            "macro",
+            "module",
+            "static",
+            "struct",
+            "trait",
+            "type_alias",
+            "union",
         ];
         if !allowed_kinds.contains(&params.node_kind.as_ref()) {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
@@ -167,16 +188,12 @@ impl Tool for CodeItemLookup {
 
         let abs_path = params.validate_to_abs_path(crate_root)?;
 
-        let mod_path: Vec<String> = params
-            .module_path
-            .split("::")
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_owned())
-            .collect();
+        let mod_path: Vec<String> = params.module_path.iter().map(|s| s.to_string()).collect();
 
         if mod_path.is_empty() || mod_path.first().map(|s| s.as_str()) != Some("crate") {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
-                message: r#"module_path must start with "crate", e.g. crate::module::submodule"#.to_string(),
+                message: r#"module_path must start with "crate", e.g. crate::module::submodule"#
+                    .to_string(),
             }));
         }
 
@@ -194,10 +211,10 @@ impl Tool for CodeItemLookup {
                         "No code item named `{}` found in {} with module_path {} and node_kind {}",
                         params.item_name,
                         abs_path.display(),
-                        params.module_path,
+                        params.module_path.join("::"),
                         params.node_kind
                     ),
-                }))
+                }));
             }
             Ok(_) => {
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
@@ -205,15 +222,15 @@ impl Tool for CodeItemLookup {
                         "Multiple items matched `{}` in {} with module_path {} and node_kind {}; expected a single match.",
                         params.item_name,
                         abs_path.display(),
-                        params.module_path,
+                        params.module_path.join("::"),
                         params.node_kind
                     ),
-                }))
+                }));
             }
             Err(e) => {
                 return Err(ploke_error::Error::Internal(InternalError::CompilerError(
                     format!("Database lookup failed: {e}"),
-                )))
+                )));
             }
         };
         let tool_results = ctx
@@ -239,7 +256,7 @@ impl Tool for CodeItemLookup {
         })?;
         let concise_context = ConciseContext {
             file_path: NodeFilepath::new(abs_path.display().to_string()),
-            canon_path: CanonPath::new(params.module_path.to_string()),
+            canon_path: CanonPath::new(params.module_path.join("::")),
             snippet,
         };
 
@@ -254,10 +271,10 @@ impl Tool for CodeItemLookup {
 }
 
 fn check_empty(
-    file_path: &std::borrow::Cow<'_, str>,
-    item_name: &std::borrow::Cow<'_, str>,
-    node_kind: &std::borrow::Cow<'_, str>,
-    module_path: &std::borrow::Cow<'_, str>,
+    file_path: std::borrow::Cow<'_, str>,
+    item_name: std::borrow::Cow<'_, str>,
+    node_kind: std::borrow::Cow<'_, str>,
+    module_path: &Vec<std::borrow::Cow<'_, str>>,
 ) -> Result<(), ploke_error::Error> {
     struct MissingFieldInfo {
         missing_field: &'static str,
@@ -279,7 +296,7 @@ fn check_empty(
             missing_field: "node_kind",
             help_msg: "Tip: if the node_kind is unknown, try using `request_code_context` to search for the item",
         })
-    } else if module_path.trim().is_empty() {
+    } else if module_path.iter().any(|s| s.trim().is_empty()) {
         Some(MissingFieldInfo {
             missing_field: "module_path",
             help_msg: "Tip: if the module_path is unknown, try using the `show_module_tree` tool",

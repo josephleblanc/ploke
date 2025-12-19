@@ -10,7 +10,7 @@ mod session;
 mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 
-use crate::SystemEvent;
+use crate::{SystemEvent, tools::code_item_lookup::CodeItemLookup};
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
@@ -354,6 +354,7 @@ async fn prepare_and_run_llm_call(
         CreateFile::tool_def(),
         NsPatch::tool_def(),
         NsRead::tool_def(),
+        CodeItemLookup::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
