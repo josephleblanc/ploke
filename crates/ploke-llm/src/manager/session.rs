@@ -6,6 +6,9 @@
 
 use std::time::Duration;
 
+use tracing::info;
+use tracing::warn;
+
 use crate::HTTP_REFERER;
 use crate::HTTP_TITLE;
 use crate::response::FinishReason;
@@ -200,6 +203,9 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
             if let Some(calls) = calls_opt {
                 // If you care about empty tool_calls arrays, you can treat empty as an error.
                 // Here, empty still counts as "tool calls" because the session loop expects it.
+                // - however, still warn for the logs
+                warn!(target: "chat-loop", "FinishReason is not ToolCalls when calling tools, found finish reason: {:?}", choice.finish_reason);
+                info!(target: "chat-loop", "native_finish_reason, type string, is not well-understood yet. Logging to learn more:{:?}", choice.native_finish_reason);
                 let finish_reason = FinishReason::ToolCalls;
                 return Ok(ChatStepOutcome::ToolCalls {
                     calls,

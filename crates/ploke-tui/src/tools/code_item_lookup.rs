@@ -117,7 +117,7 @@ impl Tool for CodeItemLookup {
         let module_path: Vec<String> = params
             .module_path
             .iter()
-            .map(|s| s.to_owned().to_string())
+            .map(|s| s.clone().to_string())
             .collect();
         Self::OwnedParams {
             file_path: params.file_path.clone().into_owned(),

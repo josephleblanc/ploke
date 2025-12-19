@@ -56,8 +56,6 @@ impl From<MessageKind> for Role {
         match value {
             MessageKind::User => Role::User,
             MessageKind::Assistant => Role::Assistant,
-            // TODO: Should change below to Role::System, might break something, check tests
-            // before/after
             MessageKind::System => Role::System,
             MessageKind::Tool => Role::Tool,
             _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
@@ -263,7 +261,7 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let result = prepare_and_run_llm_call(
+    let result: Result<String, LlmError> = prepare_and_run_llm_call(
         &state,
         &client,
         messages,
@@ -296,7 +294,7 @@ async fn finalize_assistant_response(
     let update_cmd = match result {
         Ok(content) => {
             let preview = content.chars().take(200).collect::<String>();
-            tracing::info!(
+            tracing::info!(target: "chat-loop",
                 "LLM produced response for assistant_message_id={}. preview={}",
                 assistant_message_id,
                 preview
@@ -359,7 +357,7 @@ async fn prepare_and_run_llm_call(
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
     //    When registry is available, merge model/user defaults into LLMParameters.
-    let _llm_params = crate::llm::LLMParameters::default();
+    let llm_params = crate::llm::LLMParameters::default();
 
     // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
     //      Construct a concrete request object that RequestSession will dispatch.
@@ -387,7 +385,7 @@ async fn prepare_and_run_llm_call(
         .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
         .with_model(model_id)
         .with_messages(messages)
-        .with_param_bundle(_llm_params)
+        .with_param_bundle(llm_params)
         // TODO: This is where Registry will plug in, maybe?
         // .with_params_union(_llm_params)
         .with_tools(tools)
@@ -398,37 +396,18 @@ async fn prepare_and_run_llm_call(
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
-    #[cfg(not(feature = "ploke-llm-refactor"))]
-    {
-        // Delegate the per-request loop to RequestSession
-        let session = session::RequestSession::<OpenRouter> {
-            client,
-            event_bus,
-            assistant_message_id,
-            parent_id,
-            req,
-            fallback_on_404: false,
-            attempts: TOOL_CALL_CHAIN_LIMIT,
-            state_cmd_tx: cmd_tx.clone(),
-        };
-
-        session.run().await
-    }
-    #[cfg(feature = "ploke-llm-refactor")]
-    {
-        use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
-        let policy = TuiToolPolicy::default();
-        run_chat_session(
-            client,
-            req,
-            parent_id,
-            assistant_message_id,
-            event_bus,
-            cmd_tx.clone(),
-            policy,
-        )
-        .await
-    }
+    use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
+    let policy = TuiToolPolicy::default();
+    run_chat_session(
+        client,
+        req,
+        parent_id,
+        assistant_message_id,
+        event_bus,
+        cmd_tx.clone(),
+        policy,
+    )
+    .await
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {

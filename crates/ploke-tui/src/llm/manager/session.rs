@@ -128,10 +128,6 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for _chain in 0..policy.tool_call_chain_limit {
         let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
-        // match ploke_llm::chat_step(client, &req, &cfg).await {
-        //     Ok(chat_step_outcome) => chat_step_outcome,
-        //     Err(e) => {}
-        // };
 
         match outcome {
             ChatStepOutcome::Content(text) => return Ok(text),
@@ -145,17 +141,17 @@ pub async fn run_chat_session<R: Router>(
                     ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
+                let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
                 if !initial_message_updated {
                     let is_updated = update_assistant_placeholder_once(
                         &state_cmd_tx,
                         assistant_message_id,
-                        content,
+                        msg,
                         initial_message_updated,
                     )
                     .await;
                     initial_message_updated = is_updated;
                 } else {
-                    let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
                     state_cmd_tx
                         .send(StateCommand::AddMessageImmediate {
                             msg,
@@ -222,21 +218,19 @@ pub async fn run_chat_session<R: Router>(
     Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
 }
 
-#[instrument(skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
+#[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
 async fn update_assistant_placeholder_once(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
     assistant_message_id: Uuid,
-    content: Option<String>,
+    content: String,
     initial_message_updated: bool,
 ) -> bool {
-    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
-
     if !initial_message_updated {
         state_cmd_tx
             .send(StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(assistant_update),
+                    content: Some(content),
                     status: Some(MessageStatus::Completed),
                     ..Default::default()
                 },

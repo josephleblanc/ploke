@@ -29,13 +29,24 @@ pub struct LoggingGuards {
 pub fn init_tracing() -> LoggingGuards {
     // -------- Main app log (unchanged from your version) --------
     // Default to conservative levels to keep noise down; users can override with RUST_LOG.
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("info,ploke_db=warn,cozo=warn,embed-pipeline=info,chat_tracing_target=info,api_json=info,debug_dup=error,read_file=error,scan_change=error,tokenizer=error,reqwest=error,hyper_util=error")
-    });
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("debug_dup=error,read_file=error"));
 
     let mut log_dir = workspace_root();
     log_dir.push("crates/ploke-tui/logs");
     std::fs::create_dir_all(&log_dir).expect("Failed to create logs directory");
+
+    let level = Level::WARN;
+    let targets = filter::Targets::new()
+        .with_target("ploke", level)
+        .with_target("ploke_tui", level)
+        .with_target("ploke_db", level)
+        .with_target("ploke-embed", level)
+        .with_target("ploke-io", level)
+        .with_target("ploke-transform", level)
+        .with_target("ploke_rag", level)
+        .with_target("chat-loop", Level::TRACE)
+        .with_target("cozo", Level::ERROR);
 
     // Use a per-run log file so each TUI session is isolated.
     let run_id = format!(
@@ -100,6 +111,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with(main_layer) // normal app logs -> ploke.log
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
+        .with(targets)
         .try_init();
 
     LoggingGuards {
