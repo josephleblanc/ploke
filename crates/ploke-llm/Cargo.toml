@@ -46,6 +46,7 @@ once_cell = "1.19"
 dotenvy = "0.15"
 httpmock = "0.7"
 ploke-test-utils = { path = "../test-utils" }
+tracing-subscriber = { workspace = true }
 
 [features]
 default = ["live_api_tests"]

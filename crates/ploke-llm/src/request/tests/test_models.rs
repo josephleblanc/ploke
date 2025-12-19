@@ -17,7 +17,10 @@ pub const REL_MODEL_ALL_DATA_RAW_EP: &str = "crates/ploke-tui/data/models/all_ra
 pub const REL_MODEL_ALL_DATA_STATS: &str = "crates/ploke-tui/data/models/all_raw_stats.txt";
 
 mod tests {
-    use crate::SupportsTools;
+    use crate::{
+        InputModality, InstructType, Modality, OutputModality, SupportedParameters, SupportsTools,
+        Tokenizer,
+    };
     use ploke_core::ArcStr;
     use std::collections::HashMap;
     use std::fs;
@@ -468,6 +471,57 @@ mod tests {
             "Differences found between API response and {:?}",
             log_file
         );
+
+        Ok(())
+    }
+
+    /// Live guard: fail fast when OpenRouter introduces new schema values so we update enums/fixtures.
+    #[test]
+    #[cfg(feature = "live_api_tests")]
+    fn detect_unknown_schema_values_live() -> color_eyre::Result<()> {
+        let models_resp = &MODELS_RESPONSE;
+        let mut unknowns = Vec::new();
+
+        for item in &models_resp.data {
+            for m in &item.architecture.input_modalities {
+                if let InputModality::Unknown(v) = m {
+                    unknowns.push(format!("input_modality:{v}"));
+                }
+            }
+            for m in &item.architecture.output_modalities {
+                if let OutputModality::Unknown(v) = m {
+                    unknowns.push(format!("output_modality:{v}"));
+                }
+            }
+            if let Modality::Unknown(v) = &item.architecture.modality {
+                unknowns.push(format!("modality:{v}"));
+            }
+            if let Tokenizer::Unknown(v) = &item.architecture.tokenizer {
+                unknowns.push(format!("tokenizer:{v}"));
+            }
+            if let Some(instr) = &item.architecture.instruct_type {
+                if let InstructType::Unknown(v) = instr {
+                    unknowns.push(format!("instruct_type:{v}"));
+                }
+            }
+            if let Some(params) = &item.supported_parameters {
+                for p in params {
+                    if let SupportedParameters::Unknown(v) = p {
+                        unknowns.push(format!("supported_parameters:{v}"));
+                    }
+                }
+            }
+        }
+
+        if !unknowns.is_empty() {
+            eprintln!(
+                "Unknown OpenRouter schema values detected (update enums/fixtures): {}",
+                unknowns.join(", ")
+            );
+            return Err(color_eyre::eyre::eyre!(
+                "OpenRouter returned new schema values"
+            ));
+        }
 
         Ok(())
     }

@@ -126,6 +126,8 @@ impl MessageUpdate {
             match (current_status, new_status) {
                 // Completed messages are terminal (handled above)
                 (MessageStatus::Generating, MessageStatus::Completed) => Ok(()),
+                (MessageStatus::Generating, MessageStatus::Error { .. }) => Ok(()),
+                (MessageStatus::Pending, MessageStatus::Error { .. }) => Ok(()),
                 // Can only complete generating messages
                 (_, MessageStatus::Completed)
                     if !matches!(current_status, MessageStatus::Generating) =>
@@ -432,7 +434,7 @@ impl ChatHistory {
                 // UI/system info messages are not part of the API payload; omit.
                 // NOTE: 2025-12-16
                 // Adding the sysinfo messages for now, want to try this out.
-                MessageKind::SysInfo => Some( ReqMsg::new_system(m.content.clone()) ),
+                MessageKind::SysInfo => Some(ReqMsg::new_system(m.content.clone())),
             })
             .collect()
     }

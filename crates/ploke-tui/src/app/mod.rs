@@ -982,7 +982,7 @@ impl App {
         self.needs_redraw = true;
     }
 
-    fn apply_embedding_model_selection(&mut self, model_id: ModelId, provider: Option< ArcStr >) {
+    fn apply_embedding_model_selection(&mut self, model_id: ModelId, provider: Option<ArcStr>) {
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: format!("Selected embedding model {model_id}"),
             kind: MessageKind::SysInfo,
@@ -990,7 +990,7 @@ impl App {
         });
         self.send_cmd(StateCommand::SelectEmbeddingModel {
             model_id,
-            provider: provider.unwrap_or(ArcStr::from("openrouter_temp_empty")),
+            provider: provider.unwrap_or(ArcStr::from("openrouter")),
         });
         self.needs_redraw = true;
     }

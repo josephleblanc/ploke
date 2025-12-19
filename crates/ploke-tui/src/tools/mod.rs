@@ -33,9 +33,9 @@ pub use request_code_context::{
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod create_file;
+pub mod error;
 pub mod ns_patch;
 pub mod ns_read;
-pub mod error;
 pub mod validators;
 
 pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
@@ -149,17 +149,15 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
-            let params =
-                request_code_context::RequestCodeContextGat::deserialize_params(&args).map_err(
-                    |err| {
-                        let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
-                        request_code_context::RequestCodeContextGat::emit_err(
-                            &ctx,
-                            terr.to_wire_string(),
-                        );
-                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                    },
-                )?;
+            let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
+                .map_err(|err| {
+                    let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
+                    request_code_context::RequestCodeContextGat::emit_err(
+                        &ctx,
+                        terr.to_wire_string(),
+                    );
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
@@ -194,8 +192,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr =
-                        code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
+                    let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
                     GatCodeEdit::emit_err(&ctx, terr.to_wire_string());
                     color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                 })?;
@@ -219,8 +216,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let ToolResult { content } = create_file::CreateFile::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr =
-                        create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
+                    let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
                     create_file::CreateFile::emit_err(&ctx, terr.to_wire_string());
                     color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                 })?;

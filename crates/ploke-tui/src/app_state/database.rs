@@ -5,7 +5,14 @@ use std::{
 
 use itertools::Itertools;
 use ploke_core::{EmbeddingData, FileData, NodeId};
-use ploke_db::{EmbedDataVerbose, NodeType, SimilarArgs, search_similar_args};
+use ploke_db::{
+    EmbedDataVerbose, NodeType, RestoredEmbeddingSet, SimilarArgs,
+    multi_embedding::schema::EmbeddingSetExt, search_similar_args,
+};
+use ploke_embed::config::OpenRouterConfig;
+use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
+use ploke_embed::providers::openrouter::OpenRouterBackend;
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
@@ -17,7 +24,7 @@ use syn_parser::{
     resolve::{RelationIndexer, TreeRelation},
 };
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     app_state::helpers::{print_module_set, printable_nodes},
@@ -30,6 +37,50 @@ use super::*;
 
 pub const TUI_DB_TARGET: &str = "tracing_db_target";
 pub const TUI_SCAN_TARGET: &str = "scan-for-change";
+
+/// Attempt to construct or reuse an embedder that matches the restored embedding set so the runtime
+/// stays aligned with the database after a load.
+fn build_embedder_for_restored_set(
+    state: &Arc<AppState>,
+    set: &ploke_core::embeddings::EmbeddingSet,
+) -> Result<Option<Arc<EmbeddingProcessor>>, ploke_error::Error> {
+    let target_dims = set.dims() as usize;
+
+    // Fast path: reuse the current embedder if it already matches the restored dimensions.
+    if let (Ok(curr_dim), Ok(curr_proc)) = (
+        state.embedder.dimensions(),
+        state.embedder.current_processor(),
+    ) && curr_dim == target_dims
+    {
+        return Ok(Some(curr_proc));
+    }
+
+    let provider = set.provider.as_ref();
+    match provider {
+        "openrouter" => {
+            let cfg = OpenRouterConfig {
+                model: set.model.to_string(),
+                dimensions: Some(target_dims),
+                ..Default::default()
+            };
+            match OpenRouterBackend::new(&cfg) {
+                Ok(backend) => Ok(Some(Arc::new(EmbeddingProcessor::new(
+                    EmbeddingSource::OpenRouter(backend),
+                )))),
+                Err(e) => Err(ploke_error::Error::from(
+                    ploke_error::WarningError::PlokeDb(format!(
+                        "Failed to build OpenRouter embedder for {}: {}",
+                        set.model, e
+                    )),
+                )),
+            }
+        }
+        _ => {
+            // Unknown provider; caller will surface a warning.
+            Ok(None)
+        }
+    }
+}
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
 // achieve the same results more clearly
@@ -116,6 +167,16 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                         );
                     });
                 }
+            }
+        }
+
+        // Persist the active embedding set selection so it survives backup/restore.
+        if let Ok(active_set) = state.db.with_active_set(|set| set.clone()) {
+            if let Err(e) = state
+                .db
+                .put_active_embedding_set_meta(crate_focus, &active_set)
+            {
+                error!("Failed to persist active embedding set for backup: {e}");
             }
         }
         match state.db.backup_db(file_dir.clone()) {
@@ -224,15 +285,130 @@ pub(super) async fn load_db(
         }
     }?;
 
-    let prior_rels_vec = state.db.relations_vec()?;
-    debug!("prior rels for import: {:#?}", prior_rels_vec);
     state
         .db
-        .import_from_backup(&valid_file, &prior_rels_vec)
+        .import_backup_with_embeddings(&valid_file)
         .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    ploke_db::create_index_primary_with_index(&state.db)?;
-    // .inspect_err(|e| e.emit_error())?;
+
+    // Attempt to restore the active embedding set from metadata in the backup, falling back to the
+    // first populated set.
+    let selection = state
+        .db
+        .restore_embedding_set(&crate_name)
+        .map_err(ploke_error::Error::from)?;
+    if let Some((set, reason)) = selection {
+        let reason_text = match reason {
+            RestoredEmbeddingSet::FromMetadata => {
+                format!(
+                    "Restored embedding set '{}' from backup metadata.",
+                    set.rel_name()
+                )
+            }
+            RestoredEmbeddingSet::FirstPopulated => format!(
+                "No metadata found; using first populated embedding set '{}' from backup.",
+                set.rel_name()
+            ),
+        };
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            reason_text.clone(),
+            chat_history::MessageKind::SysInfo,
+        )
+        .await;
+        info!("{reason_text}");
+
+        // Build or reuse an embedder that matches the restored set and activate it so the runtime
+        // and DB stay in sync.
+        match build_embedder_for_restored_set(state, &set) {
+            Ok(Some(new_embedder)) => {
+                if let Err(e) =
+                    state
+                        .embedder
+                        .activate(&state.db, set.clone(), Arc::clone(&new_embedder))
+                {
+                    let msg = format!(
+                        "Restored embedding set '{}' but failed to activate runtime: {}. Code search may fail until you reselect an embedding model.",
+                        set.rel_name(),
+                        e
+                    );
+                    warn!("{msg}");
+                    handlers::chat::add_msg_immediate(
+                        state,
+                        event_bus,
+                        Uuid::new_v4(),
+                        msg,
+                        chat_history::MessageKind::SysInfo,
+                    )
+                    .await;
+                } else {
+                    let msg = format!(
+                        "Switched embedding model to '{}' from backup (dims {}). Code search should work. Use `/embedding search <model>` to reindex with a different model.",
+                        set.rel_name(),
+                        set.dims()
+                    );
+                    handlers::chat::add_msg_immediate(
+                        state,
+                        event_bus,
+                        Uuid::new_v4(),
+                        msg.clone(),
+                        chat_history::MessageKind::SysInfo,
+                    )
+                    .await;
+                    info!("{msg}");
+                }
+            }
+            Ok(None) => {
+                let msg = format!(
+                    "Restored embedding set '{}' but could not build a matching embedder (provider '{}', dims {}). Code search may fail until you reselect an embedding model.",
+                    set.rel_name(),
+                    set.provider.as_ref(),
+                    set.dims()
+                );
+                warn!("{msg}");
+                handlers::chat::add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    msg,
+                    chat_history::MessageKind::SysInfo,
+                )
+                .await;
+            }
+            Err(e) => {
+                let msg = format!(
+                    "Restored embedding set '{}' but hit an error building embedder: {}. Code search may fail until you reselect an embedding model.",
+                    set.rel_name(),
+                    e
+                );
+                warn!("{msg}");
+                handlers::chat::add_msg_immediate(
+                    state,
+                    event_bus,
+                    Uuid::new_v4(),
+                    msg,
+                    chat_history::MessageKind::SysInfo,
+                )
+                .await;
+            }
+        }
+
+        ploke_db::create_index_for_set(&state.db, &set)?;
+    } else {
+        let msg = "No populated embedding set found after restore; embedding searches will be unavailable";
+        warn!("{msg}");
+        handlers::chat::add_msg_immediate(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg.to_string(),
+            chat_history::MessageKind::SysInfo,
+        )
+        .await;
+        return Err(ploke_error::WarningError::PlokeDb(msg.to_string()).into());
+    }
 
     // get count for sanity and user feedback
     match state.db.count_relations().await {
@@ -718,6 +894,191 @@ pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    use cozo::{DataValue, ScriptMutability, UuidWrapper};
+    use ploke_core::embeddings::{EmbeddingModelId, EmbeddingProviderSlug, EmbeddingShape};
+    use ploke_db::multi_embedding::debug::DebugAll;
+    use ploke_embed::indexer::EmbeddingProcessor;
+    use ploke_transform::schema::crate_node::CrateContextSchema;
+    use tempfile::TempDir;
+
+    const HNSW_SUFFIX: &str = ":hnsw_idx";
+
+    fn build_state(
+        db: Arc<ploke_db::Database>,
+        embedder: Arc<ploke_embed::runtime::EmbeddingRuntime>,
+    ) -> Arc<AppState> {
+        Arc::new(AppState {
+            chat: ChatState::new(chat_history::ChatHistory::new()),
+            config: ConfigState::new(RuntimeConfig::from(
+                crate::user_config::UserConfig::default(),
+            )),
+            system: SystemState::default(),
+            indexing_state: tokio::sync::RwLock::new(None),
+            indexer_task: None,
+            indexing_control: Arc::new(tokio::sync::Mutex::new(None)),
+            db,
+            embedder,
+            io_handle: ploke_io::IoManagerHandle::new(),
+            rag: None,
+            budget: ploke_rag::TokenBudget::default(),
+            proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            create_proposals: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        })
+    }
+
+    fn custom_set() -> ploke_core::embeddings::EmbeddingSet {
+        ploke_core::embeddings::EmbeddingSet::new(
+            EmbeddingProviderSlug::new_from_str("openrouter"),
+            EmbeddingModelId::new_from_str("mistralai/codestral-embed-2505"),
+            EmbeddingShape::new_dims_default(3),
+        )
+    }
+
+    #[tokio::test]
+    async fn load_db_restores_saved_embedding_set_and_index() {
+        let tmp_config = TempDir::new().expect("temp config dir");
+        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp_config.path());
+        }
+
+        let crate_name = "fixture_crate";
+        let crate_root = tmp_config.path().join(crate_name);
+        std::fs::create_dir_all(&crate_root).expect("crate root dir");
+
+        // Session 1: choose non-default embedding set, persist data, and back up.
+        let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        db.setup_multi_embedding().expect("multi embed setup");
+        let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let state = build_state(Arc::clone(&db), Arc::clone(&embedder));
+        state
+            .system
+            .set_crate_focus_for_test(crate_root.clone())
+            .await;
+
+        // Insert crate context so backup naming and crate_focus restore work.
+        let ns = uuid::Uuid::new_v4();
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert("name".to_string(), DataValue::from(crate_name));
+        params.insert("version".to_string(), DataValue::from("0.1.0"));
+        params.insert("namespace".to_string(), DataValue::Uuid(UuidWrapper(ns)));
+        params.insert(
+            "root_path".to_string(),
+            DataValue::from(crate_root.display().to_string()),
+        );
+        params.insert("files".to_string(), DataValue::List(vec![]));
+        let script = CrateContextSchema::SCHEMA.script_put(&params);
+        db.run_script(&script, params, ScriptMutability::Mutable)
+            .expect("crate_context put");
+
+        let target_set = custom_set();
+        embedder
+            .activate(
+                &db,
+                target_set.clone(),
+                Arc::new(EmbeddingProcessor::new_mock()),
+            )
+            .expect("activate custom set");
+
+        // Insert one embedding and create the index so restore sees a populated set.
+        let node_id = uuid::Uuid::new_v4();
+        db.update_embeddings_batch(vec![(node_id, vec![0.1, 0.2, 0.3])])
+            .expect("update embeddings");
+        assert_eq!(
+            db.count_embeddings_for_set(&target_set)
+                .expect("count before backup"),
+            1,
+            "pre-backup embedding count"
+        );
+        ploke_db::create_index_for_set(&db, &target_set).expect("create index for set");
+        db.put_active_embedding_set_meta(crate_name, &target_set)
+            .expect("persist active set metadata");
+
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        save_db(&state, &bus).await;
+
+        // Session 2: start with default set/runtime and load from backup.
+        let fresh_db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+        fresh_db.setup_multi_embedding().expect("multi embed setup");
+        let fresh_embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&fresh_db.active_embedding_set),
+            EmbeddingProcessor::new_mock(),
+        ));
+        let fresh_state = build_state(Arc::clone(&fresh_db), Arc::clone(&fresh_embedder));
+        let bus2 = Arc::new(EventBus::new(EventBusCaps::default()));
+
+        if let Err(err) = load_db(&fresh_state, &bus2, crate_name.to_string()).await {
+            eprintln!("load_db error: {err:?}");
+            let sets = fresh_state.db.list_embedding_sets().expect("list sets");
+            eprintln!("sets after import: {:?}", sets);
+            for set in &sets {
+                let cnt = fresh_state
+                    .db
+                    .count_embeddings_for_set(set)
+                    .expect("count after import");
+                eprintln!("set {:?} count {}", set.rel_name(), cnt);
+                let db_info: String = fresh_state
+                    .db
+                    .is_embedding_info_all(set)
+                    .expect("show info idempotent")
+                    .tracing_string_all();
+                eprintln!("set {:?} is_embedding_info_all: {}", set, db_info);
+            }
+            panic!("load db failed");
+        }
+
+        let restored = fresh_state
+            .db
+            .with_active_set(|s| s.clone())
+            .expect("active set");
+        assert_eq!(restored, target_set);
+        assert_eq!(
+            fresh_state
+                .db
+                .count_embeddings_for_set(&target_set)
+                .expect("count embeddings"),
+            1
+        );
+
+        let hnsw_rel = format!("{}{}", target_set.rel_name(), HNSW_SUFFIX);
+        let rels = fresh_state.db.relations_vec().expect("relations");
+        assert!(
+            rels.iter().any(|r| r == &hnsw_rel),
+            "HNSW index for restored set should exist"
+        );
+
+        // Runtime embedder should now reflect the restored set dimensions.
+        let runtime_dims = fresh_state.embedder.dimensions().expect("runtime dims");
+        assert_eq!(runtime_dims, target_set.dims() as usize);
+
+        let focus = fresh_state.system.crate_focus_for_test().await;
+        assert_eq!(
+            focus.as_deref(),
+            Some(crate_root.as_path()),
+            "crate focus should be restored from backup"
+        );
+
+        if let Some(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct PromptData {
     prompt: String,
@@ -1104,10 +1465,8 @@ mod test {
             processor,
         ));
 
-        let new_db = ploke_db::Database::new_with_active_set(
-            cozo_db,
-            embedding_runtime.active_set_handle(),
-        );
+        let new_db =
+            ploke_db::Database::new_with_active_set(cozo_db, embedding_runtime.active_set_handle());
         let db_handle = Arc::new(new_db);
 
         // Initial parse is now optional - user can run indexing on demand
@@ -1134,8 +1493,7 @@ mod test {
             8,
         );
 
-        let rag =
-            RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;
+        let rag = RagService::new(Arc::clone(&db_handle), Arc::clone(&embedding_runtime))?;
         let state = Arc::new(AppState {
             chat: ChatState::new(ChatHistory::new()),
             config: ConfigState::default(),

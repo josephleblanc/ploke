@@ -144,11 +144,13 @@ impl CallbackManager {
 
 impl Drop for CallbackManager {
     fn drop(&mut self) {
-
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
-        let vec_rel_name = self.db_arc.with_active_set(|set| set.vector_relation_name().clone()).expect("Un-Poisoned db set");
+        let vec_rel_name = self
+            .db_arc
+            .with_active_set(|set| set.vector_relation_name().clone())
+            .expect("Un-Poisoned db set");
         tracing::info!(
             "Unregistering callback for relation {} with code {}",
             &vec_rel_name,

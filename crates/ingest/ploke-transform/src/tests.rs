@@ -14,7 +14,7 @@ macro_rules! crate_test_transform {
             let test_prefix = "ploke-db::tests";
             let test_name = stringify!($test_name);
             let target_name = format!("{test_prefix}::{test_name}");
-            init_tracing_tests(&target_name, Level::ERROR, None);
+            let _log_guard = init_tracing_tests(&target_name, Level::ERROR, None);
             // initialize db
             let db = Db::new(MemStorage::default()).expect("Failed to create database");
             db.initialize().expect("Failed to initialize database");

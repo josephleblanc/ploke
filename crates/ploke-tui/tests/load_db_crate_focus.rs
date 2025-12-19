@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_tui::EventBus;
 use ploke_tui::app_state::core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState};
 use ploke_tui::event_bus::EventBusCaps;
@@ -12,7 +13,10 @@ async fn crate_focus_assigns_absolute_root_from_db() {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig::from(cfg.clone())),

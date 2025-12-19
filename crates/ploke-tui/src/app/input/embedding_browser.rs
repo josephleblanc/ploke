@@ -64,7 +64,7 @@ pub fn handle_embedding_browser_input(app: &mut App, key: KeyEvent) {
                     chosen_model = Some(item.id.clone());
                     // TODO: Either replace this or the provider field on expected field for
                     // provider in `EmbeddingSet`
-                    chosen_provider = Some(ArcStr::from("openrouter_temp"))
+                    chosen_provider = Some(ArcStr::from("openrouter"))
                 }
             }
             KeyCode::Char('?') => {

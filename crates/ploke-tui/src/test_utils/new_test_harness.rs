@@ -79,12 +79,10 @@ impl AppHarness {
         let processor = config
             .load_embedding_processor()
             .expect("load embedding processor");
-        let embedding_runtime = Arc::new(
-            ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
-                Arc::clone(&db_handle.active_embedding_set),
-                processor,
-            ),
-        );
+        let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db_handle.active_embedding_set),
+            processor,
+        ));
         let bm25_cmd = bm25_index::bm25_service::start(Arc::clone(&db_handle), 0.0)
             .expect("start bm25 service");
         let (index_cancellation_token, index_cancel_handle) = CancellationToken::new();

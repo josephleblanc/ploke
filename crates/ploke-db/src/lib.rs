@@ -15,12 +15,13 @@ pub(crate) mod utils;
 
 pub mod multi_embedding;
 
+pub use database::RestoredEmbeddingSet;
 pub use database::{to_usize, to_uuid, Database, QueryContext, TypedEmbedData};
 pub use error::DbError;
 pub use index::hnsw::{
-    create_index, create_index_primary, create_index_primary_with_index, create_index_warn,
-    hnsw_all_types, hnsw_of_type, replace_index_warn, search_similar, search_similar_args,
-    EmbedDataVerbose, SimilarArgs,
+    create_index, create_index_for_set, create_index_primary, create_index_primary_with_index,
+    create_index_warn, hnsw_all_types, hnsw_of_type, replace_index_warn, search_similar,
+    search_similar_args, EmbedDataVerbose, SimilarArgs,
 };
 pub use observability::{
     CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,

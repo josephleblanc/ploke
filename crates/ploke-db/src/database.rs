@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ops::Deref, panic::Location, path::Path};
 
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 use crate::multi_embedding::db_ext::EmbeddingExt;
+use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
 use crate::NodeType;
 use crate::QueryResult;
@@ -16,13 +17,14 @@ use ploke_error::Error as PlokeError;
 use ploke_transform::schema::meta::Bm25MetaSchema;
 use serde::{Deserialize, Serialize};
 use syn_parser::parser::nodes::{AnyNodeId, ToCozoUuid};
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, info, instrument, trace, warn};
 use uuid::Uuid;
 
 // cfg items
 
 use ploke_core::embeddings::{
-    EmbRelName, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    EmbRelName, EmbeddingDType, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet,
+    EmbeddingShape,
 };
 
 pub(crate) const TRACKING_HASH_TARGET: &str = "tracking-hash";
@@ -38,6 +40,16 @@ lazy_static! {
 // end cfg items
 
 pub const HNSW_SUFFIX: &str = ":hnsw_idx";
+pub const ACTIVE_EMBEDDING_SET_REL: &str = "active_embedding_set";
+
+/// Reason an embedding set was chosen during restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoredEmbeddingSet {
+    /// Chosen because metadata recorded it as the active set when the backup was taken.
+    FromMetadata,
+    /// Chosen because it was the first populated set discovered in the restored DB.
+    FirstPopulated,
+}
 
 /// Main database connection and query interface
 // TODO:refactor:database improve state handling for active_embedding_set
@@ -323,10 +335,7 @@ impl Database {
         Self::new_with_active_set(db, Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())))
     }
 
-    pub fn new_with_active_set(
-        db: Db<MemStorage>,
-        active_set: Arc<RwLock<EmbeddingSet>>,
-    ) -> Self {
+    pub fn new_with_active_set(db: Db<MemStorage>, active_set: Arc<RwLock<EmbeddingSet>>) -> Self {
         Self {
             db,
             active_embedding_set: active_set,
@@ -783,6 +792,341 @@ impl Database {
         Ok(QueryResult::from(result))
     }
 
+    /// Ensure the relation used to persist the active embedding set for a crate exists.
+    fn ensure_active_embedding_relation(&self) -> Result<(), DbError> {
+        let rels = self
+            .iter_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        if rels.into_iter().any(|r| r == ACTIVE_EMBEDDING_SET_REL) {
+            return Ok(());
+        }
+
+        let script = format!(
+            ":create {rel} {{
+    crate_name: String,
+    at: Validity
+    =>
+    embedding_set_id: String,
+    provider: String,
+    model: String,
+    dims: Int,
+    embedding_dtype: String,
+    rel_name: String
+}}",
+            rel = ACTIVE_EMBEDDING_SET_REL
+        );
+
+        self.db
+            .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    /// Persist the current active embedding set for a crate name so it survives backup/restore.
+    pub fn put_active_embedding_set_meta(
+        &self,
+        crate_name: &str,
+        embedding_set: &EmbeddingSet,
+    ) -> Result<(), DbError> {
+        self.ensure_active_embedding_relation()?;
+
+        let mut params = BTreeMap::new();
+        params.insert("crate_name".to_string(), cozo::DataValue::from(crate_name));
+        params.insert(
+            "embedding_set_id".to_string(),
+            cozo::DataValue::from(format!("{}", embedding_set.hash_id().into_inner())),
+        );
+        params.insert(
+            "provider".to_string(),
+            cozo::DataValue::from(embedding_set.provider().as_ref()),
+        );
+        params.insert(
+            "model".to_string(),
+            cozo::DataValue::from(embedding_set.model().as_ref()),
+        );
+        params.insert(
+            "dims".to_string(),
+            cozo::DataValue::from(embedding_set.shape.dimension as i64),
+        );
+        params.insert(
+            "embedding_dtype".to_string(),
+            cozo::DataValue::from(embedding_set.shape.dtype_tag()),
+        );
+        params.insert(
+            "rel_name".to_string(),
+            cozo::DataValue::from(embedding_set.rel_name().as_ref()),
+        );
+
+        let script = format!(
+            r#"
+?[crate_name, embedding_set_id, provider, model, dims, embedding_dtype, rel_name, at] <- [[
+    $crate_name,
+    $embedding_set_id,
+    $provider,
+    $model,
+    $dims,
+    $embedding_dtype,
+    $rel_name,
+    'ASSERT'
+]]
+
+:put {rel} {{
+    crate_name,
+    embedding_set_id,
+    provider,
+    model,
+    dims,
+    embedding_dtype,
+    rel_name,
+    at
+}}"#,
+            rel = ACTIVE_EMBEDDING_SET_REL
+        );
+
+        self.db
+            .run_script(&script, params, cozo::ScriptMutability::Mutable)
+            .map(|_| ())
+            .map_err(DbError::from)
+    }
+
+    fn parse_embedding_dtype(tag: &str) -> Result<EmbeddingDType, DbError> {
+        match tag {
+            "f32" | "F32" => Ok(EmbeddingDType::F32),
+            "f64" | "F64" => Ok(EmbeddingDType::F64),
+            other => Err(DbError::Cozo(format!(
+                "Unknown embedding dtype tag: {other}"
+            ))),
+        }
+    }
+
+    /// Read the persisted active embedding set for a crate name, if present.
+    pub fn get_active_embedding_set_meta(
+        &self,
+        crate_name: &str,
+    ) -> Result<Option<EmbeddingSet>, DbError> {
+        let rels = self
+            .iter_relations()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        if !rels.into_iter().any(|r| r == ACTIVE_EMBEDDING_SET_REL) {
+            return Ok(None);
+        }
+
+        let script = format!(
+            r#"?[embedding_set_id, provider, model, dims, embedding_dtype, rel_name] :=
+    *{rel} {{
+        crate_name,
+        embedding_set_id,
+        provider,
+        model,
+        dims,
+        embedding_dtype,
+        rel_name
+        @ 'NOW'
+    }},
+    crate_name = "{crate_name}"
+"#,
+            rel = ACTIVE_EMBEDDING_SET_REL,
+            crate_name = crate_name
+        );
+
+        let rows = self
+            .db
+            .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(DbError::from)?
+            .rows;
+
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+
+        let embedding_set_id_str = to_string(&row[0])?;
+        let embedding_set_id = embedding_set_id_str.parse::<u64>().map_err(|e| {
+            DbError::Cozo(format!(
+                "Could not parse embedding_set_id '{embedding_set_id_str}' as u64: {e}"
+            ))
+        })?;
+        let provider = to_string(&row[1])?;
+        let model = to_string(&row[2])?;
+        let dims = to_u64(&row[3])?;
+        let dtype_tag = to_string(&row[4])?;
+        let _rel_name = to_string(&row[5])?;
+
+        let dtype = Self::parse_embedding_dtype(&dtype_tag)?;
+        let shape = EmbeddingShape::new(dims as u32, dtype);
+        let provider_slug = EmbeddingProviderSlug::new_from_str(&provider);
+        let model_id = EmbeddingModelId::new_from_str(&model);
+
+        let reconstructed = EmbeddingSet::new(provider_slug, model_id, shape);
+
+        // Verify the stored hash matches what we reconstruct to avoid silent divergence.
+        if reconstructed.hash_id().into_inner() != embedding_set_id {
+            return Err(DbError::Cozo(format!(
+                "Embedding set id mismatch for crate {crate_name}: stored {embedding_set_id}, computed {}",
+                reconstructed.hash_id().into_inner()
+            )));
+        }
+
+        Ok(Some(reconstructed))
+    }
+
+    /// Restore the active embedding set after a backup import by preferring metadata, falling back
+    /// to the first populated embedding set.
+    pub fn restore_embedding_set(
+        &self,
+        crate_name: &str,
+    ) -> Result<Option<(EmbeddingSet, RestoredEmbeddingSet)>, DbError> {
+        // Ensure embedding/vector relations are registered for all known sets after a restore. This
+        // makes population checks resilient if the restored DB was missing relation registration.
+        let sets = self.list_embedding_sets()?;
+        for set in &sets {
+            // Ignore errors here so a single bad set does not prevent attempting others.
+            if let Err(e) = self.ensure_embedding_set_relation() {
+                tracing::warn!(
+                    "Failed to ensure embedding_set relation before restore for {:?}: {}",
+                    set.rel_name(),
+                    e
+                );
+            }
+            if let Err(e) = self.ensure_vector_embedding_relation(set) {
+                tracing::warn!(
+                    "Failed to ensure vector relation before restore for {:?}: {}",
+                    set.rel_name(),
+                    e
+                );
+            }
+        }
+
+        if let Some(from_meta) = self.get_active_embedding_set_meta(crate_name)? {
+            self.set_active_set(from_meta.clone())?;
+            return Ok(Some((from_meta, RestoredEmbeddingSet::FromMetadata)));
+        }
+
+        for set in sets {
+            match self.count_embeddings_for_set(&set) {
+                Ok(count) if count > 0 => {
+                    self.set_active_set(set.clone())?;
+                    return Ok(Some((set, RestoredEmbeddingSet::FirstPopulated)));
+                }
+                Ok(_) => continue,
+                Err(e) => {
+                    tracing::error!(
+                        "Error counting embeddings for set {:?} during restore: {}",
+                        set,
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Import a backup in two passes so embedding-set metadata is read first, allowing per-set
+    /// vector relations to be created before vector rows are imported.
+    pub fn import_backup_with_embeddings(&self, backup: &Path) -> Result<(), DbError> {
+        // Ensure base relations exist in the fresh DB.
+        self.ensure_embedding_set_relation()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let _ = self
+            .ensure_active_embedding_relation()
+            .map_err(|e| DbError::Cozo(e.to_string()));
+
+        // Pass 1: import embedding_set (and active metadata if present) to discover sets.
+        let first_pass: Vec<String> = vec![EmbeddingSet::RELATION_NAME.to_string()];
+
+        self.db
+            .import_from_backup(backup, &first_pass)
+            .map_err(DbError::from)?;
+
+        let sets = self.list_embedding_sets()?;
+
+        // Attempt to import active_embedding_set metadata if present in the backup; ignore missing
+        // relation errors for legacy backups.
+        if let Err(e) = self
+            .db
+            .import_from_backup(backup, &[ACTIVE_EMBEDDING_SET_REL.to_string()])
+        {
+            let msg = e.to_string();
+            if msg.contains("Cannot find requested stored relation")
+                || msg.contains("No relations specified")
+            {
+                warn!(
+                    "active_embedding_set relation not found in backup; continuing without metadata"
+                );
+            } else {
+                return Err(DbError::from(e));
+            }
+        }
+
+        // Create per-set relations so vector rows can import.
+        for set in &sets {
+            if let Err(e) = self.ensure_embedding_relation(set) {
+                warn!(
+                    "Failed to ensure embedding relation for set {:?} before import: {}",
+                    set.rel_name(),
+                    e
+                );
+            }
+            if let Err(e) = self.ensure_vector_embedding_relation(set) {
+                warn!(
+                    "Failed to ensure vector relation for set {:?} before import: {}",
+                    set.rel_name(),
+                    e
+                );
+            }
+        }
+
+        let mut relations: Vec<String> = self
+            .relations_vec()
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        relations.retain(|r| r != ACTIVE_EMBEDDING_SET_REL);
+        for set in &sets {
+            relations.push(set.rel_name().as_ref().to_string());
+        }
+
+        // Deduplicate to avoid duplicate import entries.
+        let mut uniq = HashSet::new();
+        relations.retain(|r| uniq.insert(r.clone()));
+
+        self.db
+            .import_from_backup(backup, &relations)
+            .map_err(DbError::from)?;
+
+        Ok(())
+    }
+
+    /// List all embedding sets registered in the database.
+    pub fn list_embedding_sets(&self) -> Result<Vec<EmbeddingSet>, DbError> {
+        let script = format!(
+            "?[id, provider, model, dims, embedding_dtype, rel_name] := *{} {{ id, provider, model, dims, embedding_dtype, rel_name @ 'NOW' }}",
+            EmbeddingSet::RELATION_NAME
+        );
+
+        let rows = self
+            .db
+            .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(DbError::from)?
+            .rows;
+
+        let mut sets = Vec::new();
+        for row in rows {
+            let provider = to_string(&row[1])?;
+            let model = to_string(&row[2])?;
+            let dims = to_u64(&row[3])?;
+            let dtype_tag = to_string(&row[4])?;
+            let dtype = Self::parse_embedding_dtype(&dtype_tag)?;
+            let shape = EmbeddingShape::new(dims as u32, dtype);
+            let provider_slug = EmbeddingProviderSlug::new_from_str(&provider);
+            let model_id = EmbeddingModelId::new_from_str(&model);
+            sets.push(EmbeddingSet::new(provider_slug, model_id, shape));
+        }
+
+        Ok(sets)
+    }
+
     pub async fn mock_get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingData>, DbError> {
         // TODO: The CozoScript query needs to be validated and might require adjustments
         // based on the final schema. For now, we'll return mock data.
@@ -806,7 +1150,10 @@ impl Database {
             active_embedding_set: Arc::new(RwLock::new(DEFAULT_EMBEDDING_SET.clone())),
         })
     }
-    pub async fn create_new_backup(active_embedding_set: EmbeddingSet, path: impl AsRef<Path>) -> Result<Database, PlokeError> {
+    pub async fn create_new_backup(
+        active_embedding_set: EmbeddingSet,
+        path: impl AsRef<Path>,
+    ) -> Result<Database, PlokeError> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
         Ok(Self {
@@ -1053,7 +1400,6 @@ impl Database {
     // TODO:migrate-multi-embed-full
     // Update callsites to use new API without relying on wrapper function
     pub fn get_nodes_ordered(&self, nodes: Vec<Uuid>) -> Result<Vec<EmbeddingData>, PlokeError> {
-
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
@@ -1262,7 +1608,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
-
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
@@ -1414,10 +1759,15 @@ mod tests {
 
     use super::*;
     use crate::bm25_index::DocData;
+    use crate::multi_embedding::db_ext::EmbeddingExt;
     use crate::multi_embedding::schema::CozoEmbeddingSetExt;
     use crate::Database;
     use crate::DbError;
+    use crate::RestoredEmbeddingSet;
     use cozo::{Db, MemStorage, ScriptMutability};
+    use ploke_core::embeddings::{
+        EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
+    };
     use ploke_transform::schema::create_schema_all;
     use tracing::error;
     use tracing::info;
@@ -2025,6 +2375,117 @@ mod tests {
         );
 
         // debug_print_counts(&db)?;
+        Ok(())
+    }
+
+    #[test]
+    fn active_embedding_set_meta_roundtrip() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+        db.setup_multi_embedding()?;
+
+        let provider = EmbeddingProviderSlug::new_from_str("openrouter");
+        let model = EmbeddingModelId::new_from_str("test-model-1536");
+        let shape = EmbeddingShape::new_dims_default(1536);
+        let set = EmbeddingSet::new(provider, model, shape);
+        db.put_embedding_set(&set)?;
+
+        db.put_active_embedding_set_meta("fixture_nodes", &set)
+            .expect("persist active set meta");
+        let restored = db
+            .get_active_embedding_set_meta("fixture_nodes")
+            .expect("read active set meta")
+            .expect("meta should exist");
+        assert_eq!(
+            set.hash_id().into_inner(),
+            restored.hash_id().into_inner(),
+            "round-tripped embedding set id should match"
+        );
+        assert_eq!(
+            set.rel_name(),
+            restored.rel_name(),
+            "round-tripped rel_name should match"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn list_embedding_sets_includes_default_and_added() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+        db.setup_multi_embedding()?;
+
+        let provider = EmbeddingProviderSlug::new_from_str("openrouter");
+        let model = EmbeddingModelId::new_from_str("test-model-768");
+        let shape = EmbeddingShape::new_dims_default(768);
+        let set = EmbeddingSet::new(provider, model, shape);
+        db.put_embedding_set(&set)?;
+
+        let sets = db.list_embedding_sets().expect("list embedding sets");
+        assert!(
+            sets.iter()
+                .any(|s| s.hash_id().into_inner() == set.hash_id().into_inner()),
+            "added embedding set should be listed"
+        );
+        assert!(
+            sets.iter()
+                .any(|s| s.hash_id().into_inner() == DEFAULT_EMBEDDING_SET.hash_id().into_inner()),
+            "default embedding set should be listed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restore_embedding_set_prefers_metadata() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+        db.setup_multi_embedding()?;
+
+        let provider = EmbeddingProviderSlug::new_from_str("openrouter");
+        let model = EmbeddingModelId::new_from_str("test-model-1024");
+        let shape = EmbeddingShape::new_dims_default(1024);
+        let set = EmbeddingSet::new(provider, model, shape);
+        db.put_embedding_set(&set)?;
+
+        db.put_active_embedding_set_meta("fixture_nodes", &set)?;
+
+        let selection = db
+            .restore_embedding_set("fixture_nodes")
+            .expect("restore selection")
+            .expect("should select from metadata");
+
+        assert_eq!(selection.1, RestoredEmbeddingSet::FromMetadata);
+        assert_eq!(
+            selection.0.hash_id().into_inner(),
+            set.hash_id().into_inner()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restore_embedding_set_falls_back_to_first_populated() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+        db.setup_multi_embedding()?;
+
+        let provider = EmbeddingProviderSlug::new_from_str("openrouter");
+        let model = EmbeddingModelId::new_from_str("test-model-512");
+        let shape = EmbeddingShape::new_dims_default(512);
+        let set = EmbeddingSet::new(provider, model, shape);
+        db.put_embedding_set(&set)?;
+        db.ensure_vector_embedding_relation(&set)?;
+        db.set_active_set(set.clone())?;
+        db.update_embeddings_batch(vec![(
+            Uuid::new_v4(),
+            vec![0.0_f32; shape.dimension as usize],
+        )])?;
+
+        let selection = db
+            .restore_embedding_set("fixture_nodes")
+            .expect("restore selection")
+            .expect("should select populated set");
+
+        assert_eq!(selection.1, RestoredEmbeddingSet::FirstPopulated);
+        assert_eq!(
+            selection.0.hash_id().into_inner(),
+            set.hash_id().into_inner()
+        );
         Ok(())
     }
 }

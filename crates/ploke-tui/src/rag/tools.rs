@@ -243,7 +243,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
                         segs
                     }
                 };
-                let mut nodes = match ploke_db::helpers::resolve_nodes_by_canon_in_file(
+                let mut nodes = match ploke_db::helpers::graph_resolve_exact(
                     &state.db,
                     node_type.relation_str(),
                     &abs_path,

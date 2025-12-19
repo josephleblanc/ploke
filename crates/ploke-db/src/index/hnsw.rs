@@ -7,6 +7,7 @@ use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
 use crate::multi_embedding::hnsw_ext::HnswExt;
+use ploke_core::embeddings::EmbeddingSet;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -186,48 +187,36 @@ pub fn search_similar_test(
 pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     let _ = ty;
 
-    // TODO:active-embedding-set 2025-12-15
-    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-    // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
-    db.create_embedding_index(&active_embedding_set)
+    create_index_for_set(db, &active_embedding_set)
+}
+
+/// Create embedding relations and HNSW indices for a specific embedding set.
+pub fn create_index_for_set(db: &Database, embedding_set: &EmbeddingSet) -> Result<(), DbError> {
+    use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
+
+    db.ensure_embedding_set_relation()
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+    db.ensure_embedding_relation(embedding_set)
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+    db.ensure_vector_embedding_relation(embedding_set)
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+    db.create_embedding_index(embedding_set)
 }
 
 // TODO:docs Add doc comments
 pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
-    use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-
-    let r1 = db.ensure_embedding_set_relation();
-    tracing::info!(create_embedding_set_relation = ?r1);
-    r1.unwrap_or_else(|_| panic!());
-
-    // TODO:active-embedding-set 2025-12-15
-    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-    // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
-    let r2 = db.ensure_embedding_relation(&active_embedding_set);
-    tracing::info!(ensure_embedding_relation = ?r2);
-    r2.unwrap_or_else(|_| panic!());
-
-    let r3 = db.ensure_vector_embedding_relation(&active_embedding_set);
-    tracing::info!(ensure_vector_embedding_relation = ?r3);
-    r3.unwrap_or_else(|_| panic!());
-    Ok(())
+    create_index_for_set(db, &active_embedding_set)
 }
 
 // TODO:docs Add doc comments
 // TODO:ploke-db 2025-12-16
 // Replace this function with a Database method
 pub fn create_index_primary_with_index(db: &Database) -> Result<(), DbError> {
-    use crate::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-
-    create_index_primary(db)?;
-    // TODO:active-embedding-set 2025-12-15
-    // update the active embedding set functions to correctly use Arc<RwLock<>> within these
-    // functions.
     let active_embedding_set = db.with_active_set(|set| set.clone())?;
     tracing::debug!(?active_embedding_set);
-    db.create_embedding_index(&active_embedding_set.clone())
+    create_index_for_set(db, &active_embedding_set)
 }
 
 /// Temporary wrapper function to replace current API

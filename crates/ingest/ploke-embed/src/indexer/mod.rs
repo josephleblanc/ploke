@@ -2,10 +2,10 @@
 mod unit_tests;
 
 use crate::local::{EmbeddingConfig, LocalEmbedder};
-use crate::runtime::EmbeddingRuntime;
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::providers::openrouter::OpenRouterBackend;
+use crate::runtime::EmbeddingRuntime;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
 use ploke_core::EmbeddingData;
@@ -22,11 +22,11 @@ use tokio::time::{self, Instant};
 use tracing::{info_span, instrument};
 use uuid::Uuid;
 
+use crate::cancel_token::CancellationHandle;
 use crate::{
     cancel_token::{CancellationListener, CancellationToken},
     error::EmbedError,
 };
-use crate::cancel_token::CancellationHandle;
 use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
 
 #[derive(Debug)]

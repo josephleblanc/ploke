@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
+use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_tui::{
     EventBus,
     app_state::core::{
@@ -24,7 +25,10 @@ async fn approve_emits_rescan_sysinfo() {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig::from(cfg.clone())),

@@ -34,7 +34,11 @@ async fn test_truncation_controls_no_panic() {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = crate::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let processor = cfg.load_embedding_processor().expect("embedder");
+    let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        processor,
+    ));
 
     let state = Arc::new(crate::app_state::AppState {
         chat: crate::app_state::core::ChatState::new(crate::chat_history::ChatHistory::new()),
@@ -93,7 +97,11 @@ async fn test_help_display_truncation() {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = crate::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let processor = cfg.load_embedding_processor().expect("embedder");
+    let embedder = Arc::new(ploke_embed::runtime::EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        processor,
+    ));
 
     let state = Arc::new(crate::app_state::AppState {
         chat: crate::app_state::core::ChatState::new(crate::chat_history::ChatHistory::new()),

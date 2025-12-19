@@ -16,6 +16,7 @@ use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
 use crate::{
+    create_index_for_set,
     database::HNSW_SUFFIX,
     multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
     query::builder::EMBEDDABLE_NODES_NOW,
@@ -1194,19 +1195,25 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
     // // need to drop hnsw indices before loading backup
     // db.clear_hnsw_idx().await?;
 
-    let prior_rels_vec = db.relations_vec()?;
-    debug!("prior rels for import: {:#?}", prior_rels_vec);
-    db.import_from_backup(&valid_file, &prior_rels_vec)
+    db.import_backup_with_embeddings(&valid_file)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    // NOTE: We don't need to clear the hnsw_idx as initially thougth when loading from the
-    // database. Previously we thought we needed to drop the hnsw index before importing the
-    // backup database, but it seems like we do not need to do that, and so we end up getting an
-    // error wyhen we ty to recreate the hnsw index again.
-    // - This might change if we were to try loading a database which had a non-default hnsw index
-    // on a non-default vector embedding set, but I'm not sure. Will need more testing later.
-    crate::create_index_primary_with_index(db)?;
-    // crate::create_index_primary(db)?;
+    let selection = db
+        .restore_embedding_set(&crate_name)
+        .map_err(crate::DbError::from)?;
+    if let Some((set, reason)) = selection {
+        tracing::info!(
+            "Restored embedding set {:?} via {:?}",
+            set.rel_name(),
+            reason
+        );
+        crate::create_index_for_set(db, &set)?;
+    } else {
+        return Err(ploke_error::WarningError::PlokeDb(
+            "No populated embedding set found after restore".to_string(),
+        )
+        .into());
+    }
 
     // get count for sanity and user feedback
     match db.count_relations().await {
@@ -1271,6 +1278,9 @@ name_str.len() == prefix.len() + 1 + 36 | {}
 }
 
 #[cfg(test)]
+pub(crate) use tests::TEST_DB_IMMUTABLE;
+
+#[cfg(test)]
 mod tests {
     use lazy_static::lazy_static;
     use std::collections::BTreeMap;
@@ -1301,7 +1311,7 @@ mod tests {
         ///
         /// Note that cozo::Db implements Arc::clone under the hood, so cloning this static ref is
         /// cheap.
-        static ref TEST_DB_IMMUTABLE: cozo::Db<cozo::MemStorage> =
+        pub static ref TEST_DB_IMMUTABLE: cozo::Db<cozo::MemStorage> =
             ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
                 .expect("database must be set up correctly");
     }
@@ -1335,6 +1345,7 @@ mod tests {
     /// let db_result = run_script!(empty_db, cozo::ScriptMutability::Mutable, "Testing Script:", "create
     /// example_relation relation", create_rel_script)?;.
     /// ```
+    #[macro_export]
     macro_rules! run_script {
         ($db:expr, $mutability:expr, $label:expr, $name:expr, $script:expr) => {{
             let script = $script;

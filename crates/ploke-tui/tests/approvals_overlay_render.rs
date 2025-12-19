@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use ploke_core::ArcStr;
+use ploke_embed::runtime::EmbeddingRuntime;
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -62,13 +63,58 @@ fn redact(text: &str) -> String {
     )
     .unwrap();
     let mut out = uuid_re.replace_all(text, "<UUID>").to_string();
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut redact_paths = Vec::new();
     if let Ok(pwd) = std::env::current_dir() {
-        let esc = regex::escape(&pwd.display().to_string());
-        if let Ok(pwd_re) = regex::Regex::new(&esc) {
-            out = pwd_re.replace_all(&out, "<PWD>").to_string();
+        redact_paths.push(pwd);
+    }
+    redact_paths.push(manifest_dir.clone());
+    if let Some(root) = manifest_dir.ancestors().nth(2) {
+        redact_paths.push(root.to_path_buf());
+    }
+    redact_paths.sort();
+    redact_paths.dedup();
+    for p in redact_paths {
+        let s = p.display().to_string();
+        if s.len() <= 1 {
+            continue;
         }
+        out = out.replace(&s, "<PWD>");
     }
     out
+}
+
+#[test]
+fn redact_replaces_workspace_paths_cleanly() {
+    let pwd = std::env::current_dir().expect("pwd");
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Representative snippet from the snapshots.
+    let sample = format!(
+        "Before/After:\n--- {pwd}/crates/ploke-tui/Cargo.toml\n--- {manifest}/Cargo.toml\n",
+        pwd = pwd.display(),
+        manifest = manifest.display()
+    );
+    let redacted = redact(&sample);
+    assert!(
+        !redacted.contains(&pwd.display().to_string()),
+        "workspace path should be removed"
+    );
+    assert!(
+        !redacted.contains(&manifest.display().to_string()),
+        "manifest path should be removed"
+    );
+    assert!(
+        redacted.matches("<PWD>").count() >= 1,
+        "redaction marker should appear"
+    );
+    assert!(
+        !redacted.contains("<PWD><PWD>"),
+        "path redaction should not duplicate markers"
+    );
+    assert!(
+        redacted.contains("Before/After:"),
+        "non-path labels should remain intact"
+    );
 }
 
 async fn make_state_with_ids(
@@ -77,7 +123,10 @@ async fn make_state_with_ids(
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
     let cfg = ploke_tui::user_config::UserConfig::default();
-    let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
     let state = Arc::new(AppState {
         chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
         config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
@@ -99,13 +148,15 @@ async fn make_state_with_ids(
         let mut guard = state.proposals.write().await;
         for (i, (id, preview)) in previews.into_iter().enumerate() {
             ids.push(id);
+            // Fixed, descending timestamps to keep list ordering deterministic across runs.
+            let ts = 10_000_i64.saturating_sub(i as i64);
             guard.insert(
                 id,
                 EditProposal {
                     request_id: id,
                     parent_id: uuid::Uuid::new_v4(),
                     call_id: ArcStr::from(format!("call-{i}")),
-                    proposed_at_ms: chrono::Utc::now().timestamp_millis(),
+                    proposed_at_ms: ts,
                     edits: vec![],
                     edits_ns: vec![],
                     files: vec![std::env::current_dir().unwrap().join("Cargo.toml")],
@@ -145,7 +196,10 @@ fn approvals_overlay_renders_empty_list() {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
         let io_handle = ploke_io::IoManagerHandle::new();
         let cfg = ploke_tui::user_config::UserConfig::default();
-        let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            cfg.load_embedding_processor().expect("embedder"),
+        ));
         let state = Arc::new(AppState {
             chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
             config: ConfigState::new(RuntimeConfig::from(cfg.clone())),
@@ -328,7 +382,10 @@ fn approvals_overlay_filters_and_orders_by_status_and_recency() {
         let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
         let io_handle = ploke_io::IoManagerHandle::new();
         let cfg = ploke_tui::user_config::UserConfig::default();
-        let embedder = Arc::new(cfg.load_embedding_processor().expect("embedder"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            cfg.load_embedding_processor().expect("embedder"),
+        ));
         let state = Arc::new(AppState {
             chat: ChatState::new(ploke_tui::chat_history::ChatHistory::new()),
             config: ConfigState::new(RuntimeConfig::from(cfg.clone())),

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use crate::ModelId;
 use crate::chat_history::MessageKind;
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
-use ploke_core::embeddings::EmbeddingProviderSlug;
 use ploke_core::ArcStr;
+use ploke_core::embeddings::EmbeddingProviderSlug;
 use ploke_llm::ProviderName;
 use ploke_rag::{RetrievalStrategy, TokenBudget};
 use tokio::sync::oneshot;
@@ -213,7 +213,7 @@ pub enum StateCommand {
         // Replace this with an EmbeddingModelId instead
         model_id: ModelId,
         provider: ArcStr,
-    }
+    },
 }
 
 impl StateCommand {

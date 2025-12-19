@@ -1,5 +1,7 @@
 use crate::{
-    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings}, router_only::{openrouter::EmbeddingProviderPrefs, ApiRoute, Router}, EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId
+    EmbeddingModelName, EmbeddingResponseId, LlmError, ModelId,
+    embeddings::{EmbeddingRequest, HasDims, HasEmbeddingModels, HasEmbeddings},
+    router_only::{ApiRoute, Router, openrouter::EmbeddingProviderPrefs},
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -34,18 +36,73 @@ impl HasEmbeddings for super::OpenRouter {
         Self: Sized,
         <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
     {
+        let env = OpenRouterEmbedEnv::from_env()?;
+        Self::fetch_embeddings_with_env(client, req, &env).await
+    }
+}
+
+/// Authentication + endpoint details for hitting OpenRouter embeddings.
+#[derive(Clone, Debug)]
+pub struct OpenRouterEmbedEnv {
+    pub api_key: String,
+    pub embeddings_url: String,
+}
+
+impl OpenRouterEmbedEnv {
+    pub fn from_env() -> Result<Self, std::env::VarError> {
+        let api_key = super::OpenRouter::resolve_api_key()?;
+        Ok(Self {
+            api_key,
+            embeddings_url: std::env::var("OPENROUTER_EMBEDDINGS_URL")
+                .unwrap_or_else(|_| super::OpenRouter::EMBEDDINGS_URL.to_string()),
+        })
+    }
+
+    pub fn from_parts(api_key: impl Into<String>, embeddings_url: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            embeddings_url: embeddings_url.into(),
+        }
+    }
+
+    pub fn from_overrides(
+        api_key: Option<String>,
+        embeddings_url: Option<String>,
+    ) -> Result<Self, std::env::VarError> {
+        let key = match api_key {
+            Some(k) => k,
+            None => super::OpenRouter::resolve_api_key()?,
+        };
+        let url = embeddings_url.unwrap_or_else(|| {
+            std::env::var("OPENROUTER_EMBEDDINGS_URL")
+                .unwrap_or_else(|_| super::OpenRouter::EMBEDDINGS_URL.to_string())
+        });
+        Ok(Self {
+            api_key: key,
+            embeddings_url: url,
+        })
+    }
+}
+
+impl super::OpenRouter {
+    pub async fn fetch_embeddings_with_env(
+        client: &reqwest::Client,
+        req: &EmbeddingRequest<Self>,
+        env: &OpenRouterEmbedEnv,
+    ) -> color_eyre::Result<OpenRouterEmbeddingsResponse>
+    where
+        Self: Sized,
+        <Self as HasEmbeddings>::EmbeddingFields: std::marker::Sync,
+    {
         fn snippet_lossy(bytes: &[u8], max: usize) -> String {
             let end = bytes.len().min(max);
             String::from_utf8_lossy(&bytes[..end]).to_string()
         }
 
-        let api_key = Self::resolve_api_key()?;
-        let url = std::env::var("OPENROUTER_EMBEDDINGS_URL")
-            .unwrap_or_else(|_| Self::EMBEDDINGS_URL.to_string());
-
+        let url = &env.embeddings_url;
         let resp = client
-            .post(&url)
-            .bearer_auth(api_key)
+            .post(url)
+            .bearer_auth(&env.api_key)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
@@ -90,15 +147,18 @@ impl HasEmbeddings for super::OpenRouter {
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
 
-        let bytes = resp.bytes().await.map_err(|e| OpenRouterEmbeddingError::Transport {
-            message: e.to_string(),
-            url: url.clone(),
-        })?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| OpenRouterEmbeddingError::Transport {
+                message: e.to_string(),
+                url: url.clone(),
+            })?;
 
         let parsed = parse_openrouter_embeddings_response(
             &bytes,
             status.as_u16(),
-            &url,
+            url,
             request_id.clone(),
             content_type,
         )
@@ -109,7 +169,6 @@ impl HasEmbeddings for super::OpenRouter {
                 other => other.with_body_snippet(snippet_lossy(&bytes, 8 * 1024)),
             }
         })?;
-
 
         Ok(parsed)
     }
@@ -213,16 +272,14 @@ pub struct OpenRouterEmbeddingsResponse {
 }
 
 impl HasDims for OpenRouterEmbeddingsResponse {
-    fn dims(&self) -> Option< u64 > {
+    fn dims(&self) -> Option<u64> {
         use OpenRouterEmbeddingVector::*;
-        self.data.first().map(|data| { 
-            match &data.embedding{
-                Float(items) => items.len() as u64,
-                Base64(base_64) => { 
-                    let len = base_64.len() / 4;
-                    len as u64
-                },
-            } 
+        self.data.first().map(|data| match &data.embedding {
+            Float(items) => items.len() as u64,
+            Base64(base_64) => {
+                let len = base_64.len() / 4;
+                len as u64
+            }
         })
     }
 }
@@ -271,12 +328,8 @@ mod error_mapping_tests {
         }
     }
 
-    fn set_env(url: &str) {
-        // Env mutation is process-global; restrict to tests.
-        unsafe {
-            std::env::set_var("OPENROUTER_API_KEY", "test-key");
-            std::env::set_var("OPENROUTER_EMBEDDINGS_URL", url);
-        }
+    fn test_env(url: &str) -> OpenRouterEmbedEnv {
+        OpenRouterEmbedEnv::from_parts("test-key", url.to_string())
     }
 
     async fn expect_error<F>(status: u16, body: &str, assert: F)
@@ -289,9 +342,9 @@ mod error_mapping_tests {
             when.method(POST).path("/v1/embeddings");
             then.status(status).body(body);
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
         let req = base_request();
-        let err = OpenRouter::fetch_embeddings(&Client::new(), &req)
+        let err = OpenRouter::fetch_embeddings_with_env(&Client::new(), &req, &env)
             .await
             .expect_err("expected error");
         let kind = err
@@ -348,9 +401,9 @@ mod error_mapping_tests {
             when.method(POST).path("/v1/embeddings");
             then.status(429).header("Retry-After", "2").body("too many");
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
         let req = base_request();
-        let err = OpenRouter::fetch_embeddings(&Client::new(), &req)
+        let err = OpenRouter::fetch_embeddings_with_env(&Client::new(), &req, &env)
             .await
             .expect_err("expected rate limit error");
         let kind = err
@@ -407,9 +460,9 @@ mod error_mapping_tests {
             when.method(POST).path("/v1/embeddings");
             then.status(200).body(body);
         });
-        set_env(&server.url("/v1/embeddings"));
+        let env = test_env(&server.url("/v1/embeddings"));
         let req = base_request();
-        let resp = OpenRouter::fetch_embeddings(&Client::new(), &req)
+        let resp = OpenRouter::fetch_embeddings_with_env(&Client::new(), &req, &env)
             .await
             .expect("success");
         assert_eq!(resp.data.len(), 1);
@@ -587,15 +640,12 @@ mod tests {
             .expect("fixture data array")
             .iter()
             .map(|entry| {
-                let id_value = entry
-                    .get("id")
-                    .expect("fixture entry has id field")
-                    .clone();
+                let id_value = entry.get("id").expect("fixture entry has id field").clone();
                 match id_value.as_str() {
                     Some(id) => id.to_string(),
                     None => {
-                        let parsed: ModelId =
-                            serde_json::from_value(id_value).expect("fixture id parses into ModelId");
+                        let parsed: ModelId = serde_json::from_value(id_value)
+                            .expect("fixture id parses into ModelId");
                         parsed.to_string()
                     }
                 }

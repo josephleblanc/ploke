@@ -95,10 +95,10 @@ pub trait HasEmbeddings: Router {
             let dims = resp
                 .dims()
                 .ok_or_else(|| eyre!("Received empty vector embedding"))?;
-                // .map_err(|e| {
-                //     LlmError::Embedding(e.wrap_err("invalid embedding response"))
-                // })?;
-            Ok( dims )
+            // .map_err(|e| {
+            //     LlmError::Embedding(e.wrap_err("invalid embedding response"))
+            // })?;
+            Ok(dims)
         }
     }
 }
