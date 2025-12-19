@@ -284,6 +284,34 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             ns_read::NsRead::emit_completed(&ctx, content);
             Ok(())
         }
+        ToolName::CodeItemLookup => {
+            let params =
+                code_item_lookup::CodeItemLookup::deserialize_params(&args).map_err(|err| {
+                    let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
+                    code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } =
+                code_item_lookup::CodeItemLookup::execute(params, ctx.clone())
+                    .await
+                    .map_err(|e| {
+                        let terr = code_item_lookup::CodeItemLookup::adapt_error(
+                            ToolInvocationError::Exec(e),
+                        );
+                        code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.to_wire_string());
+                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            code_item_lookup::CodeItemLookup::emit_completed(&ctx, content);
+            Ok(())
+        }
     }
 }
 
