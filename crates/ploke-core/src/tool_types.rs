@@ -8,6 +8,7 @@ pub enum ToolName {
     CreateFile,
     NsPatch,
     NsRead,
+    CodeItemLookup,
 }
 
 impl ToolName {
@@ -19,6 +20,7 @@ impl ToolName {
             CreateFile => "create_file",
             NsPatch => "non_semantic_patch",
             NsRead => "read_file",
+            CodeItemLookup => "code_item_lookup",
         }
     }
 }
@@ -126,4 +128,15 @@ pub enum ToolDescr {
         rename = "Read workspace files before editing. Supports optional line ranges and truncation limits to keep responses concise."
     )]
     NsRead,
+    #[serde(
+        rename = r#"Find the definition of a known code item. Better than grep. 
+
+Returns the code snippet of the item if it exists, and provides positive proof if the item does not exist.
+
+Use this tool when you want to look up a given code item. 
+
+Pro tip: use it with parallel tool calls to look up as many code items as you want.
+"#
+    )]
+    CodeItemLookup,
 }

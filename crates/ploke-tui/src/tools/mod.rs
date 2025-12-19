@@ -4,9 +4,16 @@
 //  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
 use crate::utils::{
     consts::DEBUG_TOOLS,
+    path_scoping,
     se_de::{de_arc_str, se_arc_str},
 };
-use std::{borrow::Cow, collections::HashMap, ops::Deref, path::PathBuf, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{
     AppEvent,
@@ -19,6 +26,7 @@ use ploke_core::{
     ArcStr,
     rag_types::{ContextPart, ContextPartKind, Modality},
 };
+use ploke_error::DomainError;
 use ploke_rag::{RagService, RetrievalStrategy, TokenBudget};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
@@ -32,6 +40,7 @@ pub use request_code_context::{
 };
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
+pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
 pub mod ns_patch;
@@ -350,6 +359,20 @@ pub trait Tool {
         params: Self::Params<'de>,
         ctx: Ctx,
     ) -> impl std::future::Future<Output = Result<ToolResult, ploke_error::Error>> + Send;
+}
+
+pub trait ValidatesAbolutePath {
+    fn get_file_path(&self) -> impl AsRef<Path>;
+    fn validate_to_abs_path<T: AsRef<Path>>(
+        &self,
+        crate_root: T,
+    ) -> Result<PathBuf, ploke_error::Error> {
+        path_scoping::resolve_in_crate_root(self.get_file_path(), &crate_root).map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Io {
+                message: format!("invalid path: {err}"),
+            })
+        })
+    }
 }
 
 #[cfg(test)]
