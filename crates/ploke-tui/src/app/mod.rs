@@ -990,7 +990,7 @@ impl App {
         });
         self.send_cmd(StateCommand::SelectEmbeddingModel {
             model_id,
-            provider: provider.unwrap_or(ArcStr::from("openrouter_temp_empty")),
+            provider: provider.unwrap_or(ArcStr::from("openrouter")),
         });
         self.needs_redraw = true;
     }

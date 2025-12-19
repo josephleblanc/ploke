@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     database::HNSW_SUFFIX,
+    create_index_for_set,
     multi_embedding::schema::{CozoEmbeddingSetExt, EmbeddingSetExt, EmbeddingVector},
     query::builder::EMBEDDABLE_NODES_NOW,
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
@@ -1194,19 +1195,25 @@ pub async fn load_db(db: &Database, crate_name: String) -> Result<(), ploke_erro
     // // need to drop hnsw indices before loading backup
     // db.clear_hnsw_idx().await?;
 
-    let prior_rels_vec = db.relations_vec()?;
-    debug!("prior rels for import: {:#?}", prior_rels_vec);
-    db.import_from_backup(&valid_file, &prior_rels_vec)
+    db.import_backup_with_embeddings(&valid_file)
         .map_err(crate::DbError::from)
         .map_err(ploke_error::Error::from)?;
-    // NOTE: We don't need to clear the hnsw_idx as initially thougth when loading from the
-    // database. Previously we thought we needed to drop the hnsw index before importing the
-    // backup database, but it seems like we do not need to do that, and so we end up getting an
-    // error wyhen we ty to recreate the hnsw index again.
-    // - This might change if we were to try loading a database which had a non-default hnsw index
-    // on a non-default vector embedding set, but I'm not sure. Will need more testing later.
-    crate::create_index_primary_with_index(db)?;
-    // crate::create_index_primary(db)?;
+    let selection = db
+        .restore_embedding_set(&crate_name)
+        .map_err(crate::DbError::from)?;
+    if let Some((set, reason)) = selection {
+        tracing::info!(
+            "Restored embedding set {:?} via {:?}",
+            set.rel_name(),
+            reason
+        );
+        crate::create_index_for_set(db, &set)?;
+    } else {
+        return Err(ploke_error::WarningError::PlokeDb(
+            "No populated embedding set found after restore".to_string(),
+        )
+        .into());
+    }
 
     // get count for sanity and user feedback
     match db.count_relations().await {

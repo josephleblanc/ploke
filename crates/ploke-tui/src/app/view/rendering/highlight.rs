@@ -123,6 +123,26 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
             (Mode::CodeBlock { buffer, .. }, Event::Code(t)) => {
                 buffer.push_str(&t);
             }
+            (_, Event::Start(Tag::Paragraph))
+            | (_, Event::Start(Tag::Heading { .. }))
+            | (_, Event::Start(Tag::BlockQuote(_)))
+            | (_, Event::Start(Tag::List(_)))
+            | (_, Event::Start(Tag::FootnoteDefinition(_)))
+            | (_, Event::Start(Tag::Table(_))) => {
+                if !current_line.is_empty() {
+                    push_newline(&mut current_line, &mut lines, diff_enabled);
+                }
+            }
+            (_, Event::End(TagEnd::Paragraph))
+            | (_, Event::End(TagEnd::Heading(..)))
+            | (_, Event::End(TagEnd::BlockQuote))
+            | (_, Event::End(TagEnd::List(_)))
+            | (_, Event::End(TagEnd::FootnoteDefinition))
+            | (_, Event::End(TagEnd::Table))
+            | (_, Event::End(TagEnd::TableHead))
+            | (_, Event::End(TagEnd::TableRow)) => {
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
             (_, Event::Text(t)) => {
                 let style = inline_style(base_style, italic_depth, bold_depth);
                 push_text(&t, style, &mut current_line, &mut lines, diff_enabled);

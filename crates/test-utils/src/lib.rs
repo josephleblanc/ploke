@@ -10,6 +10,7 @@ pub mod nodes;
 use std::path::{Path, PathBuf};
 
 use cozo::MemStorage;
+use chrono::Local;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
 use ploke_core::embeddings::EmbeddingSet;
 pub use ploke_core::NodeId;
@@ -19,6 +20,12 @@ use syn_parser::parser::nodes::TypeDefNode;
 use syn_parser::parser::{analyze_files_parallel, ParsedCodeGraph};
 // TODO: Change import path of `CodeGraph` and `NodeId`, probably better organized to use `ploke-core`
 use syn_parser::CodeGraph;
+
+/// Guard to keep both the subscriber default and any file appender worker alive.
+pub struct TestTracingGuard {
+    _default: tracing::subscriber::DefaultGuard,
+    _file: Option<tracing_appender::non_blocking::WorkerGuard>,
+}
 
 // Should return result
 pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
@@ -320,82 +327,108 @@ use fmt::format::FmtSpan;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::util::TryInitError;
-use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{filter, fmt, layer::SubscriberExt, prelude::*, EnvFilter};
 
-pub fn init_tracing_v2() -> WorkerGuard {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")); // Default to 'info' level
+fn should_write_test_log_file() -> bool {
+    match std::env::var("PLOKE_TEST_LOG") {
+        Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE"),
+        Err(_) => false,
+    }
+}
 
-    // File appender with custom timestamp format
-    let log_dir = "logs";
-    std::fs::create_dir_all(log_dir).expect("Failed to create logs directory");
-    let file_appender = tracing_appender::rolling::daily(log_dir, "ploke.log");
-    let (non_blocking_file, file_guard) = tracing_appender::non_blocking(file_appender);
+fn test_log_dir() -> PathBuf {
+    workspace_root().join("target").join("test-logs")
+}
 
-    // Common log format builder
-    let fmt_layer = fmt::layer()
-        .pretty()
-        .with_target(true)
-        .with_level(true)
-        .with_thread_ids(true)
-        .with_span_events(FmtSpan::CLOSE); // Capture span durations
+fn make_test_log_writer(prefix: &str) -> (tracing_appender::non_blocking::NonBlocking, Option<WorkerGuard>) {
+    if !should_write_test_log_file() {
+        let (writer, guard) = tracing_appender::non_blocking(std::io::sink());
+        return (writer, Some(guard));
+    }
 
-    let file_subscriber = fmt_layer
-        .with_writer(std::io::stderr)
-        // .with_writer(non_blocking_file)
-        .with_ansi(false)
-        .compact();
+    let log_dir = test_log_dir();
+    std::fs::create_dir_all(&log_dir).expect("Failed to create test log directory");
+    let run_id = format!(
+        "{}_{}",
+        Local::now().format("%Y%m%d_%H%M%S"),
+        std::process::id()
+    );
+    let file_appender =
+        tracing_appender::rolling::never(log_dir, format!("{prefix}_{run_id}.log"));
+    let (writer, guard) = tracing_appender::non_blocking(file_appender);
+    (writer, Some(guard))
+}
 
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(file_subscriber)
-        .init();
-
-    file_guard
+/// Legacy helper; now writes optional per-run logs under target/test-logs when `PLOKE_TEST_LOG=1`.
+pub fn init_tracing_v2() -> TestTracingGuard {
+    init_test_tracing(Level::INFO)
 }
 
 #[cfg(feature = "test_setup")]
-pub fn init_test_tracing_with_target(target: &'static str, level: tracing::Level) {
-    use tracing::Level;
+pub fn init_test_tracing_with_target(
+    target: &'static str,
+    level: tracing::Level,
+) -> TestTracingGuard {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("")); // opt-in via RUST_LOG
 
-    let filter = filter::Targets::new()
-        // .with_target("debug_dup", Level::ERROR)
-        .with_target("db", Level::ERROR)
-        .with_target("ploke_tui::app_state", Level::ERROR)
-        .with_target("ploke_embed", level)
-        .with_target("specific_target", Level::ERROR)
-        .with_target("file_hashes", Level::ERROR)
+    let targets = filter::Targets::new()
         .with_target("ploke", level)
-        .with_target("ploke-db", level)
+        .with_target("ploke_tui", level)
+        .with_target("ploke_db", level)
         .with_target("ploke-embed", level)
         .with_target("ploke-io", level)
         .with_target("ploke-transform", level)
-        .with_target(target, level)
-        .with_target("cozo", Level::ERROR);
+        .with_target("ploke_rag", level)
+        .with_target("cozo", Level::ERROR)
+        .with_target(target, level);
 
-    let layer = tracing_subscriber::fmt::layer()
+    let console_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_file(true)
         .with_line_number(true)
-        .with_target(true) // Show module path
-        .with_level(true) // Show log level
-        .without_time() // Remove timestamps
+        .with_target(true)
+        .with_level(true)
+        .without_time()
         .with_ansi(true)
-        .pretty();
-    tracing_subscriber::registry()
-        .with(layer)
-        .with(filter)
-        .init();
+        .compact();
+
+    let (file_writer, file_guard) = make_test_log_writer("ploke_test");
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_line_number(true)
+        .without_time()
+        .with_ansi(false);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(targets)
+        .with(console_layer)
+        .with(file_layer);
+
+    let default_guard = subscriber.set_default();
+    TestTracingGuard {
+        _default: default_guard,
+        _file: file_guard,
+    }
 }
 
 #[cfg(feature = "test_setup")]
-pub fn init_test_tracing(level: tracing::Level) {
-    init_test_tracing_with_target("", level);
+pub fn init_test_tracing(level: tracing::Level) -> TestTracingGuard {
+    init_test_tracing_with_target("", level)
 }
 
-pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<Level>) {
+pub fn init_tracing_tests(
+    target_name: &str,
+    target_level: Level,
+    base: Option<Level>,
+) -> TestTracingGuard {
     let base = base.unwrap_or(Level::ERROR);
+
     let base_filter = filter::Targets::new()
-        // .with_target("debug_dup", Level::ERROR)
         .with_target("ploke", base)
         .with_target("ploke_tui", base)
         .with_target("ploke_embed", base)
@@ -403,32 +436,42 @@ pub fn init_tracing_tests(target_name: &str, target_level: Level, base: Option<L
         .with_target("ploke-embed", base)
         .with_target("ploke-io", base)
         .with_target("ploke-transform", base)
-        // cozo is verbose, set to Error
         .with_target("cozo", Level::ERROR)
         .with_target(target_name, target_level);
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from("")); // Default to 'info' level
 
-    // File appender with custom timestamp format
-    let log_dir = "test-logs";
-    std::fs::create_dir_all(log_dir).expect("Failed to create logs directory");
-    let file_appender = tracing_appender::rolling::hourly(log_dir, "ploke.log");
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from("")); // opt-in via RUST_LOG
 
-    // Also log to stderr so test failures print captured diagnostics without requiring manual file inspection.
-    let console_subscriber = fmt::layer()
+    let console_layer = fmt::layer()
         .with_target(true)
         .with_level(true)
         .without_time()
         .with_line_number(true)
         .with_thread_ids(true)
         .with_span_events(FmtSpan::CLOSE)
-        .with_ansi(true);
+        .with_ansi(true)
+        .with_writer(std::io::stderr);
 
-    // Use try_init to avoid panicking if a global subscriber is already set (e.g., across tests)
-    let _ = tracing_subscriber::registry()
+    let (file_writer, file_guard) = make_test_log_writer("ploke_test");
+    let file_layer = fmt::layer()
+        .with_writer(file_writer)
+        .with_target(true)
+        .with_level(true)
+        .with_line_number(true)
+        .without_time()
+        .with_ansi(false);
+
+    let subscriber = tracing_subscriber::registry()
         .with(env_filter)
         .with(base_filter)
-        .with(console_subscriber.with_writer(std::io::stderr))
-        .try_init();
+        .with(console_layer)
+        .with(file_layer);
+
+    let default_guard = subscriber.set_default();
+    TestTracingGuard {
+        _default: default_guard,
+        _file: file_guard,
+    }
 }
 
 // Should return result
