@@ -107,11 +107,11 @@ pub fn init_tracing() -> LoggingGuards {
 
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
-        .with(filter) // env filter for the main layer
+        // .with(filter) // env filter for the main layer
+        .with(targets)
         .with(main_layer) // normal app logs -> ploke.log
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
-        .with(targets)
         .try_init();
 
     LoggingGuards {
