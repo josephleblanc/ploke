@@ -9,6 +9,7 @@ pub enum ToolName {
     NsPatch,
     NsRead,
     CodeItemLookup,
+    CodeItemEdges,
 }
 
 impl ToolName {
@@ -21,6 +22,7 @@ impl ToolName {
             NsPatch => "non_semantic_patch",
             NsRead => "read_file",
             CodeItemLookup => "code_item_lookup",
+            CodeItemEdges => "code_item_edges",
         }
     }
 }

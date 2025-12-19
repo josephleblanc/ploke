@@ -1,5 +1,5 @@
-use crate::{Database, DbError};
-use ploke_core::io_types::EmbeddingData;
+use crate::{get_by_id::COMMON_FIELDS_EMBEDDED, Database, DbError};
+use ploke_core::io_types::{EmbeddingData, ResolvedEdgeData};
 use std::path::Path;
 
 /// Resolve nodes by canonical module path and item name within a specific file at NOW.
@@ -54,6 +54,72 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
     qr.to_embedding_nodes()
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
+
+pub fn graph_resolve_edges(
+    db: &Database,
+    relation: &str,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+) -> Result<Vec<ResolvedEdgeData>, DbError> {
+    // Escape values safely via serde_json string literals
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+
+    let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
+
+    let script = format!(
+        r#"
+{common_fields_embedded}
+
+parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+is_file_module[id, file_path] := *module{{id @ 'NOW'}}, *file_mod {{ owner_id: id, file_path @ 'NOW'}}
+
+containing_file[file_path, target_id] := ancestor[target_id, containing_id],
+            is_file_module[containing_id, file_path]
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+resolve_item[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+
+new_data[name, canon_path, file_path, to_find_node_id] := 
+    *module{{ id: module_node_id, path: canon_path @ 'NOW' }},
+    parent_of[node_id, module_node_id],
+    has_embedding[node_id, name, hash, span],
+    containing_file[file_path, to_find_node_id]
+
+?[target_name, source_name, source_id, target_id, canon_path, file_path, relation_kind] := 
+    resolve_item[source_id, source_name, file_path, file_hash, hash, span, namespace, mod_path],
+    *syntax_edge{{source_id, target_id, relation_kind @ 'NOW'}},
+    new_data[target_name, canon_path, file_path, to_find_node_id]
+"#,
+        rel = relation,
+        item_name_lit = item_name_lit,
+        file_path_lit = file_path_lit,
+        mod_path_lit = mod_path_lit
+    );
+
+    let qr = db.raw_query(&script)?;
+    // Map ploke_error::Error into DbError::Cozo for now; we can introduce a dedicated error variant later.
+    qr.to_resolved_edges()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
 #[cfg(test)]
 mod tests {
     use std::ops::Deref;
@@ -91,6 +157,32 @@ mod tests {
 
         assert_eq!(rows.len(), 1, "expected a single const result");
         assert_eq!(rows[0].name, "TOP_LEVEL_BOOL");
+        assert_eq!(rows[0].file_path, file_path);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_edges_basic() -> Result<(), DbError> {
+        let cozo_db =
+            ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+                .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/const_static.rs");
+        let module_path = vec!["crate".to_string(), "const_static".to_string()];
+        let res = super::graph_resolve_edges(
+            &db,
+            "const",
+            &file_path,
+            &module_path,
+            "TOP_LEVEL_BOOL",
+        );
+        tracing::info!(?res);
+        let rows = res?;
+
+        // assert_eq!(rows.len(), 1, "expected a single const result");
+        assert_eq!(rows[0].source_name, "TOP_LEVEL_BOOL");
         assert_eq!(rows[0].file_path, file_path);
         Ok(())
     }

@@ -300,31 +300,25 @@ async fn finalize_assistant_response(
                 preview
             );
 
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
+            StateCommand::AddMessageImmediate {
+                msg: content,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
             }
         }
         Err(e) => {
             let err_string = e.diagnostic();
             tracing::error!(error = ?e, diagnostic = %err_string, "LLM request failed");
 
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(format!(
-                        "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
-                        err_string
-                    )),
-                    status: Some(MessageStatus::Error {
-                        description: err_string,
-                    }),
-                    ..Default::default()
-                },
+            let content = format!(
+                "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
+                err_string
+            );
+
+            StateCommand::AddMessageImmediate {
+                msg: content,
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
             }
         }
     };

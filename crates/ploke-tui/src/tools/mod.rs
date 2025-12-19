@@ -46,6 +46,7 @@ pub mod error;
 pub mod ns_patch;
 pub mod ns_read;
 pub mod validators;
+pub mod get_code_edges;
 
 pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
 

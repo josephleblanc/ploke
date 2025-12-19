@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::TrackingHash;
+use crate::{rag_types::CanonPath, TrackingHash};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingData {
@@ -15,6 +15,17 @@ pub struct EmbeddingData {
     pub end_byte: usize,
     pub node_tracking_hash: TrackingHash,
     pub namespace: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedEdgeData {
+    pub source_id: Uuid,
+    pub source_name: String,
+    pub target_id: Uuid,
+    pub target_name: String,
+    pub canon_path: CanonPath,
+    pub relation_kind: String,
+    pub file_path: PathBuf,
 }
 
 // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core

@@ -37,7 +37,7 @@ This would be the string: example_func
 "#;
 
 lazy_static::lazy_static! {
-    static ref CODE_ITEM_LOOKUP_PARAMETERS: serde_json::Value = serde_json::json!({
+    static ref ITEM_EDGES_LOOKUP_PARAMETERS: serde_json::Value = serde_json::json!({
         "type": "object",
         "properties": {
             "item_name": { "type": "string", "description": ITEM_NAME },
@@ -51,7 +51,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct LookupParams<'a> {
+pub struct EdgesParams<'a> {
     #[serde(borrow)]
     pub item_name: std::borrow::Cow<'a, str>,
     #[serde(borrow)]
@@ -62,42 +62,42 @@ pub struct LookupParams<'a> {
     pub module_path: std::borrow::Cow<'a, str>,
 }
 
-impl<'a> ValidatesAbolutePath for LookupParams<'a> {
+impl<'a> ValidatesAbolutePath for EdgesParams<'a> {
     fn get_file_path(&self) -> impl AsRef<std::path::Path> {
         Path::new(self.file_path.as_ref())
     }
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LookupParamsOwned {
+pub struct EdgesParamsOwned {
     pub item_name: String,
     pub file_path: String,
     pub node_kind: String,
     pub module_path: String,
 }
 
-pub struct CodeItemLookup;
+pub struct CodeItemEdges;
 
-impl Tool for CodeItemLookup {
+impl Tool for CodeItemEdges {
     type Output = ConciseContext;
 
-    type OwnedParams = LookupParamsOwned;
+    type OwnedParams = EdgesParamsOwned;
 
     type Params<'de>
-        = LookupParams<'de>
+        = EdgesParams<'de>
     where
         Self: 'de;
 
     fn name() -> ploke_core::tool_types::ToolName {
-        ToolName::CodeItemLookup
+        ToolName::CodeItemEdges
     }
 
     fn description() -> ploke_core::tool_types::ToolDescr {
-        ToolDescr::CodeItemLookup
+        ToolDescr::CodeItemEdges
     }
 
     fn schema() -> &'static serde_json::Value {
-        CODE_ITEM_LOOKUP_PARAMETERS.deref()
+        ITEM_EDGES_LOOKUP_PARAMETERS.deref()
     }
 
     fn build(_ctx: &super::Ctx) -> Self

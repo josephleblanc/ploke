@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use serde::Serialize;
 use tracing::info;
 use tracing::warn;
 
@@ -14,6 +15,7 @@ use crate::HTTP_TITLE;
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
+use crate::router_only::ApiRoute;
 use crate::router_only::{ChatCompRequest, Router};
 
 use super::LlmError;
@@ -92,6 +94,8 @@ pub async fn chat_step<R: Router>(
 
     if let Ok(parsed) = &serde_json::from_str(&body) {
         let _ = log_api_parsed_json_response(&resp_url, status, parsed).await;
+    } else {
+        let _ = log_api_raw_response(url, status, &body);
     }
 
     if !(200..300).contains(&status) {
@@ -204,7 +208,9 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
                 // If you care about empty tool_calls arrays, you can treat empty as an error.
                 // Here, empty still counts as "tool calls" because the session loop expects it.
                 // - however, still warn for the logs
-                warn!(target: "chat-loop", "FinishReason is not ToolCalls when calling tools, found finish reason: {:?}", choice.finish_reason);
+                if choice.finish_reason != Some(FinishReason::ToolCalls) {
+                    warn!(target: "chat-loop", "FinishReason is not ToolCalls when calling tools, found finish reason: {:?}", choice.finish_reason);
+                }
                 info!(target: "chat-loop", "native_finish_reason, type string, is not well-understood yet. Logging to learn more:{:?}", choice.native_finish_reason);
                 let finish_reason = FinishReason::ToolCalls;
                 return Ok(ChatStepOutcome::ToolCalls {

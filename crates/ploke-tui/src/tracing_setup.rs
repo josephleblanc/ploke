@@ -36,17 +36,19 @@ pub fn init_tracing() -> LoggingGuards {
     log_dir.push("crates/ploke-tui/logs");
     std::fs::create_dir_all(&log_dir).expect("Failed to create logs directory");
 
-    let level = Level::WARN;
+    let level = Level::INFO;
     let targets = filter::Targets::new()
         .with_target("ploke", level)
         .with_target("ploke_tui", level)
         .with_target("ploke_db", level)
         .with_target("ploke-embed", level)
-        .with_target("ploke-io", level)
-        .with_target("ploke-transform", level)
+        .with_target("ploke_io", level)
+        .with_target("ploke_transform", level)
         .with_target("ploke_rag", level)
         .with_target("chat-loop", Level::TRACE)
-        .with_target("cozo", Level::ERROR);
+        .with_target("api_json", Level::TRACE)
+        .with_target("cozo", Level::ERROR)
+        .with_default(LevelFilter::WARN);
 
     // Use a per-run log file so each TUI session is isolated.
     let run_id = format!(
@@ -60,10 +62,10 @@ pub fn init_tracing() -> LoggingGuards {
     let common_fmt = fmt::layer()
         .with_target(true)
         .with_level(true)
+        .with_target(true)
         .without_time()
         .with_thread_ids(false)
-        .with_span_events(FmtSpan::CLOSE)
-        .pretty()
+        // .with_span_events(FmtSpan::CLOSE)
         .with_ansi(false);
 
     let main_layer = common_fmt.with_writer(non_blocking_file);
@@ -87,8 +89,7 @@ pub fn init_tracing() -> LoggingGuards {
         .without_time();
 
     // Filter so this layer only receives events you tag with target="api_json"
-    let only_api_json =
-        filter::filter_fn(|meta| meta.target() == "api_json").and(LevelFilter::INFO); // optional: cap level if you want
+    let only_api_json = filter::Targets::new().with_target("api_json", Level::TRACE);
 
     // -------- Chat-only log (conversational context, separate from API payloads) --------
     let chat_appender = tracing_appender::rolling::never(&log_dir, format!("chat_{run_id}.log"));
@@ -103,7 +104,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_file(false)
         .with_line_number(false)
         .without_time();
-    let only_chat = filter::filter_fn(|meta| meta.target() == CHAT_TARGET);
+    let only_chat= filter::Targets::new().with_target(CHAT_TARGET, Level::TRACE);
 
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()

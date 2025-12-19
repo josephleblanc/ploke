@@ -8,8 +8,7 @@ use std::path::PathBuf;
 pub use formatter::ResultFormatter;
 use itertools::Itertools;
 use ploke_core::{
-    embeddings::{EmbeddingSet, EmbeddingSetId},
-    EmbeddingData, FileData, TrackingHash,
+    embeddings::{EmbeddingSet, EmbeddingSetId}, io_types::ResolvedEdgeData, rag_types::CanonPath, EmbeddingData, FileData, TrackingHash
 };
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
@@ -119,6 +118,46 @@ impl QueryResult {
                     node_tracking_hash,
                     file_tracking_hash,
                     namespace,
+                })
+            })
+            .collect::<Result<Vec<_>, ploke_error::Error>>()?;
+
+        Ok(embeddings)
+    }
+
+    pub fn to_resolved_edges(self) -> Result<Vec<ResolvedEdgeData>, ploke_error::Error> {
+        let target_name_index: usize = get_pos(&self.headers, "target_name")?;
+        let source_name_index: usize = get_pos(&self.headers, "source_name")?;
+        let source_id_index: usize = get_pos(&self.headers, "source_id")?;
+        let target_id_index: usize = get_pos(&self.headers, "target_id")?;
+        let canon_path_index: usize = get_pos(&self.headers, "canon_path")?;
+        let file_path_index: usize = get_pos(&self.headers, "file_path")?;
+        let relation_kind_index: usize = get_pos(&self.headers, "relation_kind")?;
+
+        let map_err = |e: DbError| {
+            ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(e.to_string()))
+        };
+
+        let embeddings = self
+            .rows
+            .into_iter()
+            .map(|row| {
+                let source_id = to_uuid(&row[source_id_index]).map_err(map_err)?;
+                let target_id = to_uuid(&row[target_id_index]).map_err(map_err)?;
+                let target_name = to_string(&row[target_name_index]).map_err(map_err)?;
+                let source_name = to_string(&row[source_name_index]).map_err(map_err)?;
+                let canon_path = to_string(&row[canon_path_index]).map_err(map_err)?;
+                let relation_kind = to_string(&row[relation_kind_index]).map_err(map_err)?;
+                let file_path_str = to_string(&row[file_path_index]).map_err(map_err)?;
+
+                Ok(ResolvedEdgeData {
+                    file_path: PathBuf::from(file_path_str),
+                    source_id,
+                    source_name,
+                    target_id,
+                    target_name,
+                    canon_path: CanonPath::new(canon_path),
+                    relation_kind,
                 })
             })
             .collect::<Result<Vec<_>, ploke_error::Error>>()?;

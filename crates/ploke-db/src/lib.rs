@@ -13,6 +13,8 @@ mod result;
 mod span;
 pub(crate) mod utils;
 
+pub mod tool_query;
+
 pub mod multi_embedding;
 
 pub use database::RestoredEmbeddingSet;
