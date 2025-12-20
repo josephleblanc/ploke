@@ -16,6 +16,8 @@ pub const SCAN_CHANGE: &str = "scan_change";
 /// in:
 ///     - app_state/handlers/chat.rs
 pub const CHAT_TARGET: &str = "chat_tracing_target";
+/// Dedicated target for low-level message update lifecycle traces
+pub const MESSAGE_UPDATE_TARGET: &str = "message-update";
 
 pub struct LoggingGuards {
     /// Guard for the main app log
@@ -24,6 +26,8 @@ pub struct LoggingGuards {
     pub api: WorkerGuard,
     /// Guard for the chat-only log
     pub chat: WorkerGuard,
+    /// Guard for the message-update-only log
+    pub message_update: WorkerGuard,
 }
 
 pub fn init_tracing() -> LoggingGuards {
@@ -46,6 +50,8 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target("ploke_transform", level)
         .with_target("ploke_rag", level)
         .with_target("chat-loop", Level::TRACE)
+        .with_target(CHAT_TARGET, Level::TRACE)
+        .with_target(MESSAGE_UPDATE_TARGET, Level::TRACE)
         .with_target("api_json", Level::TRACE)
         .with_target("cozo", Level::ERROR)
         .with_default(LevelFilter::WARN);
@@ -106,6 +112,21 @@ pub fn init_tracing() -> LoggingGuards {
         .without_time();
     let only_chat= filter::Targets::new().with_target(CHAT_TARGET, Level::TRACE);
 
+    // -------- Message update log (focus on message lifecycle updates) --------
+    let message_update_appender =
+        tracing_appender::rolling::never(&log_dir, format!("message_update_{run_id}.log"));
+    let (message_update_non_blocking, message_update_guard) =
+        tracing_appender::non_blocking(message_update_appender);
+    let message_update_layer = fmt::layer()
+        .with_writer(message_update_non_blocking)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true);
+    let only_message_updates =
+        filter::Targets::new().with_target(MESSAGE_UPDATE_TARGET, Level::TRACE);
+
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
         // .with(filter) // env filter for the main layer
@@ -113,12 +134,14 @@ pub fn init_tracing() -> LoggingGuards {
         .with(main_layer) // normal app logs -> ploke.log
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
+        .with(message_update_layer.with_filter(only_message_updates)) // message update events -> message_update_*.log
         .try_init();
 
     LoggingGuards {
         main: main_guard,
         api: api_guard,
         chat: chat_guard,
+        message_update: message_update_guard,
     }
 }
 

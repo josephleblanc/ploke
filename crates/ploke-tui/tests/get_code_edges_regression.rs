@@ -283,6 +283,109 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
 }
 
 #[tokio::test]
+async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
+    // Load ploke-db backup to mirror live runs.
+    let mut backup = workspace_root();
+    backup.push("tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45");
+    assert!(
+        backup.exists(),
+        "ploke-db backup missing at {}; copy ~/.config/ploke/data/ploke-db_* to tests/backup_dbs",
+        backup.display()
+    );
+
+    let db = {
+        let db = Database::init_with_schema().expect("init db schema");
+        let rels = db.relations_vec().expect("relations");
+        db.import_from_backup(&backup, &rels)
+            .expect("import ploke-db backup");
+        create_index_primary(&db).expect("index primary");
+        Arc::new(db)
+    };
+
+    let cfg = UserConfig::default();
+    let runtime_cfg = RuntimeConfig::from(cfg.clone());
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
+    let crate_root = workspace_root().join("crates/ploke-db");
+    let state = Arc::new(AppState {
+        chat: ChatState::new(ChatHistory::new()),
+        config: ConfigState::new(runtime_cfg),
+        system: SystemState::new(SystemStatus::new(None)),
+        indexing_state: RwLock::new(None),
+        indexer_task: None,
+        indexing_control: Arc::new(Mutex::new(None)),
+        db: db.clone(),
+        embedder,
+        io_handle: IoManagerHandle::new(),
+        proposals: RwLock::new(HashMap::new()),
+        create_proposals: RwLock::new(HashMap::new()),
+        rag: None,
+        budget: TokenBudget::default(),
+    });
+    state
+        .system
+        .set_crate_focus_for_test(crate_root.clone())
+        .await;
+
+    let abs_path = crate_root.join("src/database.rs");
+    let mod_path = vec!["crate".to_string(), "database".to_string()];
+
+    // Verify the node exists and hash is fresh.
+    let resolved =
+        graph_resolve_exact(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
+            .expect("graph_resolve_exact");
+    let entry = resolved.first().expect("Database struct should exist");
+    let stored_hash = entry.file_tracking_hash.clone();
+    let actual_hash =
+        ploke_io::read::generate_hash_for_file(&abs_path, entry.namespace)
+            .await
+            .expect("compute file hash");
+    assert_eq!(
+        stored_hash, actual_hash,
+        "tracking hash mismatch for database.rs; refresh ploke-db backup"
+    );
+
+    let expected_edges =
+        graph_resolve_edges(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
+            .expect("graph_resolve_edges should succeed for Database");
+    // In the current backup this returns zero edges; the test asserts the tool matches the DB.
+
+    // Execute tool with the same coordinates the LLM used.
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+    let ctx = Ctx {
+        state: state.clone(),
+        event_bus,
+        request_id: Uuid::new_v4(),
+        parent_id: Uuid::new_v4(),
+        call_id: ArcStr::from("call"),
+    };
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("Database"),
+        file_path: Cow::Borrowed("src/database.rs"),
+        node_kind: Cow::Borrowed("struct"),
+        module_path: Cow::Borrowed("crate::database"),
+    };
+
+    let result = CodeItemEdges::execute(params, ctx)
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let returned_edges = payload
+        .get("edge_info")
+        .and_then(|v| v.as_array())
+        .expect("edge_info array");
+
+    assert_eq!(
+        returned_edges.len(),
+        expected_edges.len(),
+        "tool edge count should match direct DB query for Database struct (currently zero in backup)"
+    );
+}
+
+#[tokio::test]
 #[ignore = "graph_resolve_edges currently returns zero edges in the ploke-db backup; enable once fixed"]
 async fn code_item_edges_graph_resolve_edges_smoke() {
     // Regression placeholder for the user-reported graph_resolve_edges case.
