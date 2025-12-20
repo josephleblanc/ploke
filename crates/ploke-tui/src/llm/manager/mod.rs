@@ -10,7 +10,10 @@ mod session;
 mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 
-use crate::{tools::{code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges}, SystemEvent};
+use crate::{
+    SystemEvent,
+    tools::{code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges},
+};
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
@@ -300,13 +303,12 @@ async fn finalize_assistant_response(
                 preview
             );
 
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
+            // Changing to AddMessageImmediate
+            // - We now update the initial message within the chat/tool loop
+            StateCommand::AddMessageImmediate {
+                msg: content,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
             }
         }
         Err(e) => {
@@ -318,13 +320,12 @@ async fn finalize_assistant_response(
                 err_string
             );
 
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
+            // Changing to AddMessageImmediate
+            // - We now update the initial message within the chat/tool loop
+            StateCommand::AddMessageImmediate {
+                msg: content,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
             }
         }
     };

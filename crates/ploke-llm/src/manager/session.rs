@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use ploke_core::ArcStr;
 use serde::Serialize;
 use tracing::info;
 use tracing::warn;
@@ -22,10 +23,14 @@ use super::LlmError;
 
 #[derive(Debug, PartialEq)]
 pub enum ChatStepOutcome {
-    Content(String),
+    Content {
+        content: Option<ArcStr>,
+        reasoning: Option<ArcStr>,
+    },
     ToolCalls {
         calls: Vec<ToolCall>,
-        content: Option<String>,
+        content: Option<ArcStr>,
+        reasoning: Option<ArcStr>,
         finish_reason: FinishReason,
     },
 }
@@ -45,7 +50,7 @@ impl Default for ChatHttpConfig {
             // NOTE:ploke-llm 2025-12-14
             // Setting to 15 secs for now, try using it and getting a feel for the right default
             // timing
-            timeout: Duration::from_secs(15),
+            timeout: Duration::from_secs(30),
         }
     }
 }
@@ -202,6 +207,7 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
         if let Some(msg) = choice.message {
             let calls_opt = msg.tool_calls;
             let content_opt = msg.content;
+            let reasoning_opt = msg.reasoning;
 
             // Normalize: tool calls always win.
             if let Some(calls) = calls_opt {
@@ -215,14 +221,18 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
                 let finish_reason = FinishReason::ToolCalls;
                 return Ok(ChatStepOutcome::ToolCalls {
                     calls,
-                    content: content_opt,
+                    content: content_opt.map(ArcStr::from),
                     finish_reason,
+                    reasoning: reasoning_opt.map(ArcStr::from),
                 });
             }
 
             // No tool calls → return content if present.
             if let Some(text) = content_opt {
-                return Ok(ChatStepOutcome::Content(text));
+                return Ok(ChatStepOutcome::Content {
+                    reasoning: reasoning_opt.map(ArcStr::from),
+                    content: Some(ArcStr::from(text)),
+                });
             }
 
             // If message exists but is empty, fall through to try other forms / choices.
@@ -231,7 +241,10 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
 
         // Case 2: Legacy completions-style `text`
         if let Some(text) = choice.text {
-            return Ok(ChatStepOutcome::Content(text));
+            return Ok(ChatStepOutcome::Content {
+                reasoning: choice.message.and_then(|m| m.reasoning.map(ArcStr::from)),
+                content: Some(ArcStr::from(text)),
+            });
         }
 
         // Case 3: Streaming deltas (unsupported in this parser)
@@ -307,7 +320,9 @@ mod tests {
         }"#;
         let r = parse_chat_outcome(body).unwrap();
         match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello world"),
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
         }
     }
@@ -321,7 +336,9 @@ mod tests {
         }"#;
         let r = parse_chat_outcome(body).unwrap();
         match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello text"),
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
     }
