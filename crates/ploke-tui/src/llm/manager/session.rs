@@ -1,3 +1,4 @@
+use std::ops::Mul;
 use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
 use chrono::DateTime;
@@ -112,6 +113,250 @@ impl Default for TuiToolPolicy {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct TuiTimeoutPolicy {
+    duration: Option<Duration>,
+    strategy: TimeoutStrategy,
+}
+
+impl Default for TuiTimeoutPolicy {
+    fn default() -> Self {
+        Self {
+            duration: Some(Duration::from_secs(30)),
+            strategy: TimeoutStrategy::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TimeoutStrategy {
+    /// Back off attempts, beginning at `TuiTimoutPolicy.duration` and doubling a number of times
+    /// equal to the Backoff value. If None, inifite backoff attempts.
+    Backoff(Option<usize>),
+    /// Number of attempts to perform retry at the `TuiTimoutPolicy.duration`.
+    FixedRetry(usize),
+    /// No retries, fail early
+    Strict,
+}
+
+impl Default for TimeoutStrategy {
+    fn default() -> Self {
+        Self::FixedRetry(3)
+    }
+}
+impl TuiTimeoutPolicy {
+    fn next_timout_dur(self, attempt: usize) -> Option<Duration> {
+        match self.strategy {
+            TimeoutStrategy::Backoff(attempt_max) => {
+                if let Some(policy_max) = attempt_max
+                    && let Some(dur) = self.duration
+                    && attempt <= policy_max
+                {
+                    Some(dur * 2_u32.pow(attempt as u32).clamp(2, 64_u32))
+                } else {
+                    None
+                }
+            }
+            TimeoutStrategy::FixedRetry(attempt_max) => {
+                if attempt <= attempt_max {
+                    self.duration
+                } else {
+                    None
+                }
+            }
+            TimeoutStrategy::Strict => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TuiErrorPolicy {
+    EndlessRetry,
+    RetryLimit(u32),
+    Strict,
+}
+
+#[derive(Clone, Copy)]
+pub enum TuiLengthPolicy {
+    RetryLimit(u32),
+    Strict,
+}
+
+impl Default for TuiErrorPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(2)
+    }
+}
+
+impl Default for TuiLengthPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(1)
+    }
+}
+
+fn should_retry_error(policy: TuiErrorPolicy, retried_errors: &mut u32) -> bool {
+    match policy {
+        TuiErrorPolicy::EndlessRetry => {
+            *retried_errors = retried_errors.saturating_add(1);
+            true
+        }
+        TuiErrorPolicy::RetryLimit(limit) => {
+            if *retried_errors < limit {
+                *retried_errors += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiErrorPolicy::Strict => false,
+    }
+}
+
+fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bool {
+    match policy {
+        TuiLengthPolicy::RetryLimit(limit) => {
+            if *retried_lengths < limit {
+                *retried_lengths += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiLengthPolicy::Strict => false,
+    }
+}
+
+enum FinishDecision {
+    Continue,
+    Return(Result<OpenAiResponse, LlmError>),
+}
+
+enum FinishFailure {
+    FinishError { msg: String, finish_reason: FinishReason },
+    Error(LlmError),
+}
+
+fn handle_finish_reasons<R: Router>(
+    full_response: OpenAiResponse,
+    req: &mut ChatCompRequest<R>,
+    cfg: &mut ChatHttpConfig,
+    timeout_policy: TuiTimeoutPolicy,
+    error_policy: TuiErrorPolicy,
+    length_policy: TuiLengthPolicy,
+    retried_errors: &mut u32,
+    retried_lengths: &mut u32,
+    timeout_attempts: &mut usize,
+    model_key: &Option<ploke_llm::ModelKey>,
+) -> FinishDecision {
+    let mut continue_chain = false;
+    let mut failure: Option<FinishFailure> = None;
+    let mut saw_finish_reason = false;
+    let mut stop = false;
+
+    for choice in &full_response.choices {
+        let Some(finish_reason) = choice.finish_reason.clone() else {
+            continue;
+        };
+        saw_finish_reason = true;
+        let native_finish_reason = choice.native_finish_reason.as_deref();
+
+        match finish_reason {
+            FinishReason::Stop => {
+                stop = true;
+                break;
+            }
+            FinishReason::Length => {
+                if should_retry_length(length_policy, retried_lengths) {
+                    let continue_msg =
+                        "Continue from where you left off. Do not repeat prior text.";
+                    req.core
+                        .messages
+                        .push(RequestMessage::new_system(continue_msg.to_string()));
+                    continue_chain = true;
+                } else if failure.is_none() {
+                    failure = Some(FinishFailure::FinishError {
+                        msg: "Provider stopped due to length; try reducing output or retrying."
+                            .to_string(),
+                        finish_reason,
+                    });
+                }
+            }
+            // should be shown to user
+            FinishReason::ContentFilter => {
+                if failure.is_none() {
+                    failure = Some(FinishFailure::FinishError {
+                        msg: "Provider reports ContentFilter applied, try again.".to_string(),
+                        finish_reason,
+                    });
+                }
+            }
+            // keep looping
+            FinishReason::ToolCalls => {
+                continue_chain = true;
+            }
+            // retry on timout policy
+            FinishReason::Timeout => {
+                *timeout_attempts = timeout_attempts.saturating_add(1);
+                if let Some(next_timout) = timeout_policy.next_timout_dur(*timeout_attempts) {
+                    // if some, change timout for next loop and ocntinue
+                    cfg.timeout = next_timout;
+                    continue_chain = true;
+                } else if failure.is_none() {
+                    failure = Some(FinishFailure::Error(LlmError::Timeout));
+                }
+            }
+            FinishReason::Error(ref e) => {
+                if should_retry_error(error_policy, retried_errors) {
+                    tracing::warn!(
+                        target = "chat-loop",
+                        error = %e,
+                        retried_errors,
+                        ?model_key,
+                        ?native_finish_reason,
+                        "FinishReason::Error, retrying"
+                    );
+                    continue_chain = true;
+                } else if failure.is_none() {
+                    failure = Some(FinishFailure::FinishError {
+                        msg: e.to_string(),
+                        finish_reason,
+                    });
+                }
+            }
+        }
+    }
+
+    if stop {
+        return FinishDecision::Return(Ok(full_response));
+    }
+
+    if continue_chain {
+        return FinishDecision::Continue;
+    }
+
+    if let Some(failure) = failure {
+        let err = match failure {
+            FinishFailure::FinishError { msg, finish_reason } => LlmError::FinishError {
+                msg,
+                full_response,
+                finish_reason,
+            },
+            FinishFailure::Error(err) => err,
+        };
+        return FinishDecision::Return(Err(err));
+    }
+
+    if !saw_finish_reason {
+        return FinishDecision::Return(Err(LlmError::ChatStep(
+            "No finish reason in llm response choices.".to_string(),
+        )));
+    }
+
+    FinishDecision::Return(Err(LlmError::ChatStep(
+        "Unhandled finish reason in llm response choices.".to_string(),
+    )))
+}
+
 pub async fn run_chat_session<R: Router>(
     client: &Client,
     mut req: ChatCompRequest<R>,
@@ -125,31 +370,49 @@ pub async fn run_chat_session<R: Router>(
 
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
-    let cfg = ChatHttpConfig::default();
+    let mut cfg = ChatHttpConfig::default();
+    let timout_policy = TuiTimeoutPolicy::default();
+    let error_retry_policy = TuiErrorPolicy::default();
+    let length_retry_policy = TuiLengthPolicy::default();
+    let mut retried_errors = 0_u32;
+    let mut retried_lengths = 0_u32;
+    let mut timeout_attempts = 0_usize;
+    let model_key = req.model_key.clone();
+
     let mut initial_message_updated = false;
-    for _chain in 0..policy.tool_call_chain_limit {
+    'tool_chain: for _chain in 0..policy.tool_call_chain_limit {
         let ChatStepData {
             outcome,
             full_response,
         } = ploke_llm::chat_step(client, &req, &cfg).await?;
 
         match outcome {
-            ChatStepOutcome::ToolCalls { calls, content, .. } => {
-                let content_string = content.map(|text| text.to_string());
+            ChatStepOutcome::ToolCalls {
+                calls,
+                content,
+                reasoning,
+                ..
+            } => {
+                let assistant_msg = if content.as_ref().is_some_and(|c| !c.is_empty()) {
+                    content.as_ref().map(|s| s.to_string())
+                } else if reasoning.as_ref().is_some_and(|r| !r.is_empty()) {
+                    reasoning.as_ref().map(|s| s.to_string())
+                } else {
+                    None
+                };
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
-                        content_string.clone(),
+                        content.map(|s| s.to_string()),
                         calls.clone(),
                     ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
-                let msg = content_string.unwrap_or_else(|| "Calling tools...".to_string());
                 add_or_update_assistant_message(
                     assistant_message_id,
                     &state_cmd_tx,
                     &mut initial_message_updated,
-                    msg,
+                    assistant_msg.unwrap_or_else(|| "Calling tools...".to_string()),
                 )
                 .await;
 
@@ -255,6 +518,22 @@ pub async fn run_chat_session<R: Router>(
                 .await;
             }
         };
+
+        match handle_finish_reasons(
+            full_response,
+            &mut req,
+            &mut cfg,
+            timout_policy,
+            error_retry_policy,
+            length_retry_policy,
+            &mut retried_errors,
+            &mut retried_lengths,
+            &mut timeout_attempts,
+            &model_key,
+        ) {
+            FinishDecision::Continue => continue 'tool_chain,
+            FinishDecision::Return(result) => return result,
+        }
     }
 
     Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
@@ -311,10 +590,6 @@ async fn update_assistant_placeholder_once(
     } else {
         false
     }
-}
-
-pub struct ToolExecPolicy {
-    pub timeout: Duration,
 }
 
 pub async fn execute_tools_via_event_bus(
@@ -455,344 +730,6 @@ fn truncate_for_error(s: &str, max: usize) -> String {
     }
 }
 
-#[cfg(feature = "xxx")]
-impl<'a, R> RequestSession<'a, R>
-where
-    R: Router,
-    R::CompletionFields: ApiRoute,
-{
-    pub async fn run(mut self) -> Result<String, LlmError> {
-        #[derive(serde::Deserialize)]
-        struct CodeEditArgsMinimal {
-            edits: Vec<CodeEditEditMinimal>,
-        }
-        #[derive(serde::Deserialize)]
-        struct CodeEditEditMinimal {
-            file: String,
-            code: String,
-        }
-
-        // Use router-level constants for URL and API key
-        let url = R::COMPLETION_URL;
-        let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
-            message: format!("missing api key: {}", e),
-            url: None,
-            is_timeout: false,
-        })?;
-
-        // Determine whether to include tools
-        let mut use_tools = self.req.tools.is_some();
-        let mut tools_fallback_attempted = false;
-        let mut assistant_intro: String = String::new();
-        let state_cmd_tx = self.state_cmd_tx.clone();
-
-        let mut initial_message_updated = false;
-        for _attempt in 0..=self.attempts {
-            if !use_tools {
-                self.req.tools = None;
-                self.req.tool_choice = None;
-            } else if self.req.tool_choice.is_none() && self.req.tools.is_some() {
-                self.req.tool_choice = Some(ToolChoice::Auto);
-            }
-
-            let _ = self.log_request().await;
-            if let Ok(req_json) = serde_json::to_string_pretty(&self.req) {
-                let _ = log_api_request_json(url, &req_json, OPENROUTER_REQUEST_LOG);
-            }
-            let response = self
-                .client
-                .post(url)
-                .bearer_auth(&api_key)
-                .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
-                .json(&self.req)
-                .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
-                .send()
-                .await
-                .map_err(|e| LlmError::Request {
-                    message: format!("sending request to {url}: {e}"),
-                    url: Some(url.to_string()),
-                    is_timeout: e.is_timeout(),
-                })?;
-
-            let resp_url = response.url().to_string();
-            let resp_status = response.status();
-
-            if !resp_status.is_success() {
-                let error_code = resp_status;
-                tracing::error!(status_code = ?error_code, "Error status returned from API");
-                let status = resp_status.as_u16();
-                let text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<no error body>".into());
-                let snippet = truncate_for_error(&text, 4_096);
-                let _ = log_api_raw_response(&resp_url, status, &text);
-
-                if status == 404
-                    && use_tools
-                    && text.to_lowercase().contains("support tool")
-                    && self.fallback_on_404
-                    && !tools_fallback_attempted
-                {
-                    let notice = format!(
-                        "Notice: endpoint appears to lack tool support; retrying without tools.\n\n{}",
-                        text
-                    );
-                    self.req
-                        .core
-                        .messages
-                        .push(RequestMessage::new_system(notice));
-                    use_tools = false;
-                    tools_fallback_attempted = true;
-                    continue;
-                }
-                return Err(LlmError::Api {
-                    status,
-                    message: text,
-                    url: Some(resp_url),
-                    body_snippet: Some(snippet),
-                });
-            }
-
-            let log_url = resp_url.clone();
-            let log_status = resp_status.as_u16();
-            let body_text = response.text().await.map_err(|e| LlmError::Request {
-                message: format!("while reading response body (status {log_status}): {e}"),
-                url: Some(log_url.clone()),
-                is_timeout: e.is_timeout(),
-            })?;
-
-            let _ = log_api_raw_response(&log_url, log_status, &body_text);
-
-            // Attempt to log parsed response; fall back to provider-embedded error detection
-            if let Ok(parsed) = serde_json::from_str::<OpenAiResponse>(&body_text) {
-                let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
-            } else if let Err(err) = check_provider_error(&body_text) {
-                return Err(err);
-            }
-
-            match ploke_llm::manager::parse_chat_outcome(&body_text)? {
-                ChatStepOutcome::ToolCalls {
-                    calls: tool_calls,
-                    content,
-                    finish_reason,
-                    ..
-                } => {
-                    tracing::debug!(calls = ?tool_calls, ?content);
-                    let assistant_update = content
-                        .map(|text| text.to_string())
-                        .unwrap_or_else(|| String::from("Calling Tools"));
-
-                    if !initial_message_updated {
-                        state_cmd_tx
-                            .send(StateCommand::UpdateMessage {
-                                id: self.assistant_message_id,
-                                update: MessageUpdate {
-                                    content: Some(assistant_update),
-                                    status: Some(MessageStatus::Completed),
-                                    ..Default::default()
-                                },
-                            })
-                            .await
-                            .expect("state command must be running");
-                        initial_message_updated = true;
-                    }
-
-                    let mut task_set = tokio::task::JoinSet::new();
-                    let mut call_feedback: HashMap<
-                        ploke_core::ArcStr,
-                        (uuid::Uuid, Option<(String, String)>),
-                    > = HashMap::new();
-                    for call in tool_calls.into_iter() {
-                        let tool_name = call.function.name;
-                        let args_json = call.function.arguments.clone();
-                        let event_bus = self.event_bus.clone();
-                        let parent_id = self.parent_id;
-                        let request_id = Uuid::new_v4();
-                        let call_id = call.call_id.clone();
-
-                        let summary = if matches!(tool_name, ToolName::ApplyCodeEdit) {
-                            if let Ok(parsed) =
-                                serde_json::from_str::<CodeEditArgsMinimal>(&args_json)
-                            {
-                                if let Some(first) = parsed.edits.first() {
-                                    let file = first.file.clone();
-                                    let snippet: String = first.code.chars().take(100).collect();
-                                    Some((file, snippet))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        call_feedback.insert(call_id.clone(), (request_id, summary));
-
-                        let mut rx = event_bus.realtime_tx.subscribe();
-                        let cmd_tx = state_cmd_tx.clone();
-                        let cmd_tx_clone = state_cmd_tx.clone();
-
-                        event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                            tool_call: call,
-                            request_id,
-                            parent_id,
-                        }));
-
-                        task_set.spawn(async move {
-                            let call_id_clone = call_id.clone();
-                            let wait = async move {
-                                while let Ok(evt) = rx.recv().await {
-                                    tracing::debug!(?evt, "recv wait tool event for matching");
-                                    match evt {
-                                        AppEvent::System(SystemEvent::ToolCallCompleted {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            content,
-                                            ..
-                                        }) if rid == request_id && cid == call_id => {
-                                            tracing::debug!(%request_id, ?call_id, ?content, "tool call completed");
-                                            return Ok(content);
-                                        }
-                                        AppEvent::System(SystemEvent::ToolCallFailed {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            error,
-                                            ..
-                                        }) if rid == request_id && cid == call_id => {
-                                            let user_msg = ToolErrorWire::parse(&error)
-                                                .map(|wire| wire.user)
-                                                .unwrap_or(error.clone());
-                                            let status = format!("error: {user_msg}");
-                                            add_sysinfo_message(&call_id, &cmd_tx, &status).await;
-                                            return Err(user_msg);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                Err("Event channel closed".to_string())
-                            };
-                            match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
-                                Ok(r) => (call_id_clone, r),
-                                Err(_) => {
-                                    add_sysinfo_message(&call_id_clone, &cmd_tx_clone, "timeout").await;
-                                    ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
-                                }
-                            }
-                        });
-                    }
-
-                    while let Some(res) = task_set.join_next().await {
-                        match res {
-                            Ok((cid, Ok(content))) => {
-                                // Append the tool's raw JSON result for the next request
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid.clone()));
-
-                                // If this was an apply_code_edit call, also append a concise System summary
-                                if let Some((rid, Some((file, snippet)))) =
-                                    call_feedback.get(&cid).cloned()
-                                {
-                                    let sys_msg = format!(
-                                        "Staged code edit recorded.
-request_id: {}
-file: {}
-snippet (first 100 chars):
-```
-{}
-```
-If you are ready to return control to the user, respond with finish_reason 'stop'.",
-                                        rid, file, snippet
-                                    );
-                                    self.req
-                                        .core
-                                        .messages
-                                        .push(RequestMessage::new_system(sys_msg));
-                                }
-                            }
-                            Ok((cid, Err(err_string))) => {
-                                tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
-                                let parsed = ToolErrorWire::parse(&err_string);
-                                let llm_payload = parsed
-                                    .as_ref()
-                                    .map(|w| w.llm.clone())
-                                    .unwrap_or_else(|| json!({"message": err_string}));
-                                let user_msg = parsed
-                                    .as_ref()
-                                    .map(|w| w.user.clone())
-                                    .unwrap_or_else(|| err_string.clone());
-
-                                let content =
-                                    json!({"ok": false, "error": llm_payload}).to_string();
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
-                                state_cmd_tx
-                                    .send(StateCommand::AddMessageTool {
-                                        new_msg_id: Uuid::new_v4(),
-                                        msg: err_msg.clone(),
-                                        // TODO: Change to 'Tool'
-                                        kind: MessageKind::Tool,
-                                        tool_call_id: cid,
-                                    })
-                                    .await
-                                    .expect("state manager must be running");
-                                continue;
-                                // return Err(LlmError::ToolCall(err_msg));
-                            }
-                            Err(join_err) => {
-                                return Err(LlmError::ToolCall(format!(
-                                    "join error: {}",
-                                    join_err
-                                )));
-                            }
-                        }
-                    }
-                    if finish_reason == FinishReason::ToolCalls {
-                        let remember_stop = "Tool Call completed: Remember to finish with a `stop` finish reason if and when you are ready to return control to the user.";
-                        state_cmd_tx
-                            .send(StateCommand::AddMessageImmediate {
-                                msg: remember_stop.to_string(),
-                                kind: MessageKind::System,
-                                new_msg_id: Uuid::new_v4(),
-                            })
-                            .await
-                            .expect("state manager must be running");
-                        continue;
-                    } else {
-                        if assistant_intro.is_empty() {
-                            assistant_intro.push_str("Calling tools")
-                        }
-                        return Ok(assistant_intro);
-                    }
-                }
-                ChatStepOutcome::Content { content, .. } => {
-                    return Ok(content.map(|text| text.to_string()).unwrap_or_default());
-                }
-            }
-        }
-
-        Err(LlmError::Unknown(format!(
-            "exhausted after {} attempt(s)",
-            self.attempts
-        )))
-    }
-
-    async fn log_request(&self) -> color_eyre::Result<()> {
-        let payload: String = serde_json::to_string_pretty(&self.req)?;
-        info!(target: "api_json", "{}", payload);
-        Ok(())
-    }
-}
-
 #[tracing::instrument]
 async fn add_sysinfo_message(
     call_id: &ploke_core::ArcStr,
@@ -830,6 +767,7 @@ async fn add_tool_failed_message(
 #[cfg(test)]
 mod tests {
     use ploke_llm::manager::parse_chat_outcome;
+    use std::time::Duration;
 
     use super::*;
     use crate::EventBus;
@@ -867,5 +805,96 @@ mod tests {
             } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
+    }
+
+    #[test]
+    fn timeout_policy_fixed_retry_respects_limit() {
+        let policy = TuiTimeoutPolicy {
+            duration: Some(Duration::from_secs(10)),
+            strategy: TimeoutStrategy::FixedRetry(2),
+        };
+
+        assert_eq!(policy.next_timout_dur(1), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(2), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(3), None);
+    }
+
+    #[test]
+    fn timeout_policy_backoff_doubles() {
+        let policy = TuiTimeoutPolicy {
+            duration: Some(Duration::from_secs(5)),
+            strategy: TimeoutStrategy::Backoff(Some(3)),
+        };
+
+        assert_eq!(policy.next_timout_dur(1), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(2), Some(Duration::from_secs(20)));
+        assert_eq!(policy.next_timout_dur(3), Some(Duration::from_secs(40)));
+        assert_eq!(policy.next_timout_dur(4), None);
+    }
+
+    #[test]
+    fn error_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+        assert!(!should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn error_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_error(TuiErrorPolicy::Strict, &mut retries));
+        assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn error_policy_endless_retry_always_retries() {
+        let mut retries = 0_u32;
+        assert!(should_retry_error(
+            TuiErrorPolicy::EndlessRetry,
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_error(
+            TuiErrorPolicy::EndlessRetry,
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn length_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_length(
+            TuiLengthPolicy::RetryLimit(1),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(!should_retry_length(
+            TuiLengthPolicy::RetryLimit(1),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+    }
+
+    #[test]
+    fn length_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_length(TuiLengthPolicy::Strict, &mut retries));
+        assert_eq!(retries, 0);
     }
 }

@@ -39,7 +39,7 @@ pub enum ChatStepOutcome {
 pub struct ChatHttpConfig {
     referer: &'static str,
     title: &'static str,
-    timeout: Duration,
+    pub timeout: Duration,
 }
 
 impl Default for ChatHttpConfig {

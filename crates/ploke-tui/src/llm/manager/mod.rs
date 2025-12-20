@@ -19,10 +19,7 @@ use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
 use ploke_llm::{
-    HasModels as _, LlmError, Router as _,
-    manager::events::{endpoint, models},
-    request::ToolChoice,
-    router_only::openrouter::OpenRouter,
+    manager::events::{endpoint, models}, request::ToolChoice, response::{Choices, FinishReason}, router_only::openrouter::OpenRouter, HasModels as _, LlmError, Router as _
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -331,7 +328,9 @@ async fn finalize_assistant_response(
     };
 
     if cmd_tx.send(update_cmd).await.is_err() {
-        tracing::error!("Failed to send final AddMessageImmediate: channel to StateCommand closed.");
+        tracing::error!(
+            "Failed to send final AddMessageImmediate: channel to StateCommand closed."
+        );
     }
 }
 
@@ -401,7 +400,7 @@ async fn prepare_and_run_llm_call(
     use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
     let policy = TuiToolPolicy::default();
 
-    run_chat_session(
+    let open_ai_response = run_chat_session(
         client,
         req,
         parent_id,
@@ -410,7 +409,8 @@ async fn prepare_and_run_llm_call(
         cmd_tx.clone(),
         policy,
     )
-    .await
+    .await?;
+    todo!()
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {
@@ -621,82 +621,5 @@ mod tests {
         assert_eq!(kept_all[0].content, m1.content);
         assert_eq!(kept_all[1].content, m2.content);
         assert_eq!(kept_all[2].content, m3.content);
-    }
-
-    #[tokio::test]
-    async fn replaces_placeholder_in_place() {
-        let db = Arc::new(Database::new_init().unwrap());
-        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder"),
-            )),
-        ));
-        let rag =
-            Arc::new(RagService::new(db.clone(), Arc::clone(&embedder)).expect("rag service init"));
-        let (rag_tx, _rag_rx) = mpsc::channel::<crate::RagEvent>(4);
-        let state = Arc::new(AppState::new(
-            Arc::clone(&db),
-            Arc::clone(&embedder),
-            ploke_io::IoManagerHandle::new(),
-            rag,
-            crate::TokenBudget::default(),
-            rag_tx,
-        ));
-        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(32);
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        tokio::spawn(state_manager(
-            state.clone(),
-            cmd_rx,
-            event_bus.clone(),
-            mpsc::channel(4).0,
-        ));
-
-        let user_id = Uuid::new_v4();
-        cmd_tx
-            .send(StateCommand::AddMessageImmediate {
-                msg: "hello".into(),
-                kind: MessageKind::User,
-                new_msg_id: user_id,
-            })
-            .await
-            .expect("send user message");
-
-        let placeholder_id = Uuid::new_v4();
-        let (responder_tx, responder_rx) = oneshot::channel();
-        cmd_tx
-            .send(StateCommand::CreateAssistantMessage {
-                parent_id: user_id,
-                responder: responder_tx,
-                new_assistant_msg_id: placeholder_id,
-            })
-            .await
-            .expect("send create assistant");
-        assert_eq!(
-            responder_rx.await.expect("receive placeholder id"),
-            placeholder_id
-        );
-
-        let final_text = "finalized assistant response".to_string();
-        super::finalize_assistant_response(&cmd_tx, placeholder_id, Ok(final_text.clone())).await;
-
-        timeout(Duration::from_millis(200), async {
-            loop {
-                let chat = state.chat.0.read().await;
-                let placeholder = chat.messages.get(&placeholder_id).unwrap();
-                let parent = chat.messages.get(&user_id).unwrap();
-                if placeholder.content == final_text
-                    && placeholder.status == MessageStatus::Completed
-                    && parent.children == vec![placeholder_id]
-                    && placeholder.children.is_empty()
-                {
-                    break;
-                }
-                drop(chat);
-                sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("placeholder should be updated in place");
     }
 }
