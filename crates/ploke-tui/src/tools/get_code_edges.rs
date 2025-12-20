@@ -83,7 +83,7 @@ pub struct EdgesParamsOwned {
 pub struct CodeItemEdges;
 
 impl Tool for CodeItemEdges {
-    type Output = ConciseContext;
+    type Output = NodeEdgeInfo;
 
     type OwnedParams = EdgesParamsOwned;
 
@@ -254,6 +254,7 @@ for a more fuzzy search."#
         let mod_path_vec = params
             .module_path
             .split("::")
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect_vec();
         let resolved_edges = graph_resolve_edges(

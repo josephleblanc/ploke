@@ -52,6 +52,9 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
 
     let push_newline =
         |current_line: &mut StyledLine, lines: &mut Vec<StyledLine>, diff_enabled: bool| {
+            if current_line.is_empty() {
+                return;
+            }
             let mut line = std::mem::take(current_line);
             if diff_enabled {
                 line = apply_diff_to_line(line, diff_enabled);

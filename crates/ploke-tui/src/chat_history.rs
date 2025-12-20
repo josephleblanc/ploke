@@ -566,7 +566,7 @@ impl ChatHistory {
             status,
             metadata: None,
             kind,
-            tool_call_id: None,
+            tool_call_id,
             context_status: ContextStatus::default(),
         };
 
@@ -1533,5 +1533,38 @@ mod tests {
         assert_eq!(msgs[1].content, "Hello?");
         assert_eq!(msgs[2].role, LlmRole::Assistant);
         assert_eq!(msgs[2].content, "Hi! How can I help?");
+    }
+
+    #[test]
+    fn tool_messages_carry_call_ids_into_llm_requests() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        // Add a user message to parent the tool call
+        let user = Uuid::new_v4();
+        ch.add_message_user(root, user, "Run the tool".to_string())
+            .unwrap();
+
+        // Add a tool message with an explicit call id
+        let tool_call_id = ArcStr::from("call-123");
+        let tool_msg_id = Uuid::new_v4();
+        ch.add_message_tool(
+            user,
+            tool_msg_id,
+            MessageKind::Tool,
+            "tool output".to_string(),
+            Some(tool_call_id.clone()),
+        )
+        .unwrap();
+
+        // Select the tool message to mirror how the UI renders the tail path
+        ch.current = tool_msg_id;
+        ch.rebuild_path_cache();
+
+        let msgs = ch.current_path_as_llm_request_messages();
+        let last = msgs.last().expect("tool message is on the path");
+        assert_eq!(last.role, LlmRole::Tool);
+        assert_eq!(last.tool_call_id, Some(tool_call_id));
+        assert_eq!(last.content, "tool output");
     }
 }

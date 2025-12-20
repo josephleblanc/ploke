@@ -10,7 +10,7 @@ mod session;
 mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 
-use crate::{SystemEvent, tools::code_item_lookup::CodeItemLookup};
+use crate::{tools::{code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges}, SystemEvent};
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
@@ -300,10 +300,13 @@ async fn finalize_assistant_response(
                 preview
             );
 
-            StateCommand::AddMessageImmediate {
-                msg: content,
-                kind: MessageKind::Assistant,
-                new_msg_id: Uuid::new_v4(),
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(content),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
             }
         }
         Err(e) => {
@@ -315,10 +318,13 @@ async fn finalize_assistant_response(
                 err_string
             );
 
-            StateCommand::AddMessageImmediate {
-                msg: content,
-                kind: MessageKind::SysInfo,
-                new_msg_id: Uuid::new_v4(),
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(content),
+                    status: Some(MessageStatus::Completed),
+                    ..Default::default()
+                },
             }
         }
     };
@@ -347,6 +353,7 @@ async fn prepare_and_run_llm_call(
         NsPatch::tool_def(),
         NsRead::tool_def(),
         CodeItemLookup::tool_def(),
+        CodeItemEdges::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
