@@ -141,4 +141,8 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
 "#
     )]
     CodeItemLookup,
+    #[serde(
+        rename = r#"Shows all edges for the target item. Useful for discovering nearby code items."#
+    )]
+    CodeItemEdges,
 }

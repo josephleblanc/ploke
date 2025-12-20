@@ -1,10 +1,14 @@
 use std::{ops::Deref, path::Path};
 
+use itertools::Itertools;
 use ploke_core::{
     rag_types::{CanonPath, ConciseContext, NodeFilepath},
     tool_types::{ToolDescr, ToolName},
 };
-use ploke_db::helpers::graph_resolve_exact;
+use ploke_db::{
+    helpers::{graph_resolve_edges, graph_resolve_exact},
+    typed_rows::ResolvedEdgeData,
+};
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
@@ -246,6 +250,19 @@ for a more fuzzy search."#
                 )));
             }
         };
+
+        let mod_path_vec = params
+            .module_path
+            .split("::")
+            .map(|s| s.to_string())
+            .collect_vec();
+        let resolved_edges = graph_resolve_edges(
+            &ctx.state.db,
+            &params.node_kind,
+            &abs_path,
+            &mod_path_vec,
+            &params.item_name,
+        )?;
         let tool_results = ctx
             .state
             .io_handle
@@ -273,14 +290,25 @@ for a more fuzzy search."#
             snippet,
         };
 
-        let content = serde_json::to_string(&concise_context).map_err(|err| {
+        let node_edge_info = NodeEdgeInfo {
+            node_info: concise_context,
+            edge_info: resolved_edges,
+        };
+
+        let content= serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                "failed to serialize ConciseContext: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
+                "failed to serialize NodeEdgeInfo: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
             )))
         })?;
 
         Ok(super::ToolResult { content })
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeEdgeInfo {
+    node_info: ConciseContext,
+    edge_info: Vec<ResolvedEdgeData>,
 }
 
 fn check_empty(

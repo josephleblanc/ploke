@@ -44,6 +44,7 @@ members = [
     "xtask",
     "tests/fixture_crates/fixture_impls",
     "crates/ploke-llm",
+    "proc_macros/ploke-db-derive",
     # Add more modules as needed
 ]
 

@@ -17,17 +17,6 @@ pub struct EmbeddingData {
     pub namespace: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedEdgeData {
-    pub source_id: Uuid,
-    pub source_name: String,
-    pub target_id: Uuid,
-    pub target_name: String,
-    pub canon_path: CanonPath,
-    pub relation_kind: String,
-    pub file_path: PathBuf,
-}
-
 // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileData {

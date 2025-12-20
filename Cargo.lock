@@ -4211,6 +4211,7 @@ dependencies = [
  "lazy_static",
  "ploke-common",
  "ploke-core",
+ "ploke-db-derive",
  "ploke-embed",
  "ploke-error",
  "ploke-test-utils",
@@ -4225,6 +4226,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "ploke-db-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

@@ -43,10 +43,10 @@ pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
+pub mod get_code_edges;
 pub mod ns_patch;
 pub mod ns_read;
 pub mod validators;
-pub mod get_code_edges;
 
 pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
 
@@ -311,6 +311,34 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             code_item_lookup::CodeItemLookup::emit_completed(&ctx, content);
+            Ok(())
+        }
+        ToolName::CodeItemEdges => {
+            let params =
+                get_code_edges::CodeItemEdges::deserialize_params(&args).map_err(|err| {
+                    let terr = get_code_edges::CodeItemEdges::adapt_error(err);
+                    get_code_edges::CodeItemEdges::emit_err(&ctx, terr.to_wire_string());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content } =
+                get_code_edges::CodeItemEdges::execute(params, ctx.clone())
+                    .await
+                    .map_err(|e| {
+                        let terr = get_code_edges::CodeItemEdges::adapt_error(
+                            ToolInvocationError::Exec(e),
+                        );
+                        get_code_edges::CodeItemEdges::emit_err(&ctx, terr.to_wire_string());
+                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            get_code_edges::CodeItemEdges::emit_completed(&ctx, content);
             Ok(())
         }
     }
