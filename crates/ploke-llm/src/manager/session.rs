@@ -141,11 +141,39 @@ pub struct ChatStepData {
     pub full_response: OpenAiResponse,
 }
 
-// Add some builder methods for the below struct AI!
 #[derive(Debug)]
 pub struct ChatStepDataBuilder {
     pub outcome: Option<ChatStepOutcome>,
     pub full_response: Option<OpenAiResponse>,
+}
+
+impl ChatStepDataBuilder {
+    pub fn new() -> Self {
+        Self {
+            outcome: None,
+            full_response: None,
+        }
+    }
+
+    pub fn outcome(mut self, outcome: ChatStepOutcome) -> Self {
+        self.outcome = Some(outcome);
+        self
+    }
+
+    pub fn full_response(mut self, response: OpenAiResponse) -> Self {
+        self.full_response = Some(response);
+        self
+    }
+
+    pub fn build(self) -> Result<ChatStepData, String> {
+        let outcome = self.outcome.ok_or("Outcome is required")?;
+        let full_response = self.full_response.ok_or("Full response is required")?;
+        
+        Ok(ChatStepData {
+            outcome,
+            full_response,
+        })
+    }
 }
 
 impl ChatStepData {
