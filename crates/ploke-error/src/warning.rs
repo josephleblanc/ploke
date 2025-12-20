@@ -24,4 +24,7 @@ pub enum WarningError {
 
     #[error("ploke-db error: {0}")]
     PlokeDb(String),
+
+    #[error("ploke-llm error: {0}")]
+    PlokeLlm(String),
 }

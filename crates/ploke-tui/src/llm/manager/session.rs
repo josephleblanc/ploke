@@ -3,6 +3,7 @@ use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 use chrono::DateTime;
 use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
+use ploke_llm::manager::ChatStepData;
 use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
@@ -119,7 +120,7 @@ pub async fn run_chat_session<R: Router>(
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
-) -> Result<String, LlmError> {
+) -> Result<OpenAiResponse, LlmError> {
     // Optionally: set tool_choice=Auto if tools exist, etc.
 
     // TODO:ploke-llm 2025-12-14
@@ -127,40 +128,30 @@ pub async fn run_chat_session<R: Router>(
     let cfg = ChatHttpConfig::default();
     let mut initial_message_updated = false;
     for _chain in 0..policy.tool_call_chain_limit {
-        let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
+        let ChatStepData {
+            outcome,
+            full_response,
+        } = ploke_llm::chat_step(client, &req, &cfg).await?;
 
         match outcome {
-            ChatStepOutcome::Content(text) => return Ok(text),
-
             ChatStepOutcome::ToolCalls { calls, content, .. } => {
+                let content_string = content.map(|text| text.to_string());
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
-                        content.clone(),
+                        content_string.clone(),
                         calls.clone(),
                     ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
-                let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
-                if !initial_message_updated {
-                    let is_updated = update_assistant_placeholder_once(
-                        &state_cmd_tx,
-                        assistant_message_id,
-                        msg,
-                        initial_message_updated,
-                    )
-                    .await;
-                    initial_message_updated = is_updated;
-                } else {
-                    state_cmd_tx
-                        .send(StateCommand::AddMessageImmediate {
-                            msg,
-                            kind: MessageKind::Assistant,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                        .await
-                        .expect("state manager must be running");
-                }
+                let msg = content_string.unwrap_or_else(|| "Calling tools...".to_string());
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg,
+                )
+                .await;
 
                 // 2) run tools (EventBus + waiting is TUI concern)
                 let results = execute_tools_via_event_bus(
@@ -212,10 +203,88 @@ pub async fn run_chat_session<R: Router>(
 
                 // loop again
             }
+            ChatStepOutcome::Content {
+                content: None,
+                reasoning: None,
+            } => {
+                return Err(LlmError::ChatStep(
+                    "No content, reasoning, or tool calls in llm chat step response. This indicates an issue with the chat/tool call loop.".to_string(),
+                ));
+            }
+            ChatStepOutcome::Content {
+                content: Some(msg),
+                reasoning: None,
+            } => {
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg.to_string(),
+                )
+                .await;
+            }
+            ChatStepOutcome::Content {
+                content: None,
+                reasoning: Some(msg),
+            } => {
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg.to_string(),
+                )
+                .await;
+            }
+            ChatStepOutcome::Content {
+                content: Some(content_msg),
+                reasoning: Some(reasoning_msg),
+            } => {
+                let x = "";
+                let msg = format!(
+                    "{x:-^10} Reasoning {x:-^10}\n 
+                    {reasoning_msg}\n
+                    {x:^20}
+                    {content_msg}"
+                );
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg,
+                )
+                .await;
+            }
         };
     }
 
     Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
+}
+
+async fn add_or_update_assistant_message(
+    assistant_message_id: Uuid,
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    initial_message_updated: &mut bool,
+    msg: String,
+) {
+    if !*initial_message_updated {
+        let is_updated = update_assistant_placeholder_once(
+            state_cmd_tx,
+            assistant_message_id,
+            msg,
+            *initial_message_updated,
+        )
+        .await;
+        *initial_message_updated = is_updated;
+    } else {
+        state_cmd_tx
+            .send(StateCommand::AddMessageImmediate {
+                msg,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
+            })
+            .await
+            .expect("state manager must be running");
+    }
 }
 
 #[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
@@ -386,6 +455,7 @@ fn truncate_for_error(s: &str, max: usize) -> String {
     }
 }
 
+#[cfg(feature = "xxx")]
 impl<'a, R> RequestSession<'a, R>
 where
     R: Router,
@@ -508,9 +578,12 @@ where
                     calls: tool_calls,
                     content,
                     finish_reason,
+                    ..
                 } => {
                     tracing::debug!(calls = ?tool_calls, ?content);
-                    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
+                    let assistant_update = content
+                        .map(|text| text.to_string())
+                        .unwrap_or_else(|| String::from("Calling Tools"));
 
                     if !initial_message_updated {
                         state_cmd_tx
@@ -684,7 +757,7 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                         }
                     }
                     if finish_reason == FinishReason::ToolCalls {
-                        let remember_stop = "Tool Call completed. Remember to end with a 'stop' finish reason to return conversation control to the user.";
+                        let remember_stop = "Tool Call completed: Remember to finish with a `stop` finish reason if and when you are ready to return control to the user.";
                         state_cmd_tx
                             .send(StateCommand::AddMessageImmediate {
                                 msg: remember_stop.to_string(),
@@ -701,8 +774,8 @@ If you are ready to return control to the user, respond with finish_reason 'stop
                         return Ok(assistant_intro);
                     }
                 }
-                ChatStepOutcome::Content(content) => {
-                    return Ok(content);
+                ChatStepOutcome::Content { content, .. } => {
+                    return Ok(content.map(|text| text.to_string()).unwrap_or_default());
                 }
             }
         }
@@ -772,8 +845,10 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello world"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
         }
     }
@@ -786,8 +861,10 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello text"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
     }

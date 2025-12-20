@@ -303,7 +303,7 @@ async fn finalize_assistant_response(
                 preview
             );
 
-            // Changing to AddMessageImmediate
+            // Changing from UpdateMessage to AddMessageImmediate
             // - We now update the initial message within the chat/tool loop
             StateCommand::AddMessageImmediate {
                 msg: content,
@@ -320,7 +320,7 @@ async fn finalize_assistant_response(
                 err_string
             );
 
-            // Changing to AddMessageImmediate
+            // Changing from UpdateMessage to AddMessageImmediate
             // - We now update the initial message within the chat/tool loop
             StateCommand::AddMessageImmediate {
                 msg: content,
@@ -331,7 +331,7 @@ async fn finalize_assistant_response(
     };
 
     if cmd_tx.send(update_cmd).await.is_err() {
-        log::error!("Failed to send final UpdateMessage: channel closed.");
+        tracing::error!("Failed to send final AddMessageImmediate: channel to StateCommand closed.");
     }
 }
 
@@ -400,6 +400,7 @@ async fn prepare_and_run_llm_call(
 
     use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
     let policy = TuiToolPolicy::default();
+
     run_chat_session(
         client,
         req,

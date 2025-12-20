@@ -165,10 +165,14 @@ impl ChatStepDataBuilder {
         self
     }
 
-    pub fn build(self) -> Result<ChatStepData, String> {
-        let outcome = self.outcome.ok_or("Outcome is required")?;
-        let full_response = self.full_response.ok_or("Full response is required")?;
-        
+    pub fn build(self) -> Result<ChatStepData, LlmError> {
+        let outcome = self
+            .outcome
+            .ok_or(LlmError::ChatStep("Outcome is required".to_string()))?;
+        let full_response = self
+            .full_response
+            .ok_or(LlmError::ChatStep("Full response is required".to_string()))?;
+
         Ok(ChatStepData {
             outcome,
             full_response,
@@ -207,6 +211,7 @@ impl ChatStepData {
 /// as `LlmError::Api`.
 pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     use serde_json::Value;
+    let mut builder = ChatStepDataBuilder::new();
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
@@ -252,12 +257,12 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     })?;
 
     // We prefer the first choice that yields a usable outcome.
-    for choice in parsed.choices.into_iter() {
+    for choice in parsed.choices.iter() {
         // Case 1: Chat-style `message`
-        if let Some(msg) = choice.message {
-            let calls_opt = msg.tool_calls;
-            let content_opt = msg.content;
-            let reasoning_opt = msg.reasoning;
+        if let Some(msg) = &choice.message {
+            let calls_opt = &msg.tool_calls;
+            let content_opt = &msg.content;
+            let reasoning_opt = &msg.reasoning;
 
             // Normalize: tool calls always win.
             if let Some(calls) = calls_opt {
@@ -269,20 +274,25 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                 }
                 info!(target: "chat-loop", "native_finish_reason, type string, is not well-understood yet. Logging to learn more:{:?}", choice.native_finish_reason);
                 let finish_reason = FinishReason::ToolCalls;
-                return Ok(ChatStepOutcome::ToolCalls {
-                    calls,
-                    content: content_opt.map(ArcStr::from),
+                let outcome = ChatStepOutcome::ToolCalls {
+                    // TODO: Find a way to get rid of this clone
+                    calls: calls.clone(),
+                    content: content_opt.as_deref().map(ArcStr::from),
                     finish_reason,
-                    reasoning: reasoning_opt.map(ArcStr::from),
-                });
+                    reasoning: reasoning_opt.as_deref().map(ArcStr::from),
+                };
+                builder = builder.outcome(outcome).full_response(parsed);
+
+                return builder.build();
             }
 
             // No tool calls → return content if present.
             if let Some(text) = content_opt {
-                return Ok(ChatStepOutcome::Content {
-                    reasoning: reasoning_opt.map(ArcStr::from),
-                    content: Some(ArcStr::from(text)),
-                });
+                let outcome = ChatStepOutcome::Content {
+                    reasoning: reasoning_opt.as_deref().map(ArcStr::from),
+                    content: Some(ArcStr::from(text.as_str())),
+                };
+                return builder.outcome(outcome).full_response(parsed).build();
             }
 
             // If message exists but is empty, fall through to try other forms / choices.
@@ -290,11 +300,15 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
         }
 
         // Case 2: Legacy completions-style `text`
-        if let Some(text) = choice.text {
-            return Ok(ChatStepOutcome::Content {
-                reasoning: choice.message.and_then(|m| m.reasoning.map(ArcStr::from)),
-                content: Some(ArcStr::from(text)),
-            });
+        if let Some(text) = &choice.text {
+            let outcome = ChatStepOutcome::Content {
+                reasoning: choice
+                    .message
+                    .as_ref()
+                    .and_then(|m| m.reasoning.as_ref().map(|s| ArcStr::from(s.as_str()))),
+                content: Some(ArcStr::from(text.as_str())),
+            };
+            return builder.outcome(outcome).full_response(parsed).build();
         }
 
         // Case 3: Streaming deltas (unsupported in this parser)
@@ -369,7 +383,7 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
+        match r.outcome {
             ChatStepOutcome::Content {
                 content: Some(c), ..
             } => assert_eq!(c.as_ref(), "Hello world"),
@@ -385,7 +399,7 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
+        match r.outcome {
             ChatStepOutcome::Content {
                 content: Some(c), ..
             } => assert_eq!(c.as_ref(), "Hello text"),

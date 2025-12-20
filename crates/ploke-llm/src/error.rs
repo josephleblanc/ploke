@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-
 use super::*;
 
 /// Represents errors that can occur during LLM interactions.
@@ -68,6 +67,10 @@ pub enum LlmError {
     /// Failed to deserialize the API response.
     #[error("Embedding Error: {0}")]
     Embedding(String),
+
+    /// Failed to deserialize the API response.
+    #[error("ChatStep Error: {0}")]
+    ChatStep(String),
 }
 
 impl LlmError {
@@ -187,6 +190,9 @@ impl From<LlmError> for ploke_error::Error {
             ),
             err_ev @ LlmError::Embedding(_) => ploke_error::Error::Internal(
                 ploke_error::InternalError::EmbedderError(std::sync::Arc::new(err_ev)),
+            ),
+            err_chat @ LlmError::ChatStep(_) => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_chat.to_string()),
             ),
         }
     }
