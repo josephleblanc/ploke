@@ -59,7 +59,7 @@ pub async fn chat_step<R: Router>(
     client: &reqwest::Client,
     req: &ChatCompRequest<R>,
     cfg: &ChatHttpConfig,
-) -> Result<ChatStepOutcome, LlmError> {
+) -> Result<ChatStepData, LlmError> {
     let url = R::COMPLETION_URL;
     let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
         message: format!("missing api key: {e}"),
@@ -135,6 +135,28 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+pub struct ChatStepData {
+    pub outcome: ChatStepOutcome,
+    pub full_response: OpenAiResponse,
+}
+
+// Add some builder methods for the below struct AI!
+#[derive(Debug)]
+pub struct ChatStepDataBuilder {
+    pub outcome: Option<ChatStepOutcome>,
+    pub full_response: Option<OpenAiResponse>,
+}
+
+impl ChatStepData {
+    pub fn new(outcome: ChatStepOutcome, full_response: OpenAiResponse) -> Self {
+        Self {
+            outcome,
+            full_response,
+        }
+    }
+}
+
 /// Parse a (non-streaming) OpenAI/OpenRouter-style response body into a normalized outcome.
 ///
 /// This function is used by the *driver* (session/tool loop) to decide what to do next:
@@ -155,7 +177,7 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
 /// ## Provider-embedded errors
 /// Some providers return `{ "error": ... }` in a 200 OK body. We detect that early and surface it
 /// as `LlmError::Api`.
-pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> {
+pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     use serde_json::Value;
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
