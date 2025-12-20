@@ -400,7 +400,7 @@ async fn prepare_and_run_llm_call(
     use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
     let policy = TuiToolPolicy::default();
 
-    let open_ai_response = run_chat_session(
+    run_chat_session(
         client,
         req,
         parent_id,
@@ -409,7 +409,7 @@ async fn prepare_and_run_llm_call(
         cmd_tx.clone(),
         policy,
     )
-    .await?;
+    .await;
     todo!()
 
     // Persist model output or error for later inspection

@@ -18,6 +18,8 @@ pub const SCAN_CHANGE: &str = "scan_change";
 pub const CHAT_TARGET: &str = "chat_tracing_target";
 /// Dedicated target for low-level message update lifecycle traces
 pub const MESSAGE_UPDATE_TARGET: &str = "message-update";
+/// Dedicated target for finish reason handling in the chat loop
+pub const FINISH_REASON_TARGET: &str = "finish-reason";
 
 pub struct LoggingGuards {
     /// Guard for the main app log
@@ -28,6 +30,8 @@ pub struct LoggingGuards {
     pub chat: WorkerGuard,
     /// Guard for the message-update-only log
     pub message_update: WorkerGuard,
+    /// Guard for the finish-reason-only log
+    pub finish_reason: WorkerGuard,
 }
 
 pub fn init_tracing() -> LoggingGuards {
@@ -53,6 +57,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target(CHAT_TARGET, Level::TRACE)
         .with_target(MESSAGE_UPDATE_TARGET, Level::TRACE)
         .with_target("api_json", Level::TRACE)
+        .with_target(FINISH_REASON_TARGET, Level::TRACE)
         .with_target("cozo", Level::ERROR)
         .with_default(LevelFilter::WARN);
 
@@ -127,6 +132,24 @@ pub fn init_tracing() -> LoggingGuards {
     let only_message_updates =
         filter::Targets::new().with_target(MESSAGE_UPDATE_TARGET, Level::TRACE);
 
+    // -------- Finish reason log (FinishReason handling in chat loop) --------
+    let finish_reason_appender =
+        tracing_appender::rolling::never(&log_dir, format!("finish_reason_{run_id}.log"));
+    let (finish_reason_non_blocking, finish_reason_guard) =
+        tracing_appender::non_blocking(finish_reason_appender);
+    let finish_reason_layer = fmt::layer()
+        .with_writer(finish_reason_non_blocking)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(true)
+        .with_line_number(true)
+        .without_time();
+    let only_finish_reason =
+        filter::Targets::new().with_target(FINISH_REASON_TARGET, Level::TRACE);
+
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
         // .with(filter) // env filter for the main layer
@@ -135,6 +158,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
         .with(message_update_layer.with_filter(only_message_updates)) // message update events -> message_update_*.log
+        .with(finish_reason_layer.with_filter(only_finish_reason)) // finish reason events -> finish_reason_*.log
         .try_init();
 
     LoggingGuards {
@@ -142,6 +166,7 @@ pub fn init_tracing() -> LoggingGuards {
         api: api_guard,
         chat: chat_guard,
         message_update: message_update_guard,
+        finish_reason: finish_reason_guard,
     }
 }
 

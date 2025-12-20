@@ -25,6 +25,7 @@ use crate::chat_history::MessageUpdate;
 use crate::llm::ChatHistoryTarget;
 use crate::tools::ToolDefinition;
 use crate::tools::ToolName;
+use crate::tracing_setup::FINISH_REASON_TARGET;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::request::ToolChoice;
@@ -92,7 +93,7 @@ where
 // put these into a better config data structure
 // - ensure there is a place to set the defaults for the user
 // - ensure the settings are persisted once set by the user, fall back on defaults
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
@@ -113,7 +114,7 @@ impl Default for TuiToolPolicy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TuiTimeoutPolicy {
     duration: Option<Duration>,
     strategy: TimeoutStrategy,
@@ -128,7 +129,7 @@ impl Default for TuiTimeoutPolicy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TimeoutStrategy {
     /// Back off attempts, beginning at `TuiTimoutPolicy.duration` and doubling a number of times
     /// equal to the Backoff value. If None, inifite backoff attempts.
@@ -169,17 +170,29 @@ impl TuiTimeoutPolicy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TuiErrorPolicy {
     EndlessRetry,
     RetryLimit(u32),
     Strict,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TuiLengthPolicy {
     RetryLimit(u32),
     Strict,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FinishPolicy {
+    /// Timeout backoff/limit behavior for FinishReason::Timeout.
+    timeout: TuiTimeoutPolicy,
+    /// Retry policy for FinishReason::Error.
+    error: TuiErrorPolicy,
+    /// Retry policy for FinishReason::Length.
+    length: TuiLengthPolicy,
+    /// System prompt appended when retrying after FinishReason::Length.
+    length_continue_prompt: &'static str,
 }
 
 impl Default for TuiErrorPolicy {
@@ -191,6 +204,17 @@ impl Default for TuiErrorPolicy {
 impl Default for TuiLengthPolicy {
     fn default() -> Self {
         Self::RetryLimit(1)
+    }
+}
+
+impl Default for FinishPolicy {
+    fn default() -> Self {
+        Self {
+            timeout: TuiTimeoutPolicy::default(),
+            error: TuiErrorPolicy::default(),
+            length: TuiLengthPolicy::default(),
+            length_continue_prompt: "Continue from where you left off. Do not repeat prior text.",
+        }
     }
 }
 
@@ -226,137 +250,249 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
     }
 }
 
+/// Outcome of finish-reason evaluation for a single response.
+///
+/// Continue variants tell the caller to retry the chat step, optionally with
+/// a system message appended before the next request.
 enum FinishDecision {
     Continue,
+    ContinueWithSystemMessage(String),
     Return(Result<OpenAiResponse, LlmError>),
 }
 
+/// Internal aggregation of failure reasons across multiple choices.
 enum FinishFailure {
-    FinishError { msg: String, finish_reason: FinishReason },
+    FinishError {
+        msg: String,
+        finish_reason: FinishReason,
+    },
     Error(LlmError),
 }
 
-fn handle_finish_reasons<R: Router>(
-    full_response: OpenAiResponse,
-    req: &mut ChatCompRequest<R>,
-    cfg: &mut ChatHttpConfig,
-    timeout_policy: TuiTimeoutPolicy,
-    error_policy: TuiErrorPolicy,
-    length_policy: TuiLengthPolicy,
-    retried_errors: &mut u32,
-    retried_lengths: &mut u32,
-    timeout_attempts: &mut usize,
-    model_key: &Option<ploke_llm::ModelKey>,
-) -> FinishDecision {
-    let mut continue_chain = false;
-    let mut failure: Option<FinishFailure> = None;
-    let mut saw_finish_reason = false;
-    let mut stop = false;
+/// Mutable counters for retry behavior within a chat session.
+struct ChatLoopState {
+    retried_errors: u32,
+    retried_lengths: u32,
+    timeout_attempts: usize,
+}
 
-    for choice in &full_response.choices {
-        let Some(finish_reason) = choice.finish_reason.clone() else {
-            continue;
-        };
-        saw_finish_reason = true;
-        let native_finish_reason = choice.native_finish_reason.as_deref();
+impl Default for ChatLoopState {
+    fn default() -> Self {
+        Self {
+            retried_errors: 0,
+            retried_lengths: 0,
+            timeout_attempts: 0,
+        }
+    }
+}
 
-        match finish_reason {
-            FinishReason::Stop => {
-                stop = true;
-                break;
-            }
-            FinishReason::Length => {
-                if should_retry_length(length_policy, retried_lengths) {
-                    let continue_msg =
-                        "Continue from where you left off. Do not repeat prior text.";
-                    req.core
-                        .messages
-                        .push(RequestMessage::new_system(continue_msg.to_string()));
-                    continue_chain = true;
-                } else if failure.is_none() {
-                    failure = Some(FinishFailure::FinishError {
-                        msg: "Provider stopped due to length; try reducing output or retrying."
-                            .to_string(),
-                        finish_reason,
-                    });
-                }
-            }
-            // should be shown to user
-            FinishReason::ContentFilter => {
-                if failure.is_none() {
-                    failure = Some(FinishFailure::FinishError {
-                        msg: "Provider reports ContentFilter applied, try again.".to_string(),
-                        finish_reason,
-                    });
-                }
-            }
-            // keep looping
-            FinishReason::ToolCalls => {
-                continue_chain = true;
-            }
-            // retry on timout policy
-            FinishReason::Timeout => {
-                *timeout_attempts = timeout_attempts.saturating_add(1);
-                if let Some(next_timout) = timeout_policy.next_timout_dur(*timeout_attempts) {
-                    // if some, change timout for next loop and ocntinue
-                    cfg.timeout = next_timout;
-                    continue_chain = true;
-                } else if failure.is_none() {
-                    failure = Some(FinishFailure::Error(LlmError::Timeout));
-                }
-            }
-            FinishReason::Error(ref e) => {
-                if should_retry_error(error_policy, retried_errors) {
-                    tracing::warn!(
-                        target = "chat-loop",
-                        error = %e,
-                        retried_errors,
-                        ?model_key,
-                        ?native_finish_reason,
-                        "FinishReason::Error, retrying"
+/// Borrowed context required to evaluate finish reasons.
+struct ChatLoopContext<'a> {
+    cfg: &'a mut ChatHttpConfig,
+    model_key: &'a Option<ploke_llm::ModelKey>,
+}
+
+impl FinishPolicy {
+    /// Decide whether to return, continue, or continue with a system message
+    /// based on the finish reasons found in the response choices.
+    fn handle_finish_reasons(
+        &self,
+        full_response: OpenAiResponse,
+        ctx: &mut ChatLoopContext<'_>,
+        state: &mut ChatLoopState,
+    ) -> FinishDecision {
+        let span = tracing::trace_span!(
+            target: FINISH_REASON_TARGET,
+            "finish_reason",
+            retried_errors = state.retried_errors,
+            retried_lengths = state.retried_lengths,
+            timeout_attempts = state.timeout_attempts,
+            timeout_policy = ?self.timeout,
+            error_policy = ?self.error,
+            length_policy = ?self.length
+        );
+        let _enter = span.enter();
+        let mut continue_chain = false;
+        let mut continue_message: Option<String> = None;
+        let mut failure: Option<FinishFailure> = None;
+        let mut saw_finish_reason = false;
+        let mut stop = false;
+
+        for choice in &full_response.choices {
+            let Some(finish_reason) = choice.finish_reason.clone() else {
+                continue;
+            };
+            saw_finish_reason = true;
+            let native_finish_reason = choice.native_finish_reason.as_deref();
+            tracing::trace!(
+                target = FINISH_REASON_TARGET,
+                ?finish_reason,
+                ?native_finish_reason,
+                "finish reason received"
+            );
+
+            match finish_reason {
+                FinishReason::Stop => {
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: stop"
                     );
+                    stop = true;
+                    break;
+                }
+                FinishReason::Length => {
+                    if should_retry_length(self.length, &mut state.retried_lengths) {
+                        continue_message = Some(self.length_continue_prompt.to_string());
+                        continue_chain = true;
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = true,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider stopped due to length; try reducing output or retrying."
+                                .to_string(),
+                            finish_reason,
+                        });
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
+                }
+                // should be shown to user
+                FinishReason::ContentFilter => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider reports ContentFilter applied, try again.".to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
+                // keep looping
+                FinishReason::ToolCalls => {
                     continue_chain = true;
-                } else if failure.is_none() {
-                    failure = Some(FinishFailure::FinishError {
-                        msg: e.to_string(),
-                        finish_reason,
-                    });
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        continue_with_message = false,
+                        "finish reason decision: continue"
+                    );
+                }
+                // retry on timout policy
+                FinishReason::Timeout => {
+                    state.timeout_attempts = state.timeout_attempts.saturating_add(1);
+                    if let Some(next_timout) = self.timeout.next_timout_dur(state.timeout_attempts)
+                    {
+                        // if some, change timout for next loop and ocntinue
+                        ctx.cfg.timeout = next_timout;
+                        continue_chain = true;
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = false,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::Error(LlmError::Timeout));
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
+                }
+                FinishReason::Error(ref e) => {
+                    if should_retry_error(self.error, &mut state.retried_errors) {
+                        tracing::warn!(
+                            target = "chat-loop",
+                            error = %e,
+                            retried_errors = state.retried_errors,
+                            ?ctx.model_key,
+                            ?native_finish_reason,
+                            "FinishReason::Error, retrying"
+                        );
+                        continue_chain = true;
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = false,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: e.to_string(),
+                            finish_reason,
+                        });
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
                 }
             }
         }
-    }
 
-    if stop {
-        return FinishDecision::Return(Ok(full_response));
-    }
+        if stop {
+            return FinishDecision::Return(Ok(full_response));
+        }
 
-    if continue_chain {
-        return FinishDecision::Continue;
-    }
+        if continue_chain {
+            return match continue_message {
+                Some(msg) => FinishDecision::ContinueWithSystemMessage(msg),
+                None => FinishDecision::Continue,
+            };
+        }
 
-    if let Some(failure) = failure {
-        let err = match failure {
-            FinishFailure::FinishError { msg, finish_reason } => LlmError::FinishError {
-                msg,
-                full_response,
-                finish_reason,
-            },
-            FinishFailure::Error(err) => err,
-        };
-        return FinishDecision::Return(Err(err));
-    }
+        if let Some(failure) = failure {
+            let err = match failure {
+                FinishFailure::FinishError { msg, finish_reason } => LlmError::FinishError {
+                    msg,
+                    full_response,
+                    finish_reason,
+                },
+                FinishFailure::Error(err) => err,
+            };
+            return FinishDecision::Return(Err(err));
+        }
 
-    if !saw_finish_reason {
-        return FinishDecision::Return(Err(LlmError::ChatStep(
-            "No finish reason in llm response choices.".to_string(),
-        )));
-    }
+        if !saw_finish_reason {
+            tracing::trace!(
+                target = FINISH_REASON_TARGET,
+                "finish reason decision: none"
+            );
+            return FinishDecision::Return(Err(LlmError::ChatStep(
+                "No finish reason in llm response choices.".to_string(),
+            )));
+        }
 
-    FinishDecision::Return(Err(LlmError::ChatStep(
-        "Unhandled finish reason in llm response choices.".to_string(),
-    )))
+        tracing::trace!(
+            target = FINISH_REASON_TARGET,
+            "finish reason decision: unhandled"
+        );
+        FinishDecision::Return(Err(LlmError::ChatStep(
+            "Unhandled finish reason in llm response choices.".to_string(),
+        )))
+    }
 }
 
+#[tracing::instrument(
+    target = "chat-loop",
+    skip(client, req, event_bus, state_cmd_tx, policy),
+    fields(
+        model_key = ?req.model_key,
+        assistant_message_id = %assistant_message_id,
+        parent_id = %parent_id
+    ),
+    ret,
+    err
+)]
+/// Chat loop structure:
+/// - issue a chat step
+/// - handle tool calls (if any), update UI, append tool results
+/// - handle finish reasons to decide return vs retry
+// Optionally: set tool_choice=Auto if tools exist, etc.
 pub async fn run_chat_session<R: Router>(
     client: &Client,
     mut req: ChatCompRequest<R>,
@@ -366,21 +502,15 @@ pub async fn run_chat_session<R: Router>(
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
 ) -> Result<OpenAiResponse, LlmError> {
-    // Optionally: set tool_choice=Auto if tools exist, etc.
-
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
     let mut cfg = ChatHttpConfig::default();
-    let timout_policy = TuiTimeoutPolicy::default();
-    let error_retry_policy = TuiErrorPolicy::default();
-    let length_retry_policy = TuiLengthPolicy::default();
-    let mut retried_errors = 0_u32;
-    let mut retried_lengths = 0_u32;
-    let mut timeout_attempts = 0_usize;
+    let finish_policy = FinishPolicy::default();
+    let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
 
     let mut initial_message_updated = false;
-    'tool_chain: for _chain in 0..policy.tool_call_chain_limit {
+    for _chain in 0..policy.tool_call_chain_limit {
         let ChatStepData {
             outcome,
             full_response,
@@ -519,19 +649,17 @@ pub async fn run_chat_session<R: Router>(
             }
         };
 
-        match handle_finish_reasons(
-            full_response,
-            &mut req,
-            &mut cfg,
-            timout_policy,
-            error_retry_policy,
-            length_retry_policy,
-            &mut retried_errors,
-            &mut retried_lengths,
-            &mut timeout_attempts,
-            &model_key,
-        ) {
-            FinishDecision::Continue => continue 'tool_chain,
+        let mut ctx = ChatLoopContext {
+            cfg: &mut cfg,
+            model_key: &model_key,
+        };
+
+        match finish_policy.handle_finish_reasons(full_response, &mut ctx, &mut loop_state) {
+            FinishDecision::Continue => continue,
+            FinishDecision::ContinueWithSystemMessage(msg) => {
+                req.core.messages.push(RequestMessage::new_system(msg));
+                continue;
+            }
             FinishDecision::Return(result) => return result,
         }
     }
