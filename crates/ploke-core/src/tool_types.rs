@@ -16,10 +16,12 @@ pub enum ToolName {
     CodeItemLookup,
     #[serde(rename = "code_item_edges")]
     CodeItemEdges,
+    #[serde(rename = "cargo")]
+    Cargo,
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 7] = [
+    pub const ALL: [ToolName; 8] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::CreateFile,
@@ -27,6 +29,7 @@ impl ToolName {
         ToolName::NsRead,
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
+        ToolName::Cargo,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -39,6 +42,7 @@ impl ToolName {
             NsRead => "read_file",
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
+            Cargo => "cargo",
         }
     }
 }
@@ -161,6 +165,10 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
         rename = r#"Shows all edges for the target item. Useful for discovering nearby code items."#
     )]
     CodeItemEdges,
+    #[serde(
+        rename = "Run cargo check or cargo test with JSON diagnostics output."
+    )]
+    Cargo,
 }
 
 #[cfg(test)]

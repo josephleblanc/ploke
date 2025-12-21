@@ -20,6 +20,8 @@ pub const CHAT_TARGET: &str = "chat_tracing_target";
 pub const MESSAGE_UPDATE_TARGET: &str = "message-update";
 /// Dedicated target for finish reason handling in the chat loop
 pub const FINISH_REASON_TARGET: &str = "finish-reason";
+/// Dedicated target for tool-call tracing (tool requests + interpreted params + results)
+pub const TOOL_CALL_TARGET: &str = "tool-calls";
 
 pub struct LoggingGuards {
     /// Guard for the main app log
@@ -32,6 +34,8 @@ pub struct LoggingGuards {
     pub message_update: WorkerGuard,
     /// Guard for the finish-reason-only log
     pub finish_reason: WorkerGuard,
+    /// Guard for the tool-calls-only log
+    pub tool_calls: WorkerGuard,
 }
 
 pub fn init_tracing() -> LoggingGuards {
@@ -58,6 +62,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target(MESSAGE_UPDATE_TARGET, Level::TRACE)
         .with_target("api_json", Level::TRACE)
         .with_target(FINISH_REASON_TARGET, Level::TRACE)
+        .with_target(TOOL_CALL_TARGET, Level::TRACE)
         .with_target("cozo", Level::ERROR)
         .with_default(LevelFilter::WARN);
 
@@ -150,6 +155,23 @@ pub fn init_tracing() -> LoggingGuards {
     let only_finish_reason =
         filter::Targets::new().with_target(FINISH_REASON_TARGET, Level::TRACE);
 
+    // -------- Tool call log (tool requests + params + results) --------
+    let tool_calls_appender =
+        tracing_appender::rolling::never(&log_dir, format!("tool_calls_{run_id}.log"));
+    let (tool_calls_non_blocking, tool_calls_guard) =
+        tracing_appender::non_blocking(tool_calls_appender);
+    let tool_calls_layer = fmt::layer()
+        .with_writer(tool_calls_non_blocking)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .without_time();
+    let only_tool_calls = filter::Targets::new().with_target(TOOL_CALL_TARGET, Level::TRACE);
+
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
         // .with(filter) // env filter for the main layer
@@ -159,6 +181,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log
         .with(message_update_layer.with_filter(only_message_updates)) // message update events -> message_update_*.log
         .with(finish_reason_layer.with_filter(only_finish_reason)) // finish reason events -> finish_reason_*.log
+        .with(tool_calls_layer.with_filter(only_tool_calls)) // tool call events -> tool_calls_*.log
         .try_init();
 
     LoggingGuards {
@@ -167,6 +190,7 @@ pub fn init_tracing() -> LoggingGuards {
         chat: chat_guard,
         message_update: message_update_guard,
         finish_reason: finish_reason_guard,
+        tool_calls: tool_calls_guard,
     }
 }
 

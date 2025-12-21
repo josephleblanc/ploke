@@ -2,6 +2,8 @@ use ploke_core::tool_types::ToolName;
 use ploke_core::ArcStr;
 use ploke_llm::LlmError;
 use serde::{Deserialize, Serialize};
+use ploke_error::DomainError;
+use ploke_error::Error as PlokeError;
 
 /// Audience for formatting diagnostics.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -178,7 +180,9 @@ impl ToolInvocationError {
                 }
                 te
             }
-            ToolInvocationError::Exec(err) => ToolError::from(err).with_audience(Audience::System),
+            ToolInvocationError::Exec(err) => {
+                ToolError::from_ploke_error_with_tool(tool, err).with_audience(Audience::System)
+            }
             ToolInvocationError::Internal(msg) => {
                 ToolError::new(tool, ToolErrorCode::Internal, msg)
             }
@@ -196,7 +200,12 @@ impl From<ploke_error::Error> for ToolError {
 
 impl ToolError {
     pub fn from_ploke_error_with_tool(tool: ToolName, err: ploke_error::Error) -> Self {
-        ToolError::new(tool, ToolErrorCode::Internal, err.to_string())
+        let code = match &err {
+            PlokeError::Domain(DomainError::Io { .. }) => ToolErrorCode::Io,
+            PlokeError::Domain(DomainError::Ui { .. }) => ToolErrorCode::InvalidFormat,
+            _ => ToolErrorCode::Internal,
+        };
+        ToolError::new(tool, code, err.to_string())
     }
 }
 
@@ -229,4 +238,18 @@ pub fn allowed_tool_names() -> Vec<ArcStr> {
         .iter()
         .map(|tool| ArcStr::from(tool.as_str()))
         .collect()
+}
+
+/// Convenience for tools that need to surface a user-facing error.
+pub fn tool_ui_error(message: impl Into<String>) -> ploke_error::Error {
+    ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+        message: message.into(),
+    })
+}
+
+/// Convenience for tools that need to surface an IO error.
+pub fn tool_io_error(message: impl Into<String>) -> ploke_error::Error {
+    ploke_error::Error::Domain(ploke_error::DomainError::Io {
+        message: message.into(),
+    })
 }

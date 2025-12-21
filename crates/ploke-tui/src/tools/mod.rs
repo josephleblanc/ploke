@@ -2,10 +2,13 @@
 
 // For any db-related issues, check cross-crate contract with db in:
 //  `ploke/crates/ploke-tui/docs/crate-contracts/tool-to-ploke-db.md`
-use crate::utils::{
+use crate::{
+    tracing_setup::TOOL_CALL_TARGET,
+    utils::{
     consts::DEBUG_TOOLS,
     path_scoping,
     se_de::{de_arc_str, se_arc_str},
+    },
 };
 use std::{
     borrow::Cow,
@@ -42,6 +45,7 @@ pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod code_item_lookup;
 pub mod create_file;
+pub mod cargo;
 pub mod error;
 pub mod get_code_edges;
 pub mod ns_patch;
@@ -50,7 +54,8 @@ pub mod ui;
 pub mod validators;
 
 pub use error::{
-    allowed_tool_names, Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError,
+    allowed_tool_names, tool_io_error, tool_ui_error, Audience, ToolError, ToolErrorCode,
+    ToolErrorWire, ToolInvocationError,
 };
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
@@ -161,6 +166,14 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
         args = ?args,
         tool = ?tool_call.function.name,
         "Processing tool"
+    );
+    tracing::info!(target: TOOL_CALL_TARGET,
+        tool = %name.as_str(),
+        request_id = %ctx.request_id,
+        parent_id = %ctx.parent_id,
+        call_id = %tool_call.call_id,
+        args = %args,
+        "tool_call_request"
     );
     match tool_call.function.name {
         ToolName::RequestCodeContext => {
@@ -347,6 +360,32 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             get_code_edges::CodeItemEdges::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::Cargo => {
+            let params = cargo::CargoTool::deserialize_params(&args).map_err(|err| {
+                let terr = cargo::CargoTool::adapt_error(err);
+                cargo::CargoTool::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult { content, ui_payload } =
+                cargo::CargoTool::execute(params, ctx.clone())
+                    .await
+                    .map_err(|e| {
+                        let terr =
+                            cargo::CargoTool::adapt_error(ToolInvocationError::Exec(e));
+                        cargo::CargoTool::emit_err(&ctx, terr.clone());
+                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                    })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            cargo::CargoTool::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
     }

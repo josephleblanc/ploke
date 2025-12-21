@@ -151,6 +151,7 @@ impl Default for EditingConfig {
 
 use super::*;
 use crate::tools::ToolVerbosity;
+use crate::user_config::ToolingConfig;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -162,6 +163,7 @@ pub struct RuntimeConfig {
     pub tool_verbosity: ToolVerbosity,
     pub embedding: EmbeddingConfig,
     pub ploke_editor: Option<String>,
+    pub tooling: ToolingConfig,
 }
 
 impl From<UserConfig> for RuntimeConfig {
@@ -193,6 +195,7 @@ impl From<UserConfig> for RuntimeConfig {
             tool_verbosity: uc.tool_verbosity,
             embedding: uc.embedding,
             ploke_editor: uc.ploke_editor,
+            tooling: uc.tooling,
         }
     }
 }
@@ -213,6 +216,7 @@ impl RuntimeConfig {
             editing,
             ploke_editor: self.ploke_editor.clone(),
             context_management: CtxPrefs::default(),
+            tooling: self.tooling.clone(),
         }
     }
 }

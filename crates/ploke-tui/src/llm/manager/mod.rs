@@ -42,8 +42,9 @@ use crate::{
     app_state::{AppState, StateCommand},
     chat_history::MessageKind,
     tools::{
-        self, Tool as _, ToolDefinition, code_edit::GatCodeEdit, create_file::CreateFile,
-        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
+        self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
+        create_file::CreateFile, ns_patch::NsPatch, ns_read::NsRead,
+        request_code_context::RequestCodeContextGat,
     },
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
 };
@@ -313,6 +314,7 @@ async fn prepare_and_run_llm_call(
         NsRead::tool_def(),
         CodeItemLookup::tool_def(),
         CodeItemEdges::tool_def(),
+        CargoTool::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)

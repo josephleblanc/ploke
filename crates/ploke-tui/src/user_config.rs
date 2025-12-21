@@ -54,6 +54,46 @@ pub struct UserConfig {
     pub ploke_editor: Option<String>,
     #[serde(default)]
     pub context_management: CtxPrefs,
+    #[serde(default)]
+    pub tooling: ToolingConfig,
+}
+
+/// Tooling-specific configuration values.
+///
+/// Timeouts are in seconds. A value of `0` disables the timeout for that command.
+///
+/// ```rust
+/// use ploke_tui::user_config::ToolingConfig;
+///
+/// let cfg = ToolingConfig {
+///     cargo_check_timeout_secs: 120,
+///     cargo_test_timeout_secs: 900,
+/// };
+/// assert_eq!(cfg.cargo_check_timeout_secs, 120);
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolingConfig {
+    #[serde(default = "default_cargo_check_timeout_secs")]
+    pub cargo_check_timeout_secs: u64,
+    #[serde(default = "default_cargo_test_timeout_secs")]
+    pub cargo_test_timeout_secs: u64,
+}
+
+impl Default for ToolingConfig {
+    fn default() -> Self {
+        Self {
+            cargo_check_timeout_secs: default_cargo_check_timeout_secs(),
+            cargo_test_timeout_secs: default_cargo_test_timeout_secs(),
+        }
+    }
+}
+
+fn default_cargo_check_timeout_secs() -> u64 {
+    60
+}
+
+fn default_cargo_test_timeout_secs() -> u64 {
+    600
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
