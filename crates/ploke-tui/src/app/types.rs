@@ -12,6 +12,7 @@ Intended usage:
 */
 
 use crate::chat_history::{Message, MessageKind};
+use crate::tools::ToolUiPayload;
 use uuid::Uuid;
 
 /// Editing/interaction mode for the TUI.
@@ -43,6 +44,7 @@ pub struct RenderableMessage {
     pub(crate) id: Uuid,
     pub(crate) kind: MessageKind,
     pub(crate) content: String,
+    pub(crate) tool_payload: Option<ToolUiPayload>,
 }
 
 /// A lightweight trait for rendering without cloning.
@@ -51,6 +53,7 @@ pub trait RenderMsg {
     fn id(&self) -> Uuid;
     fn kind(&self) -> MessageKind;
     fn content(&self) -> &str;
+    fn tool_payload(&self) -> Option<&ToolUiPayload>;
 }
 
 impl RenderMsg for RenderableMessage {
@@ -63,6 +66,10 @@ impl RenderMsg for RenderableMessage {
     fn content(&self) -> &str {
         &self.content
     }
+
+    fn tool_payload(&self) -> Option<&ToolUiPayload> {
+        self.tool_payload.as_ref()
+    }
 }
 
 impl RenderMsg for Message {
@@ -74,5 +81,9 @@ impl RenderMsg for Message {
     }
     fn content(&self) -> &str {
         &self.content
+    }
+
+    fn tool_payload(&self) -> Option<&ToolUiPayload> {
+        self.tool_payload.as_ref()
     }
 }

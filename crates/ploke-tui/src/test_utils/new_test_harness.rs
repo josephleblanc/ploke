@@ -233,6 +233,7 @@ impl AppHarness {
                 parent_id,
                 call_id,
                 content: content.into(),
+                ui_payload: None,
             }));
     }
 

@@ -166,6 +166,7 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             parent_id,
             call_id,
             content,
+            ..
         }) => {
             let params = ToolDonePersistParams {
                 request_id,
@@ -187,6 +188,7 @@ async fn handle_event(state: &Arc<AppState>, ev: AppEvent) {
             parent_id,
             call_id,
             error,
+            ..
         }) => {
             let params = ToolDonePersistParams {
                 request_id,

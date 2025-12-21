@@ -35,6 +35,7 @@ use crate::llm::manager::loop_error::{
     render_error_view,
 };
 use ploke_llm::LlmError;
+use crate::tools::ToolUiPayload;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -614,34 +615,36 @@ pub async fn run_chat_session<R: Router>(
                 for (call_id, tool_json_result) in results.into_iter() {
                     let call_id_for_state = call_id.clone();
                     match tool_json_result {
-                        Ok(tool_json) => {
+                        Ok(tool_result) => {
                             req.core
                                 .messages
-                                .push(RequestMessage::new_tool(tool_json.clone(), call_id.clone()));
+                                .push(RequestMessage::new_tool(tool_result.content.clone(), call_id.clone()));
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
-                                    msg: tool_json,
+                                    msg: tool_result.content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
+                                    tool_payload: tool_result.ui_payload,
                                 })
                                 .await
                                 .expect("state manager must be running");
                             commit_phase = CommitPhase::ToolResultsCommitted;
                         }
-                        Err(err_string) => {
-                            let content = json!({ "ok": false, "error": err_string }).to_string();
+                        Err(tool_error) => {
+                            let content =
+                                json!({ "ok": false, "error": tool_error.error }).to_string();
                             req.core
                                 .messages
-                                .push(RequestMessage::new_tool(content, call_id.clone()));
+                                .push(RequestMessage::new_tool(content.clone(), call_id.clone()));
 
-                            let err_msg = format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
-                                    msg: err_msg.clone(),
+                                    msg: content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
+                                    tool_payload: tool_error.ui_payload,
                                 })
                                 .await
                                 .expect("state manager must be running");
@@ -657,7 +660,7 @@ pub async fn run_chat_session<R: Router>(
                             if let Some(tool_name) = call_name_by_id.get(&call_id) {
                                 context.tool_name = Some(tool_name.clone());
                             }
-                            let tool_err = LlmError::ToolCall(err_string);
+                            let tool_err = LlmError::ToolCall(tool_error.error);
                             let loop_error =
                                 classify_llm_error(&tool_err, context, commit_phase.clone());
                             push_llm_payload(&mut req, &loop_error);
@@ -996,18 +999,33 @@ async fn update_assistant_placeholder_once(
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolCallUiResult {
+    pub content: String,
+    pub ui_payload: Option<ToolUiPayload>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCallUiError {
+    pub error: String,
+    pub ui_payload: Option<ToolUiPayload>,
+}
+
 pub async fn execute_tools_via_event_bus(
     event_bus: Arc<EventBus>,
     parent_id: Uuid,
     step_request_id: Uuid,
     calls: Vec<ToolCall>,
     policy_timeout: ToolCallTimeout,
-) -> Vec<(ploke_core::ArcStr, Result<String, String>)> {
+) -> Vec<(ploke_core::ArcStr, Result<ToolCallUiResult, ToolCallUiError>)> {
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
 
     // Per-call waiters
-    let mut waiters: HashMap<ploke_core::ArcStr, oneshot::Sender<Result<String, String>>> =
+    let mut waiters: HashMap<
+        ploke_core::ArcStr,
+        oneshot::Sender<Result<ToolCallUiResult, ToolCallUiError>>,
+    > =
         HashMap::new();
     let mut handles = Vec::new();
 
@@ -1020,8 +1038,20 @@ pub async fn execute_tools_via_event_bus(
             // timeout wrapper per call
             match tokio::time::timeout(policy_timeout, rx_one).await {
                 Ok(Ok(res)) => (call_id, res),
-                Ok(Err(_closed)) => (call_id, Err("tool waiter dropped".into())),
-                Err(_) => (call_id, Err("Timed out waiting for tool result".into())),
+                Ok(Err(_closed)) => (
+                    call_id,
+                    Err(ToolCallUiError {
+                        error: "tool waiter dropped".into(),
+                        ui_payload: None,
+                    }),
+                ),
+                Err(_) => (
+                    call_id,
+                    Err(ToolCallUiError {
+                        error: "Timed out waiting for tool result".into(),
+                        ui_payload: None,
+                    }),
+                ),
             }
         });
     }
@@ -1034,10 +1064,11 @@ pub async fn execute_tools_via_event_bus(
                     request_id,
                     call_id,
                     content,
+                    ui_payload,
                     ..
                 })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
-                        let _ = tx.send(Ok(content));
+                        let _ = tx.send(Ok(ToolCallUiResult { content, ui_payload }));
                     }
                     if waiters.is_empty() {
                         break;
@@ -1047,10 +1078,11 @@ pub async fn execute_tools_via_event_bus(
                     request_id,
                     call_id,
                     error,
+                    ui_payload,
                     ..
                 })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
-                        let _ = tx.send(Err(error));
+                        let _ = tx.send(Err(ToolCallUiError { error, ui_payload }));
                     }
                     if waiters.is_empty() {
                         break;
@@ -1064,7 +1096,10 @@ pub async fn execute_tools_via_event_bus(
                 Err(broadcast::error::RecvError::Closed) => {
                     // fail all remaining
                     for (_, tx) in waiters.drain() {
-                        let _ = tx.send(Err("Event channel closed".into()));
+                        let _ = tx.send(Err(ToolCallUiError {
+                            error: "Event channel closed".into(),
+                            ui_payload: None,
+                        }));
                     }
                     break;
                 }

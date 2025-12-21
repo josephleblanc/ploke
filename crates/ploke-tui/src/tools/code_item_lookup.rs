@@ -273,13 +273,20 @@ for a more fuzzy search."#
             snippet,
         };
 
+        let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());
+        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+            .with_field("file_path", concise_context.file_path.as_ref())
+            .with_field("canon_path", concise_context.canon_path.as_ref());
         let content = serde_json::to_string(&concise_context).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize ConciseContext: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
             )))
         })?;
 
-        Ok(super::ToolResult { content })
+        Ok(super::ToolResult {
+            content,
+            ui_payload: Some(ui_payload),
+        })
     }
 }
 

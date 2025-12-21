@@ -46,9 +46,11 @@ pub mod error;
 pub mod get_code_edges;
 pub mod ns_patch;
 pub mod ns_read;
+pub mod ui;
 pub mod validators;
 
 pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
+pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
 // NOTE:ploke-llm
 // Moved ToolName and its `as_str` implementation into `ploke-core` for now so `ploke-llm` and
@@ -136,6 +138,7 @@ pub use ploke_llm::response::ToolCall;
 #[derive(Debug, Serialize)]
 pub struct ToolResult {
     pub content: String,
+    pub ui_payload: Option<ToolUiPayload>,
 }
 
 // potential alternative for static dispatch, might be helpful for macro
@@ -162,183 +165,186 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             let params = request_code_context::RequestCodeContextGat::deserialize_params(&args)
                 .map_err(|err| {
                     let terr = request_code_context::RequestCodeContextGat::adapt_error(err);
-                    request_code_context::RequestCodeContextGat::emit_err(
-                        &ctx,
-                        terr.to_wire_string(),
-                    );
+                    request_code_context::RequestCodeContextGat::emit_err(&ctx, terr.clone());
                     color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } =
+            let ToolResult { content, ui_payload } =
                 request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
                     .await
                     .map_err(|e| {
                         let terr = request_code_context::RequestCodeContextGat::adapt_error(
                             ToolInvocationError::Exec(e),
                         );
-                        RequestCodeContextGat::emit_err(&ctx, terr.to_wire_string());
+                        RequestCodeContextGat::emit_err(&ctx, terr.clone());
                         color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                     })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            request_code_context::RequestCodeContextGat::emit_completed(&ctx, content);
+            request_code_context::RequestCodeContextGat::emit_completed(
+                &ctx,
+                content,
+                ui_payload,
+            );
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
             let params = code_edit::GatCodeEdit::deserialize_params(&args).map_err(|err| {
                 let terr = code_edit::GatCodeEdit::adapt_error(err);
-                code_edit::GatCodeEdit::emit_err(&ctx, terr.to_wire_string());
+                code_edit::GatCodeEdit::emit_err(&ctx, terr.clone());
                 color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } = code_edit::GatCodeEdit::execute(params, ctx.clone())
+            let ToolResult { content, ui_payload } =
+                code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
-                    GatCodeEdit::emit_err(&ctx, terr.to_wire_string());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                })?;
+                let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
+                GatCodeEdit::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            code_edit::GatCodeEdit::emit_completed(&ctx, content);
+            code_edit::GatCodeEdit::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::CreateFile => {
             let params = create_file::CreateFile::deserialize_params(&args).map_err(|err| {
                 let terr = create_file::CreateFile::adapt_error(err);
-                create_file::CreateFile::emit_err(&ctx, terr.to_wire_string());
+                create_file::CreateFile::emit_err(&ctx, terr.clone());
                 color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } = create_file::CreateFile::execute(params, ctx.clone())
+            let ToolResult { content, ui_payload } =
+                create_file::CreateFile::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
-                    create_file::CreateFile::emit_err(&ctx, terr.to_wire_string());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                })?;
+                let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
+                create_file::CreateFile::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            create_file::CreateFile::emit_completed(&ctx, content);
+            create_file::CreateFile::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::NsPatch => {
             let params = ns_patch::NsPatch::deserialize_params(&args).map_err(|err| {
                 let terr = ns_patch::NsPatch::adapt_error(err);
-                ns_patch::NsPatch::emit_err(&ctx, terr.to_wire_string());
+                ns_patch::NsPatch::emit_err(&ctx, terr.clone());
                 color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } = ns_patch::NsPatch::execute(params, ctx.clone())
+            let ToolResult { content, ui_payload } = ns_patch::NsPatch::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
-                    ns_patch::NsPatch::emit_err(&ctx, terr.to_wire_string());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                })?;
+                let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
+                ns_patch::NsPatch::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            ns_patch::NsPatch::emit_completed(&ctx, content);
+            ns_patch::NsPatch::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::NsRead => {
             let params = ns_read::NsRead::deserialize_params(&args).map_err(|err| {
                 let terr = ns_read::NsRead::adapt_error(err);
-                ns_read::NsRead::emit_err(&ctx, terr.to_wire_string());
+                ns_read::NsRead::emit_err(&ctx, terr.clone());
                 color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
             })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } = ns_read::NsRead::execute(params, ctx.clone())
+            let ToolResult { content, ui_payload } = ns_read::NsRead::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                    let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
-                    ns_read::NsRead::emit_err(&ctx, terr.to_wire_string());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                })?;
+                let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
+                ns_read::NsRead::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            ns_read::NsRead::emit_completed(&ctx, content);
+            ns_read::NsRead::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::CodeItemLookup => {
             let params =
                 code_item_lookup::CodeItemLookup::deserialize_params(&args).map_err(|err| {
-                    let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
-                    code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.to_wire_string());
-                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                })?;
+                let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
+                code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } =
+            let ToolResult { content, ui_payload } =
                 code_item_lookup::CodeItemLookup::execute(params, ctx.clone())
                     .await
                     .map_err(|e| {
-                        let terr = code_item_lookup::CodeItemLookup::adapt_error(
-                            ToolInvocationError::Exec(e),
-                        );
-                        code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.to_wire_string());
-                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                    })?;
+                    let terr = code_item_lookup::CodeItemLookup::adapt_error(
+                        ToolInvocationError::Exec(e),
+                    );
+                    code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            code_item_lookup::CodeItemLookup::emit_completed(&ctx, content);
+            code_item_lookup::CodeItemLookup::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::CodeItemEdges => {
             let params =
                 get_code_edges::CodeItemEdges::deserialize_params(&args).map_err(|err| {
                     let terr = get_code_edges::CodeItemEdges::adapt_error(err);
-                    get_code_edges::CodeItemEdges::emit_err(&ctx, terr.to_wire_string());
+                    get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
                     color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                 })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content } =
+            let ToolResult { content, ui_payload } =
                 get_code_edges::CodeItemEdges::execute(params, ctx.clone())
                     .await
                     .map_err(|e| {
                         let terr = get_code_edges::CodeItemEdges::adapt_error(
                             ToolInvocationError::Exec(e),
                         );
-                        get_code_edges::CodeItemEdges::emit_err(&ctx, terr.to_wire_string());
+                        get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
                         color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                     })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            get_code_edges::CodeItemEdges::emit_completed(&ctx, content);
+            get_code_edges::CodeItemEdges::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
     }
@@ -381,18 +387,23 @@ pub trait Tool {
         .into()
     }
 
-    fn emit_completed(ctx: &Ctx, output_json: String) {
+    fn emit_completed(ctx: &Ctx, output_json: String, ui_payload: Option<ToolUiPayload>) {
         let _ = ctx.event_bus.realtime_tx.send(crate::AppEvent::System(
             SystemEvent::ToolCallCompleted {
                 request_id: ctx.request_id,
                 parent_id: ctx.parent_id,
                 call_id: ctx.call_id.clone(),
                 content: output_json,
+                ui_payload,
             },
         ));
     }
 
-    fn emit_err(ctx: &Ctx, error: String) {
+    fn emit_err(ctx: &Ctx, error: ToolError) {
+        let ui_payload = Some(ToolUiPayload::from_error(
+            ctx.call_id.clone(),
+            &error,
+        ));
         let _ =
             ctx.event_bus
                 .realtime_tx
@@ -400,7 +411,8 @@ pub trait Tool {
                     request_id: ctx.request_id,
                     parent_id: ctx.parent_id,
                     call_id: ctx.call_id.clone(),
-                    error,
+                    error: error.to_wire_string(),
+                    ui_payload,
                 }));
     }
 

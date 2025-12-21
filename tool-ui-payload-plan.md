@@ -30,16 +30,18 @@ Implement structured tool UI payloads end-to-end so tool calls can render with t
 - Ensure ToolError mapping is available for UI payload construction (summary, fields, severity).
 
 ## Action items
-[ ] Decide storage model for UI payload (message enum vs optional field) and verbosity source.
-[ ] Add ToolUiPayload + ToolVerbosity types and update tool trait to emit UI payloads.
-[ ] Update tool execution to produce UI payloads and pass them through event/command to UI.
-[ ] Add renderer for tool payloads (minimal/normal/verbose) in message_item.rs.
-[ ] Write TDD tests that assert:
+[x] Decide storage model for UI payload (message enum vs optional field) and verbosity source.
+[x] Add ToolUiPayload + ToolVerbosity types and update tool trait to emit UI payloads.
+[x] Update tool execution to produce UI payloads and pass them through event/command to UI.
+[x] Add renderer for tool payloads (minimal/normal/verbose) in message_item.rs.
+[x] Write TDD tests that assert:
      - tool UI payload is created from a tool call
      - renderer respects verbosity level
      - tool name/fields appear in UI output
      - ToolError alignment (kind/summary fields appear in UI output)
-[ ] Implement functionality to satisfy tests; iterate until tests pass.
+[x] Implement functionality to satisfy tests; iterate until tests pass.
+[ ] Add verbosity control (config/command toggle) if desired.
+[ ] Run the full `ploke-tui` test suite if needed.
 
 ## Testing and validation
 - Add unit tests in crates/ploke-tui/tests/... for:

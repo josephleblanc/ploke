@@ -210,6 +210,26 @@ impl super::Tool for NsRead {
             content,
             file_hash,
         };
+        let summary = if result.exists {
+            format!("Read {}", result.file_path)
+        } else {
+            format!("Missing file {}", result.file_path)
+        };
+        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+            .with_field("exists", result.exists.to_string())
+            .with_field(
+                "truncated",
+                (io_truncated || slice_truncated).to_string(),
+            )
+            .with_field(
+                "lines",
+                match (result.start_line, result.end_line) {
+                    (Some(start), Some(end)) => format!("{start}-{end}"),
+                    (Some(start), None) => format!("{start}-"),
+                    (None, Some(end)) => format!("1-{end}"),
+                    (None, None) => "full".to_string(),
+                },
+            );
 
         let content = serde_json::to_string(&result).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
@@ -217,7 +237,10 @@ impl super::Tool for NsRead {
             )))
         })?;
 
-        Ok(ToolResult { content })
+        Ok(ToolResult {
+            content,
+            ui_payload: Some(ui_payload),
+        })
     }
 }
 

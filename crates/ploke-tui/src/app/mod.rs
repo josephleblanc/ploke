@@ -24,6 +24,7 @@ use crate::app::input::keymap::{Action, to_action};
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
+use crate::tools::ToolVerbosity;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
 use crate::user_config::OPENROUTER_URL;
@@ -130,6 +131,7 @@ pub struct App {
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
+    tool_verbosity: ToolVerbosity,
 }
 
 impl App {
@@ -167,6 +169,7 @@ impl App {
             input_history: Vec::new(),
             input_history_pos: None,
             context_browser: None,
+            tool_verbosity: ToolVerbosity::Normal,
         }
     }
 
@@ -477,6 +480,7 @@ impl App {
             conversation_width,
             viewport_height,
             selected_index_opt,
+            self.tool_verbosity,
         );
         self.conversation.set_last_chat_area(chat_area);
         self.conversation.render(
@@ -485,6 +489,7 @@ impl App {
             conversation_width,
             chat_area,
             selected_index_opt,
+            self.tool_verbosity,
         );
 
         // Right-side context preview (placeholder until wired to Rag events)

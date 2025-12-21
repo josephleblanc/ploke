@@ -23,7 +23,7 @@ use serde_json::Value;
 
 use crate::{
     ArcStr, ModelId, UiError,
-    tools::{Ctx, ToolCall, ToolName},
+    tools::{Ctx, ToolCall, ToolName, ToolUiPayload},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,12 +52,16 @@ pub enum SystemEvent {
         parent_id: Uuid,
         call_id: ArcStr,
         content: String,
+        #[serde(default)]
+        ui_payload: Option<ToolUiPayload>,
     },
     ToolCallFailed {
         request_id: Uuid,
         parent_id: Uuid,
         call_id: ArcStr,
         error: String,
+        #[serde(default)]
+        ui_payload: Option<ToolUiPayload>,
     },
     ReadQuery {
         file_name: String,

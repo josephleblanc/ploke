@@ -98,6 +98,7 @@ pub async fn state_manager(
                 kind,
                 new_msg_id,
                 tool_call_id,
+                tool_payload,
             } => {
                 handlers::chat::add_tool_msg_immediate(
                     &state,
@@ -105,6 +106,7 @@ pub async fn state_manager(
                     new_msg_id,
                     msg,
                     tool_call_id,
+                    tool_payload,
                 )
                 .await;
             }

@@ -59,6 +59,7 @@ pub enum StateCommand {
         kind: MessageKind,
         new_msg_id: Uuid,
         tool_call_id: ArcStr,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     },
     AddUserMessage {
         content: String,

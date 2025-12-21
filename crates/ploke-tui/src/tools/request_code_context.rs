@@ -151,9 +151,15 @@ impl super::Tool for RequestCodeContextGat {
         };
         tracing::debug!(?parts, ?stats);
         let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
+        let summary = format!("Context assembled: {} snippets", result.context.len());
+        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+            .with_field("search_term", result.search_term.as_str())
+            .with_field("top_k", result.top_k.to_string())
+            .with_field("returned", result.context.len().to_string());
         let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
             content: serialized,
+            ui_payload: Some(ui_payload),
         })
     }
 }

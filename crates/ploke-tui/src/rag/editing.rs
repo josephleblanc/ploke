@@ -1,6 +1,7 @@
 use crate::{
     app_state::{core::EditProposalStatus, handlers::chat},
     chat_history::MessageKind,
+    tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload},
 };
 
 use super::*;
@@ -86,6 +87,7 @@ async fn apply_ns_edit(
                 })
                 .filter(|r| r.is_ok())
                 .count();
+            let file_count = file_paths.len();
             let results_json: Vec<serde_json::Value> = results
                 .into_iter()
                 .zip(file_paths.into_iter())
@@ -112,10 +114,26 @@ async fn apply_ns_edit(
             proposal.status = EditProposalStatus::Applied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
+            let tool_name = if proposal.is_semantic {
+                ToolName::ApplyCodeEdit
+            } else {
+                ToolName::NsPatch
+            };
             let mut reg = state.proposals.write().await;
-            let is_semantic = proposal.is_semantic;
             reg.insert(request_id, proposal);
             drop(reg);
+            let ui_payload = ToolUiPayload::new(
+                tool_name,
+                call_id_val.clone(),
+                format!(
+                    "Applied {} edits across {} files",
+                    applied,
+                    file_count
+                ),
+            )
+            .with_field("ok", (applied > 0).to_string())
+            .with_field("applied", applied.to_string())
+            .with_field("files", file_count.to_string());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -123,6 +141,7 @@ async fn apply_ns_edit(
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     content: content.clone(),
+                    ui_payload: Some(ui_payload),
                 }));
 
             let msg = format!("Applied edits for request_id {}", request_id);
@@ -140,17 +159,24 @@ async fn apply_ns_edit(
             proposal.status = EditProposalStatus::Failed(e.to_string());
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
+            let tool_name = if proposal.is_semantic {
+                ToolName::ApplyCodeEdit
+            } else {
+                ToolName::NsPatch
+            };
             let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
+            let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id,
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
-                    error: err_str.clone(),
+                    error: err.to_wire_string(),
+                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
                 }));
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
@@ -179,6 +205,7 @@ async fn apply_semantic_edit(
     {
         Ok(results) => {
             let applied = results.iter().filter(|r| r.is_ok()).count();
+            let file_count = file_paths.len();
             let results_json: Vec<serde_json::Value> = results
                 .into_iter()
                 .zip(file_paths.into_iter())
@@ -205,10 +232,26 @@ async fn apply_semantic_edit(
             proposal.status = EditProposalStatus::Applied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
+            let tool_name = if proposal.is_semantic {
+                ToolName::ApplyCodeEdit
+            } else {
+                ToolName::NsPatch
+            };
             let mut reg = state.proposals.write().await;
-            let is_semantic = proposal.is_semantic;
             reg.insert(request_id, proposal);
             drop(reg);
+            let ui_payload = ToolUiPayload::new(
+                tool_name,
+                call_id_val.clone(),
+                format!(
+                    "Applied {} edits across {} files",
+                    applied,
+                    file_count
+                ),
+            )
+            .with_field("ok", (applied > 0).to_string())
+            .with_field("applied", applied.to_string())
+            .with_field("files", file_count.to_string());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -216,6 +259,7 @@ async fn apply_semantic_edit(
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     content: content.clone(),
+                    ui_payload: Some(ui_payload),
                 }));
 
             let msg = format!("Applied edits for request_id {}", request_id);
@@ -236,17 +280,24 @@ async fn apply_semantic_edit(
             proposal.status = EditProposalStatus::Failed(e.to_string());
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
+            let tool_name = if proposal.is_semantic {
+                ToolName::ApplyCodeEdit
+            } else {
+                ToolName::NsPatch
+            };
             let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
+            let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id,
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
-                    error: err_str.clone(),
+                    error: err.to_wire_string(),
+                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
                 }));
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
@@ -329,19 +380,26 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
             proposal.status = EditProposalStatus::Denied;
             let parent_id_val = proposal.parent_id;
             let call_id_val = proposal.call_id.clone();
+            let tool_name = if proposal.is_semantic {
+                ToolName::ApplyCodeEdit
+            } else {
+                ToolName::NsPatch
+            };
             let mut reg = state.proposals.write().await;
             reg.insert(request_id, proposal);
             drop(reg);
 
             // Bridge: mark tool call failed with denial
             let err_msg = "Edit proposal denied by user".to_string();
+            let err = ToolError::new(tool_name, ToolErrorCode::Internal, err_msg.clone());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id,
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
-                    error: err_msg.clone(),
+                    error: err.to_wire_string(),
+                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
                 }));
 
             let msg = format!("Denied edits for request_id {}", request_id);
@@ -407,6 +465,7 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
 
     // Apply creations via IoManagerHandle
     let file_paths = proposal.files.clone();
+    let file_count = file_paths.len();
     let mut applied = 0usize;
     let mut results_json: Vec<serde_json::Value> = Vec::with_capacity(proposal.creates.len());
     for req in proposal.creates.clone() {
@@ -452,8 +511,18 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
         .send(AppEvent::System(SystemEvent::ToolCallCompleted {
             request_id,
             parent_id: parent_id_val,
-            call_id: call_id_val,
+            call_id: call_id_val.clone(),
             content: content.clone(),
+            ui_payload: Some(
+                ToolUiPayload::new(
+                    ToolName::CreateFile,
+                    call_id_val.clone(),
+                    format!("Applied {} creations across {} files", applied, file_count),
+                )
+                .with_field("ok", (applied > 0).to_string())
+                .with_field("applied", applied.to_string())
+                .with_field("files", file_count.to_string()),
+            ),
         }));
 
     chat::add_msg_immediate(
@@ -522,13 +591,15 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
 
             // Bridge: mark tool call failed with denial
             let err_msg = "Create-file proposal denied by user".to_string();
+            let err = ToolError::new(ToolName::CreateFile, ToolErrorCode::Internal, err_msg.clone());
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
                     request_id,
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
-                    error: err_msg.clone(),
+                    error: err.to_wire_string(),
+                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
                 }));
 
             let msg = format!("Denied file creations for request_id {}", request_id);

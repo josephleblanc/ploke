@@ -207,6 +207,8 @@ pub struct Message {
     /// If this is a Tool message that came from a tool call, the originating call id.
     /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
     pub tool_call_id: Option<ArcStr>,
+    /// Optional structured payload for rendering tool messages in the UI.
+    pub tool_payload: Option<crate::tools::ToolUiPayload>,
     /// The status of the message in the current LLM context window.
     pub context_status: ContextStatus,
 }
@@ -369,6 +371,7 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
         content: PROMPT_HEADER.to_string(),
         kind: MessageKind::System,
         tool_call_id: None,
+        tool_payload: None,
         context_status,
     }
 });
@@ -491,7 +494,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::User;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_llm(
@@ -502,7 +505,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_sysinfo(
@@ -513,7 +516,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_system(
@@ -524,7 +527,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_tool(
@@ -534,9 +537,18 @@ impl ChatHistory {
         kind: MessageKind,
         content: String,
         tool_call_id: Option<ArcStr>,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id)
+        self.add_child(
+            parent_id,
+            child_id,
+            &content,
+            status,
+            kind,
+            tool_call_id,
+            tool_payload,
+        )
     }
 
     /// Adds a new child message to the conversation tree.
@@ -556,6 +568,7 @@ impl ChatHistory {
         status: MessageStatus,
         kind: MessageKind,
         tool_call_id: Option<ArcStr>,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -567,6 +580,7 @@ impl ChatHistory {
             metadata: None,
             kind,
             tool_call_id,
+            tool_payload,
             context_status: ContextStatus::default(),
         };
 
@@ -644,7 +658,7 @@ impl ChatHistory {
 
         // Reuse add_child but with the sibling's parent, and generate a new message id
         let new_id = Uuid::new_v4();
-        self.add_child(parent_id, new_id, content, status, kind, None)
+        self.add_child(parent_id, new_id, content, status, kind, None, None)
     }
 
     /// Deletes a message and its descendant subtree from the conversation history.
@@ -1037,7 +1051,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::Tool;
-        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id))
+        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id), None)
     }
 
     /// Decrement turns to live of messages in the currently selected message history.
@@ -1126,6 +1140,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1162,6 +1177,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1173,6 +1189,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Assistant,
             None,
+            None,
         )
         .unwrap();
 
@@ -1183,6 +1200,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1215,6 +1233,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1226,6 +1245,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Assistant,
             None,
+            None,
         )
         .unwrap();
 
@@ -1236,6 +1256,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1289,6 +1310,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
         ch.current = u1;
@@ -1315,6 +1337,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1325,6 +1348,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1346,6 +1370,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1356,6 +1381,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1382,6 +1408,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1392,6 +1419,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1415,6 +1443,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1425,6 +1454,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1472,6 +1502,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1483,6 +1514,7 @@ mod tests {
             "Hi! How can I help?",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1496,6 +1528,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::SysInfo,
             None,
+            None,
         )
         .unwrap();
 
@@ -1508,6 +1541,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Tool,
             Some(ArcStr::from("new_tool_call:0")),
+            None,
         )
         .unwrap();
 
@@ -1554,6 +1588,7 @@ mod tests {
             MessageKind::Tool,
             "tool output".to_string(),
             Some(tool_call_id.clone()),
+            None,
         )
         .unwrap();
 

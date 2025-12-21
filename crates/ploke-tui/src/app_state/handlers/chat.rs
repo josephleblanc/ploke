@@ -157,7 +157,7 @@ pub async fn add_message(
     };
 
     if let Ok(new_message_id) =
-        chat_guard.add_child(parent_id, child_id, &content, status, kind, None)
+        chat_guard.add_child(parent_id, child_id, &content, status, kind, None, None)
     {
         chat_guard.current = new_message_id;
         event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
@@ -192,6 +192,7 @@ pub async fn create_assistant_message(
         status,
         kind,
         None,
+        None,
     ) {
         chat_guard.current = new_id;
         let _ = responder.send(new_id);
@@ -209,6 +210,7 @@ pub async fn add_tool_msg_immediate(
     new_msg_id: Uuid,
     content: String,
     tool_call_id: ArcStr,
+    tool_payload: Option<crate::tools::ToolUiPayload>,
 ) {
     trace!(target: CHAT_TARGET, "Starting add_tool_msg_immediate");
     let mut chat_guard = state.chat.0.write().await;
@@ -225,6 +227,7 @@ pub async fn add_tool_msg_immediate(
         MessageKind::Tool,
         content.clone(),
         Some(tool_call_id),
+        tool_payload,
     );
     match inserted {
         Ok(_) => {
