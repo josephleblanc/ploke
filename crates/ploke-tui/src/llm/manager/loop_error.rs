@@ -423,69 +423,7 @@ pub fn classify_llm_error(
         ),
         LlmError::FinishError { finish_reason, .. } => {
             context.finish_reason = Some(finish_reason.clone());
-            match finish_reason {
-                FinishReason::ContentFilter => (
-                    LoopErrorKind::SafetyPolicy,
-                    ArcStr::from("CONTENT_FILTERED"),
-                    ErrorSeverity::Warning,
-                    RetryAdvice::No {
-                        reason: ArcStr::from("Content filtered"),
-                    },
-                    Some(ArcStr::from("Rephrase the request and retry.")),
-                    None,
-                ),
-                FinishReason::Length => (
-                    LoopErrorKind::ModelBehavior,
-                    ArcStr::from("OUTPUT_TRUNCATED"),
-                    ErrorSeverity::Warning,
-                    RetryAdvice::No {
-                        reason: ArcStr::from("Output length exhausted"),
-                    },
-                    Some(ArcStr::from(
-                        "Ask for a shorter response or request continuation.",
-                    )),
-                    Some(LlmAction {
-                        next_steps: vec![LlmNextStep {
-                            action: ArcStr::from("continue_output"),
-                            details: Some(ArcStr::from(
-                                "Continue from the last sentence without repeating.",
-                            )),
-                        }],
-                        constraints: Vec::new(),
-                        retry_hint: None,
-                    }),
-                ),
-                FinishReason::Timeout => (
-                    LoopErrorKind::Transport,
-                    ArcStr::from("PROVIDER_TIMEOUT"),
-                    ErrorSeverity::Warning,
-                    RetryAdvice::Maybe {
-                        reason: ArcStr::from("Provider timeout"),
-                    },
-                    Some(ArcStr::from("Retry or switch provider.")),
-                    None,
-                ),
-                FinishReason::Error(_) => (
-                    LoopErrorKind::ProviderProtocol,
-                    ArcStr::from("PROVIDER_ERROR"),
-                    ErrorSeverity::Error,
-                    RetryAdvice::Maybe {
-                        reason: ArcStr::from("Provider returned an error"),
-                    },
-                    None,
-                    None,
-                ),
-                FinishReason::ToolCalls | FinishReason::Stop => (
-                    LoopErrorKind::StateMachine,
-                    ArcStr::from("UNEXPECTED_FINISH_REASON"),
-                    ErrorSeverity::Error,
-                    RetryAdvice::No {
-                        reason: ArcStr::from("Unexpected finish reason"),
-                    },
-                    None,
-                    None,
-                ),
-            }
+            finish_reason_metadata(finish_reason)
         }
     };
 
@@ -507,6 +445,32 @@ pub fn classify_llm_error(
         llm_action,
         context,
         diagnostics,
+    }
+}
+
+pub fn classify_finish_reason(
+    finish_reason: &FinishReason,
+    mut context: ErrorContext,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    context.finish_reason = Some(finish_reason.clone());
+    let (kind, code, severity, retry, user_action, llm_action) =
+        finish_reason_metadata(finish_reason);
+    let summary = finish_reason_summary(finish_reason);
+
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(&kind, &code, &context),
+        kind,
+        code,
+        severity,
+        retry,
+        commit_phase,
+        summary,
+        user_action,
+        llm_action,
+        context,
+        diagnostics: None,
     }
 }
 
@@ -591,6 +555,90 @@ fn build_llm_payload(error: &LoopError) -> serde_json::Value {
             "diagnostic": error.diagnostics.as_ref().map(|d| d.diagnostic.clone())
         }
     })
+}
+
+fn finish_reason_metadata(
+    finish_reason: &FinishReason,
+) -> (
+    LoopErrorKind,
+    ArcStr,
+    ErrorSeverity,
+    RetryAdvice,
+    Option<ArcStr>,
+    Option<LlmAction>,
+) {
+    match finish_reason {
+        FinishReason::ContentFilter => (
+            LoopErrorKind::SafetyPolicy,
+            ArcStr::from("CONTENT_FILTERED"),
+            ErrorSeverity::Warning,
+            RetryAdvice::No {
+                reason: ArcStr::from("Content filtered"),
+            },
+            Some(ArcStr::from("Rephrase the request and retry.")),
+            None,
+        ),
+        FinishReason::Length => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("OUTPUT_TRUNCATED"),
+            ErrorSeverity::Warning,
+            RetryAdvice::No {
+                reason: ArcStr::from("Output length exhausted"),
+            },
+            Some(ArcStr::from(
+                "Ask for a shorter response or request continuation.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("continue_output"),
+                    details: None,
+                }],
+                constraints: Vec::new(),
+                retry_hint: None,
+            }),
+        ),
+        FinishReason::Timeout => (
+            LoopErrorKind::Transport,
+            ArcStr::from("PROVIDER_TIMEOUT"),
+            ErrorSeverity::Warning,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider timeout"),
+            },
+            Some(ArcStr::from("Retry or switch provider.")),
+            None,
+        ),
+        FinishReason::Error(_) => (
+            LoopErrorKind::ProviderProtocol,
+            ArcStr::from("PROVIDER_ERROR"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider returned an error"),
+            },
+            None,
+            None,
+        ),
+        FinishReason::ToolCalls | FinishReason::Stop => (
+            LoopErrorKind::StateMachine,
+            ArcStr::from("UNEXPECTED_FINISH_REASON"),
+            ErrorSeverity::Error,
+            RetryAdvice::No {
+                reason: ArcStr::from("Unexpected finish reason"),
+            },
+            None,
+            None,
+        ),
+    }
+}
+
+fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
+    match finish_reason {
+        FinishReason::Error(msg) => ArcStr::from(format!("Finish reason error: {}", msg)),
+        FinishReason::Length => ArcStr::from("Finish reason length: response truncated."),
+        FinishReason::Timeout => ArcStr::from("Finish reason timeout from provider."),
+        FinishReason::ContentFilter => ArcStr::from("Finish reason content filter."),
+        FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
+        FinishReason::Stop => ArcStr::from("Finish reason stop."),
+    }
 }
 
 fn kind_str(kind: &LoopErrorKind) -> &'static str {

@@ -30,8 +30,9 @@ use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
 use crate::llm::manager::loop_error::{
-    ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, SessionOutcome,
-    Verbosity, classify_llm_error, render_error_view,
+    ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
+    RetryStrategy, SessionOutcome, Verbosity, classify_finish_reason, classify_llm_error,
+    render_error_view,
 };
 use ploke_llm::LlmError;
 
@@ -253,9 +254,13 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
 ///
 /// Continue variants tell the caller to retry the chat step, optionally with
 /// a system message appended before the next request.
+struct FinishContinue {
+    finish_reason: Option<FinishReason>,
+    system_prompt: Option<String>,
+}
+
 enum FinishDecision {
-    Continue,
-    ContinueWithSystemMessage(String),
+    Continue(FinishContinue),
     Return(Result<OpenAiResponse, LlmError>),
 }
 
@@ -312,6 +317,7 @@ impl FinishPolicy {
         );
         let _enter = span.enter();
         let mut continue_chain = false;
+        let mut continue_reason: Option<FinishReason> = None;
         let mut continue_message: Option<String> = None;
         let mut failure: Option<FinishFailure> = None;
         let mut saw_finish_reason = false;
@@ -343,6 +349,9 @@ impl FinishPolicy {
                     if should_retry_length(self.length, &mut state.retried_lengths) {
                         continue_message = Some(self.length_continue_prompt.to_string());
                         continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
                         tracing::trace!(
                             target = FINISH_REASON_TARGET,
                             continue_with_message = true,
@@ -390,6 +399,9 @@ impl FinishPolicy {
                         // if some, change timout for next loop and ocntinue
                         ctx.cfg.timeout = next_timout;
                         continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
                         tracing::trace!(
                             target = FINISH_REASON_TARGET,
                             continue_with_message = false,
@@ -414,6 +426,9 @@ impl FinishPolicy {
                             "FinishReason::Error, retrying"
                         );
                         continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
                         tracing::trace!(
                             target = FINISH_REASON_TARGET,
                             continue_with_message = false,
@@ -438,10 +453,10 @@ impl FinishPolicy {
         }
 
         if continue_chain {
-            return match continue_message {
-                Some(msg) => FinishDecision::ContinueWithSystemMessage(msg),
-                None => FinishDecision::Continue,
-            };
+            return FinishDecision::Continue(FinishContinue {
+                finish_reason: continue_reason,
+                system_prompt: continue_message,
+            });
         }
 
         if let Some(failure) = failure {
@@ -645,6 +660,7 @@ pub async fn run_chat_session<R: Router>(
                             let tool_err = LlmError::ToolCall(err_string);
                             let loop_error =
                                 classify_llm_error(&tool_err, context, commit_phase.clone());
+                            push_llm_payload(&mut req, &loop_error);
                             report.record_error(loop_error);
                             continue;
                         }
@@ -740,9 +756,31 @@ pub async fn run_chat_session<R: Router>(
         };
 
         match finish_policy.handle_finish_reasons(full_response, &mut ctx, &mut loop_state) {
-            FinishDecision::Continue => continue,
-            FinishDecision::ContinueWithSystemMessage(msg) => {
-                req.core.messages.push(RequestMessage::new_system(msg));
+            FinishDecision::Continue(continue_info) => {
+                if let Some(reason) = continue_info.finish_reason {
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "finish_reason",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let mut loop_error =
+                        classify_finish_reason(&reason, context, commit_phase.clone());
+                    if let Some(prompt) = continue_info.system_prompt {
+                        apply_prompt_hint(&mut loop_error, prompt);
+                    }
+                    if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
+                        loop_error.retry = RetryAdvice::Yes {
+                            strategy: RetryStrategy::Fixed,
+                            reason: ploke_core::ArcStr::from("Retrying within session"),
+                        };
+                    }
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
+                } else if let Some(prompt) = continue_info.system_prompt {
+                    req.core.messages.push(RequestMessage::new_system(prompt));
+                }
                 continue;
             }
             FinishDecision::Return(result) => match result {
@@ -871,6 +909,48 @@ async fn emit_loop_error(
         })
         .await
         .expect("state manager must be running");
+}
+
+fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) {
+    let view = render_error_view(error, ErrorAudience::Llm, Verbosity::Normal);
+    if let Some(payload) = view.llm_payload {
+        let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| {
+            "{\"type\":\"ploke.error\",\"summary\":\"serialization_failed\"}".to_string()
+        });
+        req.core.messages.push(RequestMessage::new_system(payload_str));
+    }
+}
+
+fn apply_prompt_hint(error: &mut LoopError, prompt: String) {
+    let prompt = ploke_core::ArcStr::from(prompt);
+    match error.llm_action.as_mut() {
+        Some(action) => {
+            if let Some(step) = action
+                .next_steps
+                .iter_mut()
+                .find(|s| s.action.as_ref() == "continue_output")
+            {
+                if step.details.is_none() {
+                    step.details = Some(prompt);
+                    return;
+                }
+            }
+            action.next_steps.push(crate::llm::manager::loop_error::LlmNextStep {
+                action: ploke_core::ArcStr::from("continue_output"),
+                details: Some(prompt),
+            });
+        }
+        None => {
+            error.llm_action = Some(crate::llm::manager::loop_error::LlmAction {
+                next_steps: vec![crate::llm::manager::loop_error::LlmNextStep {
+                    action: ploke_core::ArcStr::from("continue_output"),
+                    details: Some(prompt),
+                }],
+                constraints: Vec::new(),
+                retry_hint: None,
+            });
+        }
+    }
 }
 
 fn base_error_context(
