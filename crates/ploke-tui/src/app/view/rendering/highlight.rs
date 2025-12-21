@@ -49,6 +49,12 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
         },
     }
     let mut mode = Mode::Normal;
+    #[derive(Clone, Copy)]
+    struct ListState {
+        ordered: Option<u64>,
+        next_index: u64,
+    }
+    let mut list_stack: Vec<ListState> = Vec::new();
 
     let push_newline =
         |current_line: &mut StyledLine, lines: &mut Vec<StyledLine>, diff_enabled: bool| {
@@ -129,21 +135,33 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
             (_, Event::Start(Tag::Paragraph))
             | (_, Event::Start(Tag::Heading { .. }))
             | (_, Event::Start(Tag::BlockQuote(_)))
-            | (_, Event::Start(Tag::List(_)))
             | (_, Event::Start(Tag::FootnoteDefinition(_)))
             | (_, Event::Start(Tag::Table(_))) => {
                 if !current_line.is_empty() {
                     push_newline(&mut current_line, &mut lines, diff_enabled);
                 }
             }
+            (_, Event::Start(Tag::List(start))) => {
+                if !current_line.is_empty() {
+                    push_newline(&mut current_line, &mut lines, diff_enabled);
+                }
+                let next_index = start.unwrap_or(1);
+                list_stack.push(ListState {
+                    ordered: *start,
+                    next_index,
+                });
+            }
             (_, Event::End(TagEnd::Paragraph))
             | (_, Event::End(TagEnd::Heading(..)))
             | (_, Event::End(TagEnd::BlockQuote))
-            | (_, Event::End(TagEnd::List(_)))
             | (_, Event::End(TagEnd::FootnoteDefinition))
             | (_, Event::End(TagEnd::Table))
             | (_, Event::End(TagEnd::TableHead))
             | (_, Event::End(TagEnd::TableRow)) => {
+                push_newline(&mut current_line, &mut lines, diff_enabled);
+            }
+            (_, Event::End(TagEnd::List(_))) => {
+                let _ = list_stack.pop();
                 push_newline(&mut current_line, &mut lines, diff_enabled);
             }
             (_, Event::Text(t)) => {
@@ -191,7 +209,28 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
                 let style = inline_style(base_style, italic_depth, bold_depth);
                 push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
             }
+            (_, Event::Start(Tag::Item)) => {
+                if !current_line.is_empty() {
+                    push_newline(&mut current_line, &mut lines, diff_enabled);
+                }
+                let prefix = if let Some(state) = list_stack.last() {
+                    if state.ordered.is_some() {
+                        format!("{}. ", state.next_index)
+                    } else {
+                        "- ".to_string()
+                    }
+                } else {
+                    "- ".to_string()
+                };
+                let style = inline_style(base_style, italic_depth, bold_depth);
+                push_text(&prefix, style, &mut current_line, &mut lines, diff_enabled);
+            }
             (_, Event::End(TagEnd::Item)) => {
+                if let Some(state) = list_stack.last_mut() {
+                    if state.ordered.is_some() {
+                        state.next_index = state.next_index.saturating_add(1);
+                    }
+                }
                 push_newline(&mut current_line, &mut lines, diff_enabled);
             }
             (Mode::CodeBlock { buffer, .. }, _) => {

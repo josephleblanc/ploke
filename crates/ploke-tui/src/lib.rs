@@ -161,6 +161,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // llm: registry prefs are used directly; model lists/capabilities fetched via router APIs.
     tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
+    let tool_verbosity = runtime_cfg.tool_verbosity;
 
     let processor = config.load_embedding_processor()?;
     let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
@@ -284,7 +285,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+    let app = App::new(
+        command_style,
+        state,
+        cmd_tx,
+        &event_bus,
+        default_model(),
+        tool_verbosity,
+    );
     let result = app.run(terminal).await;
     ratatui::restore();
     result

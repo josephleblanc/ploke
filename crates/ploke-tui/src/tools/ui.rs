@@ -11,6 +11,12 @@ pub enum ToolVerbosity {
     Verbose,
 }
 
+impl Default for ToolVerbosity {
+    fn default() -> Self {
+        ToolVerbosity::Normal
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolUiField {
     pub name: ArcStr,
@@ -83,11 +89,7 @@ impl ToolUiPayload {
     }
 
     pub fn render(&self, verbosity: ToolVerbosity) -> String {
-        let effective = match verbosity {
-            ToolVerbosity::Minimal => ToolVerbosity::Minimal,
-            ToolVerbosity::Normal => ToolVerbosity::Normal,
-            ToolVerbosity::Verbose => ToolVerbosity::Verbose,
-        };
+        let effective = verbosity;
 
         match effective {
             ToolVerbosity::Minimal => {
@@ -122,6 +124,16 @@ impl ToolUiPayload {
                 }
                 out.trim_end().to_string()
             }
+        }
+    }
+}
+
+impl ToolVerbosity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolVerbosity::Minimal => "minimal",
+            ToolVerbosity::Normal => "normal",
+            ToolVerbosity::Verbose => "verbose",
         }
     }
 }

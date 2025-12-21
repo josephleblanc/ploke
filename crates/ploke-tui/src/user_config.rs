@@ -18,6 +18,7 @@ pub use crate::llm::registry::user_prefs::ModelRegistryStrictness;
 use crate::llm::router_only::default_model;
 use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{Router as _, registry::user_prefs::RegistryPrefs};
+use crate::tools::ToolVerbosity;
 
 lazy_static! {
     // Parsed from llm OpenRouter BASE_URL
@@ -43,6 +44,8 @@ pub struct UserConfig {
     pub registry: RegistryPrefs,
     #[serde(default)]
     pub command_style: CommandStyle,
+    #[serde(default)]
+    pub tool_verbosity: ToolVerbosity,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
     #[serde(default)]

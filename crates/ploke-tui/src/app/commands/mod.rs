@@ -50,6 +50,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     edit auto <on|off> - Toggle auto-approval of staged edits
     edit approve <request_id> - Apply staged code edits with this request ID
     edit deny <request_id> - Deny and discard staged code edits
+    tool verbosity <minimal|normal|verbose|toggle> - Set or cycle tool output verbosity
 
     help - Show this help
     help <topic> - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
@@ -62,6 +63,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     ? - Show this help
     / - Quick hybrid search prompt
     P - Toggle context preview
+    v - Cycle tool verbosity (minimal -> normal -> verbose)
     j/↓ - Navigate down (selection)
     k/↑ - Navigate up (selection)
     J - Page down (scroll)

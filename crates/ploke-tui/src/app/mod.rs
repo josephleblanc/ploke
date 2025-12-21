@@ -142,6 +142,7 @@ impl App {
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
         active_model_id: String,
+        tool_verbosity: ToolVerbosity,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -169,8 +170,38 @@ impl App {
             input_history: Vec::new(),
             input_history_pos: None,
             context_browser: None,
-            tool_verbosity: ToolVerbosity::Normal,
+            tool_verbosity,
         }
+    }
+
+    fn apply_tool_verbosity(&mut self, verbosity: ToolVerbosity, announce: bool) {
+        self.tool_verbosity = verbosity;
+        let state = self.state.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            {
+                let mut cfg = state.config.write().await;
+                cfg.tool_verbosity = verbosity;
+            }
+            if announce {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!("Tool verbosity set to {}", verbosity.as_str()),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
+        });
+    }
+
+    fn cycle_tool_verbosity(&mut self) {
+        let next = match self.tool_verbosity {
+            ToolVerbosity::Minimal => ToolVerbosity::Normal,
+            ToolVerbosity::Normal => ToolVerbosity::Verbose,
+            ToolVerbosity::Verbose => ToolVerbosity::Minimal,
+        };
+        self.apply_tool_verbosity(next, true);
     }
 
     fn send_cmd(&self, cmd: StateCommand) {
@@ -1182,6 +1213,10 @@ impl App {
             Action::TogglePreview => {
                 self.pending_char = None;
                 self.show_context_preview = !self.show_context_preview;
+            }
+            Action::ToggleToolVerbosity => {
+                self.pending_char = None;
+                self.cycle_tool_verbosity();
             }
             Action::InputScrollPrev => {
                 self.input_view.scroll_prev();

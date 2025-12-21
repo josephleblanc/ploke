@@ -52,6 +52,7 @@ pub enum Action {
     TogglePreview,     // 'P'
     OpenApprovals,     // 'a'
     OpenContextSearch, // `s`
+    ToggleToolVerbosity, // 'v'
 
     // Input widget scrolling (testing/dev keys)
     InputScrollPrev, // Ctrl+Up
@@ -116,6 +117,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Char('m') => Some(Action::OpenQuickModel),
                 KeyCode::Char('?') => Some(Action::OpenHelp),
                 KeyCode::Char('P') => Some(Action::TogglePreview),
+                KeyCode::Char('v') => Some(Action::ToggleToolVerbosity),
                 KeyCode::Char('e') => Some(Action::OpenApprovals),
                 KeyCode::Char('s') => Some(Action::OpenContextSearch),
 

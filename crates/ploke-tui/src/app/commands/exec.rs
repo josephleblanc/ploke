@@ -246,6 +246,22 @@ pub fn execute(app: &mut App, command: Command) {
         Command::EditSetAutoConfirm(enabled) => {
             app.send_cmd(StateCommand::SetEditingAutoConfirm { enabled });
         }
+        Command::ToolVerbositySet(verbosity) => {
+            app.apply_tool_verbosity(verbosity, true);
+        }
+        Command::ToolVerbosityToggle => {
+            app.cycle_tool_verbosity();
+        }
+        Command::ToolVerbosityShow => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!(
+                    "Tool verbosity is set to {}",
+                    app.tool_verbosity.as_str()
+                ),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+        }
         Command::SearchContext(search_term) => {
             tracing::debug!(
                 "Command::SearchContext received with search term: {}",

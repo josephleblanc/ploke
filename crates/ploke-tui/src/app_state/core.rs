@@ -150,6 +150,7 @@ impl Default for EditingConfig {
 }
 
 use super::*;
+use crate::tools::ToolVerbosity;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -158,6 +159,7 @@ pub struct RuntimeConfig {
     pub active_model: ModelId,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
+    pub tool_verbosity: ToolVerbosity,
     pub embedding: EmbeddingConfig,
     pub ploke_editor: Option<String>,
 }
@@ -188,6 +190,7 @@ impl From<UserConfig> for RuntimeConfig {
             active_model: ModelId::from(ModelKey::default()),
             editing,
             command_style: uc.command_style,
+            tool_verbosity: uc.tool_verbosity,
             embedding: uc.embedding,
             ploke_editor: uc.ploke_editor,
         }
@@ -205,6 +208,7 @@ impl RuntimeConfig {
         UserConfig {
             registry: self.model_registry.clone(),
             command_style: self.command_style,
+            tool_verbosity: self.tool_verbosity,
             embedding: self.embedding.clone(),
             editing,
             ploke_editor: self.ploke_editor.clone(),
