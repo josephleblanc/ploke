@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 pub use ploke_llm::RequestMessage;
 pub use ploke_llm::manager::Role;
+use ploke_llm::manager::TokenCounter;
 
 use crate::{
     AppEvent, EventBus,
@@ -227,16 +228,30 @@ pub async fn process_llm_request(
         } // Not a request, do nothing
     };
 
-    let messages = match context {
+    let (messages, context_tokens) = match context {
         ChatEvt::PromptConstructed {
             parent_id,
             formatted_prompt,
-        } => formatted_prompt,
+        } => {
+            let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
+            let tokens = formatted_prompt
+                .iter()
+                .map(|m| tokenizer.count(&m.content))
+                .sum();
+            (formatted_prompt, tokens)
+        }
         _ => {
             tracing::debug!("No prompt constructed, do nothing");
             return;
         }
     };
+
+    // Track current context token count for observability.
+    let _ = cmd_tx
+        .send(StateCommand::UpdateContextTokens {
+            tokens: context_tokens,
+        })
+        .await;
 
     // llm: runtime routing uses registry prefs + active model; no legacy ModelConfig required.
 

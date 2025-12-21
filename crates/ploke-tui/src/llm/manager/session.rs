@@ -27,7 +27,9 @@ use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::response::FinishReason;
 use ploke_llm::response::OpenAiResponse;
+use ploke_llm::response::TokenUsage;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
+use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
@@ -780,7 +782,7 @@ pub async fn run_chat_session<R: Router>(
             model_key: &model_key,
         };
 
-        match finish_policy.handle_finish_reasons(full_response, &mut ctx, &mut loop_state) {
+        match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state) {
             FinishDecision::Continue(continue_info) => {
                 if let Some(reason) = continue_info.finish_reason {
                     let context = base_error_context(
@@ -810,6 +812,36 @@ pub async fn run_chat_session<R: Router>(
             }
             FinishDecision::Return(result) => match result {
                 Ok(_response) => {
+                    let response_clone = full_response.clone();
+                    if let Some(usage) = response_clone.usage {
+                        let usage_for_cost = usage.clone();
+                        let finish_reason = full_response
+                            .choices
+                            .iter()
+                            .find_map(|c| c.finish_reason.clone())
+                            .unwrap_or(FinishReason::Stop);
+                        let metadata = LLMMetadata {
+                            model: response_clone.model,
+                            usage,
+                            finish_reason,
+                            processing_time: Duration::default(),
+                            cost: estimate_cost(&usage_for_cost),
+                            performance: PerformanceMetrics {
+                                tokens_per_second: 0.0,
+                                time_to_first_token: Duration::default(),
+                                queue_time: Duration::default(),
+                            },
+                        };
+                        let _ = state_cmd_tx
+                            .send(StateCommand::UpdateMessage {
+                                id: assistant_message_id,
+                                update: MessageUpdate {
+                                    metadata: Some(metadata),
+                                    ..Default::default()
+                                },
+                            })
+                            .await;
+                    }
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
@@ -1014,6 +1046,16 @@ fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
         }
     }
     None
+}
+
+/// Placeholder cost estimator using usage counts.
+/// TODO: derive pricing from active model/endpoint and compute USD accurately.
+fn estimate_cost(usage: &TokenUsage) -> f64 {
+    let prompt = usage.prompt_tokens as f64;
+    let completion = usage.completion_tokens as f64;
+    // Without pricing info, return 0 and keep the surface for future pricing wiring.
+    let _ = (prompt, completion);
+    0.0
 }
 
 #[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]

@@ -213,6 +213,15 @@ pub struct Message {
     pub context_status: ContextStatus,
 }
 
+/// Running aggregates for the conversation.
+#[derive(Debug, Default, Clone)]
+pub struct ConversationTotals {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cost: f64,
+}
+
 /// The status of the message in the current LLM context window.
 /// Pinned indicates that the message should be kept in the messages sent to the LLM, while
 /// Unpinned messages are left out of messages sent to the LLM.
@@ -400,6 +409,10 @@ pub struct ChatHistory {
     path_cache: Vec<Uuid>,
     /// Scroll bar support
     pub scroll_bar: Option<ScrollbarState>,
+    /// Approximate running totals for the conversation.
+    pub totals: ConversationTotals,
+    /// Latest counted tokens for the currently constructed prompt/context.
+    pub current_context_tokens: Option<usize>,
 }
 
 impl ChatHistory {
@@ -458,7 +471,32 @@ impl ChatHistory {
             // initialize cached path with root
             path_cache: vec![root_id],
             scroll_bar: None,
+            totals: ConversationTotals::default(),
+            current_context_tokens: None,
         }
+    }
+
+    /// Update running totals by adding the provided deltas.
+    pub fn record_usage_delta(&mut self, prompt: u32, completion: u32, cost: f64) {
+        self.totals.prompt_tokens = self
+            .totals
+            .prompt_tokens
+            .saturating_add(prompt as u64);
+        self.totals.completion_tokens = self
+            .totals
+            .completion_tokens
+            .saturating_add(completion as u64);
+        // If total_tokens is not explicitly provided, approximate as prompt+completion.
+        self.totals.total_tokens = self
+            .totals
+            .total_tokens
+            .saturating_add((prompt as u64).saturating_add(completion as u64));
+        self.totals.cost += cost;
+    }
+
+    /// Overwrite current context token count (prompt being sent).
+    pub fn set_current_context_tokens(&mut self, tokens: usize) {
+        self.current_context_tokens = Some(tokens);
     }
 
     /// Rebuilds the cached root -> tail path.
@@ -1601,5 +1639,26 @@ mod tests {
         assert_eq!(last.role, LlmRole::Tool);
         assert_eq!(last.tool_call_id, Some(tool_call_id));
         assert_eq!(last.content, "tool output");
+    }
+
+    #[test]
+    fn record_usage_delta_accumulates() {
+        let mut history = ChatHistory::new();
+        history.record_usage_delta(10, 5, 1.5);
+        history.record_usage_delta(2, 3, 0.5);
+
+        assert_eq!(history.totals.prompt_tokens, 12);
+        assert_eq!(history.totals.completion_tokens, 8);
+        assert_eq!(history.totals.total_tokens, 20);
+        assert!((history.totals.cost - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn set_current_context_tokens_overwrites() {
+        let mut history = ChatHistory::new();
+        history.set_current_context_tokens(123);
+        assert_eq!(history.current_context_tokens, Some(123));
+        history.set_current_context_tokens(42);
+        assert_eq!(history.current_context_tokens, Some(42));
     }
 }

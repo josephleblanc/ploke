@@ -215,6 +215,10 @@ pub enum StateCommand {
         model_id: ModelId,
         provider: ArcStr,
     },
+    /// Update the latest context token count for the current prompt.
+    UpdateContextTokens {
+        tokens: usize,
+    },
 }
 
 impl StateCommand {
@@ -272,6 +276,7 @@ impl StateCommand {
             SelectModelProvider { .. } => "SelectModelProvider",
             DecrementChatTtl => "DecrementChatTtl",
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
+            UpdateContextTokens { .. } => "UpdateContextTokens",
         }
     }
 }

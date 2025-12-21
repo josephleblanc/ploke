@@ -59,8 +59,11 @@ pub async fn update_message(
         let old_status = message.status.clone();
         let msg_kind = message.kind;
         let new_status = update.status.clone().unwrap_or(old_status.clone());
+        let old_meta = message.metadata.clone();
+        let mut new_meta = None;
         match message.try_update(update) {
             Ok(_) => {
+                new_meta = message.metadata.clone();
                 debug!(
                     target: CHAT_TARGET,
                     msg_id = %id,
@@ -109,6 +112,23 @@ pub async fn update_message(
                 );
                 event_bus.send(UpdateFailedEvent::new(id, e).into());
             }
+        }
+        let _ = update_for_result;
+        let _ = message;
+
+        if let Some(meta) = new_meta {
+            let old_usage = old_meta.as_ref().map(|m| m.usage.clone());
+            let old_cost = old_meta.as_ref().map(|m| m.cost).unwrap_or(0.0);
+            let delta_prompt = meta
+                .usage
+                .prompt_tokens
+                .saturating_sub(old_usage.as_ref().map_or(0, |u| u.prompt_tokens));
+            let delta_completion = meta
+                .usage
+                .completion_tokens
+                .saturating_sub(old_usage.as_ref().map_or(0, |u| u.completion_tokens));
+            let delta_cost = meta.cost - old_cost;
+            chat_guard.record_usage_delta(delta_prompt, delta_completion, delta_cost);
         }
     }
 }
