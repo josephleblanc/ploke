@@ -22,18 +22,17 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::llm::ChatHistoryTarget;
-use crate::tools::ToolDefinition;
-use crate::tools::ToolName;
 use crate::tracing_setup::FINISH_REASON_TARGET;
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
-use ploke_llm::request::ToolChoice;
 use ploke_llm::response::FinishReason;
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
-use crate::tools::error::ToolErrorWire;
+use crate::llm::manager::loop_error::{
+    ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, SessionOutcome,
+    Verbosity, classify_llm_error, render_error_view,
+};
 use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
@@ -484,9 +483,7 @@ impl FinishPolicy {
         model_key = ?req.model_key,
         assistant_message_id = %assistant_message_id,
         parent_id = %parent_id
-    ),
-    ret,
-    err
+    )
 )]
 /// Chat loop structure:
 /// - issue a chat step
@@ -501,20 +498,52 @@ pub async fn run_chat_session<R: Router>(
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
-) -> Result<OpenAiResponse, LlmError> {
+) -> ChatSessionReport {
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
     let mut cfg = ChatHttpConfig::default();
     let finish_policy = FinishPolicy::default();
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
+    let session_id = Uuid::new_v4();
+    let mut report =
+        ChatSessionReport::new(session_id, assistant_message_id, parent_id, assistant_message_id);
+    let mut commit_phase = CommitPhase::PreCommit;
+    let mut attempts = 0_u32;
 
     let mut initial_message_updated = false;
-    for _chain in 0..policy.tool_call_chain_limit {
+    for chain_index in 0..policy.tool_call_chain_limit {
+        attempts = attempts.saturating_add(1);
         let ChatStepData {
             outcome,
             full_response,
-        } = ploke_llm::chat_step(client, &req, &cfg).await?;
+        } = match ploke_llm::chat_step(client, &req, &cfg).await {
+            Ok(step) => step,
+            Err(err) => {
+                let context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "chat_step",
+                    &model_key,
+                    assistant_message_id,
+                );
+                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                emit_loop_error(
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    &loop_error,
+                )
+                .await;
+                report.record_error(loop_error.clone());
+                report.outcome = SessionOutcome::Aborted {
+                    error_id: loop_error.error_id,
+                };
+                report.commit_phase = commit_phase;
+                report.attempts = attempts;
+                return report;
+            }
+        };
 
         match outcome {
             ChatStepOutcome::ToolCalls {
@@ -543,10 +572,20 @@ pub async fn run_chat_session<R: Router>(
                     &state_cmd_tx,
                     &mut initial_message_updated,
                     assistant_msg.unwrap_or_else(|| "Calling tools...".to_string()),
+                    MessageStatus::Completed,
                 )
                 .await;
+                commit_phase = CommitPhase::MessageCommitted;
 
                 // 2) run tools (EventBus + waiting is TUI concern)
+                let mut call_name_by_id: HashMap<ploke_core::ArcStr, ploke_core::ArcStr> =
+                    HashMap::new();
+                for call in &calls {
+                    call_name_by_id.insert(
+                        call.call_id.clone(),
+                        ploke_core::ArcStr::from(call.function.name.as_str()),
+                    );
+                }
                 let results = execute_tools_via_event_bus(
                     event_bus.clone(),
                     parent_id,
@@ -558,6 +597,7 @@ pub async fn run_chat_session<R: Router>(
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
+                    let call_id_for_state = call_id.clone();
                     match tool_json_result {
                         Ok(tool_json) => {
                             req.core
@@ -568,10 +608,11 @@ pub async fn run_chat_session<R: Router>(
                                     new_msg_id: Uuid::new_v4(),
                                     msg: tool_json,
                                     kind: MessageKind::Tool,
-                                    tool_call_id: call_id,
+                                    tool_call_id: call_id_for_state,
                                 })
                                 .await
                                 .expect("state manager must be running");
+                            commit_phase = CommitPhase::ToolResultsCommitted;
                         }
                         Err(err_string) => {
                             let content = json!({ "ok": false, "error": err_string }).to_string();
@@ -585,10 +626,26 @@ pub async fn run_chat_session<R: Router>(
                                     new_msg_id: Uuid::new_v4(),
                                     msg: err_msg.clone(),
                                     kind: MessageKind::Tool,
-                                    tool_call_id: call_id,
+                                    tool_call_id: call_id_for_state,
                                 })
                                 .await
                                 .expect("state manager must be running");
+                            commit_phase = CommitPhase::ToolResultsCommitted;
+                            let mut context = base_error_context(
+                                attempts,
+                                chain_index,
+                                "tool_execution",
+                                &model_key,
+                                assistant_message_id,
+                            );
+                            context.tool_call_id = Some(call_id.clone());
+                            if let Some(tool_name) = call_name_by_id.get(&call_id) {
+                                context.tool_name = Some(tool_name.clone());
+                            }
+                            let tool_err = LlmError::ToolCall(err_string);
+                            let loop_error =
+                                classify_llm_error(&tool_err, context, commit_phase.clone());
+                            report.record_error(loop_error);
                             continue;
                         }
                     }
@@ -600,9 +657,31 @@ pub async fn run_chat_session<R: Router>(
                 content: None,
                 reasoning: None,
             } => {
-                return Err(LlmError::ChatStep(
+                let err = LlmError::ChatStep(
                     "No content, reasoning, or tool calls in llm chat step response. This indicates an issue with the chat/tool call loop.".to_string(),
-                ));
+                );
+                let context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "parse_response",
+                    &model_key,
+                    assistant_message_id,
+                );
+                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                emit_loop_error(
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    &loop_error,
+                )
+                .await;
+                report.record_error(loop_error.clone());
+                report.outcome = SessionOutcome::Aborted {
+                    error_id: loop_error.error_id,
+                };
+                report.commit_phase = commit_phase;
+                report.attempts = attempts;
+                return report;
             }
             ChatStepOutcome::Content {
                 content: Some(msg),
@@ -613,8 +692,10 @@ pub async fn run_chat_session<R: Router>(
                     &state_cmd_tx,
                     &mut initial_message_updated,
                     msg.to_string(),
+                    MessageStatus::Completed,
                 )
                 .await;
+                commit_phase = CommitPhase::MessageCommitted;
             }
             ChatStepOutcome::Content {
                 content: None,
@@ -625,8 +706,10 @@ pub async fn run_chat_session<R: Router>(
                     &state_cmd_tx,
                     &mut initial_message_updated,
                     msg.to_string(),
+                    MessageStatus::Completed,
                 )
                 .await;
+                commit_phase = CommitPhase::MessageCommitted;
             }
             ChatStepOutcome::Content {
                 content: Some(content_msg),
@@ -644,8 +727,10 @@ pub async fn run_chat_session<R: Router>(
                     &state_cmd_tx,
                     &mut initial_message_updated,
                     msg,
+                    MessageStatus::Completed,
                 )
                 .await;
+                commit_phase = CommitPhase::MessageCommitted;
             }
         };
 
@@ -660,11 +745,64 @@ pub async fn run_chat_session<R: Router>(
                 req.core.messages.push(RequestMessage::new_system(msg));
                 continue;
             }
-            FinishDecision::Return(result) => return result,
+            FinishDecision::Return(result) => match result {
+                Ok(_response) => {
+                    report.outcome = SessionOutcome::Completed;
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
+                Err(err) => {
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "finish_reason",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    report.record_error(loop_error.clone());
+                    report.outcome = SessionOutcome::Exhausted {
+                        error_id: loop_error.error_id,
+                    };
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
+            },
         }
     }
 
-    Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
+    let err = LlmError::ToolCall("tool call chain limit exceeded".into());
+    let context = base_error_context(
+        attempts,
+        policy.tool_call_chain_limit,
+        "tool_call_chain_limit",
+        &model_key,
+        assistant_message_id,
+    );
+    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+    emit_loop_error(
+        &state_cmd_tx,
+        assistant_message_id,
+        &mut initial_message_updated,
+        &loop_error,
+    )
+    .await;
+    report.record_error(loop_error.clone());
+    report.outcome = SessionOutcome::Aborted {
+        error_id: loop_error.error_id,
+    };
+    report.commit_phase = commit_phase;
+    report.attempts = attempts;
+    report
 }
 
 async fn add_or_update_assistant_message(
@@ -672,12 +810,14 @@ async fn add_or_update_assistant_message(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
     initial_message_updated: &mut bool,
     msg: String,
+    status: MessageStatus,
 ) {
     if !*initial_message_updated {
         let is_updated = update_assistant_placeholder_once(
             state_cmd_tx,
             assistant_message_id,
             msg,
+            status,
             *initial_message_updated,
         )
         .await;
@@ -694,11 +834,67 @@ async fn add_or_update_assistant_message(
     }
 }
 
+async fn emit_loop_error(
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    assistant_message_id: Uuid,
+    initial_message_updated: &mut bool,
+    error: &LoopError,
+) {
+    let view = render_error_view(error, ErrorAudience::User, Verbosity::Normal);
+    let mut msg = view.summary;
+    if let Some(details) = view.details {
+        msg.push('\n');
+        msg.push_str(&details);
+    }
+
+    if !*initial_message_updated {
+        let status = MessageStatus::Error {
+            description: error.summary.to_string(),
+        };
+        let is_updated = update_assistant_placeholder_once(
+            state_cmd_tx,
+            assistant_message_id,
+            msg,
+            status,
+            *initial_message_updated,
+        )
+        .await;
+        *initial_message_updated = is_updated;
+        return;
+    }
+
+    state_cmd_tx
+        .send(StateCommand::AddMessageImmediate {
+            msg,
+            kind: MessageKind::System,
+            new_msg_id: Uuid::new_v4(),
+        })
+        .await
+        .expect("state manager must be running");
+}
+
+fn base_error_context(
+    attempts: u32,
+    chain_index: usize,
+    phase: &'static str,
+    model_key: &Option<ploke_llm::ModelKey>,
+    assistant_message_id: Uuid,
+) -> ErrorContext {
+    let mut context = ErrorContext::new(attempts, chain_index);
+    context.phase = Some(ploke_core::ArcStr::from(phase));
+    context.request_id = Some(assistant_message_id);
+    if let Some(key) = model_key {
+        context.model = Some(ploke_core::ArcStr::from(key.to_string()));
+    }
+    context
+}
+
 #[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
 async fn update_assistant_placeholder_once(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
     assistant_message_id: Uuid,
     content: String,
+    status: MessageStatus,
     initial_message_updated: bool,
 ) -> bool {
     if !initial_message_updated {
@@ -707,7 +903,7 @@ async fn update_assistant_placeholder_once(
                 id: assistant_message_id,
                 update: MessageUpdate {
                     content: Some(content),
-                    status: Some(MessageStatus::Completed),
+                    status: Some(status),
                     ..Default::default()
                 },
             })

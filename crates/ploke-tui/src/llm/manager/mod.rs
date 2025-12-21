@@ -4,11 +4,13 @@
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
 mod session;
+mod loop_error;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
+pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
 use crate::{
     SystemEvent,
@@ -19,7 +21,8 @@ use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
 use ploke_llm::{
-    manager::events::{endpoint, models}, request::ToolChoice, response::{Choices, FinishReason}, router_only::openrouter::OpenRouter, HasModels as _, LlmError, Router as _
+    manager::events::{endpoint, models}, request::ToolChoice, router_only::openrouter::OpenRouter,
+    HasModels as _, Router as _,
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -38,7 +41,6 @@ use crate::{
     AppEvent, EventBus,
     app_state::{AppState, StateCommand},
     chat_history::MessageKind,
-    chat_history::{MessageStatus, MessageUpdate},
     tools::{
         self, Tool as _, ToolDefinition, code_edit::GatCodeEdit, create_file::CreateFile,
         ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
@@ -260,76 +262,33 @@ pub async fn process_llm_request(
         }
     };
 
-    // Prepare and execute the API call, then create the final update command.
-    let result: Result<String, LlmError> = prepare_and_run_llm_call(
+    // Prepare and execute the API call; UI updates happen inside the chat loop.
+    let report = prepare_and_run_llm_call(
         &state,
         &client,
         messages,
         event_bus.clone(),
-        request_message_id,
+        assistant_message_id,
         parent_id,
         cmd_tx.clone(),
     )
     .await;
 
-    // Build concise per-request outcome summary before consuming `result`
-    // TODO: Add a typed return value that contains a summary and an option for the content
-    let _summary = match &result {
-        Ok(_msg) => "Request summary: [success]".to_string(),
-        Err(LlmError::Api { status: 404, .. }) => {
-            "Request summary: error 404 (endpoint/tool support?)".to_string()
-        }
-        Err(LlmError::Api { status: 429, .. }) => "Request summary: rate limited (429)".to_string(),
-        Err(e) => format!("Request summary: error ({})", e),
-    };
-
-    finalize_assistant_response(&cmd_tx, assistant_message_id, result).await;
-}
-
-async fn finalize_assistant_response(
-    cmd_tx: &mpsc::Sender<StateCommand>,
-    assistant_message_id: Uuid,
-    result: Result<String, LlmError>,
-) {
-    let update_cmd = match result {
-        Ok(content) => {
-            let preview = content.chars().take(200).collect::<String>();
-            tracing::info!(target: "chat-loop",
-                "LLM produced response for assistant_message_id={}. preview={}",
-                assistant_message_id,
-                preview
-            );
-
-            // Changing from UpdateMessage to AddMessageImmediate
-            // - We now update the initial message within the chat/tool loop
-            StateCommand::AddMessageImmediate {
-                msg: content,
-                kind: MessageKind::Assistant,
-                new_msg_id: Uuid::new_v4(),
-            }
-        }
-        Err(e) => {
-            let err_string = e.diagnostic();
-            tracing::error!(error = ?e, diagnostic = %err_string, "LLM request failed");
-
-            let content = format!(
-                "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
-                err_string
-            );
-
-            // Changing from UpdateMessage to AddMessageImmediate
-            // - We now update the initial message within the chat/tool loop
-            StateCommand::AddMessageImmediate {
-                msg: content,
-                kind: MessageKind::Assistant,
-                new_msg_id: Uuid::new_v4(),
-            }
-        }
-    };
-
-    if cmd_tx.send(update_cmd).await.is_err() {
-        tracing::error!(
-            "Failed to send final AddMessageImmediate: channel to StateCommand closed."
+    let summary = report.summary();
+    tracing::info!(
+        target: "chat-loop",
+        session_id = %report.session_id,
+        outcome = ?report.outcome,
+        summary = %summary,
+        "LLM request completed"
+    );
+    if let Some(err) = report.last_error() {
+        tracing::warn!(
+            target: "chat-loop",
+            error_id = %err.error_id,
+            code = %err.code,
+            kind = ?err.kind,
+            "LLM request ended with error"
         );
     }
 }
@@ -343,7 +302,7 @@ async fn prepare_and_run_llm_call(
     assistant_message_id: Uuid,
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
-) -> Result<String, LlmError> {
+) -> ChatSessionReport {
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tool_defs: Vec<ToolDefinition> = vec![
@@ -409,8 +368,7 @@ async fn prepare_and_run_llm_call(
         cmd_tx.clone(),
         policy,
     )
-    .await;
-    todo!()
+    .await
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {
