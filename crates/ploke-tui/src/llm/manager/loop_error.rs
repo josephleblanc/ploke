@@ -448,6 +448,55 @@ pub fn classify_llm_error(
     }
 }
 
+pub fn build_unknown_tool_error(
+    unknown_tool: &str,
+    allowed_tools: &[ArcStr],
+    mut context: ErrorContext,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    context.tool_name = Some(ArcStr::from(unknown_tool.to_string()));
+    let allowed_list = allowed_tools
+        .iter()
+        .map(|t| t.as_ref())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let summary = ArcStr::from(format!("Unknown tool name `{}`.", unknown_tool));
+    let llm_action = Some(LlmAction {
+        next_steps: vec![LlmNextStep {
+            action: ArcStr::from("retry_tool_call_with_valid_tool_name"),
+            details: Some(ArcStr::from(format!(
+                "Use one of: {allowed_list}"
+            ))),
+        }],
+        constraints: vec![ArcStr::from(format!(
+            "tool_name must be one of: {allowed_list}"
+        ))],
+        retry_hint: Some(RetryStrategy::Fixed),
+    });
+
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(
+            &LoopErrorKind::ModelBehavior,
+            &ArcStr::from("UNKNOWN_TOOL_NAME"),
+            &context,
+        ),
+        kind: LoopErrorKind::ModelBehavior,
+        code: ArcStr::from("UNKNOWN_TOOL_NAME"),
+        severity: ErrorSeverity::Error,
+        retry: RetryAdvice::Yes {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from("Model used an unsupported tool name"),
+        },
+        commit_phase,
+        summary,
+        user_action: Some(ArcStr::from("Retry with a supported tool.")),
+        llm_action,
+        context,
+        diagnostics: None,
+    }
+}
+
 pub fn classify_finish_reason(
     finish_reason: &FinishReason,
     mut context: ErrorContext,

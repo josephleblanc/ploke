@@ -49,7 +49,9 @@ pub mod ns_read;
 pub mod ui;
 pub mod validators;
 
-pub use error::{Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError};
+pub use error::{
+    allowed_tool_names, Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError,
+};
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
 // NOTE:ploke-llm

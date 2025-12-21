@@ -31,11 +31,11 @@ use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
-    RetryStrategy, SessionOutcome, Verbosity, classify_finish_reason, classify_llm_error,
-    render_error_view,
+    RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error,
+    classify_finish_reason, classify_llm_error, render_error_view,
 };
 use ploke_llm::LlmError;
-use crate::tools::ToolUiPayload;
+use crate::tools::{ToolUiPayload, allowed_tool_names};
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -536,6 +536,28 @@ pub async fn run_chat_session<R: Router>(
         } = match ploke_llm::chat_step(client, &req, &cfg).await {
             Ok(step) => step,
             Err(err) => {
+                if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
+                    let allowed = allowed_tool_names();
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "parse_response",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let loop_error =
+                        build_unknown_tool_error(&unknown_tool, &allowed, context, commit_phase.clone());
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
+                    continue;
+                }
                 let context = base_error_context(
                     attempts,
                     chain_index,
@@ -970,6 +992,28 @@ fn base_error_context(
         context.model = Some(ploke_core::ArcStr::from(key.to_string()));
     }
     context
+}
+
+fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
+    let message = match err {
+        LlmError::Deserialization { message, .. } => message.as_str(),
+        _ => return None,
+    };
+    let needle = "unknown variant `";
+    if let Some(start) = message.find(needle) {
+        let rest = &message[start + needle.len()..];
+        if let Some(end) = rest.find('`') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    let needle = "unknown variant \"";
+    if let Some(start) = message.find(needle) {
+        let rest = &message[start + needle.len()..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
 }
 
 #[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]

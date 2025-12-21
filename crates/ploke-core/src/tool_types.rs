@@ -1,18 +1,34 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
 pub enum ToolName {
+    #[serde(rename = "request_code_context")]
     RequestCodeContext,
+    #[serde(rename = "apply_code_edit")]
     ApplyCodeEdit,
+    #[serde(rename = "create_file")]
     CreateFile,
+    #[serde(rename = "non_semantic_patch", alias = "ns_patch")]
     NsPatch,
+    #[serde(rename = "read_file", alias = "ns_read")]
     NsRead,
+    #[serde(rename = "code_item_lookup")]
     CodeItemLookup,
+    #[serde(rename = "code_item_edges")]
     CodeItemEdges,
 }
 
 impl ToolName {
+    pub const ALL: [ToolName; 7] = [
+        ToolName::RequestCodeContext,
+        ToolName::ApplyCodeEdit,
+        ToolName::CreateFile,
+        ToolName::NsPatch,
+        ToolName::NsRead,
+        ToolName::CodeItemLookup,
+        ToolName::CodeItemEdges,
+    ];
+
     pub fn as_str(self) -> &'static str {
         use ToolName::*;
         match self {
@@ -145,4 +161,27 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
         rename = r#"Shows all edges for the target item. Useful for discovering nearby code items."#
     )]
     CodeItemEdges,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolName;
+
+    #[test]
+    fn tool_name_serializes_to_canonical_strings() {
+        let read = serde_json::to_string(&ToolName::NsRead).expect("serialize");
+        let patch = serde_json::to_string(&ToolName::NsPatch).expect("serialize");
+
+        assert_eq!(read, "\"read_file\"");
+        assert_eq!(patch, "\"non_semantic_patch\"");
+    }
+
+    #[test]
+    fn tool_name_accepts_aliases() {
+        let read_alias: ToolName = serde_json::from_str("\"ns_read\"").expect("alias");
+        let patch_alias: ToolName = serde_json::from_str("\"ns_patch\"").expect("alias");
+
+        assert_eq!(read_alias, ToolName::NsRead);
+        assert_eq!(patch_alias, ToolName::NsPatch);
+    }
 }

@@ -1,4 +1,5 @@
 use ploke_core::tool_types::ToolName;
+use ploke_core::ArcStr;
 use ploke_llm::LlmError;
 use serde::{Deserialize, Serialize};
 
@@ -221,4 +222,11 @@ pub(crate) fn truncate_for_error(s: &str, max: usize) -> String {
         let tail = &s[s.len().saturating_sub(200)..];
         format!("{head}…<snip>…{tail}")
     }
+}
+
+pub fn allowed_tool_names() -> Vec<ArcStr> {
+    ToolName::ALL
+        .iter()
+        .map(|tool| ArcStr::from(tool.as_str()))
+        .collect()
 }
