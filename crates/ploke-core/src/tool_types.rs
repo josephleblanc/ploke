@@ -165,9 +165,7 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
         rename = r#"Shows all edges for the target item. Useful for discovering nearby code items."#
     )]
     CodeItemEdges,
-    #[serde(
-        rename = "Run cargo check or cargo test with JSON diagnostics output."
-    )]
+    #[serde(rename = "Run cargo check or cargo test with JSON diagnostics output.")]
     Cargo,
 }
 

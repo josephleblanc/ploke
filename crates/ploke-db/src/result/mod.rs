@@ -6,9 +6,7 @@ mod snippet;
 use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
-use ploke_core::{
-    rag_types::CanonPath, EmbeddingData, FileData, TrackingHash,
-};
+use ploke_core::{rag_types::CanonPath, EmbeddingData, FileData, TrackingHash};
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
 pub mod typed_rows;
@@ -708,9 +706,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{CozoBorrow, CozoDecode, QueryResult};
+    use cozo::{DataValue, Num, UuidWrapper};
     use ploke_core::rag_types::CanonPath;
     use ploke_db_derive::CozoRow;
-    use cozo::{DataValue, Num, UuidWrapper};
     use uuid::Uuid;
 
     use crate::DbError;

@@ -23,12 +23,22 @@ fn impl_cozo_row(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     let data = match &input.data {
         syn::Data::Struct(data) => data,
-        _ => return Err(syn::Error::new(input.span(), "CozoRow can only be derived for structs")),
+        _ => {
+            return Err(syn::Error::new(
+                input.span(),
+                "CozoRow can only be derived for structs",
+            ))
+        }
     };
 
     let fields = match &data.fields {
         Fields::Named(named) => &named.named,
-        _ => return Err(syn::Error::new(input.span(), "CozoRow requires named fields")),
+        _ => {
+            return Err(syn::Error::new(
+                input.span(),
+                "CozoRow requires named fields",
+            ))
+        }
     };
 
     let mut specs = Vec::with_capacity(fields.len());

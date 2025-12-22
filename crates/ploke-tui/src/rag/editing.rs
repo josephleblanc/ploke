@@ -125,11 +125,7 @@ async fn apply_ns_edit(
             let ui_payload = ToolUiPayload::new(
                 tool_name,
                 call_id_val.clone(),
-                format!(
-                    "Applied {} edits across {} files",
-                    applied,
-                    file_count
-                ),
+                format!("Applied {} edits across {} files", applied, file_count),
             )
             .with_field("ok", (applied > 0).to_string())
             .with_field("applied", applied.to_string())
@@ -243,11 +239,7 @@ async fn apply_semantic_edit(
             let ui_payload = ToolUiPayload::new(
                 tool_name,
                 call_id_val.clone(),
-                format!(
-                    "Applied {} edits across {} files",
-                    applied,
-                    file_count
-                ),
+                format!("Applied {} edits across {} files", applied, file_count),
             )
             .with_field("ok", (applied > 0).to_string())
             .with_field("applied", applied.to_string())
@@ -591,7 +583,11 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
 
             // Bridge: mark tool call failed with denial
             let err_msg = "Create-file proposal denied by user".to_string();
-            let err = ToolError::new(ToolName::CreateFile, ToolErrorCode::Internal, err_msg.clone());
+            let err = ToolError::new(
+                ToolName::CreateFile,
+                ToolErrorCode::Internal,
+                err_msg.clone(),
+            );
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {

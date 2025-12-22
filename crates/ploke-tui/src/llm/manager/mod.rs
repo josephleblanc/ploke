@@ -3,8 +3,8 @@
 // This is firmly within the domain of managing the contents that are sent to the LLM and received
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
-mod session;
 mod loop_error;
+mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
@@ -21,15 +21,17 @@ use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
 use ploke_llm::{
-    manager::events::{endpoint, models}, request::ToolChoice, router_only::openrouter::OpenRouter,
     HasModels as _, Router as _,
+    manager::events::{endpoint, models},
+    request::ToolChoice,
+    router_only::openrouter::OpenRouter,
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, sync::Arc};
+use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
@@ -42,12 +44,12 @@ use crate::{
     AppEvent, EventBus,
     app_state::{AppState, StateCommand},
     chat_history::{ContextTokens, MessageKind, TokenKind},
-    tracing_setup::TOKENS_TARGET,
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
         create_file::CreateFile, ns_patch::NsPatch, ns_read::NsRead,
         request_code_context::RequestCodeContextGat,
     },
+    tracing_setup::TOKENS_TARGET,
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
 };
 
@@ -68,12 +70,15 @@ pub(super) fn truncate_for_tokens_log(input: &str) -> String {
         return input.to_string();
     }
     let truncated: String = input.chars().take(TOKENS_LOG_MAX_CHARS).collect();
-    format!("{truncated}...<truncated {} chars>", total - TOKENS_LOG_MAX_CHARS)
+    format!(
+        "{truncated}...<truncated {} chars>",
+        total - TOKENS_LOG_MAX_CHARS
+    )
 }
 
 pub(super) fn format_tokens_payload<T: Serialize>(value: &T) -> String {
-    let serialized = serde_json::to_string(value)
-        .unwrap_or_else(|e| format!("<serialize error: {e}>"));
+    let serialized =
+        serde_json::to_string(value).unwrap_or_else(|e| format!("<serialize error: {e}>"));
     truncate_for_tokens_log(&serialized)
 }
 
@@ -398,9 +403,13 @@ async fn prepare_and_run_llm_call(
     };
 
     // Use the runtime-selected active model (includes optional variant)
-    let model_id = {
+    let (model_id, chat_policy, llm_timeout_secs) = {
         let cfg = state.config.read().await;
-        cfg.active_model.clone()
+        (
+            cfg.active_model.clone(),
+            cfg.chat_policy.clone(),
+            cfg.llm_timeout_secs,
+        )
     };
 
     // WARN: Using default fields here, should try to load from registry first and use default if
@@ -420,8 +429,12 @@ async fn prepare_and_run_llm_call(
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
-    use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
-    let policy = TuiToolPolicy::default();
+    use crate::llm::manager::session::{
+        TuiToolPolicy, finish_policy_from_chat, run_chat_session, tool_policy_from_chat,
+    };
+    let policy = tool_policy_from_chat(&chat_policy);
+    let finish_policy = finish_policy_from_chat(&chat_policy);
+    let http_timeout = Duration::from_secs(llm_timeout_secs);
 
     run_chat_session(
         client,
@@ -431,6 +444,8 @@ async fn prepare_and_run_llm_call(
         event_bus,
         cmd_tx.clone(),
         policy,
+        finish_policy,
+        http_timeout,
     )
     .await
 

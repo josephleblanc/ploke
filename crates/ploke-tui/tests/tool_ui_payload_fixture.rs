@@ -13,7 +13,10 @@ use ploke_tui::{
     },
     chat_history::ChatHistory,
     event_bus::EventBusCaps,
-    tools::{Ctx, Tool, ToolVerbosity, ns_read::{NsRead, NsReadParams}},
+    tools::{
+        Ctx, Tool, ToolVerbosity,
+        ns_read::{NsRead, NsReadParams},
+    },
     user_config::UserConfig,
 };
 use tokio::sync::{Mutex, RwLock};

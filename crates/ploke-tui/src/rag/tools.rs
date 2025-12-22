@@ -17,8 +17,8 @@ use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 use tracing::debug;
 
-use crate::tools::{ToolName, ToolUiPayload};
 use crate::tools::create_file::CreateFileCtx;
+use crate::tools::{ToolName, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
@@ -538,7 +538,11 @@ Deny:     edit deny {request_id}{2}"#,
     let ui_payload = ToolUiPayload::new(
         ToolName::ApplyCodeEdit,
         call_id.clone(),
-        format!("Staged {} edits across {} files", result.staged, result.files.len()),
+        format!(
+            "Staged {} edits across {} files",
+            result.staged,
+            result.files.len()
+        ),
     )
     .with_field("staged", result.staged.to_string())
     .with_field("applied", result.applied.to_string())

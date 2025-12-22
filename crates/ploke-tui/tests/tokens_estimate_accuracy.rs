@@ -5,16 +5,15 @@ use ploke_test_utils::workspace_root;
 use regex::Regex;
 
 #[test]
-fn estimated_tokens_are_paired_with_actual_usage() {
+fn tokens_estimate_accuracy() {
     let root = workspace_root();
     let fixture = root.join("tests/fixture_chat/tokens_sample.log");
     let contents =
         fs::read_to_string(&fixture).expect("token fixture log should be present for tests");
 
-    let est_re = Regex::new(
-        r#"parent_id=([a-f0-9-]+).*?kind="estimate_input".*?estimated_tokens=(\d+)"#,
-    )
-    .unwrap();
+    let est_re =
+        Regex::new(r#"parent_id=([a-f0-9-]+).*?kind="estimate_input".*?estimated_tokens=(\d+)"#)
+            .unwrap();
     let actual_re = Regex::new(
         r#"parent_id=([a-f0-9-]+).*?kind="actual_usage".*?prompt_tokens=(\d+)\s+completion_tokens=(\d+)\s+total_tokens=(\d+)"#,
     )

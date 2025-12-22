@@ -134,10 +134,7 @@ impl super::Tool for CreateFile {
                 preview_mode,
                 auto_confirmed: editing_cfg.auto_confirm_edits,
             };
-            let summary = format!(
-                "Staged {} files for creation",
-                structured.staged
-            );
+            let summary = format!("Staged {} files for creation", structured.staged);
             let ui_payload = crate::tools::ToolUiPayload::new(
                 ToolName::CreateFile,
                 ctx.call_id.clone(),

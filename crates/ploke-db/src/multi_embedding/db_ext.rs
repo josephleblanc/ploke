@@ -819,10 +819,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
 
         self.put_embedding_set(&default_set)?;
 
-        tracing::info!(
-            "{}: create default vector embedding relation",
-            "Db"
-        );
+        tracing::info!("{}: create default vector embedding relation", "Db");
 
         self.ensure_vector_embedding_relation(&default_set)?;
         Ok(())

@@ -296,19 +296,10 @@ for a more fuzzy search."#
             edge_info: resolved_edges,
         };
 
-        let summary = format!(
-            "Resolved {} edges",
-            node_edge_info.edge_info.len()
-        );
+        let summary = format!("Resolved {} edges", node_edge_info.edge_info.len());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
-            .with_field(
-                "file_path",
-                node_edge_info.node_info.file_path.as_ref(),
-            )
-            .with_field(
-                "canon_path",
-                node_edge_info.node_info.canon_path.as_ref(),
-            )
+            .with_field("file_path", node_edge_info.node_info.file_path.as_ref())
+            .with_field("canon_path", node_edge_info.node_info.canon_path.as_ref())
             .with_field("edges", node_edge_info.edge_info.len().to_string());
         let content= serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(

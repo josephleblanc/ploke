@@ -9,15 +9,14 @@ use ploke_test_utils::workspace_root;
 use ploke_tui::{
     EventBus,
     app_state::{
-        core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState},
         SystemStatus,
+        core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState},
         test_set_crate_focus_from_db,
     },
     chat_history::ChatHistory,
     event_bus::EventBusCaps,
     tools::{
-        Ctx,
-        Tool,
+        Ctx, Tool,
         cargo::{CargoCommand, CargoScope, CargoTool, CargoToolParams},
     },
     user_config::UserConfig,

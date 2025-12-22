@@ -45,13 +45,13 @@ pub enum Action {
     GotoSequenceG, // 'g' (first press; App decides if this becomes 'gg')
 
     // Command palette openers
-    OpenCommand,       // '/', or ':hybrid' starter depending on style
-    OpenCommandColon,  // ':' (Neovim style)
-    OpenQuickModel,    // 'm'
-    OpenHelp,          // '?'
-    TogglePreview,     // 'P'
-    OpenApprovals,     // 'a'
-    OpenContextSearch, // `s`
+    OpenCommand,         // '/', or ':hybrid' starter depending on style
+    OpenCommandColon,    // ':' (Neovim style)
+    OpenQuickModel,      // 'm'
+    OpenHelp,            // '?'
+    TogglePreview,       // 'P'
+    OpenApprovals,       // 'a'
+    OpenContextSearch,   // `s`
     ToggleToolVerbosity, // 'v'
 
     // Input widget scrolling (testing/dev keys)

@@ -10,14 +10,14 @@ use ploke_test_utils::workspace_root;
 use ploke_tui::{
     EventBus,
     app_state::{
-        core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState},
         SystemStatus,
+        core::{AppState, ChatState, ConfigState, RuntimeConfig, SystemState},
     },
     chat_history::ChatHistory,
     event_bus::EventBusCaps,
     tools::{
-        get_code_edges::{CodeItemEdges, EdgesParams},
         Ctx, Tool,
+        get_code_edges::{CodeItemEdges, EdgesParams},
     },
     user_config::UserConfig,
 };
@@ -75,9 +75,14 @@ async fn code_item_edges_handles_trailing_module_separators() {
         .into_iter()
         .filter(|row| row.module_path.first().map(String::as_str) == Some("crate"))
         .find_map(|row| {
-            let edges =
-                graph_resolve_edges(db.as_ref(), &row.relation, row.file_path.as_path(), &row.module_path, &row.name)
-                    .ok()?;
+            let edges = graph_resolve_edges(
+                db.as_ref(),
+                &row.relation,
+                row.file_path.as_path(),
+                &row.module_path,
+                &row.name,
+            )
+            .ok()?;
             if edges.is_empty() {
                 return None;
             }
@@ -101,7 +106,8 @@ async fn code_item_edges_handles_trailing_module_separators() {
             .await
             .expect("compute file hash");
     assert_eq!(
-        stored_file_hash, actual_file_hash,
+        stored_file_hash,
+        actual_file_hash,
         "tracking hash mismatch for {}; DB likely stale relative to fixture contents",
         stored.file_path.display()
     );
@@ -229,12 +235,12 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
     .expect("graph_resolve_exact");
     let stored = stored_nodes.first().expect("node present");
     let stored_hash = stored.file_tracking_hash.clone();
-    let actual_hash =
-        ploke_io::read::generate_hash_for_file(&abs_path, stored.namespace)
-            .await
-            .expect("compute file hash");
+    let actual_hash = ploke_io::read::generate_hash_for_file(&abs_path, stored.namespace)
+        .await
+        .expect("compute file hash");
     assert_eq!(
-        stored_hash, actual_hash,
+        stored_hash,
+        actual_hash,
         "tracking hash mismatch for {}; refresh ploke-db backup",
         abs_path.display()
     );
@@ -333,15 +339,13 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
     let mod_path = vec!["crate".to_string(), "database".to_string()];
 
     // Verify the node exists and hash is fresh.
-    let resolved =
-        graph_resolve_exact(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
-            .expect("graph_resolve_exact");
+    let resolved = graph_resolve_exact(db.as_ref(), "struct", &abs_path, &mod_path, "Database")
+        .expect("graph_resolve_exact");
     let entry = resolved.first().expect("Database struct should exist");
     let stored_hash = entry.file_tracking_hash.clone();
-    let actual_hash =
-        ploke_io::read::generate_hash_for_file(&abs_path, entry.namespace)
-            .await
-            .expect("compute file hash");
+    let actual_hash = ploke_io::read::generate_hash_for_file(&abs_path, entry.namespace)
+        .await
+        .expect("compute file hash");
     assert_eq!(
         stored_hash, actual_hash,
         "tracking hash mismatch for database.rs; refresh ploke-db backup"
@@ -402,9 +406,14 @@ async fn code_item_edges_graph_resolve_edges_smoke() {
     let crate_root = workspace_root().join("crates/ploke-db");
     let abs_path = crate_root.join("src/helpers.rs");
     let mod_path = vec!["crate".to_string(), "helpers".to_string()];
-    let edges =
-        graph_resolve_edges(db.as_ref(), "function", &abs_path, &mod_path, "graph_resolve_edges")
-            .expect("graph_resolve_edges call should succeed");
+    let edges = graph_resolve_edges(
+        db.as_ref(),
+        "function",
+        &abs_path,
+        &mod_path,
+        "graph_resolve_edges",
+    )
+    .expect("graph_resolve_edges call should succeed");
     assert!(
         !edges.is_empty(),
         "Expected graph_resolve_edges to have edges once the underlying issue is fixed"

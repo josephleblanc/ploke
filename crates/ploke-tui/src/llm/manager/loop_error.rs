@@ -464,9 +464,7 @@ pub fn build_unknown_tool_error(
     let llm_action = Some(LlmAction {
         next_steps: vec![LlmNextStep {
             action: ArcStr::from("retry_tool_call_with_valid_tool_name"),
-            details: Some(ArcStr::from(format!(
-                "Use one of: {allowed_list}"
-            ))),
+            details: Some(ArcStr::from(format!("Use one of: {allowed_list}"))),
         }],
         constraints: vec![ArcStr::from(format!(
             "tool_name must be one of: {allowed_list}"

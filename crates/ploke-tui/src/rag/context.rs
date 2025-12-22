@@ -2,21 +2,16 @@ use crate::{
     chat_history::{ContextStatus, TurnsToLive},
     llm::{ChatEvt, LlmEvent, manager::Role},
 };
-use std::{
-    ops::{ControlFlow, Deref},
-    path::PathBuf,
-};
+use std::{ops::ControlFlow, path::PathBuf};
 
 use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr,
     rag_types::{AssembledContext, ContextPart},
 };
-use ploke_rag::{RetrievalStrategy, RrfConfig};
 use tokio::sync::oneshot;
 
 use crate::{
-    RETRIEVAL_STRATEGY, TOP_K,
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
@@ -80,10 +75,12 @@ pub async fn process_with_rag(
     if let Some(rag) = &state.rag {
         let messages: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
         let budget = &state.budget;
-        let top_k = TOP_K;
-        let retrieval_strategy = RETRIEVAL_STRATEGY.deref();
+        let (top_k, retrieval_strategy) = {
+            let cfg = state.config.read().await;
+            (cfg.rag.top_k, cfg.rag.strategy.to_runtime())
+        };
         match rag
-            .get_context(&user_msg, top_k, budget, retrieval_strategy)
+            .get_context(&user_msg, top_k, budget, &retrieval_strategy)
             .await
         {
             Ok(rag_ctx) => {

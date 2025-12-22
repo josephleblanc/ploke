@@ -24,12 +24,7 @@
 //! ).unwrap();
 //! assert!(params.test_args.is_some());
 //! ```
-use std::{
-    borrow::Cow,
-    collections::VecDeque,
-    path::Path,
-    time::Duration,
-};
+use std::{borrow::Cow, collections::VecDeque, path::Path, time::Duration};
 
 use cargo_metadata::Message;
 use serde::{Deserialize, Serialize};
@@ -376,7 +371,10 @@ impl Tool for CargoTool {
             command: params.command,
             scope: params.scope,
             package: params.package.as_ref().map(|s| s.to_string()),
-            features: params.features.as_ref().map(|v| v.iter().map(|s| s.to_string()).collect()),
+            features: params
+                .features
+                .as_ref()
+                .map(|v| v.iter().map(|s| s.to_string()).collect()),
             all_features: params.all_features,
             no_default_features: params.no_default_features,
             target: params.target.as_ref().map(|s| s.to_string()),
@@ -442,7 +440,9 @@ impl Tool for CargoTool {
             .await
             .crate_focus
             .clone()
-            .ok_or_else(|| tool_ui_error("No crate is currently focused; load a workspace first."))?;
+            .ok_or_else(|| {
+                tool_ui_error("No crate is currently focused; load a workspace first.")
+            })?;
         let crate_root = tokio::fs::canonicalize(crate_root)
             .await
             .map_err(|err| tool_io_error(format!("Failed to resolve crate root: {err}")))?;
@@ -476,10 +476,7 @@ impl Tool for CargoTool {
         }
 
         if let Some(package) = params.package.as_deref() {
-            let found = metadata
-                .packages
-                .iter()
-                .any(|pkg| pkg.name == package);
+            let found = metadata.packages.iter().any(|pkg| pkg.name == package);
             if !found {
                 return Err(tool_ui_error(format!(
                     "Package '{package}' not found in workspace."
@@ -610,7 +607,9 @@ impl Tool for CargoTool {
                     tokio::time::timeout(Duration::from_secs(KILL_GRACE_SECS), child.wait())
                         .await
                         .map_err(|_| tool_io_error("cargo did not exit after kill".to_string()))?
-                        .map_err(|err| tool_io_error(format!("cargo wait failed after kill: {err}")))?
+                        .map_err(|err| {
+                            tool_io_error(format!("cargo wait failed after kill: {err}"))
+                        })?
                 }
             }
         };
@@ -644,14 +643,8 @@ impl Tool for CargoTool {
             summary: stdout_state.summary,
             diagnostics: stdout_state.diagnostics,
             stderr_tail: stderr_state.stderr_tail.into_iter().collect(),
-            non_json_stdout_tail: stdout_state
-                .non_json_stdout_tail
-                .into_iter()
-                .collect(),
-            json_parse_errors_tail: stdout_state
-                .json_parse_errors_tail
-                .into_iter()
-                .collect(),
+            non_json_stdout_tail: stdout_state.non_json_stdout_tail.into_iter().collect(),
+            json_parse_errors_tail: stdout_state.json_parse_errors_tail.into_iter().collect(),
             raw_messages_truncated,
         };
         tracing::info!(target: TOOL_CALL_TARGET,
@@ -775,7 +768,10 @@ fn validate_name(field: &'static str, value: Option<&str>) -> Result<(), ToolInv
     let Some(value) = value else {
         return Ok(());
     };
-    if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err(ToolInvocationError::Validation(
             ToolError::new(
@@ -819,7 +815,8 @@ async fn read_stdout(
     while let Some(line) = lines
         .next_line()
         .await
-        .map_err(|err| tool_io_error(format!("stdout read failed: {err}")))? {
+        .map_err(|err| tool_io_error(format!("stdout read failed: {err}")))?
+    {
         parse_stdout_line(&line, &mut state);
     }
     Ok(state)
@@ -940,7 +937,8 @@ async fn read_stderr(
     while let Some(line) = lines
         .next_line()
         .await
-        .map_err(|err| tool_io_error(format!("stderr read failed: {err}")))? {
+        .map_err(|err| tool_io_error(format!("stderr read failed: {err}")))?
+    {
         if push_tail(&mut state.stderr_tail, line, MAX_TAIL_LINES) {
             state.raw_messages_truncated = true;
         }
@@ -1148,13 +1146,7 @@ mod tests {
 
     #[test]
     fn status_reason_respects_compile_errors() {
-        let reason = determine_status_reason(
-            CargoCommand::Check,
-            Some(1),
-            false,
-            false,
-            true,
-        );
+        let reason = determine_status_reason(CargoCommand::Check, Some(1), false, false, true);
         assert_eq!(reason, CargoStatusReason::CompileFailed);
     }
 

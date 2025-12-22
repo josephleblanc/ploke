@@ -125,7 +125,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_file(false)
         .with_line_number(false)
         .without_time();
-    let only_chat= filter::Targets::new().with_target(CHAT_TARGET, Level::TRACE);
+    let only_chat = filter::Targets::new().with_target(CHAT_TARGET, Level::TRACE);
 
     // -------- Message update log (focus on message lifecycle updates) --------
     let message_update_appender =
@@ -157,8 +157,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_file(true)
         .with_line_number(true)
         .without_time();
-    let only_finish_reason =
-        filter::Targets::new().with_target(FINISH_REASON_TARGET, Level::TRACE);
+    let only_finish_reason = filter::Targets::new().with_target(FINISH_REASON_TARGET, Level::TRACE);
 
     // -------- Tool call log (tool requests + params + results) --------
     let tool_calls_appender =

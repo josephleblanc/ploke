@@ -128,8 +128,8 @@ fn extract_tokens_log(args: Vec<String>) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let output_path = output_override
-        .unwrap_or_else(|| root.join("tests/fixture_chat/tokens_sample.log"));
+    let output_path =
+        output_override.unwrap_or_else(|| root.join("tests/fixture_chat/tokens_sample.log"));
     if let Some(parent) = output_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
             eprintln!(

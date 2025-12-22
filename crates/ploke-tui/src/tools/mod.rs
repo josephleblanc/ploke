@@ -5,9 +5,9 @@
 use crate::{
     tracing_setup::TOOL_CALL_TARGET,
     utils::{
-    consts::DEBUG_TOOLS,
-    path_scoping,
-    se_de::{de_arc_str, se_arc_str},
+        consts::DEBUG_TOOLS,
+        path_scoping,
+        se_de::{de_arc_str, se_arc_str},
     },
 };
 use std::{
@@ -43,9 +43,9 @@ pub use request_code_context::{
 };
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
+pub mod cargo;
 pub mod code_item_lookup;
 pub mod create_file;
-pub mod cargo;
 pub mod error;
 pub mod get_code_edges;
 pub mod ns_patch;
@@ -54,8 +54,8 @@ pub mod ui;
 pub mod validators;
 
 pub use error::{
-    allowed_tool_names, tool_io_error, tool_ui_error, Audience, ToolError, ToolErrorCode,
-    ToolErrorWire, ToolInvocationError,
+    Audience, ToolError, ToolErrorCode, ToolErrorWire, ToolInvocationError, allowed_tool_names,
+    tool_io_error, tool_ui_error,
 };
 pub use ui::{ToolUiField, ToolUiPayload, ToolVerbosity};
 
@@ -187,25 +187,23 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
-                    .await
-                    .map_err(|e| {
-                        let terr = request_code_context::RequestCodeContextGat::adapt_error(
-                            ToolInvocationError::Exec(e),
-                        );
-                        RequestCodeContextGat::emit_err(&ctx, terr.clone());
-                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                    })?;
+            let ToolResult {
+                content,
+                ui_payload,
+            } = request_code_context::RequestCodeContextGat::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = request_code_context::RequestCodeContextGat::adapt_error(
+                        ToolInvocationError::Exec(e),
+                    );
+                    RequestCodeContextGat::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
             );
-            request_code_context::RequestCodeContextGat::emit_completed(
-                &ctx,
-                content,
-                ui_payload,
-            );
+            request_code_context::RequestCodeContextGat::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::ApplyCodeEdit => {
@@ -218,14 +216,16 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                code_edit::GatCodeEdit::execute(params, ctx.clone())
+            let ToolResult {
+                content,
+                ui_payload,
+            } = code_edit::GatCodeEdit::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
-                GatCodeEdit::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-            })?;
+                    let terr = code_edit::GatCodeEdit::adapt_error(ToolInvocationError::Exec(e));
+                    GatCodeEdit::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -243,14 +243,16 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                create_file::CreateFile::execute(params, ctx.clone())
+            let ToolResult {
+                content,
+                ui_payload,
+            } = create_file::CreateFile::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
-                create_file::CreateFile::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-            })?;
+                    let terr = create_file::CreateFile::adapt_error(ToolInvocationError::Exec(e));
+                    create_file::CreateFile::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -268,13 +270,16 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } = ns_patch::NsPatch::execute(params, ctx.clone())
+            let ToolResult {
+                content,
+                ui_payload,
+            } = ns_patch::NsPatch::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
-                ns_patch::NsPatch::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-            })?;
+                    let terr = ns_patch::NsPatch::adapt_error(ToolInvocationError::Exec(e));
+                    ns_patch::NsPatch::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -292,13 +297,16 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } = ns_read::NsRead::execute(params, ctx.clone())
+            let ToolResult {
+                content,
+                ui_payload,
+            } = ns_read::NsRead::execute(params, ctx.clone())
                 .await
                 .map_err(|e| {
-                let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
-                ns_read::NsRead::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-            })?;
+                    let terr = ns_read::NsRead::adapt_error(ToolInvocationError::Exec(e));
+                    ns_read::NsRead::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -309,21 +317,22 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
         ToolName::CodeItemLookup => {
             let params =
                 code_item_lookup::CodeItemLookup::deserialize_params(&args).map_err(|err| {
-                let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
-                code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
-                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-            })?;
+                    let terr = code_item_lookup::CodeItemLookup::adapt_error(err);
+                    code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                code_item_lookup::CodeItemLookup::execute(params, ctx.clone())
-                    .await
-                    .map_err(|e| {
-                    let terr = code_item_lookup::CodeItemLookup::adapt_error(
-                        ToolInvocationError::Exec(e),
-                    );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = code_item_lookup::CodeItemLookup::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr =
+                        code_item_lookup::CodeItemLookup::adapt_error(ToolInvocationError::Exec(e));
                     code_item_lookup::CodeItemLookup::emit_err(&ctx, terr.clone());
                     color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
                 })?;
@@ -345,16 +354,17 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                get_code_edges::CodeItemEdges::execute(params, ctx.clone())
-                    .await
-                    .map_err(|e| {
-                        let terr = get_code_edges::CodeItemEdges::adapt_error(
-                            ToolInvocationError::Exec(e),
-                        );
-                        get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
-                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                    })?;
+            let ToolResult {
+                content,
+                ui_payload,
+            } = get_code_edges::CodeItemEdges::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr =
+                        get_code_edges::CodeItemEdges::adapt_error(ToolInvocationError::Exec(e));
+                    get_code_edges::CodeItemEdges::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -372,15 +382,16 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 "params: {}\n",
                 format_args!("{:#?}", &params),
             );
-            let ToolResult { content, ui_payload } =
-                cargo::CargoTool::execute(params, ctx.clone())
-                    .await
-                    .map_err(|e| {
-                        let terr =
-                            cargo::CargoTool::adapt_error(ToolInvocationError::Exec(e));
-                        cargo::CargoTool::emit_err(&ctx, terr.clone());
-                        color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
-                    })?;
+            let ToolResult {
+                content,
+                ui_payload,
+            } = cargo::CargoTool::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = cargo::CargoTool::adapt_error(ToolInvocationError::Exec(e));
+                    cargo::CargoTool::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
             tracing::debug!(target: DEBUG_TOOLS,
                 "content: {}\n",
                 format_args!("{:#?}", &content),
@@ -441,10 +452,7 @@ pub trait Tool {
     }
 
     fn emit_err(ctx: &Ctx, error: ToolError) {
-        let ui_payload = Some(ToolUiPayload::from_error(
-            ctx.call_id.clone(),
-            &error,
-        ));
+        let ui_payload = Some(ToolUiPayload::from_error(ctx.call_id.clone(), &error));
         let _ =
             ctx.event_bus
                 .realtime_tx

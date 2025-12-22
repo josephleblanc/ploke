@@ -40,9 +40,8 @@ impl Validator for Database {
                     None
                 }
             })
-            .map(|rel_name| {
-                format!("*{rel_name} {{ id, name @ 'NOW' }}")
-            }).join(" or ");
+            .map(|rel_name| format!("*{rel_name} {{ id, name @ 'NOW' }}"))
+            .join(" or ");
 
         let all_names_query = format!("?[count(name)] := {join_query_part}, name == {name}");
         let all_names_result = self.raw_query(&all_names_query)?;

@@ -1,6 +1,7 @@
 use std::ops::Mul;
 use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
+use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use chrono::DateTime;
 use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
@@ -31,14 +32,14 @@ use ploke_llm::response::TokenUsage;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
+use super::{format_tokens_payload, tokens_logging_enabled};
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
-    RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error,
-    classify_finish_reason, classify_llm_error, render_error_view,
+    RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error, classify_finish_reason,
+    classify_llm_error, render_error_view,
 };
-use ploke_llm::LlmError;
 use crate::tools::{ToolUiPayload, allowed_tool_names};
-use super::{format_tokens_payload, tokens_logging_enabled};
+use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -187,7 +188,7 @@ pub enum TuiLengthPolicy {
     Strict,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct FinishPolicy {
     /// Timeout backoff/limit behavior for FinishReason::Timeout.
     timeout: TuiTimeoutPolicy,
@@ -196,7 +197,7 @@ pub struct FinishPolicy {
     /// Retry policy for FinishReason::Length.
     length: TuiLengthPolicy,
     /// System prompt appended when retrying after FinishReason::Length.
-    length_continue_prompt: &'static str,
+    length_continue_prompt: String,
 }
 
 impl Default for TuiErrorPolicy {
@@ -217,8 +218,35 @@ impl Default for FinishPolicy {
             timeout: TuiTimeoutPolicy::default(),
             error: TuiErrorPolicy::default(),
             length: TuiLengthPolicy::default(),
-            length_continue_prompt: "Continue from where you left off. Do not repeat prior text.",
+            length_continue_prompt: "Continue from where you left off. Do not repeat prior text."
+                .to_string(),
         }
+    }
+}
+
+pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
+    TuiToolPolicy {
+        tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
+        tool_call_chain_limit: cfg.tool_call_chain_limit,
+        retry_without_tools_on_404: cfg.retry_without_tools_on_404,
+    }
+}
+
+pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
+    let strategy = match cfg.timeout_strategy {
+        ChatTimeoutStrategy::Backoff { attempts } => TimeoutStrategy::Backoff(attempts),
+        ChatTimeoutStrategy::FixedRetry { attempts } => TimeoutStrategy::FixedRetry(attempts),
+        ChatTimeoutStrategy::Strict => TimeoutStrategy::Strict,
+    };
+    let timeout = TuiTimeoutPolicy {
+        duration: Some(Duration::from_secs(cfg.timeout_base_secs)),
+        strategy,
+    };
+    FinishPolicy {
+        timeout,
+        error: TuiErrorPolicy::RetryLimit(cfg.error_retry_limit),
+        length: TuiLengthPolicy::RetryLimit(cfg.length_retry_limit),
+        length_continue_prompt: cfg.length_continue_prompt.clone(),
     }
 }
 
@@ -517,16 +545,22 @@ pub async fn run_chat_session<R: Router>(
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
+    finish_policy: FinishPolicy,
+    http_timeout: Duration,
 ) -> ChatSessionReport {
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
     let mut cfg = ChatHttpConfig::default();
-    let finish_policy = FinishPolicy::default();
+    cfg.timeout = http_timeout;
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
-    let mut report =
-        ChatSessionReport::new(session_id, assistant_message_id, parent_id, assistant_message_id);
+    let mut report = ChatSessionReport::new(
+        session_id,
+        assistant_message_id,
+        parent_id,
+        assistant_message_id,
+    );
     let mut commit_phase = CommitPhase::PreCommit;
     let mut attempts = 0_u32;
 
@@ -563,8 +597,12 @@ pub async fn run_chat_session<R: Router>(
                         &model_key,
                         assistant_message_id,
                     );
-                    let loop_error =
-                        build_unknown_tool_error(&unknown_tool, &allowed, context, commit_phase.clone());
+                    let loop_error = build_unknown_tool_error(
+                        &unknown_tool,
+                        &allowed,
+                        context,
+                        commit_phase.clone(),
+                    );
                     emit_loop_error(
                         &state_cmd_tx,
                         assistant_message_id,
@@ -656,9 +694,10 @@ pub async fn run_chat_session<R: Router>(
                     let call_id_for_state = call_id.clone();
                     match tool_json_result {
                         Ok(tool_result) => {
-                            req.core
-                                .messages
-                                .push(RequestMessage::new_tool(tool_result.content.clone(), call_id.clone()));
+                            req.core.messages.push(RequestMessage::new_tool(
+                                tool_result.content.clone(),
+                                call_id.clone(),
+                            ));
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
@@ -798,7 +837,8 @@ pub async fn run_chat_session<R: Router>(
             model_key: &model_key,
         };
 
-        match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state) {
+        match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state)
+        {
             FinishDecision::Continue(continue_info) => {
                 if let Some(reason) = continue_info.finish_reason {
                     let context = base_error_context(
@@ -1004,7 +1044,9 @@ fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) 
         let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| {
             "{\"type\":\"ploke.error\",\"summary\":\"serialization_failed\"}".to_string()
         });
-        req.core.messages.push(RequestMessage::new_system(payload_str));
+        req.core
+            .messages
+            .push(RequestMessage::new_system(payload_str));
     }
 }
 
@@ -1022,10 +1064,12 @@ fn apply_prompt_hint(error: &mut LoopError, prompt: String) {
                     return;
                 }
             }
-            action.next_steps.push(crate::llm::manager::loop_error::LlmNextStep {
-                action: ploke_core::ArcStr::from("continue_output"),
-                details: Some(prompt),
-            });
+            action
+                .next_steps
+                .push(crate::llm::manager::loop_error::LlmNextStep {
+                    action: ploke_core::ArcStr::from("continue_output"),
+                    details: Some(prompt),
+                });
         }
         None => {
             error.llm_action = Some(crate::llm::manager::loop_error::LlmAction {
@@ -1133,7 +1177,10 @@ pub async fn execute_tools_via_event_bus(
     step_request_id: Uuid,
     calls: Vec<ToolCall>,
     policy_timeout: ToolCallTimeout,
-) -> Vec<(ploke_core::ArcStr, Result<ToolCallUiResult, ToolCallUiError>)> {
+) -> Vec<(
+    ploke_core::ArcStr,
+    Result<ToolCallUiResult, ToolCallUiError>,
+)> {
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
 
@@ -1141,8 +1188,7 @@ pub async fn execute_tools_via_event_bus(
     let mut waiters: HashMap<
         ploke_core::ArcStr,
         oneshot::Sender<Result<ToolCallUiResult, ToolCallUiError>>,
-    > =
-        HashMap::new();
+    > = HashMap::new();
     let mut handles = Vec::new();
 
     for call in &calls {
@@ -1184,7 +1230,10 @@ pub async fn execute_tools_via_event_bus(
                     ..
                 })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
-                        let _ = tx.send(Ok(ToolCallUiResult { content, ui_payload }));
+                        let _ = tx.send(Ok(ToolCallUiResult {
+                            content,
+                            ui_payload,
+                        }));
                     }
                     if waiters.is_empty() {
                         break;

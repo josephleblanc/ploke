@@ -217,10 +217,7 @@ impl super::Tool for NsRead {
         };
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("exists", result.exists.to_string())
-            .with_field(
-                "truncated",
-                (io_truncated || slice_truncated).to_string(),
-            )
+            .with_field("truncated", (io_truncated || slice_truncated).to_string())
             .with_field(
                 "lines",
                 match (result.start_line, result.end_line) {

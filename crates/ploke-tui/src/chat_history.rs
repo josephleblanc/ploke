@@ -498,10 +498,7 @@ impl ChatHistory {
 
     /// Update running totals by adding the provided deltas.
     pub fn record_usage_delta(&mut self, prompt: u32, completion: u32, cost: f64) {
-        self.totals.prompt_tokens = self
-            .totals
-            .prompt_tokens
-            .saturating_add(prompt as u64);
+        self.totals.prompt_tokens = self.totals.prompt_tokens.saturating_add(prompt as u64);
         self.totals.completion_tokens = self
             .totals
             .completion_tokens
@@ -1109,7 +1106,15 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::Tool;
-        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id), None)
+        self.add_child(
+            parent_id,
+            child_id,
+            &content,
+            status,
+            kind,
+            Some(call_id),
+            None,
+        )
     }
 
     /// Decrement turns to live of messages in the currently selected message history.
