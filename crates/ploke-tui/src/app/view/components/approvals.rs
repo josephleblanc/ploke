@@ -24,6 +24,26 @@ pub struct ApprovalsState {
     pub filter: ApprovalsFilter,
 }
 
+pub struct ApprovalsView<'a> {
+    pub items: &'a [ApprovalListItem],
+    pub selected: usize,
+    pub help_visible: bool,
+    pub view_lines: usize,
+    pub filter: ApprovalsFilter,
+}
+
+impl<'a> ApprovalsView<'a> {
+    pub fn new(items: &'a [ApprovalListItem], ui: &'a ApprovalsState) -> Self {
+        Self {
+            items,
+            selected: ui.selected,
+            help_visible: ui.help_visible,
+            view_lines: ui.view_lines,
+            filter: ui.filter,
+        }
+    }
+}
+
 impl ApprovalsState {
     pub fn select_next(&mut self) {
         self.selected = self.selected.saturating_add(1);
@@ -242,8 +262,13 @@ pub fn render_approvals_overlay(
     let inner = outer.inner(area);
     frame.render_widget(outer, area);
 
+    // Build unified list across edits and creates with filtering
+    let items: Vec<ApprovalListItem> = filtered_items(state, ui.filter);
+    let view = ApprovalsView::new(&items, ui);
+    let selected_idx = view.selected.min(view.items.len().saturating_sub(1));
+
     // Split overlay into body + footer (help)
-    let footer_height = if ui.help_visible { 6 } else { 1 };
+    let footer_height = if view.help_visible { 6 } else { 1 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
@@ -257,11 +282,8 @@ pub fn render_approvals_overlay(
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(body_area);
 
-    // Build unified list across edits and creates with filtering
-    let items: Vec<ApprovalListItem> = filtered_items(state, ui.filter);
-    let selected_idx = ui.selected.min(items.len().saturating_sub(1));
-
-    let list_items: Vec<ListItem> = items
+    let list_items: Vec<ListItem> = view
+        .items
         .iter()
         .map(|item| ListItem::new(item.label.clone()).style(status_style(&item.status)))
         .collect();
@@ -271,13 +293,13 @@ pub fn render_approvals_overlay(
         .highlight_symbol("▶ ")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
     let mut list_state = ListState::default();
-    if !items.is_empty() {
+    if !view.items.is_empty() {
         list_state.select(Some(selected_idx));
     }
     frame.render_stateful_widget(list, cols[0], &mut list_state);
 
     // Details
-    let selected = items.get(selected_idx).map(|item| (item.kind, item.id));
+    let selected = view.items.get(selected_idx).map(|item| (item.kind, item.id));
     let mut detail_lines: Vec<Line<'static>> = Vec::new();
     let detail_width = cols[1].width.saturating_sub(2).max(1);
     if let Some((sel_kind, sel_id)) = selected {
@@ -301,10 +323,10 @@ pub fn render_approvals_overlay(
                 )));
 
                 // Determine line limit for display
-                let line_limit = if ui.view_lines == 0 {
+                let line_limit = if view.view_lines == 0 {
                     usize::MAX
                 } else {
-                    ui.view_lines
+                    view.view_lines
                 };
                 let mut rendered_preview_lines = 0usize;
 
@@ -381,11 +403,11 @@ pub fn render_approvals_overlay(
 
     // Render help footer with truncation status
     let overlay_style = Style::new().fg(Color::LightBlue);
-    if ui.help_visible {
-        let truncation_status = if ui.view_lines == 0 {
+    if view.help_visible {
+        let truncation_status = if view.view_lines == 0 {
             "unlimited".to_string()
         } else {
-            format!("{} lines", ui.view_lines)
+            format!("{} lines", view.view_lines)
         };
 
         let help_text = format!(
@@ -402,7 +424,7 @@ pub fn render_approvals_overlay(
              - f: Cycle filter\n\
              - q/Esc: Close approvals overlay",
             truncation_status,
-            ui.filter.label(),
+            view.filter.label(),
             truncation_status
         );
 
@@ -411,16 +433,16 @@ pub fn render_approvals_overlay(
             .block(Block::bordered().title(" Help ").style(overlay_style));
         frame.render_widget(help, footer_area);
     } else {
-        let truncation_info = if ui.view_lines == 0 {
+        let truncation_info = if view.view_lines == 0 {
             "unlimited".to_string()
         } else {
-            format!("{} lines", ui.view_lines)
+            format!("{} lines", view.view_lines)
         };
 
         let hint = Paragraph::new(format!(
             " ? Help | View: {} | Filter: {} ",
             truncation_info,
-            ui.filter.label()
+            view.filter.label()
         ))
         .style(overlay_style)
         .alignment(ratatui::layout::Alignment::Right);

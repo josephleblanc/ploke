@@ -329,7 +329,7 @@ pub fn render_config_overlay(frame: &mut Frame<'_>, cfg: &ConfigOverlayState) {
 
     frame.render_widget(ratatui::widgets::Clear, rect);
 
-    let footer_height = if cfg.help_visible { 5 } else { 4 };
+    let footer_height = if cfg.help_visible { 6 } else { 4 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(footer_height)])

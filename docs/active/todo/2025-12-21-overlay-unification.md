@@ -9,13 +9,15 @@
 - Added overlay manager skeleton and moved config overlay to it.
 - Routed model/embedding/context/approvals overlays through the overlay manager.
 - Added shared overlay widgets (search bar, empty state, diff preview) and migrated context/approvals.
+- Added overlay manager smoke test, overlay intent tests, and config overlay footer height test.
 
 ## In Progress
 - None.
 
 ## Next
-- Inventory shared widgets (search bar, diff preview, empty state, list header/footer) for extraction.
-- Add tests for overlay intents and manager smoke.
+- Expand overlay manager tests for render routing and close behavior per overlay.
+- Extract any remaining shared widgets (list header/footer, key-hint footer) and migrate overlays that still duplicate UI.
+- Document overlay manager invariants and overlay command boundaries in the plan (if missing).
 
 ## Notes
 - Keep config overlay limited to enum/bool selection for now; avoid inline text edits.

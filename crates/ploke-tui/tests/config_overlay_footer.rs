@@ -34,7 +34,7 @@ fn footer_rect(area: Rect, help_visible: bool) -> Rect {
     let y = area.y.saturating_add(area.height.saturating_sub(height) / 2);
     let rect = Rect::new(x, y, width.max(50), height.max(12));
 
-    let footer_height = if help_visible { 5 } else { 4 };
+    let footer_height = if help_visible { 6 } else { 4 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
