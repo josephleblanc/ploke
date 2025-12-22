@@ -1,6 +1,5 @@
 ---
 source: crates/ploke-tui/tests/approvals_overlay_render.rs
-assertion_line: 291
 expression: red
 ---
 ┌ Approvals ─────────────────────────────────────────────────────────────────────────────┐
@@ -8,8 +7,8 @@ expression: red
 ││▶ [E] 87654321  Pending  files:1 ││request_id: <UUID>   ││
 ││                                 ││status: Pending  files:1                           ││
 ││                                 ││Before/After:                                      ││
-││                                 ││--- <PWD>/crates/p││
-││                                 ││loke-tui/Cargo.toml                                ││
+││                                 ││--- <PWD>/crates/ploke-tui/Carg││
+││                                 ││o.toml                                             ││
 ││                                 ││- fn a() {}                                        ││
 ││                                 ││- fn b() {}                                        ││
 ││                                 ││+ fn a() {}                                        ││

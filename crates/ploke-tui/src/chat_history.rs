@@ -222,6 +222,26 @@ pub struct ConversationTotals {
     pub cost: f64,
 }
 
+/// Tracks how a context token count was derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Estimated,
+    Actual,
+}
+
+/// Represents the most recent prompt/context token count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextTokens {
+    pub count: usize,
+    pub kind: TokenKind,
+}
+
+impl ContextTokens {
+    pub const fn new(count: usize, kind: TokenKind) -> Self {
+        Self { count, kind }
+    }
+}
+
 /// The status of the message in the current LLM context window.
 /// Pinned indicates that the message should be kept in the messages sent to the LLM, while
 /// Unpinned messages are left out of messages sent to the LLM.
@@ -412,7 +432,7 @@ pub struct ChatHistory {
     /// Approximate running totals for the conversation.
     pub totals: ConversationTotals,
     /// Latest counted tokens for the currently constructed prompt/context.
-    pub current_context_tokens: Option<usize>,
+    pub current_context_tokens: Option<ContextTokens>,
 }
 
 impl ChatHistory {
@@ -495,7 +515,7 @@ impl ChatHistory {
     }
 
     /// Overwrite current context token count (prompt being sent).
-    pub fn set_current_context_tokens(&mut self, tokens: usize) {
+    pub fn set_current_context_tokens(&mut self, tokens: ContextTokens) {
         self.current_context_tokens = Some(tokens);
     }
 
@@ -1656,9 +1676,15 @@ mod tests {
     #[test]
     fn set_current_context_tokens_overwrites() {
         let mut history = ChatHistory::new();
-        history.set_current_context_tokens(123);
-        assert_eq!(history.current_context_tokens, Some(123));
-        history.set_current_context_tokens(42);
-        assert_eq!(history.current_context_tokens, Some(42));
+        history.set_current_context_tokens(ContextTokens::new(123, TokenKind::Estimated));
+        assert_eq!(
+            history.current_context_tokens,
+            Some(ContextTokens::new(123, TokenKind::Estimated))
+        );
+        history.set_current_context_tokens(ContextTokens::new(42, TokenKind::Estimated));
+        assert_eq!(
+            history.current_context_tokens,
+            Some(ContextTokens::new(42, TokenKind::Estimated))
+        );
     }
 }

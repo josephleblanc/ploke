@@ -21,6 +21,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("verify-fixtures") => verify_fixtures(),
         Some("regen-embedding-models") => regen_embedding_models(),
+        Some("extract-tokens-log") => extract_tokens_log(args.collect()),
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -41,7 +42,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures         Ensure required local test assets are staged\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  help                    Show this message"
+         Commands:\n  verify-fixtures         Ensure required local test assets are staged\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  help                    Show this message"
     );
 }
 
@@ -85,6 +86,128 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
         integrity: None,
     },
 ];
+
+fn extract_tokens_log(args: Vec<String>) -> ExitCode {
+    let mut input_override: Option<PathBuf> = None;
+    let mut output_override: Option<PathBuf> = None;
+    let mut include_api = false;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--input" => {
+                input_override = iter.next().map(PathBuf::from);
+            }
+            "--output" => {
+                output_override = iter.next().map(PathBuf::from);
+            }
+            "--include-api" => include_api = true,
+            other => {
+                eprintln!(
+                    "Unknown flag '{other}'. Usage: cargo xtask extract-tokens-log [--input PATH] [--output PATH] [--include-api]"
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let root = workspace_root();
+    let input_path = match input_override {
+        Some(path) => path,
+        None => match latest_tokens_log(&root) {
+            Ok(path) => path,
+            Err(err) => {
+                eprintln!("{err}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+
+    if !input_path.exists() {
+        eprintln!("Input log {} does not exist", input_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    let output_path = output_override
+        .unwrap_or_else(|| root.join("tests/fixture_chat/tokens_sample.log"));
+    if let Some(parent) = output_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "Failed to create output directory {}: {err}",
+                parent.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let Ok(input_contents) = fs::read_to_string(&input_path) else {
+        eprintln!("Unable to read {}", input_path.display());
+        return ExitCode::FAILURE;
+    };
+
+    let mut patterns = vec!["kind=\"estimate_input\"", "kind=\"actual_usage\""];
+    if include_api {
+        patterns.push("kind=\"api_request\"");
+    }
+
+    let filtered: Vec<&str> = input_contents
+        .lines()
+        .filter(|line| patterns.iter().any(|pat| line.contains(pat)))
+        .collect();
+
+    if filtered.is_empty() {
+        eprintln!(
+            "No matching token diagnostics found in {}. Did you run with PLOKE_LOG_TOKENS=1?",
+            input_path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    if let Err(err) = fs::write(&output_path, filtered.join("\n")) {
+        eprintln!(
+            "Failed to write filtered log to {}: {err}",
+            output_path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "Wrote {} lines to {}",
+        filtered.len(),
+        display_relative(&output_path, &root)
+    );
+    ExitCode::SUCCESS
+}
+
+fn latest_tokens_log(root: &Path) -> Result<PathBuf, String> {
+    let log_dir = root.join("crates/ploke-tui/logs");
+    if !log_dir.exists() {
+        return Err(format!(
+            "Log dir {} not found; run the TUI once to generate logs.",
+            display_relative(&log_dir, root)
+        ));
+    }
+    let mut entries: Vec<PathBuf> = fs::read_dir(&log_dir)
+        .map_err(|err| format!("Failed to read {}: {err}", display_relative(&log_dir, root)))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| name.starts_with("tokens_") && name.ends_with(".log"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    entries.sort();
+    match entries.pop() {
+        Some(path) => Ok(path),
+        None => Err(format!(
+            "No tokens_*.log found under {}",
+            display_relative(&log_dir, root)
+        )),
+    }
+}
 
 // TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
 fn verify_fixtures() -> ExitCode {

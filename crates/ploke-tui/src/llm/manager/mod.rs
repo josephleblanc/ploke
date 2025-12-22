@@ -41,7 +41,8 @@ use ploke_llm::manager::TokenCounter;
 use crate::{
     AppEvent, EventBus,
     app_state::{AppState, StateCommand},
-    chat_history::MessageKind,
+    chat_history::{ContextTokens, MessageKind, TokenKind},
+    tracing_setup::TOKENS_TARGET,
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
         create_file::CreateFile, ns_patch::NsPatch, ns_read::NsRead,
@@ -49,6 +50,32 @@ use crate::{
     },
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
 };
+
+const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
+const TOKENS_LOG_MAX_CHARS: usize = 4_000;
+
+/// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
+pub(super) fn tokens_logging_enabled() -> bool {
+    match env::var(TOKENS_LOG_ENV) {
+        Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"),
+        Err(_) => false,
+    }
+}
+
+pub(super) fn truncate_for_tokens_log(input: &str) -> String {
+    let total = input.chars().count();
+    if total <= TOKENS_LOG_MAX_CHARS {
+        return input.to_string();
+    }
+    let truncated: String = input.chars().take(TOKENS_LOG_MAX_CHARS).collect();
+    format!("{truncated}...<truncated {} chars>", total - TOKENS_LOG_MAX_CHARS)
+}
+
+pub(super) fn format_tokens_payload<T: Serialize>(value: &T) -> String {
+    let serialized = serde_json::to_string(value)
+        .unwrap_or_else(|e| format!("<serialize error: {e}>"));
+    truncate_for_tokens_log(&serialized)
+}
 
 // API and Config
 
@@ -246,10 +273,30 @@ pub async fn process_llm_request(
         }
     };
 
+    let active_model = {
+        let cfg = state.config.read().await;
+        cfg.active_model.clone()
+    };
+
+    if tokens_logging_enabled() {
+        let prompt_payload = format_tokens_payload(&messages);
+        tracing::info!(
+            target: TOKENS_TARGET,
+            parent_id = %parent_id,
+            request_msg_id = %request_message_id,
+            assistant_message_id = %request_message_id,
+            model = %active_model,
+            kind = "estimate_input",
+            estimated_tokens = context_tokens,
+            prompt = %prompt_payload,
+            "Estimated prompt tokens (pre-flight)"
+        );
+    }
+
     // Track current context token count for observability.
     let _ = cmd_tx
         .send(StateCommand::UpdateContextTokens {
-            tokens: context_tokens,
+            tokens: ContextTokens::new(context_tokens, TokenKind::Estimated),
         })
         .await;
 

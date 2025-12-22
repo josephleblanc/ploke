@@ -22,7 +22,7 @@ use crate::app_state::events::SystemEvent;
 use crate::chat_history::MessageKind;
 use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::tracing_setup::FINISH_REASON_TARGET;
+use crate::tracing_setup::{FINISH_REASON_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
 use ploke_llm::response::FinishReason;
@@ -38,6 +38,7 @@ use crate::llm::manager::loop_error::{
 };
 use ploke_llm::LlmError;
 use crate::tools::{ToolUiPayload, allowed_tool_names};
+use super::{format_tokens_payload, tokens_logging_enabled};
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
 const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
@@ -532,6 +533,21 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
         attempts = attempts.saturating_add(1);
+
+        if tokens_logging_enabled() {
+            let request_payload = format_tokens_payload(&req);
+            tracing::info!(
+                target: TOKENS_TARGET,
+                session_id = %session_id,
+                parent_id = %parent_id,
+                assistant_message_id = %assistant_message_id,
+                model = ?model_key,
+                attempt = attempts,
+                kind = "api_request",
+                request = %request_payload,
+                "Outgoing chat request (truncated when large)"
+            );
+        }
         let ChatStepData {
             outcome,
             full_response,
@@ -814,6 +830,20 @@ pub async fn run_chat_session<R: Router>(
                 Ok(_response) => {
                     let response_clone = full_response.clone();
                     if let Some(usage) = response_clone.usage {
+                        if tokens_logging_enabled() {
+                            tracing::info!(
+                                target: TOKENS_TARGET,
+                                session_id = %session_id,
+                                parent_id = %parent_id,
+                                assistant_message_id = %assistant_message_id,
+                                model = ?model_key,
+                                kind = "actual_usage",
+                                prompt_tokens = usage.prompt_tokens,
+                                completion_tokens = usage.completion_tokens,
+                                total_tokens = usage.total_tokens,
+                                "Actual token usage from provider"
+                            );
+                        }
                         let usage_for_cost = usage.clone();
                         let finish_reason = full_response
                             .choices

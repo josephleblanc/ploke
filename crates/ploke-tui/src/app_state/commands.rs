@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::ModelId;
-use crate::chat_history::MessageKind;
+use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_core::ArcStr;
 use ploke_core::embeddings::EmbeddingProviderSlug;
@@ -217,7 +217,7 @@ pub enum StateCommand {
     },
     /// Update the latest context token count for the current prompt.
     UpdateContextTokens {
-        tokens: usize,
+        tokens: ContextTokens,
     },
 }
 

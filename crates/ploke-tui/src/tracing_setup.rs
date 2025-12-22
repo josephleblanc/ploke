@@ -22,6 +22,8 @@ pub const MESSAGE_UPDATE_TARGET: &str = "message-update";
 pub const FINISH_REASON_TARGET: &str = "finish-reason";
 /// Dedicated target for tool-call tracing (tool requests + interpreted params + results)
 pub const TOOL_CALL_TARGET: &str = "tool-calls";
+/// Dedicated target for token estimation vs usage diagnostics (opt-in)
+pub const TOKENS_TARGET: &str = "tokens";
 
 pub struct LoggingGuards {
     /// Guard for the main app log
@@ -36,6 +38,8 @@ pub struct LoggingGuards {
     pub finish_reason: WorkerGuard,
     /// Guard for the tool-calls-only log
     pub tool_calls: WorkerGuard,
+    /// Guard for token diagnostics log
+    pub tokens: WorkerGuard,
 }
 
 pub fn init_tracing() -> LoggingGuards {
@@ -63,6 +67,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target("api_json", Level::TRACE)
         .with_target(FINISH_REASON_TARGET, Level::TRACE)
         .with_target(TOOL_CALL_TARGET, Level::TRACE)
+        .with_target(TOKENS_TARGET, Level::TRACE)
         .with_target("cozo", Level::ERROR)
         .with_default(LevelFilter::WARN);
 
@@ -172,6 +177,22 @@ pub fn init_tracing() -> LoggingGuards {
         .without_time();
     let only_tool_calls = filter::Targets::new().with_target(TOOL_CALL_TARGET, Level::TRACE);
 
+    // -------- Token diagnostics log (estimate inputs, requests, usage) --------
+    let tokens_appender =
+        tracing_appender::rolling::never(&log_dir, format!("tokens_{run_id}.log"));
+    let (tokens_non_blocking, tokens_guard) = tracing_appender::non_blocking(tokens_appender);
+    let tokens_layer = fmt::layer()
+        .with_writer(tokens_non_blocking)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .without_time();
+    let only_tokens = filter::Targets::new().with_target(TOKENS_TARGET, Level::TRACE);
+
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
         // .with(filter) // env filter for the main layer
@@ -182,6 +203,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with(message_update_layer.with_filter(only_message_updates)) // message update events -> message_update_*.log
         .with(finish_reason_layer.with_filter(only_finish_reason)) // finish reason events -> finish_reason_*.log
         .with(tool_calls_layer.with_filter(only_tool_calls)) // tool call events -> tool_calls_*.log
+        .with(tokens_layer.with_filter(only_tokens)) // token diag events -> tokens_*.log
         .try_init();
 
     LoggingGuards {
@@ -191,6 +213,7 @@ pub fn init_tracing() -> LoggingGuards {
         message_update: message_update_guard,
         finish_reason: finish_reason_guard,
         tool_calls: tool_calls_guard,
+        tokens: tokens_guard,
     }
 }
 
