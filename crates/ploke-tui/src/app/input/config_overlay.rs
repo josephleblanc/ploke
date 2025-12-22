@@ -1,17 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::view::components::config_overlay::ConfigOverlayPane;
-use crate::app::App;
+use crate::app::view::components::config_overlay::{ConfigOverlayPane, ConfigOverlayState};
 
-pub fn handle_config_overlay_input(app: &mut App, key: KeyEvent) {
-    let Some(overlay) = app.config_overlay.as_mut() else {
-        return;
-    };
+pub fn handle_config_overlay_input(overlay: &mut ConfigOverlayState, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            app.config_overlay = None;
-            app.needs_redraw = true;
-            return;
+            return true;
         }
         KeyCode::Char('?') => {
             overlay.help_visible = !overlay.help_visible;
@@ -51,5 +45,5 @@ pub fn handle_config_overlay_input(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
-    app.needs_redraw = true;
+    false
 }

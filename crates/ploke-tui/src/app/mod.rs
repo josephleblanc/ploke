@@ -10,6 +10,8 @@ use ploke_llm::manager::events::endpoint;
 pub mod commands;
 pub mod editor;
 pub mod events;
+pub mod overlay;
+pub mod overlay_manager;
 pub mod input;
 pub mod message_item;
 pub mod types;
@@ -21,6 +23,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::app::input::keymap::{Action, to_action};
+use crate::app::overlay::OverlayAction;
+use crate::app::overlay_manager::OverlayManager;
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
@@ -53,7 +57,7 @@ use view::components::approvals::{
     ApprovalListItem, ApprovalsFilter, ApprovalsState, ProposalKind, filtered_items,
     render_approvals_overlay,
 };
-use view::components::config_overlay::{ConfigOverlayState, render_config_overlay};
+use view::components::config_overlay::ConfigOverlayState;
 use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail, compute_embedding_browser_scroll,
     render_embedding_browser,
@@ -129,8 +133,8 @@ pub struct App {
     context_browser: Option<ContextSearchState>,
     // Modal overlay for approvals list
     approvals: Option<ApprovalsState>,
-    // Modal overlay for config editing (skeleton)
-    config_overlay: Option<ConfigOverlayState>,
+    // Overlay manager (config overlay wiring for now)
+    overlay_manager: OverlayManager,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
@@ -170,7 +174,7 @@ impl App {
             model_browser: None,
             embedding_browser: None,
             approvals: None,
-            config_overlay: None,
+            overlay_manager: OverlayManager::default(),
             input_history: Vec::new(),
             input_history_pos: None,
             context_browser: None,
@@ -546,7 +550,7 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            if self.model_browser.is_some() {
+            if self.model_browser.is_some() || self.overlay_manager.is_active() {
                 Mode::Normal
             } else {
                 self.mode
@@ -620,9 +624,9 @@ impl App {
             );
         }
 
-        // Render config overlay if visible
-        if let Some(cfg_overlay) = &mut self.config_overlay {
-            render_config_overlay(frame, cfg_overlay);
+        // Render overlay manager if active
+        if self.overlay_manager.is_active() {
+            self.overlay_manager.render(frame);
         // Render model browser overlay if visible
         } else if let Some(mb) = &mut self.model_browser {
             let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
@@ -930,9 +934,10 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
-        // Intercept config overlay keys
-        if self.config_overlay.is_some() {
-            input::config_overlay::handle_config_overlay_input(self, key);
+        // Intercept overlay manager keys
+        if self.overlay_manager.is_active() {
+            let actions = self.overlay_manager.handle_input(key);
+            self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
         }
@@ -942,11 +947,19 @@ impl App {
         }
         // Intercept keys for model browser overlay when visible
         if self.model_browser.is_some() {
-            input::model_browser::handle_model_browser_input(self, key);
+            let actions = {
+                let mb = self.model_browser.as_mut().expect("model browser");
+                input::model_browser::handle_model_browser_input(mb, key)
+            };
+            self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
         } else if self.embedding_browser.is_some() {
-            input::embedding_browser::handle_embedding_browser_input(self, key);
+            let actions = {
+                let eb = self.embedding_browser.as_mut().expect("embedding browser");
+                input::embedding_browser::handle_embedding_browser_input(eb, key)
+            };
+            self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
         // Intercept keys for context browser overlay when visible
@@ -1058,8 +1071,8 @@ impl App {
                 }
             }
             Action::OpenConfigOverlay => {
-                if self.config_overlay.is_some() {
-                    self.config_overlay = None;
+                if self.overlay_manager.is_config_open() {
+                    self.overlay_manager.close_active();
                 } else {
                     self.open_config_overlay();
                 }
@@ -1248,6 +1261,28 @@ impl App {
         }
     }
 
+    fn handle_overlay_actions(&mut self, actions: Vec<OverlayAction>) {
+        for action in actions {
+            match action {
+                OverlayAction::CloseOverlay(kind) => match kind {
+                    overlay::OverlayKind::ModelBrowser => self.close_model_browser(),
+                    overlay::OverlayKind::EmbeddingBrowser => self.close_embedding_browser(),
+                },
+                OverlayAction::RequestModelEndpoints { model_id } => {
+                    self.request_model_endpoints(model_id);
+                }
+                OverlayAction::SelectModel { model_id, provider } => {
+                    self.apply_model_provider_selection(model_id.to_string(), provider);
+                    self.close_model_browser();
+                }
+                OverlayAction::SelectEmbeddingModel { model_id, provider } => {
+                    self.apply_embedding_model_selection(model_id, provider);
+                    self.close_embedding_browser();
+                }
+            }
+        }
+    }
+
     fn handle_backspace(&mut self) {
         let _ = self.input_buffer.pop();
     }
@@ -1366,7 +1401,8 @@ impl App {
         let cfg = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async { self.state.config.read().await })
         });
-        self.config_overlay = Some(ConfigOverlayState::from_runtime_config(&cfg));
+        self.overlay_manager
+            .open_config(ConfigOverlayState::from_runtime_config(&cfg));
         self.needs_redraw = true;
     }
 
@@ -1512,6 +1548,21 @@ impl App {
     fn close_model_browser(&mut self) {
         self.model_browser = None;
         self.needs_redraw = true;
+    }
+
+    fn request_model_endpoints(&self, model_id: ModelId) {
+        tokio::spawn(async move {
+            let router = RouterVariants::OpenRouter(OpenRouter);
+            emit_app_event(
+                LlmEvent::Endpoint(endpoint::Event::Request {
+                    model_key: model_id.key,
+                    router,
+                    variant: model_id.variant,
+                })
+                .into(),
+            )
+            .await;
+        });
     }
 
     fn close_embedding_browser(&mut self) {

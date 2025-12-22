@@ -1,3 +1,4 @@
+pub mod approvals;
 pub mod config_overlay;
 pub mod context_browser;
 pub mod embedding_browser;
