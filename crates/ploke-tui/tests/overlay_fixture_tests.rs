@@ -61,11 +61,11 @@ async fn overlay_renders_with_fixture_app_state() {
 
     // Render via the component using the App's shared state
     let mut term = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
-    let ui = ApprovalsState::default();
+    let mut ui = ApprovalsState::default();
     tokio::task::block_in_place(|| {
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
     });

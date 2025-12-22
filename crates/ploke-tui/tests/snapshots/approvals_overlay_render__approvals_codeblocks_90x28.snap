@@ -9,9 +9,7 @@ expression: red
 ││                                 ││Before/After:                                      ││
 ││                                 ││--- <PWD>/crates/ploke-tui/Carg││
 ││                                 ││o.toml                                             ││
-││                                 ││- fn a() {}                                        ││
 ││                                 ││- fn b() {}                                        ││
-││                                 ││+ fn a() {}                                        ││
 ││                                 ││+ fn c() {}                                        ││
 ││                                 ││                                                   ││
 ││                                 ││                                                   ││
@@ -28,5 +26,5 @@ expression: red
 ││                                 ││                                                   ││
 ││                                 ││                                                   ││
 │└─────────────────────────────────┘└───────────────────────────────────────────────────┘│
-│                                     ? Help | View: unlimited | Filter: pending+errored │
+│                        ? Help | View: unlimited | Filter: pending+errored | Diff: minimal │
 └────────────────────────────────────────────────────────────────────────────────────────┘

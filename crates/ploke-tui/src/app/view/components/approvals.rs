@@ -7,21 +7,26 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
+use similar::{ChangeTag, TextDiff};
 
-use crate::app::view::components::context_browser::StepEnum;
 use crate::app::view::components::overlay_widgets;
 use crate::app::view::rendering::highlight::{
     StyledLine, StyledSpan, highlight_diff_text, styled_to_ratatui_lines,
 };
 use crate::app_state::AppState as _;
-use crate::app_state::core::{DiffPreview, EditProposalStatus}; // trait bounds
+use crate::app_state::core::{DiffPreview, EditProposalStatus};
+use crate::{app::view::components::context_browser::StepEnum, app_state::core::BeforeAfter}; // trait bounds
 
 #[derive(Debug, Clone, Default)]
 pub struct ApprovalsState {
     pub selected: usize,
     pub help_visible: bool,
-    pub view_lines: usize, // Number of lines to show in details view (None = unlimited)
+    /// Vertical scroll offset (in wrapped display lines) for the details pane.
+    pub scroll_y: u16,
+    pub view_lines: usize, // Number of lines to show in details view (0 = unlimited)
     pub filter: ApprovalsFilter,
+    pub diff_view: DiffViewMode,
+    diff_cache: DiffPreviewCache,
 }
 
 pub struct ApprovalsView<'a> {
@@ -30,16 +35,18 @@ pub struct ApprovalsView<'a> {
     pub help_visible: bool,
     pub view_lines: usize,
     pub filter: ApprovalsFilter,
+    pub diff_view: DiffViewMode,
 }
 
 impl<'a> ApprovalsView<'a> {
-    pub fn new(items: &'a [ApprovalListItem], ui: &'a ApprovalsState) -> Self {
+    pub fn new(items: &'a [ApprovalListItem], ui: &ApprovalsState) -> Self {
         Self {
             items,
             selected: ui.selected,
             help_visible: ui.help_visible,
             view_lines: ui.view_lines,
             filter: ui.filter,
+            diff_view: ui.diff_view,
         }
     }
 }
@@ -47,9 +54,19 @@ impl<'a> ApprovalsView<'a> {
 impl ApprovalsState {
     pub fn select_next(&mut self) {
         self.selected = self.selected.saturating_add(1);
+        self.scroll_y = 0;
     }
     pub fn select_prev(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.scroll_y = 0;
+    }
+
+    pub fn scroll_up(&mut self, n: u16) {
+        self.scroll_y = self.scroll_y.saturating_sub(n);
+    }
+
+    pub fn scroll_down(&mut self, n: u16) {
+        self.scroll_y = self.scroll_y.saturating_add(n);
     }
 
     pub fn increase_view_lines(&mut self) {
@@ -58,6 +75,8 @@ impl ApprovalsState {
         } else {
             self.view_lines = (self.view_lines + 10).min(200); // Cap at 200 lines
         }
+        self.scroll_y = 0;
+        self.diff_cache.clear();
     }
 
     pub fn decrease_view_lines(&mut self) {
@@ -66,15 +85,118 @@ impl ApprovalsState {
         } else {
             self.view_lines = self.view_lines.saturating_sub(10);
         }
+        self.scroll_y = 0;
+        self.diff_cache.clear();
     }
 
     pub fn toggle_unlimited(&mut self) {
         self.view_lines = if self.view_lines == 0 { 20 } else { 0 };
+        self.scroll_y = 0;
+        self.diff_cache.clear();
     }
 
     pub fn cycle_filter(&mut self) {
         self.filter = self.filter.next_wrap();
         self.selected = 0; // Reset selection to keep in-bounds on new list
+        self.scroll_y = 0;
+        self.diff_cache.clear();
+    }
+
+    pub fn toggle_diff_view(&mut self) {
+        self.diff_view = self.diff_view.next();
+        self.scroll_y = 0;
+        self.diff_cache.clear();
+    }
+
+    fn diff_chunks<'a>(
+        &'a mut self,
+        selected_id: uuid::Uuid,
+        preview: &DiffPreview,
+    ) -> &'a [String] {
+        let context_lines = match self.diff_view {
+            DiffViewMode::Expanded => {
+                if self.view_lines == 0 {
+                    6
+                } else {
+                    // Heuristic: more allowed lines -> more surrounding context.
+                    (self.view_lines / 6).clamp(3, 12)
+                }
+            }
+            _ => 0,
+        };
+
+        if !self
+            .diff_cache
+            .matches(selected_id, self.diff_view, context_lines)
+        {
+            self.diff_cache
+                .rebuild(selected_id, self.diff_view, context_lines, preview);
+        }
+        &self.diff_cache.chunks
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiffViewMode {
+    /// Only changed lines (add/remove), plus headers.
+    #[default]
+    Minimal,
+    /// Changed lines plus surrounding context lines.
+    Expanded,
+    /// Full diff output.
+    Full,
+}
+
+impl DiffViewMode {
+    fn next(self) -> Self {
+        match self {
+            DiffViewMode::Minimal => DiffViewMode::Expanded,
+            DiffViewMode::Expanded => DiffViewMode::Full,
+            DiffViewMode::Full => DiffViewMode::Minimal,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            DiffViewMode::Minimal => "minimal",
+            DiffViewMode::Expanded => "expanded",
+            DiffViewMode::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct DiffPreviewCache {
+    selected_id: Option<uuid::Uuid>,
+    mode: DiffViewMode,
+    context_lines: usize,
+    chunks: Vec<String>,
+}
+
+impl DiffPreviewCache {
+    fn matches(&self, selected_id: uuid::Uuid, mode: DiffViewMode, context_lines: usize) -> bool {
+        self.selected_id == Some(selected_id)
+            && self.mode == mode
+            && self.context_lines == context_lines
+    }
+
+    fn clear(&mut self) {
+        self.selected_id = None;
+        self.context_lines = 0;
+        self.chunks.clear();
+    }
+
+    fn rebuild(
+        &mut self,
+        selected_id: uuid::Uuid,
+        mode: DiffViewMode,
+        context_lines: usize,
+        preview: &DiffPreview,
+    ) {
+        self.selected_id = Some(selected_id);
+        self.mode = mode;
+        self.context_lines = context_lines;
+        self.chunks = diff_preview_chunks(preview, mode, context_lines);
     }
 }
 
@@ -253,7 +375,7 @@ pub fn render_approvals_overlay(
     frame: &mut Frame,
     area: Rect,
     state: &Arc<crate::app_state::AppState>,
-    ui: &ApprovalsState,
+    ui: &mut ApprovalsState,
 ) -> Option<uuid::Uuid> {
     // Clear the underlying content in the overlay area to avoid "bleed-through"
     frame.render_widget(ratatui::widgets::Clear, area);
@@ -299,18 +421,33 @@ pub fn render_approvals_overlay(
     frame.render_stateful_widget(list, cols[0], &mut list_state);
 
     // Details
-    let selected = view.items.get(selected_idx).map(|item| (item.kind, item.id));
+    let selected = view
+        .items
+        .get(selected_idx)
+        .map(|item| (item.kind, item.id));
     let mut detail_lines: Vec<Line<'static>> = Vec::new();
     let detail_width = cols[1].width.saturating_sub(2).max(1);
     if let Some((sel_kind, sel_id)) = selected {
         // Use the established pattern for accessing async data from sync context
         let (proposals_guard, create_guard) = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let p = state.proposals.read().await;
+                let p = state.proposals.write().await;
                 let c = state.create_proposals.read().await;
                 (p, c)
             })
         });
+        let context_lines = match view.diff_view {
+            DiffViewMode::Expanded => {
+                if view.view_lines == 0 {
+                    6
+                } else {
+                    // Heuristic: more allowed lines -> more surrounding context.
+                    (view.view_lines / 6).clamp(3, 12)
+                }
+            }
+            _ => 0,
+        };
+
         let mut render_preview =
             |status: &EditProposalStatus, files_len: usize, preview: &DiffPreview| {
                 detail_lines.push(Line::from(vec![Span::styled(
@@ -330,48 +467,38 @@ pub fn render_approvals_overlay(
                 };
                 let mut rendered_preview_lines = 0usize;
 
+                let chunks = diff_preview_chunks(preview, view.diff_view, context_lines);
+
                 match preview {
-                    DiffPreview::UnifiedDiff { text } => {
+                    DiffPreview::UnifiedDiff { text: _text } => {
                         detail_lines.push(Line::from(vec![Span::styled(
                             "Unified Diff:",
                             Style::new().fg(Color::Green),
                         )]));
 
-                        if push_highlighted_with_limit(
-                            &mut detail_lines,
-                            highlight_diff_text(text, detail_width),
-                            &mut rendered_preview_lines,
-                            line_limit,
-                        ) {
-                            detail_lines.push(truncation_line(line_limit));
+                        for chunk in chunks.iter().take(1) {
+                            if push_highlighted_with_limit(
+                                &mut detail_lines,
+                                highlight_diff_text(chunk.trim_end_matches('\n'), detail_width),
+                                &mut rendered_preview_lines,
+                                line_limit,
+                            ) {
+                                detail_lines.push(truncation_line(line_limit));
+                                break;
+                            }
                         }
                     }
-                    DiffPreview::CodeBlocks { per_file } => {
+                    DiffPreview::CodeBlocks { per_file: _ } => {
                         detail_lines.push(Line::from(vec![Span::styled(
                             "Before/After:",
                             Style::new().fg(Color::Green),
                         )]));
 
-                        for ba in per_file.iter().take(2) {
+                        for chunk in chunks.iter().take(2) {
                             if rendered_preview_lines >= line_limit {
                                 detail_lines.push(truncation_line(line_limit));
                                 break;
                             }
-                            let mut chunk = String::new();
-                            chunk.push_str(&format!("--- {}\n", ba.file_path.display()));
-
-                            for ln in ba.before.lines() {
-                                chunk.push_str("- ");
-                                chunk.push_str(ln);
-                                chunk.push('\n');
-                            }
-
-                            for ln in ba.after.lines() {
-                                chunk.push_str("+ ");
-                                chunk.push_str(ln);
-                                chunk.push('\n');
-                            }
-
                             if push_highlighted_with_limit(
                                 &mut detail_lines,
                                 highlight_diff_text(chunk.trim_end_matches('\n'), detail_width),
@@ -399,7 +526,19 @@ pub fn render_approvals_overlay(
             }
         }
     }
-    overlay_widgets::render_diff_preview(frame, cols[1], " Details ", detail_lines);
+    let viewport_height = cols[1].height.saturating_sub(2) as usize; // bordered block inner height
+    let max_scroll = detail_lines.len().saturating_sub(viewport_height);
+    let max_scroll_u16 = u16::try_from(max_scroll).unwrap_or(u16::MAX);
+    let scroll_y = ui.scroll_y.min(max_scroll_u16);
+    ui.scroll_y = scroll_y;
+
+    overlay_widgets::render_diff_preview_scrolled(
+        frame,
+        cols[1],
+        " Details ",
+        detail_lines,
+        scroll_y,
+    );
 
     // Render help footer with truncation status
     let overlay_style = Style::new().fg(Color::LightBlue);
@@ -412,8 +551,8 @@ pub fn render_approvals_overlay(
 
         let help_text = format!(
             "Keys: Enter=approve  n=deny  o=open in editor  ↑/↓,j/k=navigate  f=cycle filter  q/Esc=close\n\
-             View: +=more lines  -=fewer lines  u=toggle unlimited (current: {})\n\
-             Filter: current={} (f to cycle)\n\
+             View: +=more lines  -=fewer lines  u=toggle unlimited (current: {})  v=diff view ({})\n\
+             Filter: current={} (f to cycle)  Diff: {} (v to toggle)\n\
              Commands:\n\
              - Enter: Approve selected proposal\n\
              - n: Deny selected proposal\n\
@@ -422,9 +561,12 @@ pub fn render_approvals_overlay(
              - -: Show fewer lines in preview\n\
              - u: Toggle unlimited view\n\
              - f: Cycle filter\n\
+             - v: Toggle diff view (minimal/expanded/full)\n\
              - q/Esc: Close approvals overlay",
             truncation_status,
+            view.diff_view.label(),
             view.filter.label(),
+            view.diff_view.label(),
             truncation_status
         );
 
@@ -440,9 +582,10 @@ pub fn render_approvals_overlay(
         };
 
         let hint = Paragraph::new(format!(
-            " ? Help | View: {} | Filter: {} ",
+            " ? Help | View: {} | Filter: {} | Diff: {} ",
             truncation_info,
-            view.filter.label()
+            view.filter.label(),
+            view.diff_view.label()
         ))
         .style(overlay_style)
         .alignment(ratatui::layout::Alignment::Right);
@@ -450,6 +593,143 @@ pub fn render_approvals_overlay(
     }
 
     selected.map(|(_, id)| id)
+}
+
+fn diff_preview_chunks(
+    preview: &DiffPreview,
+    mode: DiffViewMode,
+    context_lines: usize,
+) -> Vec<String> {
+    match preview {
+        DiffPreview::UnifiedDiff { text } => match mode {
+            DiffViewMode::Full => vec![text.clone()],
+            DiffViewMode::Minimal => vec![filter_unified_diff(text)],
+            DiffViewMode::Expanded => vec![filter_unified_diff_with_context(text, context_lines)],
+        },
+        DiffPreview::CodeBlocks { per_file } => per_file
+            .iter()
+            .map(|ba| textdiff_chunk_for_before_after(ba, mode, context_lines))
+            .collect(),
+    }
+}
+
+fn filter_unified_diff(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let is_add = line.starts_with('+') && !line.starts_with("+++");
+        let is_del = line.starts_with('-') && !line.starts_with("---");
+        let is_hunk = line.starts_with("@@");
+        let is_header = line.starts_with("---") || line.starts_with("+++");
+        let is_file = line.starts_with("diff --git");
+        if is_add || is_del || is_hunk || is_header || is_file {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn filter_unified_diff_with_context(text: &str, context_lines: usize) -> String {
+    if context_lines == 0 {
+        return filter_unified_diff(text);
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = vec![false; lines.len()];
+
+    for (i, line) in lines.iter().enumerate() {
+        // Always keep file/hunk headers.
+        if line.starts_with("diff --git")
+            || line.starts_with("---")
+            || line.starts_with("+++")
+            || line.starts_with("@@")
+        {
+            keep[i] = true;
+            continue;
+        }
+
+        let is_add = line.starts_with('+') && !line.starts_with("+++");
+        let is_del = line.starts_with('-') && !line.starts_with("---");
+        if is_add || is_del {
+            let start = i.saturating_sub(context_lines);
+            let end = (i + context_lines).min(lines.len().saturating_sub(1));
+            for j in start..=end {
+                keep[j] = true;
+            }
+        }
+    }
+
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if keep[i] {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn textdiff_chunk_for_before_after(
+    ba: &BeforeAfter,
+    mode: DiffViewMode,
+    context_lines: usize,
+) -> String {
+    // Note: `BeforeAfter` content is already truncated at proposal time.
+    let diff = TextDiff::from_lines(&ba.before, &ba.after);
+
+    let mut out = String::new();
+    out.push_str(&format!("--- {}\n", ba.file_path.display()));
+
+    let mut changes: Vec<(ChangeTag, &str)> = Vec::new();
+    for change in diff.iter_all_changes() {
+        changes.push((change.tag(), change.value()));
+    }
+
+    let mut keep = vec![false; changes.len()];
+    match mode {
+        DiffViewMode::Full => {
+            keep.fill(true);
+        }
+        DiffViewMode::Minimal => {
+            for (i, (tag, _)) in changes.iter().enumerate() {
+                keep[i] = *tag != ChangeTag::Equal;
+            }
+        }
+        DiffViewMode::Expanded => {
+            // Keep changes plus N equal lines of context around them.
+            for (i, (tag, _)) in changes.iter().enumerate() {
+                if *tag == ChangeTag::Equal {
+                    continue;
+                }
+                let start = i.saturating_sub(context_lines);
+                let end = (i + context_lines).min(changes.len().saturating_sub(1));
+                for j in start..=end {
+                    keep[j] = true;
+                }
+            }
+        }
+    }
+
+    for (i, (tag, value)) in changes.iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+
+        let prefix = match tag {
+            ChangeTag::Delete => '-',
+            ChangeTag::Insert => '+',
+            ChangeTag::Equal => ' ',
+        };
+
+        out.push(prefix);
+        out.push(' ');
+
+        let v = value.strip_suffix('\n').unwrap_or(value);
+        out.push_str(v);
+        out.push('\n');
+    }
+
+    out
 }
 
 fn push_highlighted_with_limit(

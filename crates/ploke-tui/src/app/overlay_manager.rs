@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use crossterm::event::KeyEvent;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Alignment;
 use ratatui::prelude::Frame;
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::app::input;
-use crate::app::overlay::{OverlayAction, OverlayKind};
-use crate::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use crate::app::overlay::{
+    Overlay, OverlayAction, OverlayKind, handle_overlay_input, render_overlay, tick_overlay,
+};
+use crate::app::view::components::approvals::ApprovalsState;
 use crate::app::view::components::config_overlay::{
     ConfigOverlayState, render_config_overlay,
 };
@@ -48,32 +50,35 @@ impl OverlayManager {
     }
 
     pub fn open_config(&mut self, state: ConfigOverlayState) {
-        self.active = Some(ActiveOverlay::Config(state));
+        self.replace_active(ActiveOverlay::Config(state));
     }
 
     pub fn open_model_browser(&mut self, state: ModelBrowserState) {
-        self.active = Some(ActiveOverlay::ModelBrowser(state));
+        self.replace_active(ActiveOverlay::ModelBrowser(state));
     }
 
     pub fn open_embedding_browser(&mut self, state: EmbeddingBrowserState) {
-        self.active = Some(ActiveOverlay::EmbeddingBrowser(state));
+        self.replace_active(ActiveOverlay::EmbeddingBrowser(state));
     }
 
     pub fn open_context_browser(&mut self, state: ContextSearchState) {
-        self.active = Some(ActiveOverlay::ContextBrowser(state));
+        self.replace_active(ActiveOverlay::ContextBrowser(state));
     }
 
     pub fn open_approvals(&mut self, state: ApprovalsState) {
-        self.active = Some(ActiveOverlay::Approvals(state));
+        self.replace_active(ActiveOverlay::Approvals(state));
     }
 
     pub fn close_active(&mut self) {
+        if let Some(active) = self.active.as_mut() {
+            Self::on_close_for(active);
+        }
         self.active = None;
     }
 
     pub fn close_kind(&mut self, kind: OverlayKind) {
         if self.active_kind() == Some(kind) {
-            self.active = None;
+            self.close_active();
         }
     }
 
@@ -148,7 +153,7 @@ impl OverlayManager {
                 input::context_browser::handle_context_browser_input(state, key)
             }
             ActiveOverlay::Approvals(state) => {
-                input::approvals::handle_approvals_input(state, key)
+                handle_overlay_input(state, key)
             }
         };
 
@@ -181,8 +186,19 @@ impl OverlayManager {
                     Self::render_context_browser(frame, overlay);
                 }
                 ActiveOverlay::Approvals(overlay) => {
-                    Self::render_approvals(frame, state, overlay);
+                    render_overlay(overlay, frame, state);
                 }
+            }
+        }
+    }
+
+    pub fn tick(&mut self, dt: std::time::Duration) {
+        if let Some(active) = self.active.as_mut() {
+            match active {
+                ActiveOverlay::Approvals(overlay) => {
+                    tick_overlay(overlay, dt);
+                }
+                _ => {}
             }
         }
     }
@@ -333,16 +349,29 @@ impl OverlayManager {
         }
     }
 
-    fn render_approvals(
-        frame: &mut Frame<'_>,
-        state: &Arc<AppState>,
-        overlay: &ApprovalsState,
-    ) {
-        let w = frame.area().width.saturating_mul(8) / 10;
-        let h = frame.area().height.saturating_mul(8) / 10;
-        let x = frame.area().x + (frame.area().width.saturating_sub(w)) / 2;
-        let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
-        let overlay_area = Rect::new(x, y, w, h);
-        let _ = render_approvals_overlay(frame, overlay_area, state, overlay);
+    fn replace_active(&mut self, active: ActiveOverlay) {
+        if let Some(current) = self.active.as_mut() {
+            Self::on_close_for(current);
+        }
+        self.active = Some(active);
+        if let Some(current) = self.active.as_mut() {
+            Self::on_open_for(current);
+        }
     }
+
+    fn on_open_for(active: &mut ActiveOverlay) {
+        match active {
+            ActiveOverlay::Approvals(overlay) => overlay.on_open(),
+            _ => {}
+        }
+    }
+
+    fn on_close_for(active: &mut ActiveOverlay) {
+        match active {
+            ActiveOverlay::Approvals(overlay) => overlay.on_close(),
+            _ => {}
+        }
+    }
+
+    // Approvals uses the Overlay trait render implementation.
 }

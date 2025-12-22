@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 pub fn render_search_bar(
@@ -21,7 +21,12 @@ pub fn render_search_bar(
     ]);
     let input_widget = Paragraph::new(input_line)
         .style(style)
-        .block(Block::default().borders(Borders::ALL).title(title).style(style))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(style),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(input_widget, area);
     if let Some(cursor_col) = cursor_col {
@@ -38,14 +43,27 @@ pub fn empty_state_line<'a>(message: &'a str, style: Style) -> Line<'a> {
     Line::from(Span::styled(message, style))
 }
 
+pub fn render_diff_preview_scrolled(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'static>>,
+    scroll_y: u16,
+) {
+    let detail = Paragraph::new(lines)
+        .block(Block::bordered().title(title))
+        .alignment(Alignment::Left)
+        .scroll((scroll_y, 0))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(detail, area);
+}
+
 pub fn render_diff_preview(
     frame: &mut Frame<'_>,
     area: Rect,
     title: &str,
     lines: Vec<Line<'static>>,
 ) {
-    let detail = Paragraph::new(lines)
-        .block(Block::bordered().title(title))
-        .alignment(Alignment::Left);
-    frame.render_widget(detail, area);
+    // Backwards-compatible default: no scrolling.
+    render_diff_preview_scrolled(frame, area, title, lines, 0);
 }

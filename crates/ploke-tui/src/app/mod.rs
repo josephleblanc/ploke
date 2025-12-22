@@ -9,6 +9,7 @@ pub mod commands;
 pub mod editor;
 pub mod events;
 pub mod overlay;
+pub mod overlay_invariants;
 pub mod overlay_manager;
 pub mod input;
 pub mod message_item;
@@ -239,6 +240,8 @@ impl App {
         // Light tick for overlays that need debounce without touching global UI cadence.
         let context_tick = tokio::time::sleep(Duration::from_millis(30));
         tokio::pin!(context_tick);
+        let overlay_tick = tokio::time::sleep(Duration::from_millis(30));
+        tokio::pin!(overlay_tick);
 
         // let mut frame_counter = 0;
         while self.running {
@@ -395,6 +398,12 @@ impl App {
             _ = &mut context_tick, if self.context_browser_needs_tick() => {
                 self.tick_context_browser();
                 context_tick.as_mut().reset(TokioInstant::now() + Duration::from_millis(30));
+            }
+
+            // Trait-based overlay ticks (no-op unless active overlay implements tick).
+            _ = &mut overlay_tick => {
+                self.overlay_manager.tick(Duration::from_millis(30));
+                overlay_tick.as_mut().reset(TokioInstant::now() + Duration::from_millis(30));
             }
 
             }

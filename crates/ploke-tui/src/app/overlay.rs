@@ -4,6 +4,9 @@ use crossterm::event::KeyEvent;
 use ploke_core::ArcStr;
 use ratatui::Frame;
 
+use crate::app::input;
+use crate::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+
 use crate::ModelId;
 use crate::app_state::AppState;
 use crate::llm::ProviderKey;
@@ -57,17 +60,25 @@ pub trait Overlay {
     fn on_open(&mut self);
     fn on_close(&mut self);
     fn handle_input(&mut self, key: KeyEvent) -> Vec<OverlayAction>;
-    fn render(&mut self, frame: &mut Frame<'_>, state: &AppState);
+    fn render(&mut self, frame: &mut Frame<'_>, state: &std::sync::Arc<AppState>);
     fn tick(&mut self, dt: Duration);
 }
 
 /// Render an overlay using a lightweight generic wrapper to keep the public API ergonomic.
-pub fn render_overlay<O: Overlay>(overlay: &mut O, frame: &mut Frame<'_>, state: &AppState) {
+pub fn render_overlay<O: Overlay>(
+    overlay: &mut O,
+    frame: &mut Frame<'_>,
+    state: &std::sync::Arc<AppState>,
+) {
     render_overlay_impl(overlay, frame, state);
 }
 
 /// Heavy render path uses dynamic dispatch to avoid monomorphization bloat.
-fn render_overlay_impl(overlay: &mut dyn Overlay, frame: &mut Frame<'_>, state: &AppState) {
+fn render_overlay_impl(
+    overlay: &mut dyn Overlay,
+    frame: &mut Frame<'_>,
+    state: &std::sync::Arc<AppState>,
+) {
     overlay.render(frame, state);
 }
 
@@ -89,4 +100,25 @@ pub fn tick_overlay<O: Overlay>(overlay: &mut O, dt: Duration) {
 /// Heavy tick path uses dynamic dispatch to avoid monomorphization bloat.
 fn tick_overlay_impl(overlay: &mut dyn Overlay, dt: Duration) {
     overlay.tick(dt);
+}
+
+impl Overlay for ApprovalsState {
+    fn on_open(&mut self) {}
+
+    fn on_close(&mut self) {}
+
+    fn handle_input(&mut self, key: KeyEvent) -> Vec<OverlayAction> {
+        input::approvals::handle_approvals_input(self, key)
+    }
+
+    fn render(&mut self, frame: &mut Frame<'_>, state: &std::sync::Arc<AppState>) {
+        let w = frame.area().width.saturating_mul(8) / 10;
+        let h = frame.area().height.saturating_mul(8) / 10;
+        let x = frame.area().x + (frame.area().width.saturating_sub(w)) / 2;
+        let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
+        let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
+        let _ = render_approvals_overlay(frame, overlay_area, state, self);
+    }
+
+    fn tick(&mut self, _dt: Duration) {}
 }

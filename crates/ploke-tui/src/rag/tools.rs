@@ -373,6 +373,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             .map(|e| (e.expected_file_hash, e.namespace))
             .expect("Mismatched path in file edit");
         let tracking_hash_before = file_hash;
+        // Read via IoManager with tracking-hash verification; fall back to a placeholder on error.
         let before = match state
             .io_handle
             .read_full_verified(path.clone(), file_hash, namespace)

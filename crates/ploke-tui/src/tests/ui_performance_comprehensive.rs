@@ -112,14 +112,14 @@ mod performance_tests {
 
         for &count in PROPOSAL_COUNTS {
             let state = create_mock_app_state_with_proposals(count).await;
-            let ui_state = ApprovalsState::default();
+            let mut ui_state = ApprovalsState::default();
 
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
             // Measure rendering time
             let start = Instant::now();
             let result = terminal.draw(|frame| {
-                let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+                let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
             });
             let duration = start.elapsed();
 
@@ -148,13 +148,13 @@ mod performance_tests {
 
         for &count in PROPOSAL_COUNTS {
             let state = create_mock_app_state_with_proposals(count).await;
-            let ui_state = ApprovalsState::default();
+            let mut ui_state = ApprovalsState::default();
 
             // Multiple renders to stress test memory usage
             for _ in 0..10 {
                 let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
                 let result = terminal.draw(|frame| {
-                    let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+                    let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
                 });
                 assert!(result.is_ok(), "Memory stress test should succeed");
             }
@@ -174,18 +174,17 @@ mod performance_tests {
             let state_clone = state.clone();
             let handle = tokio::spawn(async move {
                 for j in 0..20 {
-                    let ui_state = ApprovalsState {
-                        selected: j % 5,
-                        help_visible: false,
-                        view_lines: 0,
-                        filter: Default::default(),
-                    };
+                    let mut ui_state = ApprovalsState::default();
+                    ui_state.selected = j % 5;
+                    ui_state.help_visible = false;
+                    ui_state.view_lines = 0;
+                    ui_state.filter = Default::default();
                     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
 
                     let start = Instant::now();
                     let result = terminal.draw(|frame| {
                         let _ =
-                            render_approvals_overlay(frame, frame.area(), &state_clone, &ui_state);
+                            render_approvals_overlay(frame, frame.area(), &state_clone, &mut ui_state);
                     });
                     let duration = start.elapsed();
 
@@ -265,17 +264,16 @@ mod performance_tests {
         // Continuously render UI while mutations happen
         let rendering_handle = tokio::spawn(async move {
             for i in 0..50 {
-                let ui_state = ApprovalsState {
-                    selected: i % 10,
-                    help_visible: i % 5 == 0,
-                    view_lines: 0,
-                    filter: Default::default(),
-                };
+                let mut ui_state = ApprovalsState::default();
+                ui_state.selected = i % 10;
+                ui_state.help_visible = i % 5 == 0;
+                ui_state.view_lines = 0;
+                ui_state.filter = Default::default();
                 let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
 
                 let start = Instant::now();
                 let result = terminal.draw(|frame| {
-                    let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+                    let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
                 });
                 let duration = start.elapsed();
 
@@ -354,12 +352,12 @@ mod performance_tests {
             create_proposals: RwLock::new(std::collections::HashMap::new()),
         });
 
-        let ui_state = ApprovalsState::default();
+        let mut ui_state = ApprovalsState::default();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
         let start = Instant::now();
         let result = terminal.draw(|frame| {
-            let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+            let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
         });
         let duration = start.elapsed();
 
@@ -395,18 +393,17 @@ mod stress_tests {
 
         // Run for 30 seconds
         while start_time.elapsed() < Duration::from_secs(30) {
-            let ui_state = ApprovalsState {
-                selected: (total_renders % 10) as usize,
-                help_visible: total_renders.is_multiple_of(20),
-                view_lines: 0,
-                filter: Default::default(),
-            };
+            let mut ui_state = ApprovalsState::default();
+            ui_state.selected = (total_renders % 10) as usize;
+            ui_state.help_visible = total_renders.is_multiple_of(20);
+            ui_state.view_lines = 0;
+            ui_state.filter = Default::default();
 
             let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
 
             let render_start = Instant::now();
             let result = terminal.draw(|frame| {
-                let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+                let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
             });
             let render_duration = render_start.elapsed();
 
