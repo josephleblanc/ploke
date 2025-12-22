@@ -5,14 +5,15 @@
 
 ## Done
 - Created/updated overlay unification plan with shared widgets and config overlay details.
+- Converted approvals/context search input to emit overlay actions.
+- Added overlay manager skeleton and moved config overlay to it.
 
 ## In Progress
 - None.
 
 ## Next
-- Convert context search overlay to intent-based actions.
-- Convert approvals overlay to intent-based actions.
-- Draft overlay manager interface and skeleton implementation.
+- Route model/embedding/context/approvals through an overlay manager.
+- Extract shared widgets (search bar, empty state, diff preview) and migrate one overlay.
 - Inventory shared widgets (search bar, diff preview, empty state, list header/footer) for extraction.
 - Add tests for overlay intents and manager smoke.
 

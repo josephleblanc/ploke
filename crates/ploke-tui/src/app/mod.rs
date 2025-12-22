@@ -771,141 +771,6 @@ impl App {
         // Cursor position is handled by InputView.
     }
 
-    fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
-        use crossterm::event::KeyCode;
-        if self.approvals.is_none() {
-            return false;
-        }
-        let mut close = false;
-        let mut approve = false;
-        let mut deny = false;
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                close = true;
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(st) = &mut self.approvals {
-                    st.select_prev();
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(st) = &mut self.approvals {
-                    st.select_next();
-                }
-            }
-            KeyCode::Enter | KeyCode::Char('y') => {
-                approve = true;
-            }
-            KeyCode::Char('n') | KeyCode::Char('d') => {
-                deny = true;
-            }
-            KeyCode::Char('?') => {
-                if let Some(st) = &mut self.approvals {
-                    st.help_visible = !st.help_visible;
-                }
-                return true;
-            }
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                if let Some(st) = &mut self.approvals {
-                    st.increase_view_lines();
-                }
-                return true;
-            }
-            KeyCode::Char('-') | KeyCode::Char('_') => {
-                if let Some(st) = &mut self.approvals {
-                    st.decrease_view_lines();
-                }
-                return true;
-            }
-            KeyCode::Char('u') => {
-                if let Some(st) = &mut self.approvals {
-                    st.toggle_unlimited();
-                }
-                return true;
-            }
-            KeyCode::Char('f') => {
-                if let Some(st) = &mut self.approvals {
-                    st.cycle_filter();
-                }
-                return true;
-            }
-            KeyCode::Char('o') => {
-                // Open-in-editor for the first file of selected proposal (edit or create)
-                if let Some(st) = &self.approvals {
-                    let sel_index = st.selected;
-                    let filter = st.filter;
-                    let state = Arc::clone(&self.state);
-                    let cmd_tx = self.cmd_tx.clone();
-                    tokio::spawn(async move {
-                        // Build unified ordering to match overlay
-                        let items = filtered_items(&state, filter);
-                        if let Some(ApprovalListItem { kind, id, .. }) =
-                            items.get(sel_index).cloned()
-                        {
-                            let path_opt = match kind {
-                                ProposalKind::Edit => {
-                                    let guard = state.proposals.read().await;
-                                    guard.get(&id).and_then(|p| p.files.first().cloned())
-                                }
-                                ProposalKind::Create => {
-                                    let guard = state.create_proposals.read().await;
-                                    guard.get(&id).and_then(|p| p.files.first().cloned())
-                                }
-                            };
-                            if let Some(path) = path_opt {
-                                let cfg = state.config.read().await;
-                                let editor = resolve_editor_command(&cfg);
-                                drop(cfg);
-                                if let Some(cmd) = editor {
-                                    let args = build_editor_args(&path, None);
-                                    let _ = std::process::Command::new(cmd).args(args).spawn();
-                                } else {
-                                    let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate { msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor.".into(), kind: MessageKind::SysInfo, new_msg_id: uuid::Uuid::new_v4() });
-                                }
-                            }
-                        }
-                    });
-                }
-                return true;
-            }
-            _ => {}
-        }
-        if close {
-            self.approvals = None;
-            return true;
-        }
-        if approve || deny {
-            if let Some(st) = &self.approvals {
-                let sel_index = st.selected;
-                let filter = st.filter;
-                let state = Arc::clone(&self.state);
-                let cmd_tx = self.cmd_tx.clone();
-                tokio::spawn(async move {
-                    // Build unified item list asynchronously to avoid blocking UI thread
-                    let items = filtered_items(&state, filter);
-                    if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
-                        let _ = match (approve, kind) {
-                            (true, ProposalKind::Edit) => {
-                                cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
-                            }
-                            (true, ProposalKind::Create) => {
-                                cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
-                            }
-                            (false, ProposalKind::Edit) => {
-                                cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
-                            }
-                            (false, ProposalKind::Create) => {
-                                cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
-                            }
-                        };
-                    }
-                });
-            }
-            return true;
-        }
-        true
-    }
-
     fn create_branch(&mut self) {
         // let new_branch = self.chat_history.
     }
@@ -942,7 +807,10 @@ impl App {
             return;
         }
         // Intercept approvals overlay keys
-        if self.approvals.is_some() && self.handle_overlay_key(key) {
+        if let Some(approvals) = &mut self.approvals {
+            let actions = input::approvals::handle_approvals_input(approvals, key);
+            self.handle_overlay_actions(actions);
+            self.needs_redraw = true;
             return;
         }
         // Intercept keys for model browser overlay when visible
@@ -963,8 +831,9 @@ impl App {
             self.needs_redraw = true;
             return;
         // Intercept keys for context browser overlay when visible
-        } else if self.context_browser.is_some() {
-            input::context_browser::handle_context_browser_input(self, key);
+        } else if let Some(context_browser) = &mut self.context_browser {
+            let actions = input::context_browser::handle_context_browser_input(context_browser, key);
+            self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
         }
@@ -1265,6 +1134,8 @@ impl App {
         for action in actions {
             match action {
                 OverlayAction::CloseOverlay(kind) => match kind {
+                    overlay::OverlayKind::Approvals => self.approvals = None,
+                    overlay::OverlayKind::ContextBrowser => self.context_browser = None,
                     overlay::OverlayKind::ModelBrowser => self.close_model_browser(),
                     overlay::OverlayKind::EmbeddingBrowser => self.close_embedding_browser(),
                 },
@@ -1279,8 +1150,89 @@ impl App {
                     self.apply_embedding_model_selection(model_id, provider);
                     self.close_embedding_browser();
                 }
+                OverlayAction::ApproveSelectedProposal => {
+                    self.handle_selected_approval(true);
+                }
+                OverlayAction::DenySelectedProposal => {
+                    self.handle_selected_approval(false);
+                }
+                OverlayAction::OpenSelectedProposalInEditor => {
+                    self.open_selected_proposal_in_editor();
+                }
             }
         }
+    }
+
+    fn handle_selected_approval(&mut self, approve: bool) {
+        let Some(st) = &self.approvals else {
+            return;
+        };
+        let sel_index = st.selected;
+        let filter = st.filter;
+        let state = Arc::clone(&self.state);
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            // Build unified item list asynchronously to avoid blocking UI thread
+            let items = filtered_items(&state, filter);
+            if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
+                let _ = match (approve, kind) {
+                    (true, ProposalKind::Edit) => {
+                        cmd_tx.try_send(StateCommand::ApproveEdits { request_id: id })
+                    }
+                    (true, ProposalKind::Create) => {
+                        cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
+                    }
+                    (false, ProposalKind::Edit) => {
+                        cmd_tx.try_send(StateCommand::DenyEdits { request_id: id })
+                    }
+                    (false, ProposalKind::Create) => {
+                        cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
+                    }
+                };
+            }
+        });
+    }
+
+    fn open_selected_proposal_in_editor(&mut self) {
+        let Some(st) = &self.approvals else {
+            return;
+        };
+        let sel_index = st.selected;
+        let filter = st.filter;
+        let state = Arc::clone(&self.state);
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            // Build unified ordering to match overlay
+            let items = filtered_items(&state, filter);
+            if let Some(ApprovalListItem { kind, id, .. }) = items.get(sel_index).cloned() {
+                let path_opt = match kind {
+                    ProposalKind::Edit => {
+                        let guard = state.proposals.read().await;
+                        guard.get(&id).and_then(|p| p.files.first().cloned())
+                    }
+                    ProposalKind::Create => {
+                        let guard = state.create_proposals.read().await;
+                        guard.get(&id).and_then(|p| p.files.first().cloned())
+                    }
+                };
+                if let Some(path) = path_opt {
+                    let cfg = state.config.read().await;
+                    let editor = resolve_editor_command(&cfg);
+                    drop(cfg);
+                    if let Some(cmd) = editor {
+                        let args = build_editor_args(&path, None);
+                        let _ = std::process::Command::new(cmd).args(args).spawn();
+                    } else {
+                        let _ = cmd_tx.try_send(StateCommand::AddMessageImmediate {
+                            msg: "No editor configured. Set PLOKE_EDITOR or config ploke_editor."
+                                .into(),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: uuid::Uuid::new_v4(),
+                        });
+                    }
+                }
+            }
+        });
     }
 
     fn handle_backspace(&mut self) {
