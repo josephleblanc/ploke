@@ -22,6 +22,7 @@ clap = { version = "4.5.17", features = ["derive"] }
 # error handling
 ploke-error = { path = "../ploke-error", features = ["serde"] }
 thiserror = "1.0"
+ploke-db-derive = { path = "../../proc_macros/ploke-db-derive" }
 
 # pre-caching the schema fields for queries
 lazy_static = "1.4.0" # Added lazy_static

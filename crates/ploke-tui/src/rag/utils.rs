@@ -1,4 +1,4 @@
-use crate::{TOKEN_LIMIT, tools::ToolName};
+use crate::tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload};
 
 use super::*;
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID};
@@ -124,7 +124,16 @@ pub struct ToolCallParams {
 }
 
 impl ToolCallParams {
+    fn tool_error_from_message(&self, message: impl Into<String>) -> ToolError {
+        ToolError::new(self.name, ToolErrorCode::InvalidFormat, message)
+    }
+
     pub(super) fn tool_call_failed(&self, error: String) {
+        let err = self.tool_error_from_message(error);
+        self.tool_call_failed_error(err);
+    }
+
+    pub(super) fn tool_call_failed_error(&self, error: ToolError) {
         let _ = self
             .event_bus
             .realtime_tx
@@ -132,15 +141,23 @@ impl ToolCallParams {
                 request_id: self.request_id,
                 parent_id: self.parent_id,
                 call_id: self.call_id.clone(),
-                error,
+                error: error.to_wire_string(),
+                ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
             }));
     }
+
     pub(super) fn tool_call_err(&self, error: String) -> SystemEvent {
+        let err = self.tool_error_from_message(error);
+        self.tool_call_err_from_error(err)
+    }
+
+    pub(super) fn tool_call_err_from_error(&self, error: ToolError) -> SystemEvent {
         SystemEvent::ToolCallFailed {
             request_id: self.request_id,
             parent_id: self.parent_id,
             call_id: self.call_id.clone(),
-            error,
+            error: error.to_wire_string(),
+            ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
         }
     }
 }

@@ -58,6 +58,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] SysInfo verbosity: introduce On/Off toggle, later add levels and auto‑aging of transient system messages to reduce noise.
 * [ ] Approvals overlay: approvals currently don’t enforce mutual exclusion/validation. Approving multiple overlapping proposals can all land as Applied even if stale/conflicting. Need pre-apply validation (hash/hunk match, DB/workspace check), conflict detection, and marking Stale/Failed instead of Applied; surface partial-apply results in UI/chat.
 * [ ] UI perf: approvals overlay render budget loosened to 20ms (from 16ms) after syntax-highlighting changes; needs focused perf work to regain headroom (`tests/ui_performance_comprehensive.rs`).
+* [ ] Prompt needed when restored DB root path does not match the current workspace (tool calls like `cargo` should not silently run against a different clone); add user-facing prompt/re-root flow once prompt framework exists.
 
 ## RAG
 * [ ] Add dedup for code snippets retrieved

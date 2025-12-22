@@ -9,7 +9,10 @@ use uuid::Uuid;
 use crate::llm::LLMParameters;
 use crate::llm::registry::user_prefs::RegistryPrefs;
 use crate::llm::{ModelId, ModelKey};
-use crate::user_config::{CommandStyle, CtxPrefs, EmbeddingConfig, UserConfig};
+use crate::user_config::{
+    ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning, RagUserConfig,
+    UserConfig,
+};
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
@@ -150,16 +153,33 @@ impl Default for EditingConfig {
 }
 
 use super::*;
+use crate::tools::ToolVerbosity;
+use crate::user_config::ToolingConfig;
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub llm_params: LLMParameters,
     pub model_registry: RegistryPrefs,
     pub active_model: ModelId,
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
+    pub tool_verbosity: ToolVerbosity,
     pub embedding: EmbeddingConfig,
+    pub embedding_local: LocalEmbeddingTuning,
     pub ploke_editor: Option<String>,
+    pub tooling: ToolingConfig,
+    pub chat_policy: ChatPolicy,
+    pub rag: RagUserConfig,
+    pub token_limit: u32,
+    pub tool_retries: u32,
+    pub llm_timeout_secs: u64,
+    pub context_management: CtxPrefs,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        UserConfig::default().into()
+    }
 }
 
 impl From<UserConfig> for RuntimeConfig {
@@ -182,14 +202,31 @@ impl From<UserConfig> for RuntimeConfig {
             ..Default::default()
         };
 
+        // Validate/chat/rag advanced knobs.
+        let chat_policy = uc.chat_policy.validated();
+        let rag = uc.rag.validated();
+        let embedding_local = LocalEmbeddingTuning {
+            model_batch_size: uc.embedding_local.model_batch_size.max(1),
+            ..uc.embedding_local
+        };
+
         RuntimeConfig {
             llm_params,
             model_registry: registry,
             active_model: ModelId::from(ModelKey::default()),
             editing,
             command_style: uc.command_style,
+            tool_verbosity: uc.tool_verbosity,
             embedding: uc.embedding,
+            embedding_local,
             ploke_editor: uc.ploke_editor,
+            tooling: uc.tooling,
+            chat_policy,
+            rag,
+            token_limit: uc.token_limit,
+            tool_retries: uc.tool_retries,
+            llm_timeout_secs: uc.llm_timeout_secs,
+            context_management: uc.context_management,
         }
     }
 }
@@ -205,10 +242,18 @@ impl RuntimeConfig {
         UserConfig {
             registry: self.model_registry.clone(),
             command_style: self.command_style,
+            tool_verbosity: self.tool_verbosity,
             embedding: self.embedding.clone(),
+            embedding_local: self.embedding_local,
             editing,
             ploke_editor: self.ploke_editor.clone(),
-            context_management: CtxPrefs::default(),
+            context_management: self.context_management.clone(),
+            tooling: self.tooling.clone(),
+            chat_policy: self.chat_policy.clone(),
+            rag: self.rag.clone(),
+            token_limit: self.token_limit,
+            tool_retries: self.tool_retries,
+            llm_timeout_secs: self.llm_timeout_secs,
         }
     }
 }

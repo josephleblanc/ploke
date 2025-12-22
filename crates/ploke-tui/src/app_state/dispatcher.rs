@@ -7,7 +7,7 @@ use crate::llm::registry::user_prefs::{ModelPrefs, RegistryPrefs};
 use crate::llm::router_only::RouterVariants;
 use crate::llm::{EndpointKey, ModelId, ProviderKey};
 use crate::rag::context::process_with_rag;
-use crate::{EventBus, RagEvent, rag};
+use crate::{EventBus, MessageUpdatedEvent, RagEvent, rag};
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
@@ -98,6 +98,7 @@ pub async fn state_manager(
                 kind,
                 new_msg_id,
                 tool_call_id,
+                tool_payload,
             } => {
                 handlers::chat::add_tool_msg_immediate(
                     &state,
@@ -105,6 +106,7 @@ pub async fn state_manager(
                     new_msg_id,
                     msg,
                     tool_call_id,
+                    tool_payload,
                 )
                 .await;
             }
@@ -490,6 +492,11 @@ pub async fn state_manager(
                         e.emit_error();
                     }
                 };
+            }
+            StateCommand::UpdateContextTokens { tokens } => {
+                let mut chat_guard = state.chat.0.write().await;
+                chat_guard.set_current_context_tokens(tokens);
+                event_bus.send(MessageUpdatedEvent::new(chat_guard.current).into());
             }
 
             _ => {}

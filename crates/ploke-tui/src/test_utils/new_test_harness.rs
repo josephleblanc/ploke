@@ -64,6 +64,7 @@ impl AppHarness {
         // Config + registry
         let config = UserConfig::default();
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
+        let tool_verbosity = runtime_cfg.tool_verbosity;
 
         // DB from shared fixture
         let db_handle = TEST_DB_NODES
@@ -168,6 +169,7 @@ impl AppHarness {
             cmd_tx.clone(),
             &event_bus,
             default_model(),
+            tool_verbosity,
         );
         let app_task = tokio::spawn(async move {
             let _ = app
@@ -233,6 +235,7 @@ impl AppHarness {
                 parent_id,
                 call_id,
                 content: content.into(),
+                ui_payload: None,
             }));
     }
 

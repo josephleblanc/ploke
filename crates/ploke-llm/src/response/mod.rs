@@ -36,7 +36,7 @@ pub enum ResponseFormat {
 }
 
 /// Token usage statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -66,23 +66,23 @@ pub(super) struct ResponseUsage {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Choices {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) logprobs: Option<serde_json::Value>,
+    pub logprobs: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) finish_reason: Option<FinishReason>,
+    pub finish_reason: Option<FinishReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) native_finish_reason: Option<String>,
+    pub native_finish_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) index: Option<u32>,
+    pub index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) message: Option<ResponseMessage>,
+    pub message: Option<ResponseMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) error: Option<ErrorResponse>,
+    pub error: Option<ErrorResponse>,
     // For non-streaming choices that might have text instead of message
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) text: Option<String>,
+    pub text: Option<String>,
     // For streaming choices
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) delta: Option<StreamingDelta>,
+    pub delta: Option<StreamingDelta>,
 }
 
 /// Generation completion reasons
@@ -132,7 +132,7 @@ pub(crate) struct ErrorResponse {
 // }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub(crate) struct ResponseMessage {
+pub struct ResponseMessage {
     // When tool_calls are present, role may be null/absent
     pub(super) role: Option<Role>,
     // When tool_calls are present, content may be null/absent

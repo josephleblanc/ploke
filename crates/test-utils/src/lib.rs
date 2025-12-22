@@ -373,15 +373,18 @@ pub fn init_test_tracing_with_target(
     target: &'static str,
     level: tracing::Level,
 ) -> TestTracingGuard {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("")); // opt-in via RUST_LOG
+    // let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("")); // opt-in via RUST_LOG
+
+    use tracing::level_filters::LevelFilter;
+    use tracing_subscriber::Registry;
 
     let targets = filter::Targets::new()
-        .with_target("ploke", level)
+        .with_default(Level::WARN)
         .with_target("ploke_tui", level)
         .with_target("ploke_db", level)
-        .with_target("ploke-embed", level)
-        .with_target("ploke-io", level)
-        .with_target("ploke-transform", level)
+        .with_target("ploke_embed", level)
+        .with_target("ploke_io", level)
+        .with_target("ploke_transform", level)
         .with_target("ploke_rag", level)
         .with_target("cozo", Level::ERROR)
         .with_target(target, level);
@@ -394,7 +397,7 @@ pub fn init_test_tracing_with_target(
         .with_level(true)
         .without_time()
         .with_ansi(true)
-        .compact();
+        .pretty();
 
     let (file_writer, file_guard) = make_test_log_writer("ploke_test");
     let file_layer = tracing_subscriber::fmt::layer()
@@ -404,10 +407,11 @@ pub fn init_test_tracing_with_target(
         .with_level(true)
         .with_line_number(true)
         .without_time()
-        .with_ansi(false);
+        .with_ansi(false)
+        .compact();
 
     let subscriber = tracing_subscriber::registry()
-        .with(env_filter)
+        // .with(env_filter)
         .with(targets)
         .with(console_layer)
         .with(file_layer);

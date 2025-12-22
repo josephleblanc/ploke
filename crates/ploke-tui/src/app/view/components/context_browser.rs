@@ -12,6 +12,7 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
+use crate::app::view::components::overlay_widgets;
 use crate::llm::request::endpoint::Endpoint;
 use crate::llm::{EndpointKey, ModelId, ModelKey, ModelName, ProviderKey};
 use crate::user_config::OPENROUTER_URL;
@@ -688,29 +689,17 @@ pub fn render_context_search<'a>(
         ContextBrowserMode::Insert => "INSERT",
         ContextBrowserMode::Normal => "NORMAL",
     };
-    let prompt_prefix = format!("[{mode_label}] ");
-    let input_line = Line::from(vec![
-        Span::styled(prompt_prefix.as_str(), overlay_style),
-        Span::styled(cb.input.as_str(), overlay_style),
-    ]);
-    let input_widget = Paragraph::new(input_line)
-        .style(overlay_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Query ")
-                .style(overlay_style),
-        )
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input_widget, input_area);
-    if matches!(cb.mode, ContextBrowserMode::Insert) {
-        let cursor_x = input_area.x
-            + 1 // left border padding
-            + UnicodeWidthStr::width(prompt_prefix.as_str()) as u16
-            + cb.input.display_cursor_col();
-        let cursor_y = input_area.y + 1;
-        frame.set_cursor_position((cursor_x, cursor_y));
-    }
+    let cursor_col = matches!(cb.mode, ContextBrowserMode::Insert)
+        .then(|| cb.input.display_cursor_col());
+    overlay_widgets::render_search_bar(
+        frame,
+        input_area,
+        " Query ",
+        mode_label,
+        cb.input.as_str(),
+        cursor_col,
+        overlay_style,
+    );
 
     // Build list content (styled). Header moved to Block title; keep only list lines here.
     let mut lines: Vec<Line> = Vec::new();
@@ -725,7 +714,10 @@ pub fn render_context_search<'a>(
         } else {
             "No results found"
         };
-        lines.push(Line::from(Span::styled(empty_msg, overlay_style)));
+        lines.push(overlay_widgets::empty_state_line(
+            empty_msg,
+            overlay_style,
+        ));
     }
 
     // Selected row highlighting

@@ -4,6 +4,7 @@ use candle_transformers::models::bert::{BertModel, Config, HiddenAct};
 use hf_hub::{api::sync::Api, api::sync::ApiError as HubError, Repo, RepoType};
 use ploke_error::Error as PlokeError;
 use ploke_transform::error::TransformError;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, path::PathBuf};
 use thiserror::Error;
 use tokenizers::{Error as TokenizerError, PaddingParams, Tokenizer, TruncationParams};
@@ -104,7 +105,7 @@ impl Default for EmbeddingConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize, Serialize)]
 pub enum DevicePreference {
     #[default]
     Auto,

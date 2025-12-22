@@ -6,21 +6,31 @@
 
 use std::time::Duration;
 
+use ploke_core::ArcStr;
+use serde::Serialize;
+use tracing::info;
+use tracing::warn;
+
 use crate::HTTP_REFERER;
 use crate::HTTP_TITLE;
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
+use crate::router_only::ApiRoute;
 use crate::router_only::{ChatCompRequest, Router};
 
 use super::LlmError;
 
 #[derive(Debug, PartialEq)]
 pub enum ChatStepOutcome {
-    Content(String),
+    Content {
+        content: Option<ArcStr>,
+        reasoning: Option<ArcStr>,
+    },
     ToolCalls {
         calls: Vec<ToolCall>,
-        content: Option<String>,
+        content: Option<ArcStr>,
+        reasoning: Option<ArcStr>,
         finish_reason: FinishReason,
     },
 }
@@ -29,7 +39,7 @@ pub enum ChatStepOutcome {
 pub struct ChatHttpConfig {
     referer: &'static str,
     title: &'static str,
-    timeout: Duration,
+    pub timeout: Duration,
 }
 
 impl Default for ChatHttpConfig {
@@ -40,7 +50,7 @@ impl Default for ChatHttpConfig {
             // NOTE:ploke-llm 2025-12-14
             // Setting to 15 secs for now, try using it and getting a feel for the right default
             // timing
-            timeout: Duration::from_secs(15),
+            timeout: Duration::from_secs(30),
         }
     }
 }
@@ -49,7 +59,7 @@ pub async fn chat_step<R: Router>(
     client: &reqwest::Client,
     req: &ChatCompRequest<R>,
     cfg: &ChatHttpConfig,
-) -> Result<ChatStepOutcome, LlmError> {
+) -> Result<ChatStepData, LlmError> {
     let url = R::COMPLETION_URL;
     let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
         message: format!("missing api key: {e}"),
@@ -89,6 +99,8 @@ pub async fn chat_step<R: Router>(
 
     if let Ok(parsed) = &serde_json::from_str(&body) {
         let _ = log_api_parsed_json_response(&resp_url, status, parsed).await;
+    } else {
+        let _ = log_api_raw_response(url, status, &body);
     }
 
     if !(200..300).contains(&status) {
@@ -123,6 +135,60 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+pub struct ChatStepData {
+    pub outcome: ChatStepOutcome,
+    pub full_response: OpenAiResponse,
+}
+
+#[derive(Debug)]
+pub struct ChatStepDataBuilder {
+    pub outcome: Option<ChatStepOutcome>,
+    pub full_response: Option<OpenAiResponse>,
+}
+
+impl ChatStepDataBuilder {
+    pub fn new() -> Self {
+        Self {
+            outcome: None,
+            full_response: None,
+        }
+    }
+
+    pub fn outcome(mut self, outcome: ChatStepOutcome) -> Self {
+        self.outcome = Some(outcome);
+        self
+    }
+
+    pub fn full_response(mut self, response: OpenAiResponse) -> Self {
+        self.full_response = Some(response);
+        self
+    }
+
+    pub fn build(self) -> Result<ChatStepData, LlmError> {
+        let outcome = self
+            .outcome
+            .ok_or(LlmError::ChatStep("Outcome is required".to_string()))?;
+        let full_response = self
+            .full_response
+            .ok_or(LlmError::ChatStep("Full response is required".to_string()))?;
+
+        Ok(ChatStepData {
+            outcome,
+            full_response,
+        })
+    }
+}
+
+impl ChatStepData {
+    pub fn new(outcome: ChatStepOutcome, full_response: OpenAiResponse) -> Self {
+        Self {
+            outcome,
+            full_response,
+        }
+    }
+}
+
 /// Parse a (non-streaming) OpenAI/OpenRouter-style response body into a normalized outcome.
 ///
 /// This function is used by the *driver* (session/tool loop) to decide what to do next:
@@ -143,8 +209,9 @@ fn log_api_request_json(url: &str, payload: &str) -> color_eyre::Result<()> {
 /// ## Provider-embedded errors
 /// Some providers return `{ "error": ... }` in a 200 OK body. We detect that early and surface it
 /// as `LlmError::Api`.
-pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> {
+pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     use serde_json::Value;
+    let mut builder = ChatStepDataBuilder::new();
 
     // Parse once as JSON so we can cheaply detect embedded errors without double-deserializing.
     // If this fails, we still attempt typed parsing below to produce a more specific error.
@@ -190,27 +257,42 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
     })?;
 
     // We prefer the first choice that yields a usable outcome.
-    for choice in parsed.choices.into_iter() {
+    for choice in parsed.choices.iter() {
         // Case 1: Chat-style `message`
-        if let Some(msg) = choice.message {
-            let calls_opt = msg.tool_calls;
-            let content_opt = msg.content;
+        if let Some(msg) = &choice.message {
+            let calls_opt = &msg.tool_calls;
+            let content_opt = &msg.content;
+            let reasoning_opt = &msg.reasoning;
 
             // Normalize: tool calls always win.
             if let Some(calls) = calls_opt {
                 // If you care about empty tool_calls arrays, you can treat empty as an error.
                 // Here, empty still counts as "tool calls" because the session loop expects it.
+                // - however, still warn for the logs
+                if choice.finish_reason != Some(FinishReason::ToolCalls) {
+                    warn!(target: "chat-loop", "FinishReason is not ToolCalls when calling tools, found finish reason: {:?}", choice.finish_reason);
+                }
+                info!(target: "chat-loop", "native_finish_reason, type string, is not well-understood yet. Logging to learn more:{:?}", choice.native_finish_reason);
                 let finish_reason = FinishReason::ToolCalls;
-                return Ok(ChatStepOutcome::ToolCalls {
-                    calls,
-                    content: content_opt,
+                let outcome = ChatStepOutcome::ToolCalls {
+                    // TODO: Find a way to get rid of this clone
+                    calls: calls.clone(),
+                    content: content_opt.as_deref().map(ArcStr::from),
                     finish_reason,
-                });
+                    reasoning: reasoning_opt.as_deref().map(ArcStr::from),
+                };
+                builder = builder.outcome(outcome).full_response(parsed);
+
+                return builder.build();
             }
 
             // No tool calls → return content if present.
             if let Some(text) = content_opt {
-                return Ok(ChatStepOutcome::Content(text));
+                let outcome = ChatStepOutcome::Content {
+                    reasoning: reasoning_opt.as_deref().map(ArcStr::from),
+                    content: Some(ArcStr::from(text.as_str())),
+                };
+                return builder.outcome(outcome).full_response(parsed).build();
             }
 
             // If message exists but is empty, fall through to try other forms / choices.
@@ -218,8 +300,15 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepOutcome, LlmError> 
         }
 
         // Case 2: Legacy completions-style `text`
-        if let Some(text) = choice.text {
-            return Ok(ChatStepOutcome::Content(text));
+        if let Some(text) = &choice.text {
+            let outcome = ChatStepOutcome::Content {
+                reasoning: choice
+                    .message
+                    .as_ref()
+                    .and_then(|m| m.reasoning.as_ref().map(|s| ArcStr::from(s.as_str()))),
+                content: Some(ArcStr::from(text.as_str())),
+            };
+            return builder.outcome(outcome).full_response(parsed).build();
         }
 
         // Case 3: Streaming deltas (unsupported in this parser)
@@ -294,8 +383,10 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello world"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
         }
     }
@@ -308,8 +399,10 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello text"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
     }

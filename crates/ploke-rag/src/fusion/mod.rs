@@ -8,11 +8,12 @@
 //! - [`mmr_select`]: diversity-aware selection using cosine similarity on normalized vectors.
 //!
 //! The algorithms are intentionally small, well-documented, and pure (no I/O) to aid testing and reuse.
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// Score normalization strategies for making scores comparable across modalities.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScoreNorm {
     /// No normalization; passthrough.
     None,
@@ -138,7 +139,7 @@ fn logistic(
 }
 
 /// Configuration for Reciprocal Rank Fusion (RRF).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RrfConfig {
     /// RRF smoothing parameter (typically ~60.0).
     pub k: f32,
@@ -187,14 +188,14 @@ pub fn rrf_fuse(bm25: &[(Uuid, f32)], dense: &[(Uuid, f32)], cfg: &RrfConfig) ->
 }
 
 /// Similarity metrics for MMR.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Similarity {
     /// Cosine similarity on L2-normalized vectors.
     Cosine,
 }
 
 /// Configuration for Maximal Marginal Relevance (MMR).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MmrConfig {
     /// Tradeoff between relevance and diversity: score = λ * rel - (1-λ) * max_sim
     pub lambda: f32,

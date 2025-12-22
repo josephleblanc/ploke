@@ -207,8 +207,39 @@ pub struct Message {
     /// If this is a Tool message that came from a tool call, the originating call id.
     /// Optional to preserve backward compatibility and allow SysInfo-style tool logs.
     pub tool_call_id: Option<ArcStr>,
+    /// Optional structured payload for rendering tool messages in the UI.
+    pub tool_payload: Option<crate::tools::ToolUiPayload>,
     /// The status of the message in the current LLM context window.
     pub context_status: ContextStatus,
+}
+
+/// Running aggregates for the conversation.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ConversationTotals {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cost: f64,
+}
+
+/// Tracks how a context token count was derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Estimated,
+    Actual,
+}
+
+/// Represents the most recent prompt/context token count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextTokens {
+    pub count: usize,
+    pub kind: TokenKind,
+}
+
+impl ContextTokens {
+    pub const fn new(count: usize, kind: TokenKind) -> Self {
+        Self { count, kind }
+    }
 }
 
 /// The status of the message in the current LLM context window.
@@ -369,6 +400,7 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
         content: PROMPT_HEADER.to_string(),
         kind: MessageKind::System,
         tool_call_id: None,
+        tool_payload: None,
         context_status,
     }
 });
@@ -397,6 +429,10 @@ pub struct ChatHistory {
     path_cache: Vec<Uuid>,
     /// Scroll bar support
     pub scroll_bar: Option<ScrollbarState>,
+    /// Approximate running totals for the conversation.
+    pub totals: ConversationTotals,
+    /// Latest counted tokens for the currently constructed prompt/context.
+    pub current_context_tokens: Option<ContextTokens>,
 }
 
 impl ChatHistory {
@@ -455,7 +491,29 @@ impl ChatHistory {
             // initialize cached path with root
             path_cache: vec![root_id],
             scroll_bar: None,
+            totals: ConversationTotals::default(),
+            current_context_tokens: None,
         }
+    }
+
+    /// Update running totals by adding the provided deltas.
+    pub fn record_usage_delta(&mut self, prompt: u32, completion: u32, cost: f64) {
+        self.totals.prompt_tokens = self.totals.prompt_tokens.saturating_add(prompt as u64);
+        self.totals.completion_tokens = self
+            .totals
+            .completion_tokens
+            .saturating_add(completion as u64);
+        // If total_tokens is not explicitly provided, approximate as prompt+completion.
+        self.totals.total_tokens = self
+            .totals
+            .total_tokens
+            .saturating_add((prompt as u64).saturating_add(completion as u64));
+        self.totals.cost += cost;
+    }
+
+    /// Overwrite current context token count (prompt being sent).
+    pub fn set_current_context_tokens(&mut self, tokens: ContextTokens) {
+        self.current_context_tokens = Some(tokens);
     }
 
     /// Rebuilds the cached root -> tail path.
@@ -491,7 +549,7 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::User;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_llm(
@@ -502,7 +560,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_sysinfo(
@@ -513,7 +571,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_system(
@@ -524,7 +582,7 @@ impl ChatHistory {
         content: String,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, None)
+        self.add_child(parent_id, child_id, &content, status, kind, None, None)
     }
 
     pub fn add_message_tool(
@@ -534,9 +592,18 @@ impl ChatHistory {
         kind: MessageKind,
         content: String,
         tool_call_id: Option<ArcStr>,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, kind, tool_call_id)
+        self.add_child(
+            parent_id,
+            child_id,
+            &content,
+            status,
+            kind,
+            tool_call_id,
+            tool_payload,
+        )
     }
 
     /// Adds a new child message to the conversation tree.
@@ -556,6 +623,7 @@ impl ChatHistory {
         status: MessageStatus,
         kind: MessageKind,
         tool_call_id: Option<ArcStr>,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -566,7 +634,8 @@ impl ChatHistory {
             status,
             metadata: None,
             kind,
-            tool_call_id: None,
+            tool_call_id,
+            tool_payload,
             context_status: ContextStatus::default(),
         };
 
@@ -644,7 +713,7 @@ impl ChatHistory {
 
         // Reuse add_child but with the sibling's parent, and generate a new message id
         let new_id = Uuid::new_v4();
-        self.add_child(parent_id, new_id, content, status, kind, None)
+        self.add_child(parent_id, new_id, content, status, kind, None, None)
     }
 
     /// Deletes a message and its descendant subtree from the conversation history.
@@ -1037,7 +1106,15 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let kind = MessageKind::Tool;
-        self.add_child(parent_id, child_id, &content, status, kind, Some(call_id))
+        self.add_child(
+            parent_id,
+            child_id,
+            &content,
+            status,
+            kind,
+            Some(call_id),
+            None,
+        )
     }
 
     /// Decrement turns to live of messages in the currently selected message history.
@@ -1126,6 +1203,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1162,6 +1240,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1173,6 +1252,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Assistant,
             None,
+            None,
         )
         .unwrap();
 
@@ -1183,6 +1263,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1215,6 +1296,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1226,6 +1308,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Assistant,
             None,
+            None,
         )
         .unwrap();
 
@@ -1236,6 +1319,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1289,6 +1373,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
         ch.current = u1;
@@ -1315,6 +1400,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1325,6 +1411,7 @@ mod tests {
             "A1",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1346,6 +1433,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1356,6 +1444,7 @@ mod tests {
             "A2",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1382,6 +1471,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1392,6 +1482,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1415,6 +1506,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1425,6 +1517,7 @@ mod tests {
             "A",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1472,6 +1565,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::User,
             None,
+            None,
         )
         .unwrap();
 
@@ -1483,6 +1577,7 @@ mod tests {
             "Hi! How can I help?",
             MessageStatus::Completed,
             MessageKind::Assistant,
+            None,
             None,
         )
         .unwrap();
@@ -1496,6 +1591,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::SysInfo,
             None,
+            None,
         )
         .unwrap();
 
@@ -1508,6 +1604,7 @@ mod tests {
             MessageStatus::Completed,
             MessageKind::Tool,
             Some(ArcStr::from("new_tool_call:0")),
+            None,
         )
         .unwrap();
 
@@ -1533,5 +1630,66 @@ mod tests {
         assert_eq!(msgs[1].content, "Hello?");
         assert_eq!(msgs[2].role, LlmRole::Assistant);
         assert_eq!(msgs[2].content, "Hi! How can I help?");
+    }
+
+    #[test]
+    fn tool_messages_carry_call_ids_into_llm_requests() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        // Add a user message to parent the tool call
+        let user = Uuid::new_v4();
+        ch.add_message_user(root, user, "Run the tool".to_string())
+            .unwrap();
+
+        // Add a tool message with an explicit call id
+        let tool_call_id = ArcStr::from("call-123");
+        let tool_msg_id = Uuid::new_v4();
+        ch.add_message_tool(
+            user,
+            tool_msg_id,
+            MessageKind::Tool,
+            "tool output".to_string(),
+            Some(tool_call_id.clone()),
+            None,
+        )
+        .unwrap();
+
+        // Select the tool message to mirror how the UI renders the tail path
+        ch.current = tool_msg_id;
+        ch.rebuild_path_cache();
+
+        let msgs = ch.current_path_as_llm_request_messages();
+        let last = msgs.last().expect("tool message is on the path");
+        assert_eq!(last.role, LlmRole::Tool);
+        assert_eq!(last.tool_call_id, Some(tool_call_id));
+        assert_eq!(last.content, "tool output");
+    }
+
+    #[test]
+    fn record_usage_delta_accumulates() {
+        let mut history = ChatHistory::new();
+        history.record_usage_delta(10, 5, 1.5);
+        history.record_usage_delta(2, 3, 0.5);
+
+        assert_eq!(history.totals.prompt_tokens, 12);
+        assert_eq!(history.totals.completion_tokens, 8);
+        assert_eq!(history.totals.total_tokens, 20);
+        assert!((history.totals.cost - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn set_current_context_tokens_overwrites() {
+        let mut history = ChatHistory::new();
+        history.set_current_context_tokens(ContextTokens::new(123, TokenKind::Estimated));
+        assert_eq!(
+            history.current_context_tokens,
+            Some(ContextTokens::new(123, TokenKind::Estimated))
+        );
+        history.set_current_context_tokens(ContextTokens::new(42, TokenKind::Estimated));
+        assert_eq!(
+            history.current_context_tokens,
+            Some(ContextTokens::new(42, TokenKind::Estimated))
+        );
     }
 }

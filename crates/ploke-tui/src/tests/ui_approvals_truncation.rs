@@ -67,18 +67,17 @@ async fn test_truncation_controls_no_panic() {
     ];
 
     for view_lines in test_cases {
-        let ui_state = ApprovalsState {
-            selected: 0,
-            help_visible: false,
-            view_lines,
-            filter: Default::default(),
-        };
+        let mut ui_state = ApprovalsState::default();
+        ui_state.selected = 0;
+        ui_state.help_visible = false;
+        ui_state.view_lines = view_lines;
+        ui_state.filter = Default::default();
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
         // This should not panic
         let result = terminal.draw(|frame| {
-            let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+            let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
         });
 
         assert!(
@@ -123,17 +122,16 @@ async fn test_help_display_truncation() {
 
     // Test help visible with different settings
     for view_lines in [0, 20, 100] {
-        let ui_state = ApprovalsState {
-            selected: 0,
-            help_visible: true,
-            view_lines,
-            filter: Default::default(),
-        };
+        let mut ui_state = ApprovalsState::default();
+        ui_state.selected = 0;
+        ui_state.help_visible = true;
+        ui_state.view_lines = view_lines;
+        ui_state.filter = Default::default();
 
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
         let result = terminal.draw(|frame| {
-            let _ = render_approvals_overlay(frame, frame.area(), &state, &ui_state);
+            let _ = render_approvals_overlay(frame, frame.area(), &state, &mut ui_state);
         });
 
         assert!(

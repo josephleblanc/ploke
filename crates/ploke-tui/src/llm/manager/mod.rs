@@ -3,20 +3,25 @@
 // This is firmly within the domain of managing the contents that are sent to the LLM and received
 // back, plus what happens to construct those message, and how they are handled after arriving and
 // routed (e.g. to tools or similar), and displaying the UI
+mod loop_error;
 mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
+pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
-use crate::SystemEvent;
+use crate::{
+    SystemEvent,
+    tools::{code_item_lookup::CodeItemLookup, get_code_edges::CodeItemEdges},
+};
 // pub(crate) use events::LlmEvent;
 use fxhash::FxHashMap as HashMap;
 use ploke_core::ArcStr;
 
 use ploke_llm::{
-    HasModels as _, LlmError, Router as _,
+    HasModels as _, Router as _,
     manager::events::{endpoint, models},
     request::ToolChoice,
     router_only::openrouter::OpenRouter,
@@ -26,25 +31,56 @@ use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, sync::Arc};
+use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::instrument;
 use uuid::Uuid;
 
 pub use ploke_llm::RequestMessage;
 pub use ploke_llm::manager::Role;
+use ploke_llm::manager::TokenCounter;
 
 use crate::{
     AppEvent, EventBus,
     app_state::{AppState, StateCommand},
-    chat_history::MessageKind,
-    chat_history::{MessageStatus, MessageUpdate},
+    chat_history::{ContextTokens, MessageKind, TokenKind},
     tools::{
-        self, Tool as _, ToolDefinition, code_edit::GatCodeEdit, create_file::CreateFile,
-        ns_patch::NsPatch, ns_read::NsRead, request_code_context::RequestCodeContextGat,
+        self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
+        create_file::CreateFile, ns_patch::NsPatch, ns_read::NsRead,
+        request_code_context::RequestCodeContextGat,
     },
+    tracing_setup::TOKENS_TARGET,
     utils::consts::{DEBUG_TOOLS, TOOL_CALL_CHAIN_LIMIT},
 };
+
+const TOKENS_LOG_ENV: &str = "PLOKE_LOG_TOKENS";
+const TOKENS_LOG_MAX_CHARS: usize = 4_000;
+
+/// Opt-in toggle for token diagnostics (avoid logging sensitive content by default).
+pub(super) fn tokens_logging_enabled() -> bool {
+    match env::var(TOKENS_LOG_ENV) {
+        Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"),
+        Err(_) => false,
+    }
+}
+
+pub(super) fn truncate_for_tokens_log(input: &str) -> String {
+    let total = input.chars().count();
+    if total <= TOKENS_LOG_MAX_CHARS {
+        return input.to_string();
+    }
+    let truncated: String = input.chars().take(TOKENS_LOG_MAX_CHARS).collect();
+    format!(
+        "{truncated}...<truncated {} chars>",
+        total - TOKENS_LOG_MAX_CHARS
+    )
+}
+
+pub(super) fn format_tokens_payload<T: Serialize>(value: &T) -> String {
+    let serialized =
+        serde_json::to_string(value).unwrap_or_else(|e| format!("<serialize error: {e}>"));
+    truncate_for_tokens_log(&serialized)
+}
 
 // API and Config
 
@@ -56,8 +92,6 @@ impl From<MessageKind> for Role {
         match value {
             MessageKind::User => Role::User,
             MessageKind::Assistant => Role::Assistant,
-            // TODO: Should change below to Role::System, might break something, check tests
-            // before/after
             MessageKind::System => Role::System,
             MessageKind::Tool => Role::Tool,
             _ => panic!("Invalid state: Cannot have a Role other than User, Assistant, and System"),
@@ -226,16 +260,50 @@ pub async fn process_llm_request(
         } // Not a request, do nothing
     };
 
-    let messages = match context {
+    let (messages, context_tokens) = match context {
         ChatEvt::PromptConstructed {
             parent_id,
             formatted_prompt,
-        } => formatted_prompt,
+        } => {
+            let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
+            let tokens = formatted_prompt
+                .iter()
+                .map(|m| tokenizer.count(&m.content))
+                .sum();
+            (formatted_prompt, tokens)
+        }
         _ => {
             tracing::debug!("No prompt constructed, do nothing");
             return;
         }
     };
+
+    let active_model = {
+        let cfg = state.config.read().await;
+        cfg.active_model.clone()
+    };
+
+    if tokens_logging_enabled() {
+        let prompt_payload = format_tokens_payload(&messages);
+        tracing::info!(
+            target: TOKENS_TARGET,
+            parent_id = %parent_id,
+            request_msg_id = %request_message_id,
+            assistant_message_id = %request_message_id,
+            model = %active_model,
+            kind = "estimate_input",
+            estimated_tokens = context_tokens,
+            prompt = %prompt_payload,
+            "Estimated prompt tokens (pre-flight)"
+        );
+    }
+
+    // Track current context token count for observability.
+    let _ = cmd_tx
+        .send(StateCommand::UpdateContextTokens {
+            tokens: ContextTokens::new(context_tokens, TokenKind::Estimated),
+        })
+        .await;
 
     // llm: runtime routing uses registry prefs + active model; no legacy ModelConfig required.
 
@@ -262,77 +330,34 @@ pub async fn process_llm_request(
         }
     };
 
-    // Prepare and execute the API call, then create the final update command.
-    let result = prepare_and_run_llm_call(
+    // Prepare and execute the API call; UI updates happen inside the chat loop.
+    let report = prepare_and_run_llm_call(
         &state,
         &client,
         messages,
         event_bus.clone(),
-        request_message_id,
+        assistant_message_id,
         parent_id,
         cmd_tx.clone(),
     )
     .await;
 
-    // Build concise per-request outcome summary before consuming `result`
-    // TODO: Add a typed return value that contains a summary and an option for the content
-    let _summary = match &result {
-        Ok(_msg) => "Request summary: [success]".to_string(),
-        Err(LlmError::Api { status: 404, .. }) => {
-            "Request summary: error 404 (endpoint/tool support?)".to_string()
-        }
-        Err(LlmError::Api { status: 429, .. }) => "Request summary: rate limited (429)".to_string(),
-        Err(e) => format!("Request summary: error ({})", e),
-    };
-
-    finalize_assistant_response(&cmd_tx, assistant_message_id, result).await;
-}
-
-async fn finalize_assistant_response(
-    cmd_tx: &mpsc::Sender<StateCommand>,
-    assistant_message_id: Uuid,
-    result: Result<String, LlmError>,
-) {
-    let update_cmd = match result {
-        Ok(content) => {
-            let preview = content.chars().take(200).collect::<String>();
-            tracing::info!(
-                "LLM produced response for assistant_message_id={}. preview={}",
-                assistant_message_id,
-                preview
-            );
-
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
-                    ..Default::default()
-                },
-            }
-        }
-        Err(e) => {
-            let err_string = e.diagnostic();
-            tracing::error!(error = ?e, diagnostic = %err_string, "LLM request failed");
-
-            StateCommand::UpdateMessage {
-                id: assistant_message_id,
-                update: MessageUpdate {
-                    content: Some(format!(
-                        "LLM request failed: {}\nInspect tracing target 'api_json' or logs/openrouter/session for the last request/response.",
-                        err_string
-                    )),
-                    status: Some(MessageStatus::Error {
-                        description: err_string,
-                    }),
-                    ..Default::default()
-                },
-            }
-        }
-    };
-
-    if cmd_tx.send(update_cmd).await.is_err() {
-        log::error!("Failed to send final UpdateMessage: channel closed.");
+    let summary = report.summary();
+    tracing::info!(
+        target: "chat-loop",
+        session_id = %report.session_id,
+        outcome = ?report.outcome,
+        summary = %summary,
+        "LLM request completed"
+    );
+    if let Some(err) = report.last_error() {
+        tracing::warn!(
+            target: "chat-loop",
+            error_id = %err.error_id,
+            code = %err.code,
+            kind = ?err.kind,
+            "LLM request ended with error"
+        );
     }
 }
 
@@ -345,7 +370,7 @@ async fn prepare_and_run_llm_call(
     assistant_message_id: Uuid,
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
-) -> Result<String, LlmError> {
+) -> ChatSessionReport {
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tool_defs: Vec<ToolDefinition> = vec![
@@ -354,11 +379,14 @@ async fn prepare_and_run_llm_call(
         CreateFile::tool_def(),
         NsPatch::tool_def(),
         NsRead::tool_def(),
+        CodeItemLookup::tool_def(),
+        CodeItemEdges::tool_def(),
+        CargoTool::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
     //    When registry is available, merge model/user defaults into LLMParameters.
-    let _llm_params = crate::llm::LLMParameters::default();
+    let llm_params = crate::llm::LLMParameters::default();
 
     // 4.1) Build a router-generic ChatCompRequest using the builder pattern (OpenRouter default).
     //      Construct a concrete request object that RequestSession will dispatch.
@@ -375,9 +403,13 @@ async fn prepare_and_run_llm_call(
     };
 
     // Use the runtime-selected active model (includes optional variant)
-    let model_id = {
+    let (model_id, chat_policy, llm_timeout_secs) = {
         let cfg = state.config.read().await;
-        cfg.active_model.clone()
+        (
+            cfg.active_model.clone(),
+            cfg.chat_policy.clone(),
+            cfg.llm_timeout_secs,
+        )
     };
 
     // WARN: Using default fields here, should try to load from registry first and use default if
@@ -386,7 +418,7 @@ async fn prepare_and_run_llm_call(
         .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
         .with_model(model_id)
         .with_messages(messages)
-        .with_param_bundle(_llm_params)
+        .with_param_bundle(llm_params)
         // TODO: This is where Registry will plug in, maybe?
         // .with_params_union(_llm_params)
         .with_tools(tools)
@@ -397,37 +429,25 @@ async fn prepare_and_run_llm_call(
 
     // Persist a diagnostic snapshot of the outgoing "request plan" for offline analysis (disabled for now).
 
-    #[cfg(not(feature = "ploke-llm-refactor"))]
-    {
-        // Delegate the per-request loop to RequestSession
-        let session = session::RequestSession::<OpenRouter> {
-            client,
-            event_bus,
-            assistant_message_id,
-            parent_id,
-            req,
-            fallback_on_404: false,
-            attempts: TOOL_CALL_CHAIN_LIMIT,
-            state_cmd_tx: cmd_tx.clone(),
-        };
+    use crate::llm::manager::session::{
+        TuiToolPolicy, finish_policy_from_chat, run_chat_session, tool_policy_from_chat,
+    };
+    let policy = tool_policy_from_chat(&chat_policy);
+    let finish_policy = finish_policy_from_chat(&chat_policy);
+    let http_timeout = Duration::from_secs(llm_timeout_secs);
 
-        session.run().await
-    }
-    #[cfg(feature = "ploke-llm-refactor")]
-    {
-        use crate::llm::manager::session::{TuiToolPolicy, run_chat_session};
-        let policy = TuiToolPolicy::default();
-        run_chat_session(
-            client,
-            req,
-            parent_id,
-            assistant_message_id,
-            event_bus,
-            cmd_tx.clone(),
-            policy,
-        )
-        .await
-    }
+    run_chat_session(
+        client,
+        req,
+        parent_id,
+        assistant_message_id,
+        event_bus,
+        cmd_tx.clone(),
+        policy,
+        finish_policy,
+        http_timeout,
+    )
+    .await
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {
@@ -638,82 +658,5 @@ mod tests {
         assert_eq!(kept_all[0].content, m1.content);
         assert_eq!(kept_all[1].content, m2.content);
         assert_eq!(kept_all[2].content, m3.content);
-    }
-
-    #[tokio::test]
-    async fn replaces_placeholder_in_place() {
-        let db = Arc::new(Database::new_init().unwrap());
-        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder"),
-            )),
-        ));
-        let rag =
-            Arc::new(RagService::new(db.clone(), Arc::clone(&embedder)).expect("rag service init"));
-        let (rag_tx, _rag_rx) = mpsc::channel::<crate::RagEvent>(4);
-        let state = Arc::new(AppState::new(
-            Arc::clone(&db),
-            Arc::clone(&embedder),
-            ploke_io::IoManagerHandle::new(),
-            rag,
-            crate::TokenBudget::default(),
-            rag_tx,
-        ));
-        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(32);
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        tokio::spawn(state_manager(
-            state.clone(),
-            cmd_rx,
-            event_bus.clone(),
-            mpsc::channel(4).0,
-        ));
-
-        let user_id = Uuid::new_v4();
-        cmd_tx
-            .send(StateCommand::AddMessageImmediate {
-                msg: "hello".into(),
-                kind: MessageKind::User,
-                new_msg_id: user_id,
-            })
-            .await
-            .expect("send user message");
-
-        let placeholder_id = Uuid::new_v4();
-        let (responder_tx, responder_rx) = oneshot::channel();
-        cmd_tx
-            .send(StateCommand::CreateAssistantMessage {
-                parent_id: user_id,
-                responder: responder_tx,
-                new_assistant_msg_id: placeholder_id,
-            })
-            .await
-            .expect("send create assistant");
-        assert_eq!(
-            responder_rx.await.expect("receive placeholder id"),
-            placeholder_id
-        );
-
-        let final_text = "finalized assistant response".to_string();
-        super::finalize_assistant_response(&cmd_tx, placeholder_id, Ok(final_text.clone())).await;
-
-        timeout(Duration::from_millis(200), async {
-            loop {
-                let chat = state.chat.0.read().await;
-                let placeholder = chat.messages.get(&placeholder_id).unwrap();
-                let parent = chat.messages.get(&user_id).unwrap();
-                if placeholder.content == final_text
-                    && placeholder.status == MessageStatus::Completed
-                    && parent.children == vec![placeholder_id]
-                    && placeholder.children.is_empty()
-                {
-                    break;
-                }
-                drop(chat);
-                sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("placeholder should be updated in place");
     }
 }

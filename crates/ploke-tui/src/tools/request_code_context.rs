@@ -3,8 +3,6 @@ use ploke_core::rag_types::{
 };
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
-use crate::TOKEN_LIMIT;
-
 use super::*;
 
 // Canonical schema: RequestCodeContextArgs { token_budget, hint }
@@ -130,16 +128,15 @@ impl super::Tool for RequestCodeContextGat {
                 ),
             ));
         };
-        let token_budget = params.token_budget.unwrap_or(TOKEN_LIMIT);
-        let top_k = calc_top_k_for_budget(token_budget);
+        let cfg = ctx.state.config.read().await;
+        let token_budget = params.token_budget.unwrap_or(cfg.token_limit);
+        let top_k = calc_top_k_for_budget(token_budget).min(cfg.rag.top_k);
         let budget = TokenBudget {
             max_total: token_budget as usize,
             ..Default::default()
         };
-        let strategy = RetrievalStrategy::Hybrid {
-            rrf: RrfConfig::default(),
-            mmr: None,
-        };
+        let strategy = cfg.rag.strategy.to_runtime();
+        drop(cfg);
         let AssembledContext { parts, stats } = rag
             .get_context(&search_term, top_k, &budget, &strategy)
             .await?;
@@ -151,9 +148,15 @@ impl super::Tool for RequestCodeContextGat {
         };
         tracing::debug!(?parts, ?stats);
         let result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
+        let summary = format!("Context assembled: {} snippets", result.context.len());
+        let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
+            .with_field("search_term", result.search_term.as_str())
+            .with_field("top_k", result.top_k.to_string())
+            .with_field("returned", result.context.len().to_string());
         let serialized = serde_json::to_string(&result).expect("serialization");
         Ok(ToolResult {
             content: serialized,
+            ui_payload: Some(ui_payload),
         })
     }
 }

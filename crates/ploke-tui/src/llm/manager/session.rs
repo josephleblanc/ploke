@@ -1,8 +1,11 @@
+use std::ops::Mul;
 use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
+use crate::user_config::{ChatPolicy, ChatTimeoutStrategy};
 use chrono::DateTime;
 use ploke_llm::ChatHttpConfig;
 use ploke_llm::ChatStepOutcome;
+use ploke_llm::manager::ChatStepData;
 use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
@@ -17,20 +20,25 @@ use crate::AppEvent;
 use crate::EventBus;
 use crate::app_state::StateCommand;
 use crate::app_state::events::SystemEvent;
-use crate::chat_history::MessageKind;
-use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
-use crate::llm::ChatHistoryTarget;
-use crate::tools::ToolDefinition;
-use crate::tools::ToolName;
+use crate::chat_history::{ContextTokens, MessageKind};
+use crate::chat_history::{MessageStatus, TokenKind};
+use crate::tracing_setup::{FINISH_REASON_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
-use ploke_llm::request::ToolChoice;
 use ploke_llm::response::FinishReason;
 use ploke_llm::response::OpenAiResponse;
+use ploke_llm::response::TokenUsage;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
+use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
-use crate::tools::error::ToolErrorWire;
+use super::{format_tokens_payload, tokens_logging_enabled};
+use crate::llm::manager::loop_error::{
+    ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
+    RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error, classify_finish_reason,
+    classify_llm_error, render_error_view,
+};
+use crate::tools::{ToolUiPayload, allowed_tool_names};
 use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
@@ -90,7 +98,7 @@ where
 // put these into a better config data structure
 // - ensure there is a place to set the defaults for the user
 // - ensure the settings are persisted once set by the user, fall back on defaults
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
@@ -111,6 +119,424 @@ impl Default for TuiToolPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct TuiTimeoutPolicy {
+    duration: Option<Duration>,
+    strategy: TimeoutStrategy,
+}
+
+impl Default for TuiTimeoutPolicy {
+    fn default() -> Self {
+        Self {
+            duration: Some(Duration::from_secs(30)),
+            strategy: TimeoutStrategy::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TimeoutStrategy {
+    /// Back off attempts, beginning at `TuiTimoutPolicy.duration` and doubling a number of times
+    /// equal to the Backoff value. If None, inifite backoff attempts.
+    Backoff(Option<usize>),
+    /// Number of attempts to perform retry at the `TuiTimoutPolicy.duration`.
+    FixedRetry(usize),
+    /// No retries, fail early
+    Strict,
+}
+
+impl Default for TimeoutStrategy {
+    fn default() -> Self {
+        Self::FixedRetry(3)
+    }
+}
+impl TuiTimeoutPolicy {
+    fn next_timout_dur(self, attempt: usize) -> Option<Duration> {
+        match self.strategy {
+            TimeoutStrategy::Backoff(attempt_max) => {
+                if let Some(policy_max) = attempt_max
+                    && let Some(dur) = self.duration
+                    && attempt <= policy_max
+                {
+                    Some(dur * 2_u32.pow(attempt as u32).clamp(2, 64_u32))
+                } else {
+                    None
+                }
+            }
+            TimeoutStrategy::FixedRetry(attempt_max) => {
+                if attempt <= attempt_max {
+                    self.duration
+                } else {
+                    None
+                }
+            }
+            TimeoutStrategy::Strict => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TuiErrorPolicy {
+    EndlessRetry,
+    RetryLimit(u32),
+    Strict,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TuiLengthPolicy {
+    RetryLimit(u32),
+    Strict,
+}
+
+#[derive(Clone, Debug)]
+pub struct FinishPolicy {
+    /// Timeout backoff/limit behavior for FinishReason::Timeout.
+    timeout: TuiTimeoutPolicy,
+    /// Retry policy for FinishReason::Error.
+    error: TuiErrorPolicy,
+    /// Retry policy for FinishReason::Length.
+    length: TuiLengthPolicy,
+    /// System prompt appended when retrying after FinishReason::Length.
+    length_continue_prompt: String,
+}
+
+impl Default for TuiErrorPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(2)
+    }
+}
+
+impl Default for TuiLengthPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(1)
+    }
+}
+
+impl Default for FinishPolicy {
+    fn default() -> Self {
+        Self {
+            timeout: TuiTimeoutPolicy::default(),
+            error: TuiErrorPolicy::default(),
+            length: TuiLengthPolicy::default(),
+            length_continue_prompt: "Continue from where you left off. Do not repeat prior text."
+                .to_string(),
+        }
+    }
+}
+
+pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
+    TuiToolPolicy {
+        tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
+        tool_call_chain_limit: cfg.tool_call_chain_limit,
+        retry_without_tools_on_404: cfg.retry_without_tools_on_404,
+    }
+}
+
+pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
+    let strategy = match cfg.timeout_strategy {
+        ChatTimeoutStrategy::Backoff { attempts } => TimeoutStrategy::Backoff(attempts),
+        ChatTimeoutStrategy::FixedRetry { attempts } => TimeoutStrategy::FixedRetry(attempts),
+        ChatTimeoutStrategy::Strict => TimeoutStrategy::Strict,
+    };
+    let timeout = TuiTimeoutPolicy {
+        duration: Some(Duration::from_secs(cfg.timeout_base_secs)),
+        strategy,
+    };
+    FinishPolicy {
+        timeout,
+        error: TuiErrorPolicy::RetryLimit(cfg.error_retry_limit),
+        length: TuiLengthPolicy::RetryLimit(cfg.length_retry_limit),
+        length_continue_prompt: cfg.length_continue_prompt.clone(),
+    }
+}
+
+fn should_retry_error(policy: TuiErrorPolicy, retried_errors: &mut u32) -> bool {
+    match policy {
+        TuiErrorPolicy::EndlessRetry => {
+            *retried_errors = retried_errors.saturating_add(1);
+            true
+        }
+        TuiErrorPolicy::RetryLimit(limit) => {
+            if *retried_errors < limit {
+                *retried_errors += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiErrorPolicy::Strict => false,
+    }
+}
+
+fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bool {
+    match policy {
+        TuiLengthPolicy::RetryLimit(limit) => {
+            if *retried_lengths < limit {
+                *retried_lengths += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiLengthPolicy::Strict => false,
+    }
+}
+
+/// Outcome of finish-reason evaluation for a single response.
+///
+/// Continue variants tell the caller to retry the chat step, optionally with
+/// a system message appended before the next request.
+struct FinishContinue {
+    finish_reason: Option<FinishReason>,
+    system_prompt: Option<String>,
+}
+
+enum FinishDecision {
+    Continue(FinishContinue),
+    Return(Result<OpenAiResponse, LlmError>),
+}
+
+/// Internal aggregation of failure reasons across multiple choices.
+enum FinishFailure {
+    FinishError {
+        msg: String,
+        finish_reason: FinishReason,
+    },
+    Error(LlmError),
+}
+
+/// Mutable counters for retry behavior within a chat session.
+struct ChatLoopState {
+    retried_errors: u32,
+    retried_lengths: u32,
+    timeout_attempts: usize,
+}
+
+impl Default for ChatLoopState {
+    fn default() -> Self {
+        Self {
+            retried_errors: 0,
+            retried_lengths: 0,
+            timeout_attempts: 0,
+        }
+    }
+}
+
+/// Borrowed context required to evaluate finish reasons.
+struct ChatLoopContext<'a> {
+    cfg: &'a mut ChatHttpConfig,
+    model_key: &'a Option<ploke_llm::ModelKey>,
+}
+
+impl FinishPolicy {
+    /// Decide whether to return, continue, or continue with a system message
+    /// based on the finish reasons found in the response choices.
+    fn handle_finish_reasons(
+        &self,
+        full_response: OpenAiResponse,
+        ctx: &mut ChatLoopContext<'_>,
+        state: &mut ChatLoopState,
+    ) -> FinishDecision {
+        let span = tracing::trace_span!(
+            target: FINISH_REASON_TARGET,
+            "finish_reason",
+            retried_errors = state.retried_errors,
+            retried_lengths = state.retried_lengths,
+            timeout_attempts = state.timeout_attempts,
+            timeout_policy = ?self.timeout,
+            error_policy = ?self.error,
+            length_policy = ?self.length
+        );
+        let _enter = span.enter();
+        let mut continue_chain = false;
+        let mut continue_reason: Option<FinishReason> = None;
+        let mut continue_message: Option<String> = None;
+        let mut failure: Option<FinishFailure> = None;
+        let mut saw_finish_reason = false;
+        let mut stop = false;
+
+        for choice in &full_response.choices {
+            let Some(finish_reason) = choice.finish_reason.clone() else {
+                continue;
+            };
+            saw_finish_reason = true;
+            let native_finish_reason = choice.native_finish_reason.as_deref();
+            tracing::trace!(
+                target = FINISH_REASON_TARGET,
+                ?finish_reason,
+                ?native_finish_reason,
+                "finish reason received"
+            );
+
+            match finish_reason {
+                FinishReason::Stop => {
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: stop"
+                    );
+                    stop = true;
+                    break;
+                }
+                FinishReason::Length => {
+                    if should_retry_length(self.length, &mut state.retried_lengths) {
+                        continue_message = Some(self.length_continue_prompt.to_string());
+                        continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = true,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider stopped due to length; try reducing output or retrying."
+                                .to_string(),
+                            finish_reason,
+                        });
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
+                }
+                // should be shown to user
+                FinishReason::ContentFilter => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider reports ContentFilter applied, try again.".to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
+                // keep looping
+                FinishReason::ToolCalls => {
+                    continue_chain = true;
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        continue_with_message = false,
+                        "finish reason decision: continue"
+                    );
+                }
+                // retry on timout policy
+                FinishReason::Timeout => {
+                    state.timeout_attempts = state.timeout_attempts.saturating_add(1);
+                    if let Some(next_timout) = self.timeout.next_timout_dur(state.timeout_attempts)
+                    {
+                        // if some, change timout for next loop and ocntinue
+                        ctx.cfg.timeout = next_timout;
+                        continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = false,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::Error(LlmError::Timeout));
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
+                }
+                FinishReason::Error(ref e) => {
+                    if should_retry_error(self.error, &mut state.retried_errors) {
+                        tracing::warn!(
+                            target = "chat-loop",
+                            error = %e,
+                            retried_errors = state.retried_errors,
+                            ?ctx.model_key,
+                            ?native_finish_reason,
+                            "FinishReason::Error, retrying"
+                        );
+                        continue_chain = true;
+                        if continue_reason.is_none() {
+                            continue_reason = Some(finish_reason.clone());
+                        }
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            continue_with_message = false,
+                            "finish reason decision: continue"
+                        );
+                    } else if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: e.to_string(),
+                            finish_reason,
+                        });
+                        tracing::trace!(
+                            target = FINISH_REASON_TARGET,
+                            "finish reason decision: failure"
+                        );
+                    }
+                }
+            }
+        }
+
+        if stop {
+            return FinishDecision::Return(Ok(full_response));
+        }
+
+        if continue_chain {
+            return FinishDecision::Continue(FinishContinue {
+                finish_reason: continue_reason,
+                system_prompt: continue_message,
+            });
+        }
+
+        if let Some(failure) = failure {
+            let err = match failure {
+                FinishFailure::FinishError { msg, finish_reason } => LlmError::FinishError {
+                    msg,
+                    full_response,
+                    finish_reason,
+                },
+                FinishFailure::Error(err) => err,
+            };
+            return FinishDecision::Return(Err(err));
+        }
+
+        if !saw_finish_reason {
+            tracing::trace!(
+                target = FINISH_REASON_TARGET,
+                "finish reason decision: none"
+            );
+            return FinishDecision::Return(Err(LlmError::ChatStep(
+                "No finish reason in llm response choices.".to_string(),
+            )));
+        }
+
+        tracing::trace!(
+            target = FINISH_REASON_TARGET,
+            "finish reason decision: unhandled"
+        );
+        FinishDecision::Return(Err(LlmError::ChatStep(
+            "Unhandled finish reason in llm response choices.".to_string(),
+        )))
+    }
+}
+
+#[tracing::instrument(
+    target = "chat-loop",
+    skip(client, req, event_bus, state_cmd_tx, policy),
+    fields(
+        model_key = ?req.model_key,
+        assistant_message_id = %assistant_message_id,
+        parent_id = %parent_id
+    )
+)]
+/// Chat loop structure:
+/// - issue a chat step
+/// - handle tool calls (if any), update UI, append tool results
+/// - handle finish reasons to decide return vs retry
+// Optionally: set tool_choice=Auto if tools exist, etc.
 pub async fn run_chat_session<R: Router>(
     client: &Client,
     mut req: ChatCompRequest<R>,
@@ -119,54 +545,153 @@ pub async fn run_chat_session<R: Router>(
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
     policy: TuiToolPolicy,
-) -> Result<String, LlmError> {
-    // Optionally: set tool_choice=Auto if tools exist, etc.
-
+    finish_policy: FinishPolicy,
+    http_timeout: Duration,
+) -> ChatSessionReport {
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
-    let cfg = ChatHttpConfig::default();
+    let mut cfg = ChatHttpConfig::default();
+    cfg.timeout = http_timeout;
+    let mut loop_state = ChatLoopState::default();
+    let model_key = req.model_key.clone();
+    let session_id = Uuid::new_v4();
+    let mut report = ChatSessionReport::new(
+        session_id,
+        assistant_message_id,
+        parent_id,
+        assistant_message_id,
+    );
+    let mut commit_phase = CommitPhase::PreCommit;
+    let mut attempts = 0_u32;
+
     let mut initial_message_updated = false;
-    for _chain in 0..policy.tool_call_chain_limit {
-        let outcome = ploke_llm::chat_step(client, &req, &cfg).await?;
-        // match ploke_llm::chat_step(client, &req, &cfg).await {
-        //     Ok(chat_step_outcome) => chat_step_outcome,
-        //     Err(e) => {}
-        // };
+    for chain_index in 0..policy.tool_call_chain_limit {
+        attempts = attempts.saturating_add(1);
 
+        if tokens_logging_enabled() {
+            let request_payload = format_tokens_payload(&req);
+            tracing::info!(
+                target: TOKENS_TARGET,
+                session_id = %session_id,
+                parent_id = %parent_id,
+                assistant_message_id = %assistant_message_id,
+                model = ?model_key,
+                attempt = attempts,
+                kind = "api_request",
+                request = %request_payload,
+                "Outgoing chat request (truncated when large)"
+            );
+        }
+        let ChatStepData {
+            outcome,
+            full_response,
+        } = match ploke_llm::chat_step(client, &req, &cfg).await {
+            Ok(step) => step,
+            Err(err) => {
+                if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
+                    let allowed = allowed_tool_names();
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "parse_response",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let loop_error = build_unknown_tool_error(
+                        &unknown_tool,
+                        &allowed,
+                        context,
+                        commit_phase.clone(),
+                    );
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
+                    continue;
+                }
+                let context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "chat_step",
+                    &model_key,
+                    assistant_message_id,
+                );
+                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                emit_loop_error(
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    &loop_error,
+                )
+                .await;
+                report.record_error(loop_error.clone());
+                report.outcome = SessionOutcome::Aborted {
+                    error_id: loop_error.error_id,
+                };
+                report.commit_phase = commit_phase;
+                report.attempts = attempts;
+                return report;
+            }
+        };
+
+        let token_usage = full_response.usage;
+        if let Some(resp_tokens) = token_usage {
+            state_cmd_tx
+                .send(StateCommand::UpdateContextTokens {
+                    tokens: ContextTokens {
+                        count: resp_tokens.prompt_tokens as usize,
+                        kind: TokenKind::Actual,
+                    },
+                })
+                .await
+                .expect("Invariant: state manager running");
+        }
         match outcome {
-            ChatStepOutcome::Content(text) => return Ok(text),
-
-            ChatStepOutcome::ToolCalls { calls, content, .. } => {
+            ChatStepOutcome::ToolCalls {
+                calls,
+                content,
+                reasoning,
+                ..
+            } => {
+                let assistant_msg = if content.as_ref().is_some_and(|c| !c.is_empty()) {
+                    content.as_ref().map(|s| s.to_string())
+                } else if reasoning.as_ref().is_some_and(|r| !r.is_empty()) {
+                    reasoning.as_ref().map(|s| s.to_string())
+                } else {
+                    None
+                };
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
-                        content.clone(),
+                        content.map(|s| s.to_string()),
                         calls.clone(),
                     ));
                 let step_request_id = Uuid::new_v4();
                 // 1) update placeholder message once (UI concern)
-                if !initial_message_updated {
-                    let is_updated = update_assistant_placeholder_once(
-                        &state_cmd_tx,
-                        assistant_message_id,
-                        content,
-                        initial_message_updated,
-                    )
-                    .await;
-                    initial_message_updated = is_updated;
-                } else {
-                    let msg = content.unwrap_or_else(|| "Calling tools...".to_string());
-                    state_cmd_tx
-                        .send(StateCommand::AddMessageImmediate {
-                            msg,
-                            kind: MessageKind::Assistant,
-                            new_msg_id: Uuid::new_v4(),
-                        })
-                        .await
-                        .expect("state manager must be running");
-                }
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    assistant_msg.unwrap_or_else(|| "Calling tools...".to_string()),
+                    MessageStatus::Completed,
+                )
+                .await;
+                commit_phase = CommitPhase::MessageCommitted;
 
                 // 2) run tools (EventBus + waiting is TUI concern)
+                let mut call_name_by_id: HashMap<ploke_core::ArcStr, ploke_core::ArcStr> =
+                    HashMap::new();
+                for call in &calls {
+                    call_name_by_id.insert(
+                        call.call_id.clone(),
+                        ploke_core::ArcStr::from(call.function.name.as_str()),
+                    );
+                }
                 let results = execute_tools_via_event_bus(
                     event_bus.clone(),
                     parent_id,
@@ -178,37 +703,59 @@ pub async fn run_chat_session<R: Router>(
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
+                    let call_id_for_state = call_id.clone();
                     match tool_json_result {
-                        Ok(tool_json) => {
-                            req.core
-                                .messages
-                                .push(RequestMessage::new_tool(tool_json.clone(), call_id.clone()));
+                        Ok(tool_result) => {
+                            req.core.messages.push(RequestMessage::new_tool(
+                                tool_result.content.clone(),
+                                call_id.clone(),
+                            ));
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
-                                    msg: tool_json,
+                                    msg: tool_result.content,
                                     kind: MessageKind::Tool,
-                                    tool_call_id: call_id,
+                                    tool_call_id: call_id_for_state,
+                                    tool_payload: tool_result.ui_payload,
                                 })
                                 .await
                                 .expect("state manager must be running");
+                            commit_phase = CommitPhase::ToolResultsCommitted;
                         }
-                        Err(err_string) => {
-                            let content = json!({ "ok": false, "error": err_string }).to_string();
+                        Err(tool_error) => {
+                            let content =
+                                json!({ "ok": false, "error": tool_error.error }).to_string();
                             req.core
                                 .messages
-                                .push(RequestMessage::new_tool(content, call_id.clone()));
+                                .push(RequestMessage::new_tool(content.clone(), call_id.clone()));
 
-                            let err_msg = format!("tool failed\n\t{call_id:?}\n\t{err_string:?}");
                             state_cmd_tx
                                 .send(StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
-                                    msg: err_msg.clone(),
+                                    msg: content,
                                     kind: MessageKind::Tool,
-                                    tool_call_id: call_id,
+                                    tool_call_id: call_id_for_state,
+                                    tool_payload: tool_error.ui_payload,
                                 })
                                 .await
                                 .expect("state manager must be running");
+                            commit_phase = CommitPhase::ToolResultsCommitted;
+                            let mut context = base_error_context(
+                                attempts,
+                                chain_index,
+                                "tool_execution",
+                                &model_key,
+                                assistant_message_id,
+                            );
+                            context.tool_call_id = Some(call_id.clone());
+                            if let Some(tool_name) = call_name_by_id.get(&call_id) {
+                                context.tool_name = Some(tool_name.clone());
+                            }
+                            let tool_err = LlmError::ToolCall(tool_error.error);
+                            let loop_error =
+                                classify_llm_error(&tool_err, context, commit_phase.clone());
+                            push_llm_payload(&mut req, &loop_error);
+                            report.record_error(loop_error);
                             continue;
                         }
                     }
@@ -216,28 +763,400 @@ pub async fn run_chat_session<R: Router>(
 
                 // loop again
             }
+            ChatStepOutcome::Content {
+                content: None,
+                reasoning: None,
+            } => {
+                let err = LlmError::ChatStep(
+                    "No content, reasoning, or tool calls in llm chat step response. This indicates an issue with the chat/tool call loop.".to_string(),
+                );
+                let context = base_error_context(
+                    attempts,
+                    chain_index,
+                    "parse_response",
+                    &model_key,
+                    assistant_message_id,
+                );
+                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                emit_loop_error(
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    &loop_error,
+                )
+                .await;
+                report.record_error(loop_error.clone());
+                report.outcome = SessionOutcome::Aborted {
+                    error_id: loop_error.error_id,
+                };
+                report.commit_phase = commit_phase;
+                report.attempts = attempts;
+                return report;
+            }
+            ChatStepOutcome::Content {
+                content: Some(msg),
+                reasoning: None,
+            } => {
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg.to_string(),
+                    MessageStatus::Completed,
+                )
+                .await;
+                commit_phase = CommitPhase::MessageCommitted;
+            }
+            ChatStepOutcome::Content {
+                content: None,
+                reasoning: Some(msg),
+            } => {
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg.to_string(),
+                    MessageStatus::Completed,
+                )
+                .await;
+                commit_phase = CommitPhase::MessageCommitted;
+            }
+            ChatStepOutcome::Content {
+                content: Some(content_msg),
+                reasoning: Some(reasoning_msg),
+            } => {
+                let x = "";
+                let msg = format!(
+                    "{x:-^10} Reasoning {x:-^10}\n 
+                    {reasoning_msg}\n
+                    {x:^20}
+                    {content_msg}"
+                );
+                add_or_update_assistant_message(
+                    assistant_message_id,
+                    &state_cmd_tx,
+                    &mut initial_message_updated,
+                    msg,
+                    MessageStatus::Completed,
+                )
+                .await;
+                commit_phase = CommitPhase::MessageCommitted;
+            }
         };
+
+        let mut ctx = ChatLoopContext {
+            cfg: &mut cfg,
+            model_key: &model_key,
+        };
+
+        match finish_policy.handle_finish_reasons(full_response.clone(), &mut ctx, &mut loop_state)
+        {
+            FinishDecision::Continue(continue_info) => {
+                if let Some(reason) = continue_info.finish_reason {
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "finish_reason",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let mut loop_error =
+                        classify_finish_reason(&reason, context, commit_phase.clone());
+                    if let Some(prompt) = continue_info.system_prompt {
+                        apply_prompt_hint(&mut loop_error, prompt);
+                    }
+                    if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
+                        loop_error.retry = RetryAdvice::Yes {
+                            strategy: RetryStrategy::Fixed,
+                            reason: ploke_core::ArcStr::from("Retrying within session"),
+                        };
+                    }
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
+                } else if let Some(prompt) = continue_info.system_prompt {
+                    req.core.messages.push(RequestMessage::new_system(prompt));
+                }
+                continue;
+            }
+            FinishDecision::Return(result) => match result {
+                Ok(_response) => {
+                    let response_clone = full_response.clone();
+                    if let Some(usage) = response_clone.usage {
+                        if tokens_logging_enabled() {
+                            tracing::info!(
+                                target: TOKENS_TARGET,
+                                session_id = %session_id,
+                                parent_id = %parent_id,
+                                assistant_message_id = %assistant_message_id,
+                                model = ?model_key,
+                                kind = "actual_usage",
+                                prompt_tokens = usage.prompt_tokens,
+                                completion_tokens = usage.completion_tokens,
+                                total_tokens = usage.total_tokens,
+                                "Actual token usage from provider"
+                            );
+                        }
+                        let finish_reason = full_response
+                            .choices
+                            .iter()
+                            .find_map(|c| c.finish_reason.clone())
+                            .unwrap_or(FinishReason::Stop);
+                        let metadata = LLMMetadata {
+                            model: response_clone.model,
+                            usage,
+                            finish_reason,
+                            processing_time: Duration::default(),
+                            cost: estimate_cost(usage),
+                            performance: PerformanceMetrics {
+                                tokens_per_second: 0.0,
+                                time_to_first_token: Duration::default(),
+                                queue_time: Duration::default(),
+                            },
+                        };
+                        let _ = state_cmd_tx
+                            .send(StateCommand::UpdateMessage {
+                                id: assistant_message_id,
+                                update: MessageUpdate {
+                                    metadata: Some(metadata),
+                                    ..Default::default()
+                                },
+                            })
+                            .await;
+                    }
+                    report.outcome = SessionOutcome::Completed;
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
+                Err(err) => {
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "finish_reason",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    report.record_error(loop_error.clone());
+                    report.outcome = SessionOutcome::Exhausted {
+                        error_id: loop_error.error_id,
+                    };
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
+            },
+        }
     }
 
-    Err(LlmError::ToolCall("tool call chain limit exceeded".into()))
+    let err = LlmError::ToolCall("tool call chain limit exceeded".into());
+    let context = base_error_context(
+        attempts,
+        policy.tool_call_chain_limit,
+        "tool_call_chain_limit",
+        &model_key,
+        assistant_message_id,
+    );
+    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+    emit_loop_error(
+        &state_cmd_tx,
+        assistant_message_id,
+        &mut initial_message_updated,
+        &loop_error,
+    )
+    .await;
+    report.record_error(loop_error.clone());
+    report.outcome = SessionOutcome::Aborted {
+        error_id: loop_error.error_id,
+    };
+    report.commit_phase = commit_phase;
+    report.attempts = attempts;
+    report
 }
 
-#[instrument(skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
+async fn add_or_update_assistant_message(
+    assistant_message_id: Uuid,
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    initial_message_updated: &mut bool,
+    msg: String,
+    status: MessageStatus,
+) {
+    if !*initial_message_updated {
+        let is_updated = update_assistant_placeholder_once(
+            state_cmd_tx,
+            assistant_message_id,
+            msg,
+            status,
+            *initial_message_updated,
+        )
+        .await;
+        *initial_message_updated = is_updated;
+    } else {
+        state_cmd_tx
+            .send(StateCommand::AddMessageImmediate {
+                msg,
+                kind: MessageKind::Assistant,
+                new_msg_id: Uuid::new_v4(),
+            })
+            .await
+            .expect("state manager must be running");
+    }
+}
+
+async fn emit_loop_error(
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    assistant_message_id: Uuid,
+    initial_message_updated: &mut bool,
+    error: &LoopError,
+) {
+    let view = render_error_view(error, ErrorAudience::User, Verbosity::Normal);
+    let mut msg = view.summary;
+    if let Some(details) = view.details {
+        msg.push('\n');
+        msg.push_str(&details);
+    }
+
+    if !*initial_message_updated {
+        let status = MessageStatus::Error {
+            description: error.summary.to_string(),
+        };
+        let is_updated = update_assistant_placeholder_once(
+            state_cmd_tx,
+            assistant_message_id,
+            msg,
+            status,
+            *initial_message_updated,
+        )
+        .await;
+        *initial_message_updated = is_updated;
+        return;
+    }
+
+    state_cmd_tx
+        .send(StateCommand::AddMessageImmediate {
+            msg,
+            kind: MessageKind::System,
+            new_msg_id: Uuid::new_v4(),
+        })
+        .await
+        .expect("state manager must be running");
+}
+
+fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) {
+    let view = render_error_view(error, ErrorAudience::Llm, Verbosity::Normal);
+    if let Some(payload) = view.llm_payload {
+        let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| {
+            "{\"type\":\"ploke.error\",\"summary\":\"serialization_failed\"}".to_string()
+        });
+        req.core
+            .messages
+            .push(RequestMessage::new_system(payload_str));
+    }
+}
+
+fn apply_prompt_hint(error: &mut LoopError, prompt: String) {
+    let prompt = ploke_core::ArcStr::from(prompt);
+    match error.llm_action.as_mut() {
+        Some(action) => {
+            if let Some(step) = action
+                .next_steps
+                .iter_mut()
+                .find(|s| s.action.as_ref() == "continue_output")
+                && step.details.is_none()
+            {
+                step.details = Some(prompt);
+                return;
+            }
+            action
+                .next_steps
+                .push(crate::llm::manager::loop_error::LlmNextStep {
+                    action: ploke_core::ArcStr::from("continue_output"),
+                    details: Some(prompt),
+                });
+        }
+        None => {
+            error.llm_action = Some(crate::llm::manager::loop_error::LlmAction {
+                next_steps: vec![crate::llm::manager::loop_error::LlmNextStep {
+                    action: ploke_core::ArcStr::from("continue_output"),
+                    details: Some(prompt),
+                }],
+                constraints: Vec::new(),
+                retry_hint: None,
+            });
+        }
+    }
+}
+
+fn base_error_context(
+    attempts: u32,
+    chain_index: usize,
+    phase: &'static str,
+    model_key: &Option<ploke_llm::ModelKey>,
+    assistant_message_id: Uuid,
+) -> ErrorContext {
+    let mut context = ErrorContext::new(attempts, chain_index);
+    context.phase = Some(ploke_core::ArcStr::from(phase));
+    context.request_id = Some(assistant_message_id);
+    if let Some(key) = model_key {
+        context.model = Some(ploke_core::ArcStr::from(key.to_string()));
+    }
+    context
+}
+
+fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
+    let message = match err {
+        LlmError::Deserialization { message, .. } => message.as_str(),
+        _ => return None,
+    };
+    let needle = "unknown variant `";
+    if let Some(start) = message.find(needle) {
+        let rest = &message[start + needle.len()..];
+        if let Some(end) = rest.find('`') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    let needle = "unknown variant \"";
+    if let Some(start) = message.find(needle) {
+        let rest = &message[start + needle.len()..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
+/// Placeholder cost estimator using usage counts.
+/// TODO: derive pricing from active model/endpoint and compute USD accurately.
+fn estimate_cost(usage: TokenUsage) -> f64 {
+    let prompt = usage.prompt_tokens as f64;
+    let completion = usage.completion_tokens as f64;
+    // Without pricing info, return 0 and keep the surface for future pricing wiring.
+    let _ = (prompt, completion);
+    0.0
+}
+
+#[instrument(target = "chat-loop", skip(state_cmd_tx), fields( msg_content = ?content, initial_message_updated ))]
 async fn update_assistant_placeholder_once(
     state_cmd_tx: &mpsc::Sender<StateCommand>,
     assistant_message_id: Uuid,
-    content: Option<String>,
+    content: String,
+    status: MessageStatus,
     initial_message_updated: bool,
 ) -> bool {
-    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
-
     if !initial_message_updated {
         state_cmd_tx
             .send(StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(assistant_update),
-                    status: Some(MessageStatus::Completed),
+                    content: Some(content),
+                    status: Some(status),
                     ..Default::default()
                 },
             })
@@ -250,8 +1169,16 @@ async fn update_assistant_placeholder_once(
     }
 }
 
-pub struct ToolExecPolicy {
-    pub timeout: Duration,
+#[derive(Debug, Clone)]
+pub struct ToolCallUiResult {
+    pub content: String,
+    pub ui_payload: Option<ToolUiPayload>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCallUiError {
+    pub error: String,
+    pub ui_payload: Option<ToolUiPayload>,
 }
 
 pub async fn execute_tools_via_event_bus(
@@ -260,13 +1187,18 @@ pub async fn execute_tools_via_event_bus(
     step_request_id: Uuid,
     calls: Vec<ToolCall>,
     policy_timeout: ToolCallTimeout,
-) -> Vec<(ploke_core::ArcStr, Result<String, String>)> {
+) -> Vec<(
+    ploke_core::ArcStr,
+    Result<ToolCallUiResult, ToolCallUiError>,
+)> {
     // One receiver for the whole batch
     let mut rx = event_bus.realtime_tx.subscribe();
 
     // Per-call waiters
-    let mut waiters: HashMap<ploke_core::ArcStr, oneshot::Sender<Result<String, String>>> =
-        HashMap::new();
+    let mut waiters: HashMap<
+        ploke_core::ArcStr,
+        oneshot::Sender<Result<ToolCallUiResult, ToolCallUiError>>,
+    > = HashMap::new();
     let mut handles = Vec::new();
 
     for call in &calls {
@@ -278,8 +1210,20 @@ pub async fn execute_tools_via_event_bus(
             // timeout wrapper per call
             match tokio::time::timeout(policy_timeout, rx_one).await {
                 Ok(Ok(res)) => (call_id, res),
-                Ok(Err(_closed)) => (call_id, Err("tool waiter dropped".into())),
-                Err(_) => (call_id, Err("Timed out waiting for tool result".into())),
+                Ok(Err(_closed)) => (
+                    call_id,
+                    Err(ToolCallUiError {
+                        error: "tool waiter dropped".into(),
+                        ui_payload: None,
+                    }),
+                ),
+                Err(_) => (
+                    call_id,
+                    Err(ToolCallUiError {
+                        error: "Timed out waiting for tool result".into(),
+                        ui_payload: None,
+                    }),
+                ),
             }
         });
     }
@@ -292,10 +1236,14 @@ pub async fn execute_tools_via_event_bus(
                     request_id,
                     call_id,
                     content,
+                    ui_payload,
                     ..
                 })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
-                        let _ = tx.send(Ok(content));
+                        let _ = tx.send(Ok(ToolCallUiResult {
+                            content,
+                            ui_payload,
+                        }));
                     }
                     if waiters.is_empty() {
                         break;
@@ -305,10 +1253,11 @@ pub async fn execute_tools_via_event_bus(
                     request_id,
                     call_id,
                     error,
+                    ui_payload,
                     ..
                 })) if request_id == step_request_id => {
                     if let Some(tx) = waiters.remove(&call_id) {
-                        let _ = tx.send(Err(error));
+                        let _ = tx.send(Err(ToolCallUiError { error, ui_payload }));
                     }
                     if waiters.is_empty() {
                         break;
@@ -322,7 +1271,10 @@ pub async fn execute_tools_via_event_bus(
                 Err(broadcast::error::RecvError::Closed) => {
                     // fail all remaining
                     for (_, tx) in waiters.drain() {
-                        let _ = tx.send(Err("Event channel closed".into()));
+                        let _ = tx.send(Err(ToolCallUiError {
+                            error: "Event channel closed".into(),
+                            ui_payload: None,
+                        }));
                     }
                     break;
                 }
@@ -392,340 +1344,6 @@ fn truncate_for_error(s: &str, max: usize) -> String {
     }
 }
 
-impl<'a, R> RequestSession<'a, R>
-where
-    R: Router,
-    R::CompletionFields: ApiRoute,
-{
-    pub async fn run(mut self) -> Result<String, LlmError> {
-        #[derive(serde::Deserialize)]
-        struct CodeEditArgsMinimal {
-            edits: Vec<CodeEditEditMinimal>,
-        }
-        #[derive(serde::Deserialize)]
-        struct CodeEditEditMinimal {
-            file: String,
-            code: String,
-        }
-
-        // Use router-level constants for URL and API key
-        let url = R::COMPLETION_URL;
-        let api_key = R::resolve_api_key().map_err(|e| LlmError::Request {
-            message: format!("missing api key: {}", e),
-            url: None,
-            is_timeout: false,
-        })?;
-
-        // Determine whether to include tools
-        let mut use_tools = self.req.tools.is_some();
-        let mut tools_fallback_attempted = false;
-        let mut assistant_intro: String = String::new();
-        let state_cmd_tx = self.state_cmd_tx.clone();
-
-        let mut initial_message_updated = false;
-        for _attempt in 0..=self.attempts {
-            if !use_tools {
-                self.req.tools = None;
-                self.req.tool_choice = None;
-            } else if self.req.tool_choice.is_none() && self.req.tools.is_some() {
-                self.req.tool_choice = Some(ToolChoice::Auto);
-            }
-
-            let _ = self.log_request().await;
-            if let Ok(req_json) = serde_json::to_string_pretty(&self.req) {
-                let _ = log_api_request_json(url, &req_json, OPENROUTER_REQUEST_LOG);
-            }
-            let response = self
-                .client
-                .post(url)
-                .bearer_auth(&api_key)
-                .header("Accept", "application/json")
-                .header("HTTP-Referer", "https://github.com/ploke-ai/ploke")
-                .header("X-Title", "Ploke TUI")
-                .json(&self.req)
-                .timeout(Duration::from_secs(crate::LLM_TIMEOUT_SECS))
-                .send()
-                .await
-                .map_err(|e| LlmError::Request {
-                    message: format!("sending request to {url}: {e}"),
-                    url: Some(url.to_string()),
-                    is_timeout: e.is_timeout(),
-                })?;
-
-            let resp_url = response.url().to_string();
-            let resp_status = response.status();
-
-            if !resp_status.is_success() {
-                let error_code = resp_status;
-                tracing::error!(status_code = ?error_code, "Error status returned from API");
-                let status = resp_status.as_u16();
-                let text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<no error body>".into());
-                let snippet = truncate_for_error(&text, 4_096);
-                let _ = log_api_raw_response(&resp_url, status, &text);
-
-                if status == 404
-                    && use_tools
-                    && text.to_lowercase().contains("support tool")
-                    && self.fallback_on_404
-                    && !tools_fallback_attempted
-                {
-                    let notice = format!(
-                        "Notice: endpoint appears to lack tool support; retrying without tools.\n\n{}",
-                        text
-                    );
-                    self.req
-                        .core
-                        .messages
-                        .push(RequestMessage::new_system(notice));
-                    use_tools = false;
-                    tools_fallback_attempted = true;
-                    continue;
-                }
-                return Err(LlmError::Api {
-                    status,
-                    message: text,
-                    url: Some(resp_url),
-                    body_snippet: Some(snippet),
-                });
-            }
-
-            let log_url = resp_url.clone();
-            let log_status = resp_status.as_u16();
-            let body_text = response.text().await.map_err(|e| LlmError::Request {
-                message: format!("while reading response body (status {log_status}): {e}"),
-                url: Some(log_url.clone()),
-                is_timeout: e.is_timeout(),
-            })?;
-
-            let _ = log_api_raw_response(&log_url, log_status, &body_text);
-
-            // Attempt to log parsed response; fall back to provider-embedded error detection
-            if let Ok(parsed) = serde_json::from_str::<OpenAiResponse>(&body_text) {
-                let _ = log_api_parsed_json_response(&log_url, log_status, &parsed).await;
-            } else if let Err(err) = check_provider_error(&body_text) {
-                return Err(err);
-            }
-
-            match ploke_llm::manager::parse_chat_outcome(&body_text)? {
-                ChatStepOutcome::ToolCalls {
-                    calls: tool_calls,
-                    content,
-                    finish_reason,
-                } => {
-                    tracing::debug!(calls = ?tool_calls, ?content);
-                    let assistant_update = content.unwrap_or_else(|| String::from("Calling Tools"));
-
-                    if !initial_message_updated {
-                        state_cmd_tx
-                            .send(StateCommand::UpdateMessage {
-                                id: self.assistant_message_id,
-                                update: MessageUpdate {
-                                    content: Some(assistant_update),
-                                    status: Some(MessageStatus::Completed),
-                                    ..Default::default()
-                                },
-                            })
-                            .await
-                            .expect("state command must be running");
-                        initial_message_updated = true;
-                    }
-
-                    let mut task_set = tokio::task::JoinSet::new();
-                    let mut call_feedback: HashMap<
-                        ploke_core::ArcStr,
-                        (uuid::Uuid, Option<(String, String)>),
-                    > = HashMap::new();
-                    for call in tool_calls.into_iter() {
-                        let tool_name = call.function.name;
-                        let args_json = call.function.arguments.clone();
-                        let event_bus = self.event_bus.clone();
-                        let parent_id = self.parent_id;
-                        let request_id = Uuid::new_v4();
-                        let call_id = call.call_id.clone();
-
-                        let summary = if matches!(tool_name, ToolName::ApplyCodeEdit) {
-                            if let Ok(parsed) =
-                                serde_json::from_str::<CodeEditArgsMinimal>(&args_json)
-                            {
-                                if let Some(first) = parsed.edits.first() {
-                                    let file = first.file.clone();
-                                    let snippet: String = first.code.chars().take(100).collect();
-                                    Some((file, snippet))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        call_feedback.insert(call_id.clone(), (request_id, summary));
-
-                        let mut rx = event_bus.realtime_tx.subscribe();
-                        let cmd_tx = state_cmd_tx.clone();
-                        let cmd_tx_clone = state_cmd_tx.clone();
-
-                        event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-                            tool_call: call,
-                            request_id,
-                            parent_id,
-                        }));
-
-                        task_set.spawn(async move {
-                            let call_id_clone = call_id.clone();
-                            let wait = async move {
-                                while let Ok(evt) = rx.recv().await {
-                                    tracing::debug!(?evt, "recv wait tool event for matching");
-                                    match evt {
-                                        AppEvent::System(SystemEvent::ToolCallCompleted {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            content,
-                                            ..
-                                        }) if rid == request_id && cid == call_id => {
-                                            tracing::debug!(%request_id, ?call_id, ?content, "tool call completed");
-                                            return Ok(content);
-                                        }
-                                        AppEvent::System(SystemEvent::ToolCallFailed {
-                                            request_id: rid,
-                                            call_id: cid,
-                                            error,
-                                            ..
-                                        }) if rid == request_id && cid == call_id => {
-                                            let user_msg = ToolErrorWire::parse(&error)
-                                                .map(|wire| wire.user)
-                                                .unwrap_or(error.clone());
-                                            let status = format!("error: {user_msg}");
-                                            add_sysinfo_message(&call_id, &cmd_tx, &status).await;
-                                            return Err(user_msg);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                Err("Event channel closed".to_string())
-                            };
-                            match tokio::time::timeout(Duration::from_secs(TOOL_CALL_TIMEOUT), wait).await {
-                                Ok(r) => (call_id_clone, r),
-                                Err(_) => {
-                                    add_sysinfo_message(&call_id_clone, &cmd_tx_clone, "timeout").await;
-                                    ( call_id_clone, Err("Timed out waiting for tool result".into() ) ) 
-                                }
-                            }
-                        });
-                    }
-
-                    while let Some(res) = task_set.join_next().await {
-                        match res {
-                            Ok((cid, Ok(content))) => {
-                                // Append the tool's raw JSON result for the next request
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid.clone()));
-
-                                // If this was an apply_code_edit call, also append a concise System summary
-                                if let Some((rid, Some((file, snippet)))) =
-                                    call_feedback.get(&cid).cloned()
-                                {
-                                    let sys_msg = format!(
-                                        "Staged code edit recorded.
-request_id: {}
-file: {}
-snippet (first 100 chars):
-```
-{}
-```
-If you are ready to return control to the user, respond with finish_reason 'stop'.",
-                                        rid, file, snippet
-                                    );
-                                    self.req
-                                        .core
-                                        .messages
-                                        .push(RequestMessage::new_system(sys_msg));
-                                }
-                            }
-                            Ok((cid, Err(err_string))) => {
-                                tracing::debug!(tool_content = ?cid, error_msg = ?err_string);
-                                let parsed = ToolErrorWire::parse(&err_string);
-                                let llm_payload = parsed
-                                    .as_ref()
-                                    .map(|w| w.llm.clone())
-                                    .unwrap_or_else(|| json!({"message": err_string}));
-                                let user_msg = parsed
-                                    .as_ref()
-                                    .map(|w| w.user.clone())
-                                    .unwrap_or_else(|| err_string.clone());
-
-                                let content =
-                                    json!({"ok": false, "error": llm_payload}).to_string();
-                                self.req
-                                    .core
-                                    .messages
-                                    .push(RequestMessage::new_tool(content, cid.clone()));
-                                let err_msg = format!("tool failed\n\t{cid:?}\n\t{user_msg}",);
-                                state_cmd_tx
-                                    .send(StateCommand::AddMessageTool {
-                                        new_msg_id: Uuid::new_v4(),
-                                        msg: err_msg.clone(),
-                                        // TODO: Change to 'Tool'
-                                        kind: MessageKind::Tool,
-                                        tool_call_id: cid,
-                                    })
-                                    .await
-                                    .expect("state manager must be running");
-                                continue;
-                                // return Err(LlmError::ToolCall(err_msg));
-                            }
-                            Err(join_err) => {
-                                return Err(LlmError::ToolCall(format!(
-                                    "join error: {}",
-                                    join_err
-                                )));
-                            }
-                        }
-                    }
-                    if finish_reason == FinishReason::ToolCalls {
-                        let remember_stop = "Tool Call completed. Remember to end with a 'stop' finish reason to return conversation control to the user.";
-                        state_cmd_tx
-                            .send(StateCommand::AddMessageImmediate {
-                                msg: remember_stop.to_string(),
-                                kind: MessageKind::System,
-                                new_msg_id: Uuid::new_v4(),
-                            })
-                            .await
-                            .expect("state manager must be running");
-                        continue;
-                    } else {
-                        if assistant_intro.is_empty() {
-                            assistant_intro.push_str("Calling tools")
-                        }
-                        return Ok(assistant_intro);
-                    }
-                }
-                ChatStepOutcome::Content(content) => {
-                    return Ok(content);
-                }
-            }
-        }
-
-        Err(LlmError::Unknown(format!(
-            "exhausted after {} attempt(s)",
-            self.attempts
-        )))
-    }
-
-    async fn log_request(&self) -> color_eyre::Result<()> {
-        let payload: String = serde_json::to_string_pretty(&self.req)?;
-        info!(target: "api_json", "{}", payload);
-        Ok(())
-    }
-}
-
 #[tracing::instrument]
 async fn add_sysinfo_message(
     call_id: &ploke_core::ArcStr,
@@ -763,6 +1381,7 @@ async fn add_tool_failed_message(
 #[cfg(test)]
 mod tests {
     use ploke_llm::manager::parse_chat_outcome;
+    use std::time::Duration;
 
     use super::*;
     use crate::EventBus;
@@ -778,8 +1397,10 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello world"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
         }
     }
@@ -792,9 +1413,102 @@ mod tests {
             ]
         }"#;
         let r = parse_chat_outcome(body).unwrap();
-        match r {
-            ChatStepOutcome::Content(c) => assert_eq!(c, "Hello text"),
+        match r.outcome {
+            ChatStepOutcome::Content {
+                content: Some(c), ..
+            } => assert_eq!(c.as_ref(), "Hello text"),
             _ => panic!("expected content"),
         }
+    }
+
+    #[test]
+    fn timeout_policy_fixed_retry_respects_limit() {
+        let policy = TuiTimeoutPolicy {
+            duration: Some(Duration::from_secs(10)),
+            strategy: TimeoutStrategy::FixedRetry(2),
+        };
+
+        assert_eq!(policy.next_timout_dur(1), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(2), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(3), None);
+    }
+
+    #[test]
+    fn timeout_policy_backoff_doubles() {
+        let policy = TuiTimeoutPolicy {
+            duration: Some(Duration::from_secs(5)),
+            strategy: TimeoutStrategy::Backoff(Some(3)),
+        };
+
+        assert_eq!(policy.next_timout_dur(1), Some(Duration::from_secs(10)));
+        assert_eq!(policy.next_timout_dur(2), Some(Duration::from_secs(20)));
+        assert_eq!(policy.next_timout_dur(3), Some(Duration::from_secs(40)));
+        assert_eq!(policy.next_timout_dur(4), None);
+    }
+
+    #[test]
+    fn error_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+        assert!(!should_retry_error(
+            TuiErrorPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn error_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_error(TuiErrorPolicy::Strict, &mut retries));
+        assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn error_policy_endless_retry_always_retries() {
+        let mut retries = 0_u32;
+        assert!(should_retry_error(
+            TuiErrorPolicy::EndlessRetry,
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_error(
+            TuiErrorPolicy::EndlessRetry,
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn length_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_length(
+            TuiLengthPolicy::RetryLimit(1),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(!should_retry_length(
+            TuiLengthPolicy::RetryLimit(1),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+    }
+
+    #[test]
+    fn length_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_length(TuiLengthPolicy::Strict, &mut retries));
+        assert_eq!(retries, 0);
     }
 }

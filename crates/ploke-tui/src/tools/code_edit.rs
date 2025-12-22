@@ -122,13 +122,14 @@ impl super::Tool for GatCodeEdit {
         };
         apply_code_edit_tool(params_env).await;
         // Build typed result deterministically from proposal registry
-        print_code_edit_results(&ctx, request_id).await
+        print_code_edit_results(&ctx, request_id, ToolName::ApplyCodeEdit).await
     }
 }
 
 pub async fn print_code_edit_results(
     ctx: &Ctx,
     request_id: Uuid,
+    tool_name: ToolName,
 ) -> Result<ToolResult, ploke_error::Error> {
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
@@ -159,10 +160,21 @@ pub async fn print_code_edit_results(
             preview_mode,
             auto_confirmed: editing_cfg.auto_confirm_edits,
         };
+        let summary = format!(
+            "Staged {} edits across {} files",
+            structured_result.staged,
+            structured_result.files.len()
+        );
+        let ui_payload = super::ToolUiPayload::new(tool_name, ctx.call_id.clone(), summary)
+            .with_field("staged", structured_result.staged.to_string())
+            .with_field("applied", structured_result.applied.to_string())
+            .with_field("files", structured_result.files.len().to_string())
+            .with_field("preview_mode", structured_result.preview_mode.as_str());
         let serialized_str =
             serde_json::to_string(&structured_result).expect("Incorrect deserialization");
         Ok(ToolResult {
             content: serialized_str,
+            ui_payload: Some(ui_payload),
         })
     } else {
         Err(ploke_error::Error::Internal(

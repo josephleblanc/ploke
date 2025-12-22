@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use thiserror::Error;
+
+use crate::response::{FinishReason, OpenAiResponse};
 
 use super::*;
 
@@ -67,6 +71,17 @@ pub enum LlmError {
     /// Failed to deserialize the API response.
     #[error("Embedding Error: {0}")]
     Embedding(String),
+
+    /// Failed to deserialize the API response.
+    #[error("ChatStep Error: {0}")]
+    ChatStep(String),
+
+    #[error("FinishReason Error: {msg}")]
+    FinishError {
+        msg: String,
+        full_response: OpenAiResponse,
+        finish_reason: FinishReason,
+    },
 }
 
 impl LlmError {
@@ -186,6 +201,13 @@ impl From<LlmError> for ploke_error::Error {
             ),
             err_ev @ LlmError::Embedding(_) => ploke_error::Error::Internal(
                 ploke_error::InternalError::EmbedderError(std::sync::Arc::new(err_ev)),
+            ),
+            err_chat @ LlmError::ChatStep(_) => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_chat.to_string()),
+            ),
+            // TODO: Add more match arms for levels of error by `FinishReason`
+            err_llm @ LlmError::FinishError { .. } => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeLlm(err_llm.to_string()),
             ),
         }
     }

@@ -14,6 +14,7 @@ use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
+use crate::tools::ToolVerbosity;
 use crate::user_config::CommandStyle;
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
@@ -60,6 +61,7 @@ pub fn create_mock_app() -> App {
         cmd_tx,
         &event_bus,
         active_model_id,
+        ToolVerbosity::Normal,
     )
 }
 

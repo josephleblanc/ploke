@@ -1,6 +1,8 @@
 //! High-performance text retrieval from code graph database
 #![allow(unused_variables, unused_imports, dead_code)]
 
+extern crate self as ploke_db;
+
 pub mod bm25_index;
 mod database;
 mod error;
@@ -12,6 +14,8 @@ mod query;
 mod result;
 mod span;
 pub(crate) mod utils;
+
+pub mod tool_query;
 
 pub mod multi_embedding;
 
@@ -34,5 +38,8 @@ pub use query::{
     callbacks::{Callback, CallbackManager},
     QueryBuilder,
 };
+
+pub use result::typed_rows;
+
 pub use result::{CodeSnippet, QueryResult, ResultFormatter};
 pub use span::{CodeLocation, SpanChange, SpanTracker};

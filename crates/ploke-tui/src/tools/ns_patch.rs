@@ -184,7 +184,7 @@ impl super::Tool for NsPatch {
             call_id,
         };
         apply_ns_code_edit_tool(params_env).await?;
-        crate::tools::code_edit::print_code_edit_results(&ctx, request_id).await
+        crate::tools::code_edit::print_code_edit_results(&ctx, request_id, ToolName::NsPatch).await
     }
 }
 

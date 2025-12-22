@@ -61,7 +61,7 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
-use ploke_rag::{RrfConfig, TokenBudget};
+use ploke_rag::{RagConfig, TokenBudget};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
@@ -91,27 +91,6 @@ pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
 static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
 
-pub const TOP_K: usize = 15;
-lazy_static! {
-    static ref RETRIEVAL_STRATEGY: ploke_rag::RetrievalStrategy =
-        ploke_rag::RetrievalStrategy::Hybrid {
-            rrf: RrfConfig::default(),
-            mmr: None,
-        };
-}
-
-/// The number of tool retries to allow if model fails to call tool correctly.
-// TODO: Add this to user config
-pub const TOOL_RETRIES: u32 = 2;
-
-/// The default number of tokens per LLM request.
-// TODO: Add this to user config
-pub const TOKEN_LIMIT: u32 = 8196;
-
-/// The default number of seconds for timeout on LLM request loop.
-// TODO: Add this to user config
-pub const LLM_TIMEOUT_SECS: u64 = 45;
-
 /// Set the global event bus for error handling
 pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
     *GLOBAL_EVENT_BUS.lock().await = Some(event_bus);
@@ -128,6 +107,16 @@ pub async fn emit_app_event(event: AppEvent) {
     if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
         event_bus.send(event);
     }
+}
+
+fn build_rag_config(rag: &crate::user_config::RagUserConfig) -> RagConfig {
+    let mut cfg = RagConfig::default();
+    cfg.bm25_timeout_ms = rag.bm25_timeout_ms;
+    cfg.bm25_retry_backoff_ms = rag.bm25_retry_backoff_ms.clone();
+    cfg.strict_bm25_by_default = rag.strict_bm25_by_default;
+    cfg.rrf_default = rag.rrf;
+    cfg.mmr_default = rag.mmr;
+    cfg
 }
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -161,6 +150,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // llm: registry prefs are used directly; model lists/capabilities fetched via router APIs.
     tracing::debug!("Registry prefs loaded: {:#?}", config.registry);
     let runtime_cfg: RuntimeConfig = config.clone().into();
+    let tool_verbosity = runtime_cfg.tool_verbosity;
 
     let processor = config.load_embedding_processor()?;
     let embedding_runtime = Arc::new(ploke_embed::runtime::EmbeddingRuntime::with_default_set(
@@ -204,11 +194,12 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let indexer_task = Arc::new(indexer_task);
 
     // Initialize RAG orchestration service with full capabilities (BM25 + dense + IoManager)
+    let rag_config = build_rag_config(&runtime_cfg.rag);
     let rag = match ploke_rag::RagService::new_full(
         db_handle.clone(),
         Arc::clone(&embedding_runtime),
         io_handle.clone(),
-        ploke_rag::RagConfig::default(),
+        rag_config,
     ) {
         Ok(svc) => Some(Arc::new(svc)),
         Err(e) => {
@@ -284,7 +275,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+    let app = App::new(
+        command_style,
+        state,
+        cmd_tx,
+        &event_bus,
+        default_model(),
+        tool_verbosity,
+    );
     let result = app.run(terminal).await;
     ratatui::restore();
     result

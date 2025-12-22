@@ -246,6 +246,19 @@ pub fn execute(app: &mut App, command: Command) {
         Command::EditSetAutoConfirm(enabled) => {
             app.send_cmd(StateCommand::SetEditingAutoConfirm { enabled });
         }
+        Command::ToolVerbositySet(verbosity) => {
+            app.apply_tool_verbosity(verbosity, true);
+        }
+        Command::ToolVerbosityToggle => {
+            app.cycle_tool_verbosity();
+        }
+        Command::ToolVerbosityShow => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!("Tool verbosity is set to {}", app.tool_verbosity.as_str()),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+        }
         Command::SearchContext(search_term) => {
             tracing::debug!(
                 "Command::SearchContext received with search term: {}",
@@ -751,11 +764,13 @@ pub(crate) fn open_context_search(app: &mut App, query_id: u64, search_term: &st
         let _guard = span.enter();
 
         let budget = &state.budget;
-        let top_k = crate::TOP_K;
-        let retrieval_strategy = &crate::RETRIEVAL_STRATEGY;
+        let (top_k, retrieval_strategy) = {
+            let cfg = state.config.read().await;
+            (cfg.rag.top_k, cfg.rag.strategy.to_runtime())
+        };
         if let Some(rag_service) = &state.rag {
             match rag_service
-                .get_context(&keyword_str, top_k, budget, retrieval_strategy)
+                .get_context(&keyword_str, top_k, budget, &retrieval_strategy)
                 .await
             {
                 Ok(ctx_returned) => {

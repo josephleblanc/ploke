@@ -2,6 +2,7 @@ use super::*;
 use crate::app::types::RenderMsg;
 use crate::app::view::rendering::highlight::{StyledSpan, highlight_message_lines};
 use crate::chat_history::MessageKind;
+use crate::tools::ToolVerbosity;
 
 fn base_style_for_kind(kind: MessageKind) -> Style {
     match kind {
@@ -17,6 +18,7 @@ fn base_style_for_kind(kind: MessageKind) -> Style {
 pub fn measure_messages<'a, I, T: RenderMsg + 'a>(
     renderable_msg: I,
     conversation_width: u16,
+    tool_verbosity: ToolVerbosity,
     _selected_index: Option<usize>,
 ) -> (u16, Vec<u16>)
 where
@@ -28,7 +30,8 @@ where
     for msg in renderable_msg.into_iter() {
         // Always reserve a 1-column gutter for the selection bar to keep heights stable.
         let eff_w = conversation_width.saturating_sub(1).max(1);
-        let lines = highlight_message_lines(msg.content(), base_style_for_kind(msg.kind()), eff_w);
+        let content = render_message_content(msg, tool_verbosity);
+        let lines = highlight_message_lines(&content, base_style_for_kind(msg.kind()), eff_w);
         let h = lines.len() as u16;
         let height = h.max(1);
         heights.push(height);
@@ -46,6 +49,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
     offset_y: u16,
     heights: &[u16],
     selected_index: Option<usize>,
+    tool_verbosity: ToolVerbosity,
 ) where
     I: IntoIterator<Item = &'a T>,
 {
@@ -73,7 +77,8 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
 
         // Use the same effective width as in height calc: always reserve 1-column gutter.
         let eff_w = conversation_width.saturating_sub(1).max(1);
-        let wrapped = highlight_message_lines(msg.content(), base_style, eff_w);
+        let content = render_message_content(msg, tool_verbosity);
+        let wrapped = highlight_message_lines(&content, base_style, eff_w);
         let bar = Span::styled("│", base_style.fg(Color::White));
 
         // If offset lands inside this message, skip top lines so we don’t waste space
@@ -109,4 +114,11 @@ fn append_spans(spans: &mut Vec<Span<'static>>, line: Vec<StyledSpan>) {
     for span in line {
         spans.push(Span::styled(span.content, span.style));
     }
+}
+
+fn render_message_content<T: RenderMsg>(msg: &T, verbosity: ToolVerbosity) -> String {
+    if let Some(payload) = msg.tool_payload() {
+        return payload.render(verbosity);
+    }
+    msg.content().to_string()
 }

@@ -12,6 +12,7 @@
 // - `/model providers <model_id>` should also work for aliases
 use crate::app::App;
 use crate::app_state::core::PreviewMode;
+use crate::tools::ToolVerbosity;
 use crate::user_config::{CommandStyle, ModelRegistryStrictness};
 use uuid::Uuid;
 
@@ -52,6 +53,9 @@ pub enum Command {
     EditSetPreviewMode(PreviewMode),
     EditSetPreviewLines(usize),
     EditSetAutoConfirm(bool),
+    ToolVerbositySet(ToolVerbosity),
+    ToolVerbosityToggle,
+    ToolVerbosityShow,
     Raw(String),
     SearchContext(String),
 }
@@ -220,6 +224,20 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 Command::EditSetAutoConfirm(false)
             } else {
                 Command::Raw(trimmed.to_string())
+            }
+        }
+        "tool verbosity" => Command::ToolVerbosityShow,
+        s if s.starts_with("tool verbosity ") => {
+            let t = s
+                .trim_start_matches("tool verbosity ")
+                .trim()
+                .to_lowercase();
+            match t.as_str() {
+                "minimal" => Command::ToolVerbositySet(ToolVerbosity::Minimal),
+                "normal" => Command::ToolVerbositySet(ToolVerbosity::Normal),
+                "verbose" => Command::ToolVerbositySet(ToolVerbosity::Verbose),
+                "toggle" => Command::ToolVerbosityToggle,
+                _ => Command::Raw(trimmed.to_string()),
             }
         }
         s if s.starts_with("edit approve ") => {

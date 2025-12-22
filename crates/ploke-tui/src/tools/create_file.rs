@@ -134,8 +134,21 @@ impl super::Tool for CreateFile {
                 preview_mode,
                 auto_confirmed: editing_cfg.auto_confirm_edits,
             };
+            let summary = format!("Staged {} files for creation", structured.staged);
+            let ui_payload = crate::tools::ToolUiPayload::new(
+                ToolName::CreateFile,
+                ctx.call_id.clone(),
+                summary,
+            )
+            .with_field("staged", structured.staged.to_string())
+            .with_field("applied", structured.applied.to_string())
+            .with_field("files", structured.files.len().to_string())
+            .with_field("preview_mode", structured.preview_mode.as_str());
             let s = serde_json::to_string(&structured).expect("serialize result");
-            return Ok(ToolResult { content: s });
+            return Ok(ToolResult {
+                content: s,
+                ui_payload: Some(ui_payload),
+            });
         }
 
         Err(ploke_error::Error::Internal(
@@ -147,7 +160,16 @@ impl super::Tool for CreateFile {
 }
 
 impl CreateFileCtx {
+    fn tool_error_from_message(&self, message: impl Into<String>) -> ToolError {
+        ToolError::new(self.name, ToolErrorCode::InvalidFormat, message)
+    }
+
     pub(super) fn tool_call_failed(&self, error: String) {
+        let err = self.tool_error_from_message(error);
+        self.tool_call_failed_error(err);
+    }
+
+    pub(super) fn tool_call_failed_error(&self, error: ToolError) {
         let _ = self
             .event_bus
             .realtime_tx
@@ -155,15 +177,22 @@ impl CreateFileCtx {
                 request_id: self.request_id,
                 parent_id: self.parent_id,
                 call_id: self.call_id.clone(),
-                error,
+                error: error.to_wire_string(),
+                ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
             }));
     }
     pub(super) fn tool_call_err(&self, error: String) -> SystemEvent {
+        let err = self.tool_error_from_message(error);
+        self.tool_call_err_from_error(err)
+    }
+
+    pub(super) fn tool_call_err_from_error(&self, error: ToolError) -> SystemEvent {
         SystemEvent::ToolCallFailed {
             request_id: self.request_id,
             parent_id: self.parent_id,
             call_id: self.call_id.clone(),
-            error,
+            error: error.to_wire_string(),
+            ui_payload: Some(ToolUiPayload::from_error(self.call_id.clone(), &error)),
         }
     }
 }
@@ -379,6 +408,16 @@ Deny:     create deny {request_id}{auto}"#,
         preview_mode: preview_label.to_string(),
         auto_confirmed: editing_cfg.auto_confirm_edits,
     };
+    let ui_payload = ToolUiPayload::new(
+        ToolName::CreateFile,
+        call_id.clone(),
+        format!("Staged {} files for creation", result.staged),
+    )
+    .with_field("staged", result.staged.to_string())
+    .with_field("applied", result.applied.to_string())
+    .with_field("files", result.files.len().to_string())
+    .with_field("preview_mode", result.preview_mode.as_str())
+    .with_field("auto_confirmed", result.auto_confirmed.to_string());
     let content = match serde_json::to_string(&result) {
         Ok(s) => s,
         Err(e) => {
@@ -394,6 +433,7 @@ Deny:     create deny {request_id}{auto}"#,
             parent_id,
             call_id: call_id.clone(),
             content,
+            ui_payload: Some(ui_payload),
         }));
 
     if editing_cfg.auto_confirm_edits {

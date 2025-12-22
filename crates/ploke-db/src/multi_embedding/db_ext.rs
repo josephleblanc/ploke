@@ -806,7 +806,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
         tracing::info!(
             "{}: New multi_embedding relations created in the database
 (both embedding_set and default embeddings vector for sentence-transformers)",
-            "Setup".log_step()
+            "Setup"
         );
 
         // Always ensure the default local embedding set exists for backwards compatibility.
@@ -819,10 +819,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, ordering] :=
 
         self.put_embedding_set(&default_set)?;
 
-        tracing::info!(
-            "{}: create default vector embedding relation",
-            "Db".log_step()
-        );
+        tracing::info!("{}: create default vector embedding relation", "Db");
 
         self.ensure_vector_embedding_relation(&default_set)?;
         Ok(())

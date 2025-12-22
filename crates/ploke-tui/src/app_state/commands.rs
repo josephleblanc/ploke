@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use crate::ModelId;
-use crate::chat_history::MessageKind;
+use crate::chat_history::{ContextTokens, MessageKind};
 use crate::llm::{ChatHistoryTarget, LLMParameters, ProviderKey};
 use ploke_core::ArcStr;
 use ploke_core::embeddings::EmbeddingProviderSlug;
@@ -59,6 +59,7 @@ pub enum StateCommand {
         kind: MessageKind,
         new_msg_id: Uuid,
         tool_call_id: ArcStr,
+        tool_payload: Option<crate::tools::ToolUiPayload>,
     },
     AddUserMessage {
         content: String,
@@ -214,6 +215,10 @@ pub enum StateCommand {
         model_id: ModelId,
         provider: ArcStr,
     },
+    /// Update the latest context token count for the current prompt.
+    UpdateContextTokens {
+        tokens: ContextTokens,
+    },
 }
 
 impl StateCommand {
@@ -271,6 +276,7 @@ impl StateCommand {
             SelectModelProvider { .. } => "SelectModelProvider",
             DecrementChatTtl => "DecrementChatTtl",
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
+            UpdateContextTokens { .. } => "UpdateContextTokens",
         }
     }
 }

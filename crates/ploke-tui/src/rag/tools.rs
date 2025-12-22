@@ -17,8 +17,8 @@ use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
 use similar::TextDiff;
 use tracing::debug;
 
-use crate::tools::ToolName;
 use crate::tools::create_file::CreateFileCtx;
+use crate::tools::{ToolName, ToolUiPayload};
 use crate::utils::path_scoping;
 use crate::{
     app_state::{
@@ -373,6 +373,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
             .map(|e| (e.expected_file_hash, e.namespace))
             .expect("Mismatched path in file edit");
         let tracking_hash_before = file_hash;
+        // Read via IoManager with tracking-hash verification; fall back to a placeholder on error.
         let before = match state
             .io_handle
             .read_full_verified(path.clone(), file_hash, namespace)
@@ -535,6 +536,20 @@ Deny:     edit deny {request_id}{2}"#,
         preview_mode: preview_label.to_string(),
         auto_confirmed: editing_cfg.auto_confirm_edits,
     };
+    let ui_payload = ToolUiPayload::new(
+        ToolName::ApplyCodeEdit,
+        call_id.clone(),
+        format!(
+            "Staged {} edits across {} files",
+            result.staged,
+            result.files.len()
+        ),
+    )
+    .with_field("staged", result.staged.to_string())
+    .with_field("applied", result.applied.to_string())
+    .with_field("files", result.files.len().to_string())
+    .with_field("preview_mode", result.preview_mode.as_str())
+    .with_field("auto_confirmed", result.auto_confirmed.to_string());
     let content = match serde_json::to_string(&result) {
         Ok(s) => s,
         Err(e) => {
@@ -550,6 +565,7 @@ Deny:     edit deny {request_id}{2}"#,
             parent_id,
             call_id: call_id.clone(),
             content,
+            ui_payload: Some(ui_payload),
         }));
 
     if editing_cfg.auto_confirm_edits {

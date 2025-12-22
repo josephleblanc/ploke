@@ -32,6 +32,7 @@ lazy_static! {
 
         // Convert to runtime configuration
         let runtime_cfg: app_state::core::RuntimeConfig = config.clone().into();
+        let tool_verbosity = runtime_cfg.tool_verbosity;
 
         // Initialize an in-memory database with schema; optionally restore a pre-loaded backup for realistic tests
         let db = ploke_db::Database::init_with_schema().expect("init test db");
@@ -154,7 +155,14 @@ lazy_static! {
             event_bus.clone(),
             state.clone(),
         ));
-        let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
+        let app = App::new(
+            command_style,
+            state,
+            cmd_tx,
+            &event_bus,
+            default_model(),
+            tool_verbosity,
+        );
 
         Arc::new(Mutex::new(app))
     };

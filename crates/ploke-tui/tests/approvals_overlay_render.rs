@@ -215,11 +215,11 @@ fn approvals_overlay_renders_empty_list() {
             proposals: RwLock::new(std::collections::HashMap::new()),
             create_proposals: RwLock::new(std::collections::HashMap::new()),
         });
-        let ui = ApprovalsState::default();
+        let mut ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 60, 20);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
 
@@ -268,11 +268,11 @@ fn approvals_overlay_renders_single_proposal_unified_diff() {
             },
         )])
         .await;
-        let ui = ApprovalsState::default();
+        let mut ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
 
@@ -311,11 +311,11 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
             },
         )])
         .await;
-        let ui = ApprovalsState::default();
+        let mut ui = ApprovalsState::default();
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 90, 28);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
         let text = buffer_to_lines(&term).join("\n");
@@ -348,7 +348,7 @@ fn approvals_overlay_renders_multiple_and_moves_selection() {
 
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
         let text1 = buffer_to_lines(&term).join("\n");
@@ -357,7 +357,7 @@ fn approvals_overlay_renders_multiple_and_moves_selection() {
         ui.selected = 1;
         term.draw(|f| {
             let area = Rect::new(0, 0, 80, 24);
-            let _ = render_approvals_overlay(f, area, &state, &ui);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
         })
         .expect("draw");
         let text2 = buffer_to_lines(&term).join("\n");

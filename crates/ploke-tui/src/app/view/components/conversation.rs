@@ -26,6 +26,7 @@ impl ConversationView {
         conversation_width: u16,
         viewport_height: u16,
         selected_index_opt: Option<usize>,
+        tool_verbosity: crate::tools::ToolVerbosity,
     ) where
         I: IntoIterator<Item = &'a T>,
     {
@@ -33,7 +34,7 @@ impl ConversationView {
 
         // 1) Measure
         let (total_height, heights) =
-            measure_messages(path, conversation_width, selected_index_opt);
+            measure_messages(path, conversation_width, tool_verbosity, selected_index_opt);
         self.content_height = total_height;
         self.item_heights = heights;
 
@@ -99,6 +100,7 @@ impl ConversationView {
         conversation_width: u16,
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
+        tool_verbosity: crate::tools::ToolVerbosity,
     ) where
         I: IntoIterator<Item = &'a T>,
     {
@@ -110,6 +112,7 @@ impl ConversationView {
             self.offset_y,
             &self.item_heights,
             selected_index_opt,
+            tool_verbosity,
         );
     }
 
