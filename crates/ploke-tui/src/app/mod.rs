@@ -53,6 +53,7 @@ use view::components::approvals::{
     ApprovalListItem, ApprovalsFilter, ApprovalsState, ProposalKind, filtered_items,
     render_approvals_overlay,
 };
+use view::components::config_overlay::{ConfigOverlayState, render_config_overlay};
 use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail, compute_embedding_browser_scroll,
     render_embedding_browser,
@@ -128,6 +129,8 @@ pub struct App {
     context_browser: Option<ContextSearchState>,
     // Modal overlay for approvals list
     approvals: Option<ApprovalsState>,
+    // Modal overlay for config editing (skeleton)
+    config_overlay: Option<ConfigOverlayState>,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
@@ -167,6 +170,7 @@ impl App {
             model_browser: None,
             embedding_browser: None,
             approvals: None,
+            config_overlay: None,
             input_history: Vec::new(),
             input_history_pos: None,
             context_browser: None,
@@ -616,8 +620,11 @@ impl App {
             );
         }
 
+        // Render config overlay if visible
+        if let Some(cfg_overlay) = &mut self.config_overlay {
+            render_config_overlay(frame, cfg_overlay);
         // Render model browser overlay if visible
-        if let Some(mb) = &mut self.model_browser {
+        } else if let Some(mb) = &mut self.model_browser {
             let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
 
             // Keep focused row visible and clamp vscroll
@@ -923,6 +930,12 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        // Intercept config overlay keys
+        if self.config_overlay.is_some() {
+            input::config_overlay::handle_config_overlay_input(self, key);
+            self.needs_redraw = true;
+            return;
+        }
         // Intercept approvals overlay keys
         if self.approvals.is_some() && self.handle_overlay_key(key) {
             return;
@@ -1042,6 +1055,13 @@ impl App {
                     self.approvals = None;
                 } else {
                     self.approvals = Some(ApprovalsState::default());
+                }
+            }
+            Action::OpenConfigOverlay => {
+                if self.config_overlay.is_some() {
+                    self.config_overlay = None;
+                } else {
+                    self.open_config_overlay();
                 }
             }
             Action::Quit => {
@@ -1339,6 +1359,14 @@ impl App {
             vscroll: 0,
             viewport_height: 0,
         });
+        self.needs_redraw = true;
+    }
+
+    fn open_config_overlay(&mut self) {
+        let cfg = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async { self.state.config.read().await })
+        });
+        self.config_overlay = Some(ConfigOverlayState::from_runtime_config(&cfg));
         self.needs_redraw = true;
     }
 
