@@ -38,7 +38,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 "receieved ContextSearch with assembled_context stats: {:#?}",
                 assembled_context.stats
             );
-            if let Some(ctx_browser) = app.context_browser.as_mut() {
+            if let Some(ctx_browser) = app.overlay_manager.context_state_mut() {
                 if query_id != ctx_browser.query_id {
                     trace!(
                         "Ignoring stale context search results: incoming={} current={}",
@@ -277,12 +277,16 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
         return;
     };
 
-    let Some(mb) = app.model_browser.as_ref() else {
+    let Some(mb) = app.overlay_manager.model_browser_state() else {
         debug!("Received model list response without open browser");
         return;
     };
 
-    let Some(keyword_snapshot) = app.model_browser.as_ref().map(|mb| mb.keyword.clone()) else {
+    let Some(keyword_snapshot) = app
+        .overlay_manager
+        .model_browser_state()
+        .map(|mb| mb.keyword.clone())
+    else {
         debug!("Received model list response without an open browser; ignoring");
         return;
     };
@@ -304,7 +308,7 @@ fn handle_llm_models_response(app: &mut App, models_event: models::Event) {
         send_warning(app, &warning);
     }
 
-    if let Some(mb) = app.model_browser.as_mut() {
+    if let Some(mb) = app.overlay_manager.model_browser_state_mut() {
         // Drop results if another search replaced the keyword while this async request completed.
         if mb.keyword != keyword_snapshot {
             debug!(
@@ -342,12 +346,16 @@ fn handle_llm_embedding_models_response(app: &mut App, models_event: embedding_m
         return;
     };
 
-    let Some(eb) = app.embedding_browser.as_ref() else {
+    let Some(eb) = app.overlay_manager.embedding_browser_state() else {
         error!("Received embedding model list response without open browser");
         return;
     };
 
-    let Some(keyword_snapshot) = app.embedding_browser.as_ref().map(|eb| eb.keyword.clone()) else {
+    let Some(keyword_snapshot) = app
+        .overlay_manager
+        .embedding_browser_state()
+        .map(|eb| eb.keyword.clone())
+    else {
         error!("Received embedding model list response without an open browser; ignoring");
         return;
     };
@@ -369,7 +377,7 @@ fn handle_llm_embedding_models_response(app: &mut App, models_event: embedding_m
         send_warning(app, &warning);
     }
 
-    if let Some(eb) = app.embedding_browser.as_mut() {
+    if let Some(eb) = app.overlay_manager.embedding_browser_state_mut() {
         if eb.keyword != keyword_snapshot {
             debug!(
                 "Embedding browser keyword changed from '{}' → '{}' while request was pending",
@@ -423,7 +431,7 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
                 return;
             }
         };
-        let mb = match app.model_browser.as_mut() {
+        let mb = match app.overlay_manager.model_browser_state_mut() {
             Some(m_browser) => m_browser,
             None => {
                 send_warning(app, "Querying model endpoints outside of model browser");
@@ -477,7 +485,8 @@ fn handle_llm_endpoints_response(app: &mut App, endpoints_event: endpoint::Event
 
         if let Some((mid, pk)) = select_after {
             app.apply_model_provider_selection(mid.to_string(), Some(pk));
-            app.close_model_browser();
+            app.overlay_manager
+                .close_kind(crate::app::overlay::OverlayKind::ModelBrowser);
         }
     }
 }

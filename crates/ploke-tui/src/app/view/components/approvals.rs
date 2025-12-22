@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::view::components::context_browser::StepEnum;
+use crate::app::view::components::overlay_widgets;
 use crate::app::view::rendering::highlight::{
     StyledLine, StyledSpan, highlight_diff_text, styled_to_ratatui_lines,
 };
@@ -376,10 +377,7 @@ pub fn render_approvals_overlay(
             }
         }
     }
-    let detail = Paragraph::new(detail_lines)
-        .block(Block::bordered().title(" Details "))
-        .alignment(Alignment::Left);
-    frame.render_widget(detail, cols[1]);
+    overlay_widgets::render_diff_preview(frame, cols[1], " Details ", detail_lines);
 
     // Render help footer with truncation status
     let overlay_style = Style::new().fg(Color::LightBlue);

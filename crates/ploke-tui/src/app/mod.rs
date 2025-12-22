@@ -1,6 +1,4 @@
-use crate::app::view::components::context_browser::{
-    self, ContextSearchState, SearchItem, render_context_search,
-};
+use crate::app::view::components::context_browser::{ContextSearchState, SearchItem};
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
@@ -53,19 +51,12 @@ use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 use toml::to_string;
 use tracing::instrument;
-use view::components::approvals::{
-    ApprovalListItem, ApprovalsFilter, ApprovalsState, ProposalKind, filtered_items,
-    render_approvals_overlay,
-};
+use view::components::approvals::{ApprovalListItem, ApprovalsState, ProposalKind, filtered_items};
 use view::components::config_overlay::ConfigOverlayState;
 use view::components::embedding_browser::{
-    EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail, compute_embedding_browser_scroll,
-    render_embedding_browser,
+    EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail,
 };
-use view::components::model_browser::{
-    ModelBrowserItem, ModelBrowserState, ModelProviderRow, compute_browser_scroll,
-    model_browser_focus_line, model_browser_total_lines, render_model_browser,
-};
+use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
 struct TerminalModeGuard {
@@ -125,15 +116,7 @@ pub struct App {
     pending_char: Option<char>,
     needs_redraw: bool,
     show_context_preview: bool,
-    // Modal overlay for interactive model discovery/selection
-    model_browser: Option<ModelBrowserState>,
-    // Modal overlay for embedding model discovery/selection
-    embedding_browser: Option<EmbeddingBrowserState>,
-    // Context Search overlay for interactive exploration of code context
-    context_browser: Option<ContextSearchState>,
-    // Modal overlay for approvals list
-    approvals: Option<ApprovalsState>,
-    // Overlay manager (config overlay wiring for now)
+    // Overlay manager (config + other overlays)
     overlay_manager: OverlayManager,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
@@ -171,13 +154,9 @@ impl App {
             pending_char: None,
             needs_redraw: true,
             show_context_preview: false,
-            model_browser: None,
-            embedding_browser: None,
-            approvals: None,
             overlay_manager: OverlayManager::default(),
             input_history: Vec::new(),
             input_history_pos: None,
-            context_browser: None,
             tool_verbosity,
         }
     }
@@ -550,7 +529,7 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            if self.model_browser.is_some() || self.overlay_manager.is_active() {
+            if self.overlay_manager.is_active() {
                 Mode::Normal
             } else {
                 self.mode
@@ -626,146 +605,7 @@ impl App {
 
         // Render overlay manager if active
         if self.overlay_manager.is_active() {
-            self.overlay_manager.render(frame);
-        // Render model browser overlay if visible
-        } else if let Some(mb) = &mut self.model_browser {
-            let (body_area, footer_area, overlay_style, lines) = render_model_browser(frame, mb);
-
-            // Keep focused row visible and clamp vscroll
-            compute_browser_scroll(body_area, mb);
-
-            let widget = Paragraph::new(lines)
-                .style(overlay_style)
-                .block(
-                    Block::bordered()
-                        .title(format!(
-                            " Model Browser — {} results for \"{}\" ",
-                            mb.items.len(),
-                            mb.keyword
-                        ))
-                        .style(overlay_style),
-                )
-                // Preserve leading indentation in detail lines
-                .wrap(ratatui::widgets::Wrap { trim: false })
-                .scroll((mb.vscroll, 0));
-            frame.render_widget(widget, body_area);
-
-            // Footer: bottom-right help toggle or expanded help
-            if mb.help_visible {
-                let help = Paragraph::new(
-                    "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
-                     Save/Load/Search:\n\
-                     - model save [path] [--with-keys]\n\
-                     - model load [path]\n\
-                     - model search <keyword>",
-                )
-                .style(overlay_style)
-                .block(Block::bordered().title(" Help ").style(overlay_style))
-                .wrap(ratatui::widgets::Wrap { trim: true });
-                frame.render_widget(help, footer_area);
-            } else {
-                let hint = Paragraph::new(" ? Help ")
-                    .style(overlay_style)
-                    .alignment(ratatui::layout::Alignment::Right)
-                    .block(Block::default().style(overlay_style));
-                frame.render_widget(hint, footer_area);
-            }
-        } else if let Some(eb) = &mut self.embedding_browser {
-            let (body_area, footer_area, overlay_style, lines) =
-                render_embedding_browser(frame, eb);
-
-            compute_embedding_browser_scroll(body_area, eb);
-
-            let widget = Paragraph::new(lines)
-                .style(overlay_style)
-                .block(
-                    Block::bordered()
-                        .title(format!(
-                            " Embedding Models — {} results for \"{}\" ",
-                            eb.items.len(),
-                            eb.keyword
-                        ))
-                        .style(overlay_style),
-                )
-                .wrap(ratatui::widgets::Wrap { trim: false })
-                .scroll((eb.vscroll, 0));
-            frame.render_widget(widget, body_area);
-
-            if eb.help_visible {
-                let help = Paragraph::new(
-                    "Keys: s=select  Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
-                     Command:\n\
-                     - embedding search <keyword>",
-                )
-                .style(overlay_style)
-                .block(Block::bordered().title(" Help ").style(overlay_style))
-                .wrap(ratatui::widgets::Wrap { trim: true });
-                frame.render_widget(help, footer_area);
-            } else {
-                let hint = Paragraph::new(" ? Help ")
-                    .style(overlay_style)
-                    .alignment(ratatui::layout::Alignment::Right)
-                    .block(Block::default().style(overlay_style));
-                frame.render_widget(hint, footer_area);
-            }
-        } else if let Some(cb) = &mut self.context_browser {
-            let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, cb);
-
-            let free_width = body_area.width.saturating_sub(43) as usize;
-            let trunc_search_string: String = cb.input.as_str().chars().take(free_width).collect();
-
-            // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
-            // on for better functionality later
-            // user_search::compute_browser_scroll(body_area, cb);
-
-            // subtract 43 for the length of the surrounding text in the `format!` call for the
-            // widget title below.
-            let widget = Paragraph::new(lines)
-                .style(overlay_style)
-                .block(
-                    Block::bordered()
-                        .title(format!(
-                            " Context Browser — {} results for \"{}\" ",
-                            cb.items.len(),
-                            trunc_search_string
-                        ))
-                        .style(overlay_style),
-                )
-                // Preserve leading indentation in detail lines
-                .wrap(ratatui::widgets::Wrap { trim: false })
-                .scroll((cb.vscroll, 0));
-            frame.render_widget(widget, body_area);
-            if cb.help_visible {
-                // NOTE: placeholder for now, not actually functional
-                let help = Paragraph::new(
-                    "Keys: Enter/Space=toggle details  j/k,↑/↓=navigate  q/Esc=close\n\
-                     Save/Load/Search:\n\
-                     - model save [path] [--with-keys]\n\
-                     - model load [path]\n\
-                     - model search <keyword>",
-                )
-                .style(overlay_style)
-                .block(Block::bordered().title(" Help ").style(overlay_style))
-                .wrap(ratatui::widgets::Wrap { trim: true });
-                frame.render_widget(help, footer_area);
-            } else {
-                let hint = Paragraph::new(" ? Help ")
-                    .style(overlay_style)
-                    .alignment(ratatui::layout::Alignment::Right)
-                    .block(Block::default().style(overlay_style));
-                frame.render_widget(hint, footer_area);
-            }
-        }
-
-        // Render approvals overlay if visible (on top)
-        if let Some(approvals) = &self.approvals {
-            // Centered overlay
-            let w = frame.area().width.saturating_mul(8) / 10;
-            let h = frame.area().height.saturating_mul(8) / 10;
-            let x = frame.area().x + (frame.area().width.saturating_sub(w)) / 2;
-            let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
-            let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
-            let _ = render_approvals_overlay(frame, overlay_area, &self.state, approvals);
+            self.overlay_manager.render(frame, &self.state);
         }
 
         // Cursor position is handled by InputView.
@@ -806,46 +646,16 @@ impl App {
             self.needs_redraw = true;
             return;
         }
-        // Intercept approvals overlay keys
-        if let Some(approvals) = &mut self.approvals {
-            let actions = input::approvals::handle_approvals_input(approvals, key);
-            self.handle_overlay_actions(actions);
-            self.needs_redraw = true;
-            return;
-        }
-        // Intercept keys for model browser overlay when visible
-        if self.model_browser.is_some() {
-            let actions = {
-                let mb = self.model_browser.as_mut().expect("model browser");
-                input::model_browser::handle_model_browser_input(mb, key)
-            };
-            self.handle_overlay_actions(actions);
-            self.needs_redraw = true;
-            return;
-        } else if self.embedding_browser.is_some() {
-            let actions = {
-                let eb = self.embedding_browser.as_mut().expect("embedding browser");
-                input::embedding_browser::handle_embedding_browser_input(eb, key)
-            };
-            self.handle_overlay_actions(actions);
-            self.needs_redraw = true;
-            return;
-        // Intercept keys for context browser overlay when visible
-        } else if let Some(context_browser) = &mut self.context_browser {
-            let actions = input::context_browser::handle_context_browser_input(context_browser, key);
-            self.handle_overlay_actions(actions);
-            self.needs_redraw = true;
-            return;
-        }
+        // Overlay manager handles overlay input above.
 
         // Global action mapping (including OpenApprovals)
         if let Some(action) = to_action(self.mode, key, self.command_style)
             && Action::OpenApprovals == action
         {
-            if self.approvals.is_some() {
-                self.approvals = None;
+            if self.overlay_manager.is_approvals_open() {
+                self.overlay_manager.close_active();
             } else {
-                self.approvals = Some(ApprovalsState::default());
+                self.overlay_manager.open_approvals(ApprovalsState::default());
             }
             self.needs_redraw = true;
             return;
@@ -933,10 +743,10 @@ impl App {
 
         match action {
             Action::OpenApprovals => {
-                if self.approvals.is_some() {
-                    self.approvals = None;
+                if self.overlay_manager.is_approvals_open() {
+                    self.overlay_manager.close_active();
                 } else {
-                    self.approvals = Some(ApprovalsState::default());
+                    self.overlay_manager.open_approvals(ApprovalsState::default());
                 }
             }
             Action::OpenConfigOverlay => {
@@ -1133,22 +943,21 @@ impl App {
     fn handle_overlay_actions(&mut self, actions: Vec<OverlayAction>) {
         for action in actions {
             match action {
-                OverlayAction::CloseOverlay(kind) => match kind {
-                    overlay::OverlayKind::Approvals => self.approvals = None,
-                    overlay::OverlayKind::ContextBrowser => self.context_browser = None,
-                    overlay::OverlayKind::ModelBrowser => self.close_model_browser(),
-                    overlay::OverlayKind::EmbeddingBrowser => self.close_embedding_browser(),
-                },
+                OverlayAction::CloseOverlay(kind) => {
+                    self.overlay_manager.close_kind(kind);
+                }
                 OverlayAction::RequestModelEndpoints { model_id } => {
                     self.request_model_endpoints(model_id);
                 }
                 OverlayAction::SelectModel { model_id, provider } => {
                     self.apply_model_provider_selection(model_id.to_string(), provider);
-                    self.close_model_browser();
+                    self.overlay_manager
+                        .close_kind(overlay::OverlayKind::ModelBrowser);
                 }
                 OverlayAction::SelectEmbeddingModel { model_id, provider } => {
                     self.apply_embedding_model_selection(model_id, provider);
-                    self.close_embedding_browser();
+                    self.overlay_manager
+                        .close_kind(overlay::OverlayKind::EmbeddingBrowser);
                 }
                 OverlayAction::ApproveSelectedProposal => {
                     self.handle_selected_approval(true);
@@ -1164,7 +973,7 @@ impl App {
     }
 
     fn handle_selected_approval(&mut self, approve: bool) {
-        let Some(st) = &self.approvals else {
+        let Some(st) = self.overlay_manager.approvals_state() else {
             return;
         };
         let sel_index = st.selected;
@@ -1194,7 +1003,7 @@ impl App {
     }
 
     fn open_selected_proposal_in_editor(&mut self) {
-        let Some(st) = &self.approvals else {
+        let Some(st) = self.overlay_manager.approvals_state() else {
             return;
         };
         let sel_index = st.selected;
@@ -1335,7 +1144,7 @@ impl App {
 
     fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
         let items = Self::build_model_browser_items(items);
-        self.model_browser = Some(ModelBrowserState {
+        self.overlay_manager.open_model_browser(ModelBrowserState {
             visible: true,
             keyword,
             selected: 0,
@@ -1360,15 +1169,16 @@ impl App {
 
     fn open_embedding_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
         let items = Self::build_embedding_browser_items(items);
-        self.embedding_browser = Some(EmbeddingBrowserState {
-            visible: true,
-            keyword,
-            selected: 0,
-            items,
-            help_visible: false,
-            vscroll: 0,
-            viewport_height: 0,
-        });
+        self.overlay_manager
+            .open_embedding_browser(EmbeddingBrowserState {
+                visible: true,
+                keyword,
+                selected: 0,
+                items,
+                help_visible: false,
+                vscroll: 0,
+                viewport_height: 0,
+            });
         self.needs_redraw = true;
     }
 
@@ -1376,8 +1186,7 @@ impl App {
         level = "debug",
         fields(
             search_input,
-            retrieved_items_len = retrieved_items.len(),
-            self.context_browser
+            retrieved_items_len = retrieved_items.len()
         )
     )]
     #[instrument(
@@ -1386,20 +1195,24 @@ impl App {
     )]
     fn open_context_browser(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
         let search_items = Self::build_context_search_items(retrieved_items);
-        self.context_browser = Some(ContextSearchState::with_items(search_input, search_items));
+        self.overlay_manager
+            .open_context_browser(ContextSearchState::with_items(
+                search_input,
+                search_items,
+            ));
         self.needs_redraw = true;
     }
 
     fn context_browser_needs_tick(&self) -> bool {
-        self.context_browser
-            .as_ref()
+        self.overlay_manager
+            .context_state()
             .map(|cb| cb.pending_dispatch)
             .unwrap_or(false)
     }
 
     fn tick_context_browser(&mut self) {
         let mut query_to_dispatch: Option<String> = None;
-        if let Some(cb) = self.context_browser.as_mut() {
+        if let Some(cb) = self.overlay_manager.context_state_mut() {
             if !cb.pending_dispatch {
                 return;
             }
@@ -1423,7 +1236,7 @@ impl App {
 
     fn dispatch_context_search(&mut self, query: &str) {
         let query = query.trim();
-        let Some(cb) = self.context_browser.as_mut() else {
+        let Some(cb) = self.overlay_manager.context_state_mut() else {
             return;
         };
         cb.query_id = cb.query_id.saturating_add(1);
@@ -1497,11 +1310,6 @@ impl App {
             .collect::<Vec<_>>()
     }
 
-    fn close_model_browser(&mut self) {
-        self.model_browser = None;
-        self.needs_redraw = true;
-    }
-
     fn request_model_endpoints(&self, model_id: ModelId) {
         tokio::spawn(async move {
             let router = RouterVariants::OpenRouter(OpenRouter);
@@ -1515,11 +1323,6 @@ impl App {
             )
             .await;
         });
-    }
-
-    fn close_embedding_browser(&mut self) {
-        self.embedding_browser = None;
-        self.needs_redraw = true;
     }
 
     fn switch_to_model(&mut self, model_id: &str) {
@@ -1623,12 +1426,12 @@ impl App {
     // Test-only helpers to exercise overlay and key handling without exposing internals publicly
     /// Open the approvals overlay (intended for tests and scripted UI flows)
     pub fn approvals_open(&mut self) {
-        self.approvals = Some(ApprovalsState::default());
+        self.overlay_manager.open_approvals(ApprovalsState::default());
     }
 
     /// Close the approvals overlay (intended for tests and scripted UI flows)
     pub fn approvals_close(&mut self) {
-        self.approvals = None;
+        self.overlay_manager.close_kind(overlay::OverlayKind::Approvals);
     }
 
     /// Inject a KeyEvent into the App input handler (intended for tests)
