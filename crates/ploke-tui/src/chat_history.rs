@@ -214,7 +214,7 @@ pub struct Message {
 }
 
 /// Running aggregates for the conversation.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ConversationTotals {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,

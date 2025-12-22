@@ -1,4 +1,5 @@
 use crate::app::view::components::context_browser::{ContextSearchState, SearchItem};
+use crate::chat_history::{ContextTokens, ConversationTotals};
 use crate::llm::request::models;
 use crate::llm::router_only::RouterVariants;
 use crate::llm::router_only::openrouter::OpenRouter;
@@ -8,11 +9,11 @@ use ploke_llm::manager::events::endpoint;
 pub mod commands;
 pub mod editor;
 pub mod events;
+pub mod input;
+pub mod message_item;
 pub mod overlay;
 pub mod overlay_invariants;
 pub mod overlay_manager;
-pub mod input;
-pub mod message_item;
 pub mod types;
 pub mod utils;
 pub mod view;
@@ -251,6 +252,8 @@ impl App {
                 let history_guard = app_state.chat.0.read().await;
                 let path_len = history_guard.path_len();
                 let current_id = history_guard.current;
+                let current_token_totals: Option<ContextTokens> =
+                    history_guard.current_context_tokens;
 
                 // Draw the UI using iterators over the cached path.
                 terminal.draw(|frame| {
@@ -260,6 +263,7 @@ impl App {
                         history_guard.iter_path(),
                         path_len,
                         current_id,
+                        current_token_totals,
                     )
                 })?;
                 self.needs_redraw = false;
@@ -435,6 +439,7 @@ impl App {
         path_for_render: I2,
         path_len: usize,
         current_id: Uuid,
+        current_token_totals: Option<ContextTokens>,
     ) where
         I1: IntoIterator<Item = &'a T>,
         I2: IntoIterator<Item = &'a T>,
@@ -487,7 +492,7 @@ impl App {
 
         // Remember conversation area for mouse hit-testing is handled by ConversationView.
 
-        let status_line_area = layout_statusline(5, status_area);
+        let status_line_area = layout_statusline(4, status_area);
 
         // ---------- Prepare Widgets ----------
         // Render message tree
@@ -565,6 +570,18 @@ impl App {
         let node_status = Paragraph::new(format!("Node: {}", truncate_uuid(current_id)))
             .block(Block::default().borders(Borders::NONE))
             .style(Style::new().fg(Color::Blue));
+        let context_tracker = {
+            let fmt_arg = if let Some(current_tokens) = current_token_totals {
+                format!("{}", current_tokens.count)
+            } else {
+                "unknown".to_string()
+            };
+            let formatted_tokens = format!("ctx tokens: {}", fmt_arg);
+
+            Paragraph::new(formatted_tokens)
+                .block(Block::default().borders(Borders::NONE))
+                .style(Style::new().fg(Color::Blue))
+        };
 
         // -- Handle Scrollbars --
         // TODO: how to make this work?
@@ -583,6 +600,7 @@ impl App {
         // -- first nested
         frame.render_widget(status_bar, status_line_area[0]);
         frame.render_widget(node_status, status_line_area[1]);
+        frame.render_widget(context_tracker, status_line_area[3]);
 
         // -- model indicator (always visible)
         let display_model = self
@@ -664,7 +682,8 @@ impl App {
             if self.overlay_manager.is_approvals_open() {
                 self.overlay_manager.close_active();
             } else {
-                self.overlay_manager.open_approvals(ApprovalsState::default());
+                self.overlay_manager
+                    .open_approvals(ApprovalsState::default());
             }
             self.needs_redraw = true;
             return;
@@ -755,7 +774,8 @@ impl App {
                 if self.overlay_manager.is_approvals_open() {
                     self.overlay_manager.close_active();
                 } else {
-                    self.overlay_manager.open_approvals(ApprovalsState::default());
+                    self.overlay_manager
+                        .open_approvals(ApprovalsState::default());
                 }
             }
             Action::OpenConfigOverlay => {
@@ -1205,10 +1225,7 @@ impl App {
     fn open_context_browser(&mut self, search_input: String, retrieved_items: Vec<ContextPart>) {
         let search_items = Self::build_context_search_items(retrieved_items);
         self.overlay_manager
-            .open_context_browser(ContextSearchState::with_items(
-                search_input,
-                search_items,
-            ));
+            .open_context_browser(ContextSearchState::with_items(search_input, search_items));
         self.needs_redraw = true;
     }
 
@@ -1435,12 +1452,14 @@ impl App {
     // Test-only helpers to exercise overlay and key handling without exposing internals publicly
     /// Open the approvals overlay (intended for tests and scripted UI flows)
     pub fn approvals_open(&mut self) {
-        self.overlay_manager.open_approvals(ApprovalsState::default());
+        self.overlay_manager
+            .open_approvals(ApprovalsState::default());
     }
 
     /// Close the approvals overlay (intended for tests and scripted UI flows)
     pub fn approvals_close(&mut self) {
-        self.overlay_manager.close_kind(overlay::OverlayKind::Approvals);
+        self.overlay_manager
+            .close_kind(overlay::OverlayKind::Approvals);
     }
 
     /// Inject a KeyEvent into the App input handler (intended for tests)

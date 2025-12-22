@@ -117,7 +117,7 @@ pub async fn update_message(
         let _ = message;
 
         if let Some(meta) = new_meta {
-            let old_usage = old_meta.as_ref().map(|m| m.usage.clone());
+            let old_usage = old_meta.as_ref().map(|m| m.usage);
             let old_cost = old_meta.as_ref().map(|m| m.cost).unwrap_or(0.0);
             let delta_prompt = meta
                 .usage

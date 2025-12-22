@@ -20,9 +20,9 @@ use crate::AppEvent;
 use crate::EventBus;
 use crate::app_state::StateCommand;
 use crate::app_state::events::SystemEvent;
-use crate::chat_history::MessageKind;
-use crate::chat_history::MessageStatus;
 use crate::chat_history::MessageUpdate;
+use crate::chat_history::{ContextTokens, MessageKind};
+use crate::chat_history::{MessageStatus, TokenKind};
 use crate::tracing_setup::{FINISH_REASON_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
@@ -639,6 +639,18 @@ pub async fn run_chat_session<R: Router>(
             }
         };
 
+        let token_usage = full_response.usage;
+        if let Some(resp_tokens) = token_usage {
+            state_cmd_tx
+                .send(StateCommand::UpdateContextTokens {
+                    tokens: ContextTokens {
+                        count: resp_tokens.prompt_tokens as usize,
+                        kind: TokenKind::Actual,
+                    },
+                })
+                .await
+                .expect("Invariant: state manager running");
+        }
         match outcome {
             ChatStepOutcome::ToolCalls {
                 calls,
@@ -884,7 +896,6 @@ pub async fn run_chat_session<R: Router>(
                                 "Actual token usage from provider"
                             );
                         }
-                        let usage_for_cost = usage.clone();
                         let finish_reason = full_response
                             .choices
                             .iter()
@@ -895,7 +906,7 @@ pub async fn run_chat_session<R: Router>(
                             usage,
                             finish_reason,
                             processing_time: Duration::default(),
-                            cost: estimate_cost(&usage_for_cost),
+                            cost: estimate_cost(usage),
                             performance: PerformanceMetrics {
                                 tokens_per_second: 0.0,
                                 time_to_first_token: Duration::default(),
@@ -1058,11 +1069,10 @@ fn apply_prompt_hint(error: &mut LoopError, prompt: String) {
                 .next_steps
                 .iter_mut()
                 .find(|s| s.action.as_ref() == "continue_output")
+                && step.details.is_none()
             {
-                if step.details.is_none() {
-                    step.details = Some(prompt);
-                    return;
-                }
+                step.details = Some(prompt);
+                return;
             }
             action
                 .next_steps
@@ -1124,7 +1134,7 @@ fn extract_unknown_tool_name(err: &LlmError) -> Option<String> {
 
 /// Placeholder cost estimator using usage counts.
 /// TODO: derive pricing from active model/endpoint and compute USD accurately.
-fn estimate_cost(usage: &TokenUsage) -> f64 {
+fn estimate_cost(usage: TokenUsage) -> f64 {
     let prompt = usage.prompt_tokens as f64;
     let completion = usage.completion_tokens as f64;
     // Without pricing info, return 0 and keep the surface for future pricing wiring.
