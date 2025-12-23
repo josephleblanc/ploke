@@ -21,6 +21,7 @@ pub struct ExpandingList<'a, T: ExpandableItem> {
     detail_style: Style,
 }
 
+// add builder methods for ergonomic usage AI!
 impl<'a, T: ExpandableItem> ExpandingList<'a, T> {
     pub fn new(
         items: &'a [T],
@@ -45,7 +46,7 @@ impl<'a, T: ExpandableItem> ExpandingList<'a, T> {
             .enumerate()
             .flat_map(|(i, item)| {
                 let mut items = Vec::new();
-                
+
                 // Main item line
                 let main_line = Line::from(vec![
                     Span::styled(
