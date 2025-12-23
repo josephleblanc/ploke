@@ -1,3 +1,4 @@
+use ratatui::prelude::Stylize;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
