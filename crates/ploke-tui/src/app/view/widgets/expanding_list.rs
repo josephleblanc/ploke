@@ -21,22 +21,35 @@ pub struct ExpandingList<'a, T: ExpandableItem> {
     detail_style: Style,
 }
 
-// add builder methods for ergonomic usage AI!
 impl<'a, T: ExpandableItem> ExpandingList<'a, T> {
-    pub fn new(
-        items: &'a [T],
-        selected: usize,
-        style: Style,
-        selected_style: Style,
-        detail_style: Style,
-    ) -> Self {
+    pub fn new(items: &'a [T]) -> Self {
         Self {
             items,
-            selected,
-            style,
-            selected_style,
-            detail_style,
+            selected: 0,
+            style: Style::default(),
+            selected_style: Style::default().fg(Color::Yellow),
+            detail_style: Style::default().fg(Color::DarkGray),
         }
+    }
+
+    pub fn selected(mut self, selected: usize) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn selected_style(mut self, selected_style: Style) -> Self {
+        self.selected_style = selected_style;
+        self
+    }
+
+    pub fn detail_style(mut self, detail_style: Style) -> Self {
+        self.detail_style = detail_style;
+        self
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
