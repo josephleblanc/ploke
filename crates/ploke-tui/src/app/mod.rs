@@ -12,8 +12,6 @@ pub mod events;
 pub mod input;
 pub mod message_item;
 pub mod overlay;
-pub mod overlay_invariants;
-pub mod overlay_manager;
 pub mod types;
 pub mod utils;
 pub mod view;
@@ -23,8 +21,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::app::input::keymap::{Action, to_action};
-use crate::app::overlay::OverlayAction;
-use crate::app::overlay_manager::OverlayManager;
+use crate::app::overlay::{OverlayAction, OverlayManager};
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;

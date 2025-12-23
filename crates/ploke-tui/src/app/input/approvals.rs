@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::overlay::{OverlayAction, OverlayKind};
-use crate::app::overlay_invariants::{OverlayNavAction, map_close_key, map_navigation_key};
+use crate::app::overlay::{OverlayNavAction, map_close_key, map_navigation_key};
 use crate::app::view::components::approvals::ApprovalsState;
 
 pub fn handle_approvals_input(overlay: &mut ApprovalsState, key: KeyEvent) -> Vec<OverlayAction> {

@@ -10,9 +10,7 @@ use crate::app::overlay::{
     Overlay, OverlayAction, OverlayKind, handle_overlay_input, render_overlay, tick_overlay,
 };
 use crate::app::view::components::approvals::ApprovalsState;
-use crate::app::view::components::config_overlay::{
-    ConfigOverlayState, render_config_overlay,
-};
+use crate::app::view::components::config_overlay::{ConfigOverlayState, render_config_overlay};
 use crate::app::view::components::context_browser::{ContextSearchState, render_context_search};
 use crate::app::view::components::embedding_browser::{
     EmbeddingBrowserState, compute_embedding_browser_scroll, render_embedding_browser,
@@ -152,9 +150,7 @@ impl OverlayManager {
             ActiveOverlay::ContextBrowser(state) => {
                 input::context_browser::handle_context_browser_input(state, key)
             }
-            ActiveOverlay::Approvals(state) => {
-                handle_overlay_input(state, key)
-            }
+            ActiveOverlay::Approvals(state) => handle_overlay_input(state, key),
         };
 
         if actions.is_empty() {
@@ -299,12 +295,10 @@ impl OverlayManager {
     }
 
     fn render_context_browser(frame: &mut Frame<'_>, overlay: &mut ContextSearchState) {
-        let (body_area, footer_area, overlay_style, lines) =
-            render_context_search(frame, overlay);
+        let (body_area, footer_area, overlay_style, lines) = render_context_search(frame, overlay);
 
         let free_width = body_area.width.saturating_sub(43) as usize;
-        let trunc_search_string: String =
-            overlay.input.as_str().chars().take(free_width).collect();
+        let trunc_search_string: String = overlay.input.as_str().chars().take(free_width).collect();
 
         // WARNING: temporarily taking this line out due to borrowing issues, need to turn it
         // on for better functionality later

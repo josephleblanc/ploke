@@ -1,3 +1,9 @@
+mod manager;
+mod navigation;
+
+pub use manager::{ActiveOverlay, OverlayManager};
+pub use navigation::{OverlayNavAction, map_close_key, map_navigation_key};
+
 use std::time::Duration;
 
 use crossterm::event::KeyEvent;
@@ -14,7 +20,9 @@ use crate::llm::ProviderKey;
 #[derive(Debug, Clone)]
 pub enum OverlayAction {
     CloseOverlay(OverlayKind),
-    RequestModelEndpoints { model_id: ModelId },
+    RequestModelEndpoints {
+        model_id: ModelId,
+    },
     SelectModel {
         model_id: ModelId,
         provider: Option<ProviderKey>,
