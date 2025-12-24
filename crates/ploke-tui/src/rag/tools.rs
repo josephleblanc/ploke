@@ -629,19 +629,21 @@ pub async fn apply_ns_code_edit_tool(
         //         .join(p)
         // };
 
-        let crate_root = state
-            .system
-            .read()
-            .await
-            .crate_focus
-            .clone()
-            .ok_or_else(|| {
-                ploke_error::Error::Domain(DomainError::Ui {
+        let crate_root = {
+            state
+                .system
+                .read()
+                .await
+                .crate_focus
+                .clone()
+                .ok_or_else(|| {
+                    ploke_error::Error::Domain(DomainError::Ui {
                     message:
                         "No crate is currently focused; load a workspace before using read_file."
                             .to_string(),
                 })
-            })?;
+                })?
+        };
 
         let requested_path = PathBuf::from(file.as_str());
         let abs_path =
@@ -658,11 +660,15 @@ pub async fn apply_ns_code_edit_tool(
             strategy: ReadStrategy::Plain,
         };
 
-        let read_resp = state.io_handle.read_file(request).await.map_err(|err| {
+        let read_result = state.io_handle.read_file(request).await.map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "io channel error: {err}"
             )))
-        })??;
+        });
+        tracing::trace!(target: "ns-patch", "ns_patch outer result reads file ok: {}", read_result.is_ok());
+        let read_resp_inner = read_result?;
+        tracing::trace!(target: "ns-patch", "ns_patch inner result reads file ok: {}", read_resp_inner.is_ok());
+        let read_resp = read_resp_inner?;
 
         let ploke_io::ReadFileResponse {
             exists,

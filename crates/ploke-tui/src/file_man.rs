@@ -8,6 +8,7 @@ use tracing::{error, info, warn};
 
 use crate::app_state::events::SystemEvent;
 use crate::error::ErrorSeverity;
+use crate::tools::Audience;
 use crate::{AppEvent, EventBus};
 use crate::{ErrorEvent, RagEvent};
 
@@ -60,6 +61,7 @@ impl FileManager {
                         let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
                             message: format!("Save failed: working directory invalid: {}", e),
                             severity: ErrorSeverity::Error,
+                            audience: Audience::System,
                         }));
                         return;
                     }
@@ -80,6 +82,7 @@ impl FileManager {
                         let _ = self.event_tx.send(AppEvent::Error(ErrorEvent {
                             message: format!("Save failed: {}", e),
                             severity: ErrorSeverity::Error,
+                            audience: Audience::System,
                         }));
                     }
                 }
@@ -162,6 +165,7 @@ impl FileManager {
             .send(AppEvent::Error(ErrorEvent {
                 message,
                 severity: ErrorSeverity::Warning,
+                audience: Audience::System,
             }))
             .expect("Invariant violated: ReadQuery event after AppEvent reader closed");
     }

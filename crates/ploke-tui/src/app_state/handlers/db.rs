@@ -3,9 +3,11 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::app_state::events::SystemEvent;
+use crate::error::ErrorSeverity;
+use crate::tools::Audience;
 use crate::{AppEvent, EventBus, app_state::database, error::ErrorExt as _};
 
-use crate::AppState;
+use crate::{AppState, ErrorEvent};
 
 pub async fn update_database(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     use ploke_db::{NodeType, create_index_warn, replace_index_warn};
@@ -124,10 +126,19 @@ pub async fn scan_for_change(
     event_bus: &Arc<EventBus>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) {
-    let _ = database::scan_for_change(state, event_bus, scan_tx)
+    let result = database::scan_for_change(state, event_bus, scan_tx)
         .await
         .inspect_err(|e| {
             e.emit_error();
             tracing::error!("Error in ScanForChange:\n{e}");
         });
+    if let Err(e) = result {
+        let message = format!("Failed to parse target crate with error: {e}");
+        event_bus.send(AppEvent::Error(ErrorEvent {
+            message,
+            severity: ErrorSeverity::Warning,
+            audience: Audience::System,
+        }));
+        event_bus.send(AppEvent::Error(ErrorEvent::new_scan_err(e.to_string())));
+    }
 }

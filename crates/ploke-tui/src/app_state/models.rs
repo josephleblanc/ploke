@@ -1,3 +1,5 @@
+use crate::tools::Audience;
+
 use super::*;
 
 pub(super) async fn switch_model(
@@ -27,6 +29,7 @@ pub(super) async fn switch_model(
             event_bus.send(AppEvent::Error(ErrorEvent {
                 message: format!("Unknown model '{}'", alias_or_id),
                 severity: ErrorSeverity::Warning,
+                audience: Audience::System,
             }));
         }
     }

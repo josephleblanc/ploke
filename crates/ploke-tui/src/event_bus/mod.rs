@@ -6,6 +6,7 @@ use tracing::instrument;
 use ploke_embed::indexer::{self, IndexStatus};
 use tokio::sync::broadcast;
 
+use crate::tools::Audience;
 use crate::utils::consts::DBG_EVENTS;
 use crate::{AppEvent, error::ErrorSeverity};
 
@@ -19,6 +20,23 @@ pub enum EventPriority {
 pub struct ErrorEvent {
     pub message: String,
     pub severity: ErrorSeverity,
+    pub audience: Audience,
+}
+
+impl ErrorEvent {
+    pub fn new_scan_err(err_msg: String) -> Self {
+        let message = format!(
+            "Failed to parse target crate with error: {err_msg}. This indicates that
+there is a syntax error in the rust files, causing the `syn`-based parser to fail. Try using the
+`cargo check` command to find the malformed files, read them with the `ns_read` tool, and use
+`ns_patch` if asked to suggest fixes."
+        );
+        ErrorEvent {
+            message,
+            severity: ErrorSeverity::Warning,
+            audience: Audience::Llm,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -107,6 +125,7 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                             event_bus.send(AppEvent::Error(ErrorEvent {
                                 message: format!("Indexing failed: {}", err),
                                 severity: ErrorSeverity::Error,
+                                audience: Audience::System
                             }));
                             let _ = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
                             // reset for next run
@@ -137,6 +156,7 @@ pub async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                                 .send(AppEvent::Error(ErrorEvent {
                                     message: msg,
                                     severity: ErrorSeverity::Warning,
+                                    audience: Audience::System,
                                 }));
                             last_lag_warn = Some(now);
                         } else {
@@ -172,8 +192,12 @@ impl EventBus {
         let _ = tx.send(event); // Ignore receiver count
     }
 
-    pub fn send_error(&self, message: String, severity: ErrorSeverity) {
-        let _ = self.error_tx.send(ErrorEvent { message, severity });
+    pub fn send_error(&self, message: String, severity: ErrorSeverity, audience: Audience) {
+        let _ = self.error_tx.send(ErrorEvent {
+            message,
+            severity,
+            audience,
+        });
     }
 
     pub fn subscribe(&self, priority: EventPriority) -> broadcast::Receiver<AppEvent> {

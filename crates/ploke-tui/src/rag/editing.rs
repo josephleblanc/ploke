@@ -1,5 +1,9 @@
 use crate::{
-    app_state::{core::EditProposalStatus, handlers::chat},
+    ErrorEvent,
+    app_state::{
+        core::EditProposalStatus,
+        handlers::{chat, db},
+    },
     chat_history::MessageKind,
     tools::{ToolError, ToolErrorCode, ToolName, ToolUiPayload},
 };
@@ -305,7 +309,7 @@ fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_
         let state = Arc::clone(state);
         let event_bus = Arc::clone(event_bus);
         async move {
-            crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+            db::scan_for_change(&state, &event_bus, scan_tx).await;
             let add_chat_message = |msg: String| {
                 chat::add_msg_immediate(
                     &state,
@@ -340,7 +344,8 @@ fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_
                         request_id, e
                     );
                     tracing::error!(target: "edit-proposals", msg);
-                    add_chat_message(msg).await;
+                    event_bus.send(AppEvent::Error(ErrorEvent::new_scan_err(e.to_string())));
+                    // add_chat_message(msg).await;
                 }
             }
         }
@@ -535,7 +540,7 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
         let state = Arc::clone(state);
         let event_bus = Arc::clone(event_bus);
         async move {
-            crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+            let scan_result = db::scan_for_change(&state, &event_bus, scan_tx).await;
             let _ = scan_rx
                 .await
                 .inspect_err(|e| tracing::error!(scan_error = ?e));

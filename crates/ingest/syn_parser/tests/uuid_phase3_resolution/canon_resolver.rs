@@ -50,7 +50,8 @@ mod canon_resolver_tests {
             .collect();
 
         // Calculate the expected count from the tree's path_index
-        let mut expected_count = 0;
+        let mut actual_count = 0;
+        let mut unique_count = 0;
         let mut processed_items = HashSet::new(); // Track items to avoid double counting if modules overlap (shouldn't happen with path_index)
 
         for &any_id in tree.path_index().values() {
@@ -58,8 +59,9 @@ mod canon_resolver_tests {
             if let Some(module_node) = tree.modules().get(&module_id) {
                 if let Some(items) = module_node.items() {
                     for item_id in items {
+                        actual_count += 1;
                         if processed_items.insert(*item_id) {
-                            expected_count += 1;
+                            unique_count += 1;
                         }
                     }
                 }
@@ -68,11 +70,20 @@ mod canon_resolver_tests {
 
         assert_eq!(
             resolved_ids.len(),
-            expected_count,
-            "Number of resolved IDs ({}) does not match expected count ({}) from indexed modules",
+            unique_count,
+            "Number of resolved IDs ({}) does not match unique count ({}) from indexed modules",
             resolved_ids.len(),
-            expected_count
+            unique_count
         );
+
+        assert_eq!(
+            resolved_ids.len(),
+            actual_count,
+            "Number of resolved IDs ({}) does not match actual count ({}) from indexed modules",
+            resolved_ids.len(),
+            actual_count
+        );
+
         Ok(())
     }
 

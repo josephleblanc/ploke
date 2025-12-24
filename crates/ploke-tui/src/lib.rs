@@ -82,7 +82,10 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
-use crate::llm::{ChatEvt, LlmEvent};
+use crate::{
+    llm::{ChatEvt, LlmEvent},
+    tools::Audience,
+};
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
@@ -97,9 +100,13 @@ pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
 }
 
 /// Emit an error event to the global event bus
-pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
+pub async fn emit_error_event(message: String, severity: ErrorSeverity, audience: Audience) {
     if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
-        event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
+        event_bus.send(AppEvent::Error(ErrorEvent {
+            message,
+            severity,
+            audience,
+        }));
     }
 }
 

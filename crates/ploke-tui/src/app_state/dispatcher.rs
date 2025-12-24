@@ -250,7 +250,7 @@ pub async fn state_manager(
                 handlers::db::load_db(&state, &event_bus, crate_name).await;
             }
             StateCommand::ScanForChange { scan_tx } => {
-                handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+                let _ = handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }
 
             StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,

@@ -4,8 +4,7 @@
 //! - config overlay closes on `Esc` and produces no overlay actions.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ploke_tui::app::overlay_manager::OverlayManager;
-use ploke_tui::app::overlay::OverlayKind;
+use ploke_tui::app::overlay::{OverlayKind, OverlayManager};
 use ploke_tui::app::view::components::config_overlay::ConfigOverlayState;
 use ploke_tui::app::view::components::model_browser::ModelBrowserState;
 use ploke_tui::app_state::core::RuntimeConfig;

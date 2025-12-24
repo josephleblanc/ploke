@@ -49,6 +49,20 @@ pub struct RequestCodeContextParams<'a> {
 pub struct RequestCodeContextParamsOwned {
     pub token_budget: Option<u32>,
     pub search_term: Option<String>,
+    // TODO: Add a validation enum/ghost data
+}
+
+impl RequestCodeContextParamsOwned {
+    pub fn build_base_err(&self, code: ToolErrorCode, message: impl Into<String>) -> ToolError {
+        ToolError::new(ToolName::RequestCodeContext, code, message)
+    }
+    // pub fn validate_input(&mut self) -> Result<(), ToolError> {
+    //     let Self { token_budget: _, search_term } = self;
+    //     let terms = match search_term {
+    //         Some(term) => term,
+    //         None => ToolError ,
+    //     }
+    // }
 }
 
 #[derive(Default)]
@@ -97,7 +111,7 @@ impl super::Tool for RequestCodeContextGat {
             None => {
                 return Err(ploke_error::Error::Internal(
                     ploke_error::InternalError::CompilerError(
-                        "RAG service unavailable".to_string(),
+                        "RAG service unavailable.".to_string(),
                     ),
                 ));
             }
@@ -122,6 +136,17 @@ impl super::Tool for RequestCodeContextGat {
                 .filter(|s| !s.is_empty());
         }
         let Some(search_term) = search_term_opt else {
+            // let base_tool_err = Self::into_owned(&params).build_base_err(
+            //     ToolErrorCode::MissingField,
+            //     "No query available (search_term missing or empty)".to_string(),
+            // );
+            // let llm_facing_err = base_tool_err
+            //     .expected(String::from(
+            //         "`search_term` field should exist and be non-empty.",
+            //     ))
+            //     .received("Empty input")
+            //     .with_audience(Audience::Llm);
+            // return Err(llm_facing_err.into());
             return Err(ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(
                     "No query available (search_term missing or empty)".to_string(),
