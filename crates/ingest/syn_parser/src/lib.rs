@@ -83,7 +83,14 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
-                                                      // Separate successes and errors
+
+    // NOTE: Just added, needs to be turned into a `SynParserError` instead of calling `expect`
+    let root_graph = results
+        .iter()
+        .filter_map(|pr| pr.as_ref().ok())
+        .find(|pr| pr.crate_context.is_some())
+        .expect("At least one crate must carry the context");
+    // Separate successes and errors
     let (successes, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
 
     if !errors.is_empty() {
@@ -94,7 +101,9 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
             // All failed - return combined errors
             return Err(SynParserError::MultipleErrors(error_list));
         } else {
-            // Some succeeded - log errors but continue
+            // NOTE: this logs errors but does not stop the parsing process. Instead, we should
+            // collect all of the errors into a new `SynParserError` type that holds all of the
+            // returned errors. The caller can then decide how to handle the errors.
             eprintln!(
                 "{} files had errors: {}",
                 error_list.len(),
