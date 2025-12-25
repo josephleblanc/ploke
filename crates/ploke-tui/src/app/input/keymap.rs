@@ -35,6 +35,7 @@ pub enum Action {
     NavigateListDown,
     BranchPrev,
     BranchNext,
+    TriggerSelection,
 
     // Scrolling
     PageUp,
@@ -110,6 +111,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
             match key.code {
                 KeyCode::Char('q') => Some(Action::Quit),
                 KeyCode::Char('i') => Some(Action::SwitchMode(Mode::Insert)),
+                KeyCode::Enter => Some(Action::TriggerSelection),
 
                 KeyCode::Char('/') => Some(Action::OpenCommand),
                 KeyCode::Char(':') if matches!(style, CommandStyle::NeoVim) => {

@@ -993,6 +993,38 @@ impl App {
                 self.input_view.scroll_next();
             }
             Action::OpenContextSearch => todo!(),
+            Action::TriggerSelection => {
+                if let Some(selected) = self.list.selected() {
+                    let should_trigger = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            let guard = self.state.chat.0.read().await;
+                            let path = guard.get_full_path();
+                            if let Some(msg) = path.get(selected) {
+                                if let Some(payload) = msg.tool_payload() {
+                                    if let Some(req_id) = payload.request_id {
+                                        return Some(req_id);
+                                    }
+                                }
+                            }
+                            None
+                        })
+                    });
+
+                    if let Some(request_id) = should_trigger {
+                        let is_yes = self
+                            .confirmation_states
+                            .get(&self.conversation.interactive_tools.get(&selected).copied().unwrap_or_default())
+                            .copied()
+                            .unwrap_or(true);
+
+                        if is_yes {
+                            self.send_cmd(StateCommand::ApproveEdits { request_id });
+                        } else {
+                            self.send_cmd(StateCommand::DenyEdits { request_id });
+                        }
+                    }
+                }
+            }
         }
     }
 

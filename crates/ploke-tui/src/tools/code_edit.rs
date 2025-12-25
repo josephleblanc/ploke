@@ -166,6 +166,7 @@ pub async fn print_code_edit_results(
             structured_result.files.len()
         );
         let ui_payload = super::ToolUiPayload::new(tool_name, ctx.call_id.clone(), summary)
+            .with_request_id(request_id)
             .with_field("staged", structured_result.staged.to_string())
             .with_field("applied", structured_result.applied.to_string())
             .with_field("files", structured_result.files.len().to_string())
