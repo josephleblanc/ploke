@@ -2,7 +2,7 @@ use std::{borrow::Cow, ops::Deref as _, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{rag::tools::apply_ns_code_edit_tool, tools::ToolResult};
+use crate::{rag::tools::apply_ns_code_edit_tool, tools::tool_ui_error, tools::ToolResult};
 
 /// Type for non-semantic file patching
 pub struct NsPatch;
@@ -28,6 +28,7 @@ lazy_static::lazy_static! {
         "properties": {
             "patches": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -156,6 +157,9 @@ impl super::Tool for NsPatch {
         params: Self::Params<'de>,
         ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
+        if params.patches.is_empty() {
+            return Err(tool_ui_error("non_semantic_patch requires at least one patch"));
+        }
         use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 
         let typed_req = ApplyCodeEditRequest {

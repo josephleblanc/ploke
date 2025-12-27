@@ -35,7 +35,7 @@ use tracing::instrument;
 /// assert_eq!(result.unwrap(), fs::canonicalize(current_dir).unwrap());
 /// ```
 #[instrument(fields(user_dir), err)]
-pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_error::Error> {
+pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, SynParserError> {
     let target_dir = match user_dir {
         Some(p) => p,
         None => env::current_dir().map_err(SynParserError::from)?,
@@ -48,11 +48,13 @@ pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_er
             .join(target_dir)
     };
     let policy = PathPolicy::new(vec![abs_target.clone()]);
-    let normalized = normalize_target_path(&abs_target, &policy)?;
+    let normalized = normalize_target_path(&abs_target, &policy).map_err(|err| {
+        SynParserError::InternalState(format!("Failed to normalize target path: {err}"))
+    })?;
     Ok(normalized)
 }
 
-pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), ploke_error::Error> {
+pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), SynParserError> {
     use syn_parser::utils::LogStyle;
 
     let target = resolve_target_dir(target_dir)?;
@@ -68,7 +70,7 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
     //         tracing::error!("discovery error: {e:?}");
     //     })?;
 
-    let parser_output = try_run_phases_and_merge(&target)?;
+    let _parser_output = try_run_phases_and_merge(&target)?;
     // let graphs: Vec<_> = results
     //     .into_iter()
     //     .collect::<Result<_, _>>()
@@ -88,7 +90,7 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
 pub fn run_parse_no_transform(
     db: Arc<Database>,
     target_dir: Option<PathBuf>,
-) -> Result<ParserOutput, ploke_error::Error> {
+) -> Result<ParserOutput, SynParserError> {
     use syn_parser::utils::LogStyle;
 
     let target = resolve_target_dir(target_dir)?;
@@ -98,19 +100,20 @@ pub fn run_parse_no_transform(
         target.display()
     );
 
-    let discovery_output =
-        run_discovery_phase(&target, &[target.clone()]).map_err(ploke_error::Error::from)?;
+    let discovery_output = run_discovery_phase(&target, &[target.clone()])
+        .map_err(|err| SynParserError::try_from(err).unwrap_or_else(|err| err))?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);
 
     let graphs: Vec<_> = results
         .into_iter()
-        .collect::<Result<_, _>>()
-        .map_err(ploke_error::Error::from)?;
+        .collect::<Result<_, _>>()?;
 
     let mut merged = ParsedCodeGraph::merge_new(graphs)?;
-    let tree = merged.build_tree_and_prune()?;
+    let tree = merged.build_tree_and_prune().map_err(|err| {
+        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
+    })?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),

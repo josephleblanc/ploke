@@ -6,7 +6,10 @@ use uuid::Uuid;
 use crate::app_state::{AppState, handlers};
 use crate::chat_history::MessageKind;
 use crate::parser::run_parse;
+use crate::utils::parse_errors::format_parse_failure;
 use crate::{AppEvent, EventBus};
+use crate::error::ErrorSeverity;
+use crate::event_bus::ErrorEvent;
 
 use super::chat::add_msg_immediate;
 
@@ -59,11 +62,26 @@ pub async fn index_workspace(
 
     if needs_parse {
         match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
-            Ok(_) => tracing::info!(
-                "Parse of target workspace {} successful",
-                &target_dir.display()
-            ),
+            Ok(_) => {
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_success();
+                }
+                tracing::info!(
+                    "Parse of target workspace {} successful",
+                    &target_dir.display()
+                );
+            }
             Err(e) => {
+                let msg = format_parse_failure(&target_dir, &e);
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_failure(target_dir.clone(), msg.clone());
+                }
+                event_bus.send(AppEvent::Error(ErrorEvent {
+                    message: msg,
+                    severity: ErrorSeverity::Error,
+                }));
                 tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e);
                 return;
             }

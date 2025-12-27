@@ -32,6 +32,7 @@ use crate::{
     parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     utils::helper::find_file_by_prefix,
+    utils::parse_errors::format_parse_failure,
 };
 
 use super::*;
@@ -499,7 +500,7 @@ pub(super) async fn scan_for_change(
     event_bus: &Arc<EventBus>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<(), ploke_error::Error> {
-    use ploke_error::Error as PlokeError;
+    use ploke_error::{DomainError, Error as PlokeError};
     let guard = state.system.read().await;
     // TODO: Make a wrapper type for this and make it a method to get just the crate
     // name.
@@ -563,18 +564,63 @@ pub(super) async fn scan_for_change(
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
         // on I'll do something more efficient.
         let mut parser_output =
-            run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
-        let mut merged = parser_output
-            .extract_merged_graph()
-            .ok_or(SynParserError::MergeError)?;
-        let tree = parser_output.extract_module_tree().ok_or_else(|| {
+            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone())) {
+                Ok(output) => {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_success();
+                    output
+                }
+                Err(err) => {
+                    let msg = format_parse_failure(&crate_path, &err);
+                    {
+                        let mut system_guard = state.system.write().await;
+                        system_guard.record_parse_failure(crate_path.clone(), msg.clone());
+                    }
+                    event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+                        message: msg.clone(),
+                        severity: crate::error::ErrorSeverity::Error,
+                    }));
+                    return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+                }
+            };
+        let mut merged = match parser_output.extract_merged_graph().ok_or(SynParserError::MergeError)
+        {
+            Ok(merged) => merged,
+            Err(err) => {
+                let msg = format_parse_failure(&crate_path, &err);
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_failure(crate_path.clone(), msg.clone());
+                }
+                event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+                    message: msg.clone(),
+                    severity: crate::error::ErrorSeverity::Error,
+                }));
+                return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+            }
+        };
+        let tree = match parser_output.extract_module_tree().ok_or_else(|| {
             SynParserError::ModuleTreeError(syn_parser::resolve::ModuleTreeError::InternalState(
                 "Error unwrapping module tree.
 This error should never appear and indicates there is an error involving invalid state in the
 module tree process or run_parse_no_transform"
                     .to_string(),
             ))
-        })?;
+        }) {
+            Ok(tree) => tree,
+            Err(err) => {
+                let msg = format_parse_failure(&crate_path, &err);
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_failure(crate_path.clone(), msg.clone());
+                }
+                event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+                    message: msg.clone(),
+                    severity: crate::error::ErrorSeverity::Error,
+                }));
+                return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+            }
+        };
 
         // get the changed (altered or removed) filenames to send through the oneshot
         let changed_filenames = vec_ok

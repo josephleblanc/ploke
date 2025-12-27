@@ -221,7 +221,9 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
 pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_error::Error> {
     let parsed_graphs = run_phases_and_collect(fixture_name)?;
     let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let tree = merged.build_tree_and_prune()?;
+    let tree = merged.build_tree_and_prune().map_err(|err| {
+        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
+    })?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),
@@ -229,10 +231,12 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
 }
 
 #[tracing::instrument(fields(target_crate), err)]
-pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, ploke_error::Error> {
+pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
     let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let tree = merged.build_tree_and_prune()?;
+    let tree = merged.build_tree_and_prune().map_err(|err| {
+        SynParserError::InternalState(format!("Failed to build module tree: {err}"))
+    })?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),

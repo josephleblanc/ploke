@@ -92,6 +92,9 @@ impl super::Tool for RequestCodeContextGat {
     ) -> Result<ToolResult, ploke_error::Error> {
         use crate::rag::utils::calc_top_k_for_budget;
         use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
+        if let Some(parse_failure) = ctx.state.system.read().await.last_parse_failure() {
+            return Err(tool_ui_error(parse_failure.message.clone()));
+        }
         let rag = match &ctx.state.rag {
             Some(r) => r.clone(),
             None => {

@@ -1,3 +1,4 @@
+use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
 use ploke_error::DomainError;
@@ -370,6 +371,15 @@ pub struct SystemStatus {
     pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
     pub(crate) invalidated_crates: HashSet<CrateId>,
     pub(crate) no_workspace_tip_shown: bool,
+    pub(crate) last_parse_failure: Option<ParseFailure>,
+    pub(crate) last_parse_success_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseFailure {
+    pub target_dir: PathBuf,
+    pub message: String,
+    pub occurred_at_ms: i64,
 }
 
 impl SystemStatus {
@@ -390,6 +400,8 @@ impl SystemStatus {
             crate_deps: HashMap::new(),
             invalidated_crates: HashSet::new(),
             no_workspace_tip_shown: false,
+            last_parse_failure: None,
+            last_parse_success_ms: None,
         }
     }
 
@@ -436,6 +448,23 @@ impl SystemStatus {
     pub fn focused_crate_stale(&self) -> Option<bool> {
         let crate_id = self.crate_focus?;
         Some(self.invalidated_crates.contains(&crate_id))
+    }
+
+    pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
+        self.last_parse_failure = Some(ParseFailure {
+            target_dir,
+            message,
+            occurred_at_ms: Utc::now().timestamp_millis(),
+        });
+    }
+
+    pub fn record_parse_success(&mut self) {
+        self.last_parse_failure = None;
+        self.last_parse_success_ms = Some(Utc::now().timestamp_millis());
+    }
+
+    pub fn last_parse_failure(&self) -> Option<&ParseFailure> {
+        self.last_parse_failure.as_ref()
     }
 
     fn dependents_of(&self, changed: CrateId) -> Vec<CrateId> {

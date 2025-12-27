@@ -94,6 +94,10 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         typed_req,
         call_id,
     } = tool_call_params.clone();
+    if let Some(parse_failure) = state.system.read().await.last_parse_failure() {
+        tool_call_params.tool_call_failed(parse_failure.message.clone());
+        return;
+    }
     // Idempotency: guard duplicate requests
     {
         let reg = state.proposals.read().await;
