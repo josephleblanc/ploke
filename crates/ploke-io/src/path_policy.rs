@@ -2,6 +2,23 @@ use super::*;
 
 // Target module for path policy and security
 
+#[derive(Debug, Clone)]
+pub struct PathPolicy {
+    pub roots: Vec<PathBuf>,
+    pub symlink_policy: SymlinkPolicy,
+    pub require_absolute: bool,
+}
+
+impl PathPolicy {
+    pub fn new(roots: Vec<PathBuf>) -> Self {
+        Self {
+            roots,
+            symlink_policy: SymlinkPolicy::DenyCrossRoot,
+            require_absolute: true,
+        }
+    }
+}
+
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -55,6 +72,22 @@ pub(crate) fn normalize_against_roots(path: &Path, roots: &[PathBuf]) -> Result<
             kind: std::io::ErrorKind::InvalidInput,
         })
     }
+}
+
+pub fn normalize_target_path(path: &Path, policy: &PathPolicy) -> Result<PathBuf, IoError> {
+    if policy.require_absolute && !path.is_absolute() {
+        return Err(IoError::FileOperation {
+            operation: "read",
+            path: path.to_path_buf(),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    }
+
+    normalize_against_roots_with_policy(path, &policy.roots, policy.symlink_policy)
 }
 
 /// Normalize a path against configured roots using a symlink policy.

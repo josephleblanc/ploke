@@ -172,6 +172,7 @@ pub use errors::RecvError;
 pub mod handle;
 pub use handle::IoManagerHandle;
 pub mod path_policy;
+pub use path_policy::{normalize_target_path, PathPolicy, SymlinkPolicy};
 pub mod read;
 pub mod scan;
 #[cfg(feature = "watcher")]

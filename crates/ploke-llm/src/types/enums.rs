@@ -125,7 +125,7 @@ string_enum_with_unknown!(
     }
 );
 
-/// Possible output modalities that a model can produce.
+// Possible output modalities that a model can produce.
 string_enum_with_unknown!(
     OutputModality,
     "output_modality",
