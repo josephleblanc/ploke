@@ -27,7 +27,7 @@ fn mock_embedder() -> EmbeddingProcessor {
 
 #[tokio::test]
 async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
-    // App state with no crate_focus and a valid (empty) DB + RAG service
+    // App state with no focused crate and a valid (empty) DB + RAG service
     let db = Arc::new(Database::new_init().expect("init db"));
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),

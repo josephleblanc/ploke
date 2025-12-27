@@ -122,6 +122,8 @@ impl Tool for CodeItemLookup {
     ) -> Result<super::ToolResult, ploke_error::Error> {
         use ploke_error::{DomainError, InternalError};
 
+        ctx.state.system.is_stale_err().await?;
+
         // validate inputs and produce helpful error messages to help llm recover.
         check_empty(
             &params.file_path,

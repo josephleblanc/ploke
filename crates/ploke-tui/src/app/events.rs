@@ -87,6 +87,14 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::IndexingCompleted => {
             info!("Indexing Succeeded!");
             app.indexing_state = None;
+            if let Some(crate_id) = app.state.system.read().await.crate_focus {
+                let mut sys = app.state.system.write().await;
+                let version = sys.record_index_complete(crate_id);
+                debug!(
+                    "Indexing complete; crate_id={:?} version={}",
+                    crate_id, version
+                );
+            }
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg: String::from("Indexing Succeeded"),
                 kind: MessageKind::SysInfo,

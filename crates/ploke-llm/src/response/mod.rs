@@ -98,7 +98,7 @@ pub enum FinishReason {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct StreamingDelta {
+pub struct StreamingDelta {
     // May be null or string
     pub(super) content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,7 +110,7 @@ pub(crate) struct StreamingDelta {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) struct ErrorResponse {
+pub struct ErrorResponse {
     pub(super) code: i64,
     pub(super) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]

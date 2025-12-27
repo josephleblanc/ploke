@@ -1,7 +1,8 @@
 use ploke_core::file_hash::LargeFilePolicy;
 use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
+use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -98,6 +99,16 @@ impl SystemState {
     pub async fn crate_focus_for_test(&self) -> Option<std::path::PathBuf> {
         let guard = self.0.read().await;
         guard.focused_crate_root()
+    }
+
+    pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
+        if self.read().await.focused_crate_stale() == Some(true) {
+            Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Focused crate index is stale; reindex to query code items.".to_string(),
+            }))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -355,21 +366,29 @@ impl AppState {
 pub struct SystemStatus {
     pub(crate) workspace_roots: WorkspaceRoots,
     pub(crate) crate_focus: Option<CrateId>,
+    pub(crate) crate_versions: HashMap<CrateId, u64>,
+    pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
+    pub(crate) invalidated_crates: HashSet<CrateId>,
     pub(crate) no_workspace_tip_shown: bool,
 }
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
         let mut workspace_roots = WorkspaceRoots::default();
+        let mut crate_versions = HashMap::new();
         let crate_focus = crate_focus.map(|path| {
             let info = CrateInfo::from_root_path(path);
             let id = info.id;
             workspace_roots.upsert(info);
+            crate_versions.entry(id).or_insert(0);
             id
         });
         Self {
             workspace_roots,
             crate_focus,
+            crate_versions,
+            crate_deps: HashMap::new(),
+            invalidated_crates: HashSet::new(),
             no_workspace_tip_shown: false,
         }
     }
@@ -391,8 +410,45 @@ impl SystemStatus {
         let info = CrateInfo::from_root_path(root);
         let id = info.id;
         self.workspace_roots.upsert(info);
+        self.crate_versions.entry(id).or_insert(0);
         self.crate_focus = Some(id);
         id
+    }
+
+    pub fn set_crate_deps(&mut self, crate_id: CrateId, deps: Vec<CrateId>) {
+        self.crate_deps.insert(crate_id, deps);
+    }
+
+    pub fn record_index_complete(&mut self, crate_id: CrateId) -> u64 {
+        let dependents = self.dependents_of(crate_id);
+        let version = self
+            .crate_versions
+            .entry(crate_id)
+            .and_modify(|v| *v += 1)
+            .or_insert(1);
+        self.invalidated_crates.remove(&crate_id);
+        for dependent in dependents {
+            self.invalidated_crates.insert(dependent);
+        }
+        *version
+    }
+
+    pub fn focused_crate_stale(&self) -> Option<bool> {
+        let crate_id = self.crate_focus?;
+        Some(self.invalidated_crates.contains(&crate_id))
+    }
+
+    fn dependents_of(&self, changed: CrateId) -> Vec<CrateId> {
+        self.crate_deps
+            .iter()
+            .filter_map(|(crate_id, deps)| {
+                if deps.contains(&changed) {
+                    Some(*crate_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
@@ -405,5 +461,27 @@ impl SystemStatus {
             symlink_policy: SymlinkPolicy::DenyCrossRoot,
             require_absolute: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemStatus;
+    use std::path::PathBuf;
+
+    #[test]
+    fn record_index_complete_marks_dependents_stale() {
+        let mut status = SystemStatus::default();
+        let root_a = std::env::temp_dir().join("ploke_test_crate_a");
+        let root_b = std::env::temp_dir().join("ploke_test_crate_b");
+        let id_a = status.set_focus_from_root(root_a);
+        let id_b = status.set_focus_from_root(root_b);
+
+        status.set_crate_deps(id_b, vec![id_a]);
+
+        let version = status.record_index_complete(id_a);
+        assert_eq!(version, 1);
+        assert!(status.invalidated_crates.contains(&id_b));
+        assert!(!status.invalidated_crates.contains(&id_a));
     }
 }
