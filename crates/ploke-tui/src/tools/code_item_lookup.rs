@@ -165,8 +165,7 @@ impl Tool for CodeItemLookup {
             .system
             .read()
             .await
-            .crate_focus
-            .clone()
+            .focused_crate_root()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message:

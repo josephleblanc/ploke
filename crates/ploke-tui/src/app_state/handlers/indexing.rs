@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ploke_io::path_policy::SymlinkPolicy;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -28,7 +27,8 @@ pub async fn index_workspace(
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
-        match state.system.read().await.crate_focus.clone() {
+        let focused_root = { state.system.read().await.focused_crate_root() };
+        match focused_root {
             Some(path) => path,
             None => match std::env::current_dir() {
                 Ok(current_dir) => {
@@ -45,17 +45,17 @@ pub async fn index_workspace(
     };
 
     // Set crate focus to the resolved target directory and update IO roots
-    {
+    let policy = {
         let mut system_guard = state.system.write().await;
-        system_guard.crate_focus = Some(target_dir.clone());
+        system_guard.set_focus_from_root(target_dir.clone());
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
     }
-    state
-        .io_handle
-        .update_roots(
-            Some(vec![target_dir.clone()]),
-            Some(SymlinkPolicy::DenyCrossRoot),
-        )
-        .await;
 
     if needs_parse {
         match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {

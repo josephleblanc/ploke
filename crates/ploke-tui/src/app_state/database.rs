@@ -125,17 +125,10 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     // focus of the user's target crate within the same session.
     // - Explicit command?
     // - Model-allowed tool calling?
-    if let Some(crate_focus) = system_guard
-        .crate_focus
-        .clone()
-        .iter()
-        .filter_map(|cr| cr.file_name())
-        .filter_map(|cr| cr.to_str())
-        .next()
-    {
+    if let Some(crate_name) = system_guard.focused_crate_name() {
         let crate_name_version = match state
             .db
-            .get_crate_name_id(crate_focus)
+            .get_crate_name_id(crate_name)
             .map_err(ploke_error::Error::from)
         {
             Ok(db_result) => db_result,
@@ -153,7 +146,7 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
                 return;
             }
         };
-        debug!(save_crate_focus = ?crate_focus);
+        debug!(save_crate_focus = ?crate_name);
 
         let file_dir = default_dir.join(crate_name_version);
         info!("Checking for previous database file {}", file_dir.display());
@@ -175,7 +168,7 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
         if let Ok(active_set) = state.db.with_active_set(|set| set.clone())
             && let Err(e) = state
                 .db
-                .put_active_embedding_set_meta(crate_focus, &active_set)
+                .put_active_embedding_set_meta(crate_name, &active_set)
         {
             error!("Failed to persist active embedding set for backup: {e}");
         }
@@ -432,17 +425,17 @@ pub(super) async fn load_db(
                     .map(|v| v.get_str().expect("Crate must always be a string"))?;
                 // crate_root_path is expected to be absolute from DB context; use directly
                 let root_path = std::path::PathBuf::from(crate_root_path);
-                system_guard.crate_focus = Some(root_path.clone());
+                system_guard.set_focus_from_root(root_path.clone());
                 // Also update IoManager roots for IO-level enforcement
                 debug!(load_db_crate_focus = ?root_path);
+                let policy = system_guard.derive_path_policy(&[]);
                 drop(system_guard);
-                state
-                    .io_handle
-                    .update_roots(
-                        Some(vec![root_path.clone()]),
-                        Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
-                    )
-                    .await;
+                if let Some(policy) = policy {
+                    state
+                        .io_handle
+                        .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+                        .await;
+                }
                 event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                     crate_name,
                     file_dir: Some(Arc::new(valid_file)),
@@ -487,17 +480,17 @@ pub async fn test_set_crate_focus_from_db(
         })
         .map(|v| v.get_str().expect("Crate must always be a string"))?;
     let root_path = std::path::PathBuf::from(crate_root_path);
-    {
+    let policy = {
         let mut system_guard = state.system.write().await;
-        system_guard.crate_focus = Some(root_path.clone());
+        system_guard.set_focus_from_root(root_path.clone());
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
     }
-    state
-        .io_handle
-        .update_roots(
-            Some(vec![root_path]),
-            Some(ploke_io::path_policy::SymlinkPolicy::DenyCrossRoot),
-        )
-        .await;
     Ok(())
 }
 
@@ -511,7 +504,7 @@ pub(super) async fn scan_for_change(
     // TODO: Make a wrapper type for this and make it a method to get just the crate
     // name.
     // 1. Get the currently focused crate name, checking for errors.
-    let crate_path = guard.crate_focus.as_ref().ok_or_else(|| {
+    let crate_path = guard.focused_crate_root().ok_or_else(|| {
         error!("Missing crate focus, cannot scan unspecified target crate");
         let e = PlokeError::from(StateError::MissingCrateFocus {
             msg: "Missing crate focus is None, cannot scan unspecified target crate",
@@ -519,9 +512,11 @@ pub(super) async fn scan_for_change(
         e.emit_warning();
         e
     })?;
-    let crate_name = crate_path.file_name().and_then(|os_str| os_str.to_str()).ok_or_else(|| {
+    let crate_name = guard.focused_crate_name().ok_or_else(|| {
         error!("Crate name is empty, cannot scan empty crate name");
-        let e = PlokeError::from(StateError::MissingCrateFocus {msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate"});
+        let e = PlokeError::from(StateError::MissingCrateFocus {
+            msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate",
+        });
         e.emit_warning();
         e
     })?;
@@ -1522,8 +1517,12 @@ mod test {
         {
             let mut system_guard = state.system.write().await;
             let path = workspace_root.join(workspace);
-            system_guard.crate_focus = Some(path);
-            trace!(target: TUI_SCAN_TARGET, "system_guard.crate_focus: {:?}", system_guard.crate_focus);
+            system_guard.set_focus_from_root(path);
+            trace!(
+                target: TUI_SCAN_TARGET,
+                "system_guard.focused_crate_root: {:?}",
+                system_guard.focused_crate_root()
+            );
         }
 
         // Create command channel with backpressure
@@ -1719,10 +1718,9 @@ mod test {
 
         let mut target_file = {
             let mut system_guard = state.system.write().await;
-            system_guard.crate_focus = Some(workspace_root.join(workspace));
+            system_guard.set_focus_from_root(workspace_root.join(workspace));
             system_guard
-                .crate_focus
-                .clone()
+                .focused_crate_root()
                 .expect("Crate focus not set")
         };
         trace!(target: TUI_SCAN_TARGET, "target_file before pushes:\n{}", target_file.display());

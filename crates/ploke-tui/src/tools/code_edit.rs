@@ -133,7 +133,7 @@ pub async fn print_code_edit_results(
 ) -> Result<ToolResult, ploke_error::Error> {
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
-        let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
+        let crate_root = { ctx.state.system.read().await.focused_crate_root() };
         let display_files: Vec<String> = prop
             .files
             .iter()

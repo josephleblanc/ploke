@@ -106,7 +106,7 @@ impl super::Tool for CreateFile {
                 .cloned()
         };
         if let Some(prop) = proposal_opt {
-            let crate_root = { ctx.state.system.read().await.crate_focus.clone() };
+            let crate_root = { ctx.state.system.read().await.focused_crate_root() };
             tracing::debug!(crate_root = ?crate_root);
             let display_files: Vec<String> = prop
                 .files
@@ -212,7 +212,7 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     let params: CreateFileParamsOwned = typed_req.clone();
 
     // Resolve absolute path against crate root when relative
-    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let crate_root = { state.system.read().await.focused_crate_root() };
     let abs_path = {
         let p = std::path::PathBuf::from(&params.file_path);
         if let Some(root) = crate_root.as_ref() {

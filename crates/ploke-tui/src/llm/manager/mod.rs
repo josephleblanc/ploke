@@ -394,7 +394,7 @@ async fn prepare_and_run_llm_call(
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = {
         let sys = state.system.read().await;
-        sys.crate_focus.is_some()
+        sys.focused_crate().is_some()
     };
     let (tools, tool_choice) = if crate_loaded {
         (Some(tool_defs.clone()), Some(ToolChoice::Auto))

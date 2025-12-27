@@ -1,5 +1,5 @@
 use ploke_core::file_hash::LargeFilePolicy;
-use ploke_core::{ArcStr, TrackingHash};
+use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,6 +17,7 @@ use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_io::path_policy::{PathPolicy, SymlinkPolicy};
 use ploke_io::{IoManagerHandle, NsWriteSnippetData, PatchApplyOptions};
 use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -91,12 +92,12 @@ impl SystemState {
     #[cfg(feature = "test_harness")]
     pub async fn set_crate_focus_for_test(&self, p: std::path::PathBuf) {
         let mut guard = self.0.write().await;
-        guard.crate_focus = Some(p);
+        guard.set_focus_from_root(p);
     }
     #[cfg(feature = "test_harness")]
     pub async fn crate_focus_for_test(&self) -> Option<std::path::PathBuf> {
         let guard = self.0.read().await;
-        guard.crate_focus.clone()
+        guard.focused_crate_root()
     }
 }
 
@@ -352,15 +353,57 @@ impl AppState {
 
 #[derive(Debug, Default)]
 pub struct SystemStatus {
-    pub(crate) crate_focus: Option<PathBuf>,
+    pub(crate) workspace_roots: WorkspaceRoots,
+    pub(crate) crate_focus: Option<CrateId>,
     pub(crate) no_workspace_tip_shown: bool,
 }
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
+        let mut workspace_roots = WorkspaceRoots::default();
+        let crate_focus = crate_focus.map(|path| {
+            let info = CrateInfo::from_root_path(path);
+            let id = info.id;
+            workspace_roots.upsert(info);
+            id
+        });
         Self {
+            workspace_roots,
             crate_focus,
             no_workspace_tip_shown: false,
         }
+    }
+
+    pub fn focused_crate(&self) -> Option<&CrateInfo> {
+        self.crate_focus
+            .and_then(|id| self.workspace_roots.find_by_id(id))
+    }
+
+    pub fn focused_crate_root(&self) -> Option<PathBuf> {
+        self.focused_crate().map(|info| info.root_path.clone())
+    }
+
+    pub fn focused_crate_name(&self) -> Option<&str> {
+        self.focused_crate().map(|info| info.name.as_str())
+    }
+
+    pub fn set_focus_from_root(&mut self, root: PathBuf) -> CrateId {
+        let info = CrateInfo::from_root_path(root);
+        let id = info.id;
+        self.workspace_roots.upsert(info);
+        self.crate_focus = Some(id);
+        id
+    }
+
+    pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
+        let focus_root = self.focused_crate_root()?;
+        let mut roots = Vec::with_capacity(1 + extra_read_roots.len());
+        roots.push(focus_root);
+        roots.extend(extra_read_roots.iter().cloned());
+        Some(PathPolicy {
+            roots,
+            symlink_policy: SymlinkPolicy::DenyCrossRoot,
+            require_absolute: true,
+        })
     }
 }

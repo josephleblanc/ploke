@@ -101,7 +101,7 @@ pub async fn process_with_rag(
     let convo_only: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
     let (crate_loaded, first_tip): (bool, bool) = {
         let mut sys = state.system.write().await;
-        let loaded = sys.crate_focus.is_some();
+        let loaded = sys.focused_crate().is_some();
         let first = !sys.no_workspace_tip_shown;
         if !loaded {
             sys.no_workspace_tip_shown = true;

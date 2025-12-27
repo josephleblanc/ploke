@@ -131,7 +131,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     }
 
     // Resolve each edit by canonical path -> EmbeddingData -> WriteSnippetData
-    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let crate_root = { state.system.read().await.focused_crate_root() };
     let editing_cfg = { state.config.read().await.editing.clone() };
     let mut edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let mut files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
@@ -590,7 +590,7 @@ pub async fn apply_ns_code_edit_tool(
         typed_req,
         call_id,
     } = tool_call_params.clone();
-    let crate_root = { state.system.read().await.crate_focus.clone() };
+    let crate_root = { state.system.read().await.focused_crate_root() };
     let editing_cfg = { state.config.read().await.editing.clone() };
     let edits: Vec<WriteSnippetData> = Vec::with_capacity(typed_req.edits.len());
     let files_set: BTreeSet<PathBuf> = std::collections::BTreeSet::new();
@@ -634,8 +634,7 @@ pub async fn apply_ns_code_edit_tool(
             .system
             .read()
             .await
-            .crate_focus
-            .clone()
+            .focused_crate_root()
             .ok_or_else(|| {
                 ploke_error::Error::Domain(DomainError::Ui {
                     message:

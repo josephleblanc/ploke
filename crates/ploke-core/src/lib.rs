@@ -23,11 +23,13 @@ pub use io_types::{
 mod arc_str;
 
 pub mod rag_types;
+pub mod workspace;
 
 #[cfg(feature = "json")]
 pub mod tool_types;
 
 pub use arc_str::ArcStr;
+pub use workspace::{CrateId, CrateInfo, WorkspaceRoots};
 pub mod embeddings;
 
 pub mod file_hash;
