@@ -6,9 +6,11 @@ use std::{
 
 use ploke_db::Database;
 use syn_parser::{
-    ModuleTree, ParsedCodeGraph, discovery::run_discovery_phase, error::SynParserError,
-    parser::analyze_files_parallel,
+    ModuleTree, ParsedCodeGraph, ParserOutput, discovery::run_discovery_phase,
+    error::SynParserError, parser::analyze_files_parallel, run_phases_and_collect,
+    try_run_phases_and_merge,
 };
+use tracing::instrument;
 
 /// Returns the directory to process.
 /// Priority:
@@ -31,6 +33,7 @@ use syn_parser::{
 /// let result = ploke_tui::parser::resolve_target_dir(None);
 /// assert_eq!(result.unwrap(), current_dir);
 /// ```
+#[instrument(fields(user_dir), err)]
 pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_error::Error> {
     let target_dir = match user_dir {
         Some(p) => p,
@@ -49,20 +52,21 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
         target.display()
     );
 
-    let discovery_output =
-        run_discovery_phase(&target, &[target.clone()]).map_err(ploke_error::Error::from)?;
+    // let discovery_output = run_discovery_phase(&target, &[target.clone()])
+    //     .map_err(ploke_error::Error::from)
+    //     .inspect_err(|e| {
+    //         tracing::error!("discovery error: {e:?}");
+    //     })?;
 
-    let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
-        analyze_files_parallel(&discovery_output, 0);
+    let parser_output = try_run_phases_and_merge(&target)?;
+    // let graphs: Vec<_> = results
+    //     .into_iter()
+    //     .collect::<Result<_, _>>()
+    //     .inspect_err(|e| {
+    //         tracing::error!("error during parse: {e:?}");
+    //     })
+    //     .map_err(ploke_error::Error::from)?;
 
-    let graphs: Vec<_> = results
-        .into_iter()
-        .collect::<Result<_, _>>()
-        .map_err(ploke_error::Error::from)?;
-
-    let mut merged = ParsedCodeGraph::merge_new(graphs)?;
-    let tree = merged.build_tree_and_prune()?;
-    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
     tracing::info!(
         "{}: Parsing and Database Transform Complete",
         "Setup".log_step()
@@ -70,12 +74,7 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub struct ParserOutput {
-    pub merged: ParsedCodeGraph,
-    pub tree: ModuleTree,
-}
-
+#[instrument(err, fields(target_dir), skip(db))]
 pub fn run_parse_no_transform(
     db: Arc<Database>,
     target_dir: Option<PathBuf>,
@@ -102,7 +101,10 @@ pub fn run_parse_no_transform(
 
     let mut merged = ParsedCodeGraph::merge_new(graphs)?;
     let tree = merged.build_tree_and_prune()?;
-    Ok(ParserOutput { merged, tree })
+    Ok(ParserOutput {
+        merged_graph: Some(merged),
+        module_tree: Some(tree),
+    })
 }
 
 #[cfg(test)]

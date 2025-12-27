@@ -16,7 +16,8 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{
-    ModuleTree, TestIds,
+    ModuleTree, ParserOutput, TestIds,
+    error::SynParserError,
     parser::{
         nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId},
         relations::SyntacticRelation,
@@ -28,7 +29,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     app_state::helpers::{print_module_set, printable_nodes},
-    parser::{ParserOutput, run_parse_no_transform},
+    parser::run_parse_no_transform,
     tracing_setup::SCAN_CHANGE,
     utils::helper::find_file_by_prefix,
 };
@@ -171,13 +172,12 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
         }
 
         // Persist the active embedding set selection so it survives backup/restore.
-        if let Ok(active_set) = state.db.with_active_set(|set| set.clone()) {
-            if let Err(e) = state
+        if let Ok(active_set) = state.db.with_active_set(|set| set.clone())
+            && let Err(e) = state
                 .db
                 .put_active_embedding_set_meta(crate_focus, &active_set)
-            {
-                error!("Failed to persist active embedding set for backup: {e}");
-            }
+        {
+            error!("Failed to persist active embedding set for backup: {e}");
         }
         match state.db.backup_db(file_dir.clone()) {
             Ok(()) => {
@@ -288,7 +288,6 @@ pub(super) async fn load_db(
     state
         .db
         .import_backup_with_embeddings(&valid_file)
-        .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
 
     // Attempt to restore the active embedding set from metadata in the backup, falling back to the
@@ -568,8 +567,19 @@ pub(super) async fn scan_for_change(
         // TODO: Move this into `syn_parser` probably
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
         // on I'll do something more efficient.
-        let ParserOutput { mut merged, tree } =
+        let mut parser_output =
             run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
+        let mut merged = parser_output
+            .extract_merged_graph()
+            .ok_or(SynParserError::MergeError)?;
+        let tree = parser_output.extract_module_tree().ok_or_else(|| {
+            SynParserError::ModuleTreeError(syn_parser::resolve::ModuleTreeError::InternalState(
+                "Error unwrapping module tree.
+This error should never appear and indicates there is an error involving invalid state in the
+module tree process or run_parse_no_transform"
+                    .to_string(),
+            ))
+        })?;
 
         // get the changed (altered or removed) filenames to send through the oneshot
         let changed_filenames = vec_ok

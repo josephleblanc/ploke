@@ -54,7 +54,6 @@ pub fn init_tracing() -> LoggingGuards {
 
     let level = Level::INFO;
     let targets = filter::Targets::new()
-        .with_target("ploke", level)
         .with_target("ploke_tui", level)
         .with_target("ploke_db", level)
         .with_target("ploke_embed", level)
@@ -84,6 +83,8 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target(true)
         .with_level(true)
         .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
         .without_time()
         .with_thread_ids(false)
         // .with_span_events(FmtSpan::CLOSE)
@@ -238,7 +239,7 @@ pub fn init_tracing_tests(level: Level) -> WorkerGuard {
 
     let file_subscriber = fmt_layer
         .with_writer(non_blocking_file)
-        .pretty()
+        // .pretty()
         .with_ansi(false);
 
     // Also log to stderr so test failures print captured diagnostics without requiring manual file inspection.

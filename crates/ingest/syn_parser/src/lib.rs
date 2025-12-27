@@ -39,8 +39,12 @@ pub mod parser;
 pub mod resolve;
 pub mod utils; // Don't re-export `LogStyle` to keep it clear its a utility trait.
 
+use std::path::{Path, PathBuf};
+
 use discovery::run_discovery_phase;
 use error::SynParserError;
+// Re-export PartialSuccess for internal use or if needed
+pub use error::PartialSuccess;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use parser::visitor::analyze_file_phase2;
@@ -54,6 +58,76 @@ pub use parser::nodes::test_ids::TestIds;
 // Main types for access in other crates
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
+use tracing::instrument;
+
+/// Try to run the full parsing process, returning the first error encountered. An error is
+/// returned when the parse fails for any reason. The caller may determine whether to panic or
+/// otherwise handle the error.
+///
+/// The target is assumed to be a single crate which may or may not be in a workspace. However, the
+/// target dir itself must be the crate root, and is assumed to contain a crate-level (as opposed
+/// to workspace-level) `Cargo.toml` file.
+#[instrument(err, fields(target_crate_dir))]
+pub fn try_run_phases_and_resolve(
+    target_crate_dir: &Path,
+) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
+    // NOTE: Although the `run_discovery_phase` fuction takes two arguments, one for root path to a
+    // workspace dir and another for the paths of multiple crates, it currently does not use the
+    // argument for the root path, and so is left empty below for convenience.
+    let path_buf = PathBuf::from(target_crate_dir);
+
+    let name = path_buf
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("No filename")
+        .to_string();
+    let path = path_buf.display().to_string();
+    let discovery_output = run_discovery_phase(&Path::new(""), std::slice::from_ref(&path_buf))
+        .map_err(|e| SynParserError::ComplexDiscovery {
+            name,
+            path,
+            source_string: e.to_string(),
+        })?;
+    // NOTE:2025-12-26
+    // commenting out the below so we don't panic on error in the target crate.
+    // TODO: Determine whether or not the following error would be a result of an intenral error
+    // (i.e. due to an error in the parsing program itself such as broken invariant) or an error in
+    // the target crate's syntax (e.g. a `ub fn some_func() {}` instead of `pub fn some_func() {}`)
+    // .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
+
+    let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
+        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
+
+    // Separate successes and errors
+    let (successes_res, errors_res): (Vec<_>, Vec<_>) =
+        results.into_iter().partition(Result::is_ok);
+
+    let successes: Vec<ParsedCodeGraph> = successes_res.into_iter().map(Result::unwrap).collect();
+    let error_list: Vec<SynParserError> = errors_res.into_iter().map(Result::unwrap_err).collect();
+
+    // Check if at least one crate carries the context (critical for merging)
+    if !successes.is_empty() && !successes.iter().any(|pr| pr.crate_context.is_some()) {
+        return Err(SynParserError::ParsedGraphError(
+            crate::parser::graph::ParsedGraphError::MissingCrateContext,
+        ));
+    }
+
+    if !error_list.is_empty() {
+        if successes.is_empty() {
+            // All failed - return combined errors
+            return Err(SynParserError::MultipleErrors(error_list));
+        } else {
+            // Partial success - return successes and errors
+            // The caller can match on this error to retrieve the partial successes if needed.
+            return Err(SynParserError::PartialParsing {
+                successes: PartialSuccess(successes),
+                errors: error_list,
+            });
+        }
+    }
+
+    Ok(successes)
+}
 
 /// Runs the discovery and parsing phases and collects the `ParsedCodeGraph`s.
 ///
@@ -67,8 +141,8 @@ pub use resolve::module_tree::ModuleTree;
 /// # Returns
 ///
 /// A `Result` containing a `Vec` of `ParsedCodeGraph`s on success, or a
-/// `SynParserError` if a critical error occurs during discovery or if all
-/// files fail to parse.
+/// `SynParserError` if a critical error occurs during discovery, if all
+/// files fail to parse, or if partial parsing occurs (returned as `SynParserError::PartialParsing`).
 ///
 /// # Panics
 ///
@@ -79,45 +153,50 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
     let discovery_output = run_discovery_phase(&project_root, std::slice::from_ref(&crate_path))
-        .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
+        .map_err(|e| SynParserError::ComplexDiscovery {
+            name: fixture_name.to_string(),
+            path: crate_path.display().to_string(),
+            source_string: e.to_string(),
+        })?;
+    // NOTE:2025-12-26
+    // commenting out the below so we don't panic on error in the target crate.
+    // TODO: Determine whether or not the following error would be a result of an intenral error
+    // (i.e. due to an error in the parsing program itself such as broken invariant) or an error in
+    // the target crate's syntax (e.g. a `ub fn some_func() {}` instead of `pub fn some_func() {}`)
+    // .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
 
-    // NOTE: Just added, needs to be turned into a `SynParserError` instead of calling `expect`
-    let root_graph = results
-        .iter()
-        .filter_map(|pr| pr.as_ref().ok())
-        .find(|pr| pr.crate_context.is_some())
-        .expect("At least one crate must carry the context");
     // Separate successes and errors
-    let (successes, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    let (successes_res, errors_res): (Vec<_>, Vec<_>) =
+        results.into_iter().partition(Result::is_ok);
 
-    if !errors.is_empty() {
-        // Convert Vec<Result<T, E>> to Vec<E>
-        let error_list: Vec<SynParserError> = errors.into_iter().map(Result::unwrap_err).collect();
+    let successes: Vec<ParsedCodeGraph> = successes_res.into_iter().map(Result::unwrap).collect();
+    let error_list: Vec<SynParserError> = errors_res.into_iter().map(Result::unwrap_err).collect();
 
+    // Check if at least one crate carries the context (critical for merging)
+    if !successes.is_empty() && !successes.iter().any(|pr| pr.crate_context.is_some()) {
+        return Err(SynParserError::ParsedGraphError(
+            crate::parser::graph::ParsedGraphError::MissingCrateContext,
+        ));
+    }
+
+    if !error_list.is_empty() {
         if successes.is_empty() {
             // All failed - return combined errors
             return Err(SynParserError::MultipleErrors(error_list));
         } else {
-            // NOTE: this logs errors but does not stop the parsing process. Instead, we should
-            // collect all of the errors into a new `SynParserError` type that holds all of the
-            // returned errors. The caller can then decide how to handle the errors.
-            eprintln!(
-                "{} files had errors: {}",
-                error_list.len(),
-                error_list
-                    .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("")
-            );
+            // Partial success - return successes and errors
+            // The caller can match on this error to retrieve the partial successes if needed.
+            return Err(SynParserError::PartialParsing {
+                successes: PartialSuccess(successes),
+                errors: error_list,
+            });
         }
     }
 
-    // Unwrap all successes (we know they're Ok)
-    Ok(successes.into_iter().map(Result::unwrap).collect())
+    Ok(successes)
 }
 
 /// Runs the full parsing pipeline and returns a `ParserOutput`.
@@ -149,11 +228,22 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_er
     })
 }
 
+#[tracing::instrument(fields(target_crate), err)]
+pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, ploke_error::Error> {
+    let parsed_graphs = try_run_phases_and_resolve(target_crate)?;
+    let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+    let tree = merged.build_tree_and_prune()?;
+    Ok(ParserOutput {
+        merged_graph: Some(merged),
+        module_tree: Some(tree),
+    })
+}
+
 /// The output of the parser, containing the merged `ParsedCodeGraph` and `ModuleTree`.
 #[allow(dead_code, reason = "Primary output of this crate, not used locally")]
 pub struct ParserOutput {
-    merged_graph: Option<ParsedCodeGraph>,
-    module_tree: Option<ModuleTree>,
+    pub merged_graph: Option<ParsedCodeGraph>,
+    pub module_tree: Option<ModuleTree>,
 }
 
 impl ParserOutput {

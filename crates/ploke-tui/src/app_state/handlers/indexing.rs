@@ -69,6 +69,7 @@ pub async fn index_workspace(
             }
         }
     }
+    tracing::info!("end parse");
 
     add_msg_immediate(
         state,

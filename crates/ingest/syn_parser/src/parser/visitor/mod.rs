@@ -119,8 +119,8 @@ pub fn analyze_file_phase2(
     // .expect("This is the primary problem? line 118 of visitor/mod.rs");
     // TODO: Add real error handling here.
     // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
-    let file = syn::parse_file(&file_content)
-        .inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
+    let file = syn::parse_file(&file_content)?;
+    // .inspect_err(|e| tracing::trace!("Getting closer to the source: {e}"))?;
     // .expect(&msg);
 
     // 1. Create VisitorState with the provided context
@@ -518,7 +518,7 @@ pub fn analyze_files_parallel(
                 )
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
                 .map_err(|e| {
-                        eprintln!("Error found: {}", e);
+                        tracing::trace!("Error found: {}", e);
                         e.into()
                     })
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
@@ -527,12 +527,23 @@ pub fn analyze_files_parallel(
         })
         .collect(); // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
 
-    let root_graph = parsed_results
+    let crate_count = parsed_results
         .iter()
         .filter_map(|pr| pr.as_ref().ok())
-        .find(|pr| pr.crate_context.is_some())
-        .expect("At least one crate must carry the context");
-    log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
+        .filter_map(|pr| pr.crate_context.as_ref())
+        .inspect(|pr| {
+            log::trace!(target: "crate_context", "root graph contains files: {:#?}", pr);
+        })
+        .count();
+    if crate_count != 1 {
+        log::trace!(target: "crate_context", "total crate count of graphs with crate_context: {}", crate_count);
+    }
+    // NOTE:2025-12-26
+    // Commenting out the below so this function will not panic on finding a crate_context, as in
+    // the case of an error in the syntax of the `lib.rs` for the target crate.
+    // .find(|pr| pr.crate_context.is_some());
+    // .expect("At least one crate must carry the context");
+    // log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
 
     parsed_results
 }

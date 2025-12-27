@@ -7,6 +7,7 @@ use crate::{
 use ploke_core::{IdConversionError, TypeId};
 use thiserror::Error;
 
+use crate::parser::graph::ParsedCodeGraph;
 use crate::parser::nodes::{ModuleNode, NodeError};
 use ploke_core::ItemKind; // Import ItemKind
 
@@ -35,12 +36,30 @@ pub enum CodeVisitorError {
 /// Custom error type for the syn_parser crate.
 use crate::parser::graph::ParsedGraphError;
 
+/// Wrapper to allow partial equality check on errors containing ParsedCodeGraph (which doesn't implement PartialEq).
+#[derive(Debug, Clone)]
+pub struct PartialSuccess<T>(pub T);
+
+impl<T> PartialEq for PartialSuccess<T> {
+    fn eq(&self, _other: &Self) -> bool {
+        // We ignore the actual graphs for error equality checks
+        true
+    }
+}
+
 /// The primary error type for the `syn_parser` crate.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
     /// Multiple errors occurred during parsing.
     #[error("Multiple errors occurred:\n{}", .0.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n"))]
     MultipleErrors(Vec<SynParserError>),
+
+    /// Parsing succeeded for some files but failed for others.
+    #[error("Partial parsing success: {} succeeded, {} failed", .successes.0.len(), .errors.len())]
+    PartialParsing {
+        successes: PartialSuccess<Vec<ParsedCodeGraph>>,
+        errors: Vec<SynParserError>,
+    },
 
     /// An error occurred in a test helper.
     #[error("Test helper error: {0}")]
@@ -433,8 +452,8 @@ impl From<NodeError> for SynParserError {
 impl From<syn::Error> for SynParserError {
     fn from(err: syn::Error) -> Self {
         // Print immediately so you see it even if the caller swallows it
-        eprintln!("   syn::Error: {}", err);
-        eprintln!("   span: {}", err.to_compile_error());
+        tracing::trace!("   syn::Error: {}", err);
+        tracing::trace!("   span: {}", err.to_compile_error());
         SynParserError::Syn(err.to_string())
     }
 }
