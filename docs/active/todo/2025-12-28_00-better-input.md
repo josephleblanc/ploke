@@ -8,11 +8,11 @@
   different background color from the rest of the application (light gray)
   - [x] add ghost text for autocomplete on commands
     - [ ] stretch goal (include the pwd for files after an `@` symbol)
-  - [ ] add a line above the input that appears whenever there are pending edit
+  - [x] add a line above the input that appears whenever there are pending edit
   proposals to approve. this will be an area that has a message like "Press
   shift+y to approve all, shift+n to reject all". Allows more ergonomical
   application of code edits.
-    - [ ] implement a rough edit ordering priority, where only the newer item is
+    - [x] implement a rough edit ordering priority, where only the newer item is
     applied when there is overlap.
   - [ ] Add semantic highlighting to fenced code blocks
     - [ ] add styling to markdown quote blocks

@@ -201,6 +201,10 @@ pub enum StateCommand {
     DenyEdits {
         request_id: Uuid,
     },
+    /// Approve all pending edit proposals (newest wins when overlaps exist).
+    ApprovePendingEdits,
+    /// Deny all pending edit proposals.
+    DenyPendingEdits,
     ApproveCreations {
         request_id: Uuid,
     },
@@ -274,6 +278,8 @@ impl StateCommand {
             SetEditingAutoConfirm { .. } => "SetEditingAutoConfirm",
             ApproveEdits { .. } => "ApproveEdits",
             DenyEdits { .. } => "DenyEdits",
+            ApprovePendingEdits => "ApprovePendingEdits",
+            DenyPendingEdits => "DenyPendingEdits",
             ApproveCreations { .. } => "ApproveCreations",
             DenyCreations { .. } => "DenyCreations",
             SelectModelProvider { .. } => "SelectModelProvider",

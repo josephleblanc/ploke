@@ -301,6 +301,12 @@ pub async fn state_manager(
             StateCommand::DenyEdits { request_id } => {
                 rag::editing::deny_edits(&state, &event_bus, request_id).await;
             }
+            StateCommand::ApprovePendingEdits => {
+                rag::editing::approve_pending_edits(&state, &event_bus).await;
+            }
+            StateCommand::DenyPendingEdits => {
+                rag::editing::deny_pending_edits(&state, &event_bus).await;
+            }
             StateCommand::ApproveCreations { request_id } => {
                 rag::editing::approve_creations(&state, &event_bus, request_id).await;
             }

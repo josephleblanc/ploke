@@ -70,10 +70,12 @@ fn compute_input_height(
     frame_height: u16,
     has_indexing: bool,
     show_indicator: bool,
+    pending_banner_height: u16,
 ) -> u16 {
     let min_input_height = 3_u16;
     let max_by_screen = frame_height / 2;
     let mut fixed_height = 1_u16 + 1_u16 + 1_u16; // model info + status + minimum chat
+    fixed_height = fixed_height.saturating_add(pending_banner_height);
     if has_indexing {
         fixed_height = fixed_height.saturating_add(3);
     }
@@ -520,6 +522,23 @@ impl App {
         (suggestions, Some(ghost_text), Some(accept_text))
     }
 
+    /// Count pending edit proposals for UI banner display.
+    fn pending_edit_count(&self) -> usize {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let reg = self.state.proposals.read().await;
+                reg.values()
+                    .filter(|p| {
+                        matches!(
+                            p.status,
+                            crate::app_state::core::EditProposalStatus::Pending
+                        )
+                    })
+                    .count()
+            })
+        })
+    }
+
     /// Renders the user interface.
     fn draw<'a, I1, I2, T: RenderMsg + 'a>(
         &mut self,
@@ -540,6 +559,8 @@ impl App {
         };
         let (command_suggestions, ghost_text, accept_text) =
             self.command_completions(input_mode);
+        let pending_edits = self.pending_edit_count();
+        let pending_banner_height = if pending_edits > 0 { 1 } else { 0 };
         // Always show the currently selected model in the top-right
         let show_indicator = true;
         let frame_area = frame.area();
@@ -552,18 +573,35 @@ impl App {
             frame_area.height,
             self.indexing_state.is_some(),
             show_indicator,
+            pending_banner_height,
         );
 
         // ---------- Define Layout ----------
-        let mut proto_layout = vec![
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
-        ];
-        if self.indexing_state.is_some() {
+        let mut proto_layout = vec![Constraint::Length(1), Constraint::Min(1)];
+        let pending_banner_idx_opt = if pending_banner_height > 0 {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(pending_banner_height));
+            Some(idx)
+        } else {
+            None
+        };
+        let input_idx = {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(input_height));
+            idx
+        };
+        let status_idx = {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(1));
+            idx
+        };
+        let indexing_idx_opt = if self.indexing_state.is_some() {
+            let idx = proto_layout.len();
             proto_layout.push(Constraint::Length(3));
-        }
+            Some(idx)
+        } else {
+            None
+        };
         if show_indicator {
             proto_layout.push(Constraint::Length(1));
         }
@@ -575,8 +613,9 @@ impl App {
 
         let model_info_area = main_layout[0];
         let chat_area_full = main_layout[1];
-        let input_area = main_layout[2];
-        let status_area = main_layout[3];
+        let pending_banner_area_opt = pending_banner_idx_opt.map(|idx| main_layout[idx]);
+        let input_area = main_layout[input_idx];
+        let status_area = main_layout[status_idx];
 
         // Optionally split chat into conversation (left) and context preview (right)
         let (chat_area, preview_area_opt) = if self.show_context_preview {
@@ -631,6 +670,20 @@ impl App {
             frame.render_widget(preview, preview_area);
         }
 
+        if let Some(pending_banner_area) = pending_banner_area_opt {
+            let banner = Paragraph::new(format!(
+                "Pending edit proposals: {}  |  Shift+Y approve all, Shift+N reject all",
+                pending_edits
+            ))
+            .style(
+                Style::new()
+                    .fg(self.theme.input_command_fg)
+                    .bg(self.theme.input_suggestion_bg),
+            )
+            .alignment(ratatui::layout::Alignment::Left);
+            frame.render_widget(banner, pending_banner_area);
+        }
+
         // Render input box via InputView
         self.input_view.render(
             frame,
@@ -642,7 +695,7 @@ impl App {
             &command_suggestions,
         );
         // Add progress bar at bottom if indexing
-        if let Some(state) = &self.indexing_state {
+        if let (Some(state), Some(indexing_idx)) = (&self.indexing_state, indexing_idx_opt) {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
 
             let gauge = Gauge::default()
@@ -650,7 +703,7 @@ impl App {
                 .ratio(state.calc_progress())
                 .gauge_style(Style::new().light_blue());
 
-            frame.render_widget(gauge, main_layout[4]); // Bottom area
+            frame.render_widget(gauge, main_layout[indexing_idx]); // Bottom area
         }
 
         // Render Mode to text
@@ -875,6 +928,12 @@ impl App {
                 } else {
                     self.open_config_overlay();
                 }
+            }
+            Action::ApproveAllPendingEdits => {
+                self.send_cmd(StateCommand::ApprovePendingEdits);
+            }
+            Action::DenyAllPendingEdits => {
+                self.send_cmd(StateCommand::DenyPendingEdits);
             }
             Action::Quit => {
                 self.quit();
@@ -1634,19 +1693,19 @@ mod tests {
 
     #[test]
     fn input_height_clamps_to_screen_and_layout() {
-        let height = compute_input_height(50, 20, false, true);
+        let height = compute_input_height(50, 20, false, true, 0);
         assert_eq!(height, 10);
     }
 
     #[test]
     fn input_height_uses_min_when_possible() {
-        let height = compute_input_height(3, 20, false, true);
+        let height = compute_input_height(3, 20, false, true, 0);
         assert_eq!(height, 3);
     }
 
     #[test]
     fn input_height_falls_back_when_screen_is_tiny() {
-        let height = compute_input_height(10, 5, false, true);
+        let height = compute_input_height(10, 5, false, true, 0);
         assert_eq!(height, 1);
     }
 }
