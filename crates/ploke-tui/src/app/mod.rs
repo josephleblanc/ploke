@@ -451,25 +451,37 @@ impl App {
     {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
-
-        // ---------- Define Layout ----------
-        let mut proto_layout = if self.indexing_state.is_some() {
-            vec![
-                Constraint::Length(1),
-                Constraint::Percentage(80),
-                Constraint::Percentage(20),
-                Constraint::Length(1),
-                Constraint::Length(3),
-            ]
+        let frame_area = frame.area();
+        let desired_input_height =
+            self.input_view
+                .desired_height(&self.input_buffer, frame_area.width);
+        let min_input_height = 3_u16;
+        let max_by_screen = frame_area.height / 2;
+        let mut fixed_height = 1_u16 + 1_u16 + 1_u16; // model info + status + minimum chat
+        if self.indexing_state.is_some() {
+            fixed_height = fixed_height.saturating_add(3);
+        }
+        if show_indicator {
+            fixed_height = fixed_height.saturating_add(1);
+        }
+        let max_by_layout = frame_area.height.saturating_sub(fixed_height);
+        let mut max_input_height = max_by_screen.min(max_by_layout).max(1);
+        let input_height = if max_input_height < min_input_height {
+            max_input_height
         } else {
-            vec![
-                Constraint::Length(1),
-                Constraint::Percentage(80),
-                Constraint::Percentage(20),
-                Constraint::Length(1),
-            ]
+            desired_input_height.clamp(min_input_height, max_input_height)
         };
 
+        // ---------- Define Layout ----------
+        let mut proto_layout = vec![
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(input_height),
+            Constraint::Length(1),
+        ];
+        if self.indexing_state.is_some() {
+            proto_layout.push(Constraint::Length(3));
+        }
         if show_indicator {
             proto_layout.push(Constraint::Length(1));
         }

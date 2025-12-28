@@ -18,6 +18,13 @@ pub struct InputView {
 }
 
 impl InputView {
+    pub fn desired_height(&self, buffer: &str, area_width: u16) -> u16 {
+        let inner_width = area_width.saturating_sub(2).max(1);
+        let wrapped = textwrap::wrap(buffer, inner_width as usize);
+        let line_count = wrapped.len().max(1) as u16;
+        line_count.saturating_add(2)
+    }
+
     pub fn render(&mut self, frame: &mut Frame, area: Rect, buffer: &str, mode: Mode, title: &str) {
         // Wrap text to area width minus borders
         let input_width = area.width.saturating_sub(2);
