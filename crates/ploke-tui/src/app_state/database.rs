@@ -501,30 +501,32 @@ pub(super) async fn scan_for_change(
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<(), ploke_error::Error> {
     use ploke_error::{DomainError, Error as PlokeError};
-    let guard = state.system.read().await;
-    // TODO: Make a wrapper type for this and make it a method to get just the crate
-    // name.
-    // 1. Get the currently focused crate name, checking for errors.
-    let crate_path = guard.focused_crate_root().ok_or_else(|| {
-        error!("Missing crate focus, cannot scan unspecified target crate");
-        let e = PlokeError::from(StateError::MissingCrateFocus {
-            msg: "Missing crate focus is None, cannot scan unspecified target crate",
-        });
-        e.emit_warning();
-        e
-    })?;
-    let crate_name = guard.focused_crate_name().ok_or_else(|| {
-        error!("Crate name is empty, cannot scan empty crate name");
-        let e = PlokeError::from(StateError::MissingCrateFocus {
-            msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate",
-        });
-        e.emit_warning();
-        e
-    })?;
+    // Snapshot focus metadata up front; do not hold the system lock across IO.
+    let (crate_path, crate_name) = {
+        let guard = state.system.read().await;
+        // TODO: Make a wrapper type for this and make it a method to get just the crate name.
+        let crate_path = guard.focused_crate_root().ok_or_else(|| {
+            error!("Missing crate focus, cannot scan unspecified target crate");
+            let e = PlokeError::from(StateError::MissingCrateFocus {
+                msg: "Missing crate focus is None, cannot scan unspecified target crate",
+            });
+            e.emit_warning();
+            e
+        })?;
+        let crate_name = guard.focused_crate_name().ok_or_else(|| {
+            error!("Crate name is empty, cannot scan empty crate name");
+            let e = PlokeError::from(StateError::MissingCrateFocus {
+                msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate",
+            });
+            e.emit_warning();
+            e
+        })?;
+        (crate_path, crate_name.to_string())
+    };
 
     info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
-    let file_data = state.db.get_crate_files(crate_name)?;
+    let file_data = state.db.get_crate_files(&crate_name)?;
     trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
 
     // 2.5. Check for files that have been removed

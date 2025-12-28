@@ -25,3 +25,10 @@
 - Identified lock scope issue in `process_with_rag`: read lock on chat was held across awaits and attempted to write to chat, causing deadlock. Refactored to snapshot chat state before awaits.
 - App-loop regression test now passes after fixing chat lock scope in `process_with_rag`.
 - Ran `cargo test -p ploke-tui --test indexing_freeze_app_loop -- --nocapture`.
+- Added a system-lock regression test in `crates/ploke-tui/tests/indexing_freeze_app_loop.rs` that holds a `state.system` read lock, triggers `AppEvent::IndexingCompleted`, then verifies input processing; this reproduces the UI stall.
+- Ran `cargo test -p ploke-tui --test indexing_freeze_app_loop -- --nocapture`; new test fails with `app loop did not process input while indexing completion event was pending`.
+- Potential fix: move `SystemState` mutation out of the UI event handler into `state_manager` (`RecordIndexCompleted`), and snapshot `SystemState` fields before IO in `scan_for_change` to avoid long-lived system read locks.
+- Ran `cargo test -p ploke-tui --test indexing_freeze_app_loop -- --nocapture`; system-lock regression test now passes (potential fix, not yet confirmed in live UI).
+- Investigating "indexing completes but 0 nodes indexed": logs show parse succeeds, but indexer reports 0 unembedded nodes; `run_parse` was parsing without writing to DB. Potential fix: call `transform_parsed_graph` in `crates/ploke-tui/src/parser.rs` so initial indexing populates the DB.
+- Confirmed: UI responsiveness restored and indexing now populates targets after applying `RecordIndexCompleted` + `scan_for_change` lock scope reduction + `run_parse` DB transform.
+- Follow-up (longer-term): replace direct UI mutation of `SystemState` with a snapshot/event-driven model (single writer task + watch channel) to avoid lock contention by design.

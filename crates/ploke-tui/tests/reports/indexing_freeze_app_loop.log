@@ -18,3 +18,31 @@
 2025-12-28T02:26:51.361225Z  INFO indexing_freeze_app_loop: waiting for baseline user message
 2025-12-28T02:26:51.552480Z  INFO indexing_freeze_app_loop: waiting for user message to land
 2025-12-28T02:26:51.599959Z  INFO indexing_freeze_app_loop: user message observed = true
+2025-12-28T03:30:25.474093Z  INFO indexing_freeze_app_loop: starting system-lock regression test
+2025-12-28T03:30:25.474169Z  INFO indexing_freeze_app_loop: starting app-loop indexing regression test
+2025-12-28T03:30:25.478584Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:30:25.478583Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:30:25.582708Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:30:25.686323Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:30:25.740788Z  INFO indexing_freeze_app_loop: user message observed = true
+2025-12-28T03:30:31.821496Z  INFO indexing_freeze_app_loop: starting system-lock regression test
+2025-12-28T03:30:31.821503Z  INFO indexing_freeze_app_loop: starting app-loop indexing regression test
+2025-12-28T03:30:31.825476Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:30:31.825501Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:30:31.931687Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:30:32.032198Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:30:32.087514Z  INFO indexing_freeze_app_loop: user message observed = true
+2025-12-28T03:31:35.600016Z  INFO indexing_freeze_app_loop: starting app-loop indexing regression test
+2025-12-28T03:31:35.600016Z  INFO indexing_freeze_app_loop: starting system-lock regression test
+2025-12-28T03:31:35.603806Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:31:35.603806Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:31:35.711616Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:31:35.811809Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:31:35.867653Z  INFO indexing_freeze_app_loop: user message observed = true
+2025-12-28T03:45:39.975474Z  INFO indexing_freeze_app_loop: starting system-lock regression test
+2025-12-28T03:45:39.975536Z  INFO indexing_freeze_app_loop: starting app-loop indexing regression test
+2025-12-28T03:45:39.979471Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:45:39.979471Z  INFO indexing_freeze_app_loop: waiting for baseline user message
+2025-12-28T03:45:40.088690Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:45:40.192064Z  INFO indexing_freeze_app_loop: waiting for user message to land
+2025-12-28T03:45:40.244569Z  INFO indexing_freeze_app_loop: user message observed = true

@@ -153,6 +153,19 @@ pub async fn state_manager(
             StateCommand::UpdateDatabase => {
                 handlers::db::update_database(&state, &event_bus).await;
             }
+            StateCommand::RecordIndexCompleted => {
+                let mut sys = state.system.write().await;
+                if let Some(crate_id) = sys.crate_focus {
+                    let version = sys.record_index_complete(crate_id);
+                    tracing::debug!(
+                        "Indexing complete; crate_id={:?} version={}",
+                        crate_id,
+                        version
+                    );
+                } else {
+                    tracing::warn!("Indexing completed but no crate focus set");
+                }
+            }
 
             StateCommand::EmbedMessage {
                 new_msg_id,

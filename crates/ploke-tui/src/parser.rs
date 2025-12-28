@@ -5,6 +5,7 @@ use std::{
 };
 
 use ploke_db::Database;
+use ploke_transform::transform::transform_parsed_graph;
 use ploke_io::path_policy::{normalize_target_path, PathPolicy};
 use syn_parser::{
     ModuleTree, ParsedCodeGraph, ParserOutput, discovery::run_discovery_phase,
@@ -70,7 +71,16 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
     //         tracing::error!("discovery error: {e:?}");
     //     })?;
 
-    let _parser_output = try_run_phases_and_merge(&target)?;
+    let mut parser_output = try_run_phases_and_merge(&target)?;
+    let merged = parser_output.extract_merged_graph().ok_or_else(|| {
+        SynParserError::InternalState("Missing parsed code graph".to_string())
+    })?;
+    let tree = parser_output.extract_module_tree().ok_or_else(|| {
+        SynParserError::InternalState("Missing module tree".to_string())
+    })?;
+    transform_parsed_graph(&db, merged, &tree).map_err(|err| {
+        SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
+    })?;
     // let graphs: Vec<_> = results
     //     .into_iter()
     //     .collect::<Result<_, _>>()
