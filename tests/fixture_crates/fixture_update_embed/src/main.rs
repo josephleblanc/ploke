@@ -24,4 +24,4 @@ pub mod inner_test_mod {
     }
 }
 
-struct TestStruct(pub i32);
+pub struct TestStruct(pub i32);

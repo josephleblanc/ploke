@@ -2,10 +2,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use std::collections::HashMap;
 use uuid::Uuid;
-use ploke_core::tool_types::ToolName;
 
 use crate::app::AppEvent;
-use crate::app::message_item::{measure_messages, render_messages};
+use crate::app::message_item::{measure_messages, render_messages, should_render_tool_buttons};
 use crate::app::types::RenderMsg;
 use crate::app::view::EventSubscriber;
 
@@ -46,7 +45,7 @@ impl ConversationView {
         self.interactive_tools.clear();
         for (i, msg) in path.into_iter().enumerate() {
             if let Some(payload) = msg.tool_payload() {
-                if matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch) {
+                if should_render_tool_buttons(payload) {
                     self.interactive_tools.insert(i, msg.id());
                 }
             }
