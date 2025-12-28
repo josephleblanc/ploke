@@ -366,3 +366,77 @@ pub async fn add_msg_immediate_nofocus(
         tracing::error!("Failed to add message (nofocus) of kind: {}", kind);
     }
 }
+
+pub async fn add_msg_immediate_background(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    kind: MessageKind,
+) {
+    trace!(target: CHAT_TARGET, "Starting add_msg_immediate_background");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+    let old_tail = chat_guard.tail;
+    let old_selected_child = chat_guard
+        .messages
+        .get(&parent_id)
+        .and_then(|msg| msg.selected_child);
+
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
+        MessageKind::System => {
+            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
+        }
+        MessageKind::Assistant => {
+            chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
+        }
+        MessageKind::Tool => panic!("Use add_tool_msg_immediate to add tool messages"),
+        MessageKind::SysInfo => {
+            chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
+        }
+    };
+
+    if message_wrapper.is_ok() {
+        chat_guard.tail = old_tail;
+        if let Some(parent) = chat_guard.messages.get_mut(&parent_id) {
+            parent.selected_child = old_selected_child;
+        }
+        chat_guard.rebuild_path_cache();
+    }
+    drop(chat_guard);
+
+    if let Ok(message_id) = message_wrapper {
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    } else {
+        tracing::error!("Failed to add background message of kind: {}", kind);
+    }
+}
+
+pub async fn update_tool_message_by_call_id(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    call_id: &ArcStr,
+    content: Option<String>,
+    tool_payload: Option<crate::tools::ToolUiPayload>,
+) {
+    let mut chat_guard = state.chat.0.write().await;
+    let mut updated_id = None;
+    for (id, msg) in chat_guard.messages.iter_mut() {
+        if msg.tool_call_id.as_ref() == Some(call_id) {
+            if let Some(content) = content {
+                msg.content = content;
+            }
+            if tool_payload.is_some() {
+                msg.tool_payload = tool_payload;
+            }
+            updated_id = Some(*id);
+            break;
+        }
+    }
+    drop(chat_guard);
+
+    if let Some(message_id) = updated_id {
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    }
+}

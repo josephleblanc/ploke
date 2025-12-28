@@ -28,6 +28,7 @@ use crate::app::overlay::OverlayAction;
 use crate::app::overlay_manager::OverlayManager;
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
+use crate::app::message_item::should_render_tool_buttons;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
@@ -1001,8 +1002,10 @@ impl App {
                             let path = guard.get_full_path();
                             if let Some(msg) = path.get(selected) {
                                 if let Some(payload) = msg.tool_payload() {
-                                    if let Some(req_id) = payload.request_id {
-                                        return Some(req_id);
+                                    if should_render_tool_buttons(payload) {
+                                        if let Some(req_id) = payload.request_id {
+                                            return Some(req_id);
+                                        }
                                     }
                                 }
                             }

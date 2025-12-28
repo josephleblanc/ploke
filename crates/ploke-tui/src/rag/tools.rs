@@ -550,6 +550,7 @@ Deny:     edit deny {request_id}{2}"#,
         ),
     )
     .with_request_id(request_id)
+    .with_field("status", "pending")
     .with_field("staged", result.staged.to_string())
     .with_field("applied", result.applied.to_string())
     .with_field("files", result.files.len().to_string())

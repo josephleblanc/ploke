@@ -9,7 +9,14 @@ use super::*;
 pub async fn approve_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
     };
     let reg = state.proposals.write().await;
     let Some(proposal) = reg.get(&request_id).cloned() else {
@@ -69,7 +76,14 @@ async fn apply_ns_edit(
     file_paths: Vec<PathBuf>,
 ) {
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await;
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await;
     };
 
     match state
@@ -127,9 +141,12 @@ async fn apply_ns_edit(
                 call_id_val.clone(),
                 format!("Applied {} edits across {} files", applied, file_count),
             )
+            .with_request_id(request_id)
+            .with_field("status", "applied")
             .with_field("ok", (applied > 0).to_string())
             .with_field("applied", applied.to_string())
             .with_field("files", file_count.to_string());
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -139,6 +156,14 @@ async fn apply_ns_edit(
                     content: content.clone(),
                     ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(content.clone()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Applied edits for request_id {}", request_id);
             add_msg_imm(msg).await;
@@ -165,6 +190,10 @@ async fn apply_ns_edit(
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
+            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_request_id(request_id)
+                .with_field("status", "failed");
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
@@ -172,8 +201,16 @@ async fn apply_ns_edit(
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     error: err.to_wire_string(),
-                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
+                    ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(err.to_wire_string()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
             add_msg_imm(msg).await;
@@ -191,7 +228,14 @@ async fn apply_semantic_edit(
     file_paths: Vec<PathBuf>,
 ) {
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await;
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await;
     };
 
     match state
@@ -241,9 +285,12 @@ async fn apply_semantic_edit(
                 call_id_val.clone(),
                 format!("Applied {} edits across {} files", applied, file_count),
             )
+            .with_request_id(request_id)
+            .with_field("status", "applied")
             .with_field("ok", (applied > 0).to_string())
             .with_field("applied", applied.to_string())
             .with_field("files", file_count.to_string());
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -253,6 +300,14 @@ async fn apply_semantic_edit(
                     content: content.clone(),
                     ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(content.clone()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Applied edits for request_id {}", request_id);
             add_msg_imm(msg).await;
@@ -282,6 +337,10 @@ async fn apply_semantic_edit(
             drop(reg);
             let err_str = format!("Failed to apply edits: {}", e);
             let err = ToolError::new(tool_name, ToolErrorCode::Io, err_str.clone());
+            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_request_id(request_id)
+                .with_field("status", "failed");
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
@@ -289,8 +348,16 @@ async fn apply_semantic_edit(
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     error: err.to_wire_string(),
-                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
+                    ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(err.to_wire_string()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Failed to apply edits for request_id {}: {}", request_id, e);
             add_msg_imm(msg).await;
@@ -307,7 +374,7 @@ fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_
         async move {
             crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             let add_chat_message = |msg: String| {
-                chat::add_msg_immediate(
+                chat::add_msg_immediate_background(
                     &state,
                     &event_bus,
                     Uuid::new_v4(),
@@ -350,7 +417,14 @@ fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_
 pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
     };
     let reg = state.proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
@@ -384,6 +458,10 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
             // Bridge: mark tool call failed with denial
             let err_msg = "Edit proposal denied by user".to_string();
             let err = ToolError::new(tool_name, ToolErrorCode::Internal, err_msg.clone());
+            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_request_id(request_id)
+                .with_field("status", "denied");
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
@@ -391,8 +469,16 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     error: err.to_wire_string(),
-                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
+                    ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(err.to_wire_string()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Denied edits for request_id {}", request_id);
             add_msg_imm(msg).await;
@@ -412,7 +498,14 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
 pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
     };
     let reg = state.create_proposals.write().await;
     let Some(mut proposal) = reg.get(&request_id).cloned() else {
@@ -498,6 +591,17 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
     reg.insert(request_id, proposal);
     drop(reg);
 
+    let ui_payload = ToolUiPayload::new(
+        ToolName::CreateFile,
+        call_id_val.clone(),
+        format!("Applied {} creations across {} files", applied, file_count),
+    )
+    .with_request_id(request_id)
+    .with_field("status", "applied")
+    .with_field("ok", (applied > 0).to_string())
+    .with_field("applied", applied.to_string())
+    .with_field("files", file_count.to_string());
+    let ui_payload_for_chat = ui_payload.clone();
     let _ = event_bus
         .realtime_tx
         .send(AppEvent::System(SystemEvent::ToolCallCompleted {
@@ -505,19 +609,18 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
             parent_id: parent_id_val,
             call_id: call_id_val.clone(),
             content: content.clone(),
-            ui_payload: Some(
-                ToolUiPayload::new(
-                    ToolName::CreateFile,
-                    call_id_val.clone(),
-                    format!("Applied {} creations across {} files", applied, file_count),
-                )
-                .with_field("ok", (applied > 0).to_string())
-                .with_field("applied", applied.to_string())
-                .with_field("files", file_count.to_string()),
-            ),
+            ui_payload: Some(ui_payload),
         }));
+    chat::update_tool_message_by_call_id(
+        state,
+        event_bus,
+        &call_id_val,
+        Some(content.clone()),
+        Some(ui_payload_for_chat),
+    )
+    .await;
 
-    chat::add_msg_immediate(
+    chat::add_msg_immediate_background(
         state,
         event_bus,
         Uuid::new_v4(),
@@ -541,7 +644,7 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
                 .inspect_err(|e| tracing::error!(scan_error = ?e));
         }
     });
-    chat::add_msg_immediate(
+    chat::add_msg_immediate_background(
         state,
         event_bus,
         Uuid::new_v4(),
@@ -554,7 +657,14 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
 pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
-        chat::add_msg_immediate(state, event_bus, Uuid::new_v4(), msg, MessageKind::SysInfo).await
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
     };
 
     let reg = state.create_proposals.write().await;
@@ -588,6 +698,10 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
                 ToolErrorCode::Internal,
                 err_msg.clone(),
             );
+            let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
+                .with_request_id(request_id)
+                .with_field("status", "denied");
+            let ui_payload_for_chat = ui_payload.clone();
             let _ = event_bus
                 .realtime_tx
                 .send(AppEvent::System(SystemEvent::ToolCallFailed {
@@ -595,8 +709,16 @@ pub async fn deny_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
                     parent_id: parent_id_val,
                     call_id: call_id_val.clone(),
                     error: err.to_wire_string(),
-                    ui_payload: Some(ToolUiPayload::from_error(call_id_val.clone(), &err)),
+                    ui_payload: Some(ui_payload),
                 }));
+            chat::update_tool_message_by_call_id(
+                state,
+                event_bus,
+                &call_id_val,
+                Some(err.to_wire_string()),
+                Some(ui_payload_for_chat),
+            )
+            .await;
 
             let msg = format!("Denied file creations for request_id {}", request_id);
             add_msg_imm(msg).await;

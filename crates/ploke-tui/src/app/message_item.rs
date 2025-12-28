@@ -177,8 +177,20 @@ fn render_message_content<T: RenderMsg>(msg: &T, verbosity: ToolVerbosity) -> St
     msg.content().to_string()
 }
 
-fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) -> bool {
+pub(crate) fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) -> bool {
+    let is_pending = tool_payload_status(payload)
+        .map(|status| status.eq_ignore_ascii_case("pending"))
+        .unwrap_or(true);
     matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch)
         && payload.error.is_none()
         && payload.request_id.is_some()
+        && is_pending
+}
+
+fn tool_payload_status(payload: &crate::tools::ToolUiPayload) -> Option<&str> {
+    payload
+        .fields
+        .iter()
+        .find(|field| field.name.as_ref() == "status")
+        .map(|field| field.value.as_ref())
 }
