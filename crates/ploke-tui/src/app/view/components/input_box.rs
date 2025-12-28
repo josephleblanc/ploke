@@ -1,9 +1,10 @@
 use crate::app::AppEvent;
+use crate::ui_theme::UiTheme;
 use crate::app::types::Mode;
 use crate::app::view::EventSubscriber;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
 use textwrap;
@@ -30,7 +31,7 @@ impl InputView {
         area: Rect,
         buffer: &str,
         mode: Mode,
-        _title: &str,
+        theme: &UiTheme,
     ) {
         let inner_area = area.inner(Margin {
             vertical: 1,
@@ -93,10 +94,10 @@ impl InputView {
 
         // Build paragraph
         let input_text = Text::from_iter(input_wrapped);
-        let background_style = Style::default().bg(Color::Rgb(90, 90, 90));
+        let background_style = Style::default().bg(theme.input_bg);
         let input_style = match mode {
-            Mode::Command => background_style.fg(Color::Blue),
-            _ => background_style.fg(Color::Rgb(220, 220, 220)),
+            Mode::Command => background_style.fg(theme.input_command_fg),
+            _ => background_style.fg(theme.input_fg),
         };
         let background = Block::default().borders(Borders::NONE).style(background_style);
         let input = Paragraph::new(input_text)

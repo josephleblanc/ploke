@@ -33,6 +33,7 @@ use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::InputView;
 use crate::emit_app_event;
 use crate::tools::ToolVerbosity;
+use crate::ui_theme::UiTheme;
 use crate::user_config::OPENROUTER_URL;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
@@ -147,6 +148,8 @@ pub struct App {
     show_context_preview: bool,
     // Overlay manager (config + other overlays)
     overlay_manager: OverlayManager,
+    // UI theme (colors)
+    theme: UiTheme,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
@@ -185,6 +188,7 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             overlay_manager: OverlayManager::default(),
+            theme: UiTheme::default(),
             input_history: Vec::new(),
             input_history_pos: None,
             tool_verbosity,
@@ -563,13 +567,6 @@ impl App {
             frame.render_widget(preview, preview_area);
         }
 
-        // Render input area
-        let input_title = match (self.mode, self.command_style) {
-            (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
-            (Mode::Command, CommandStyle::Slash) => "Slash Mode",
-            _ => "Input",
-        };
-
         // Render input box via InputView
         self.input_view.render(
             frame,
@@ -580,7 +577,7 @@ impl App {
             } else {
                 self.mode
             },
-            input_title,
+            &self.theme,
         );
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {

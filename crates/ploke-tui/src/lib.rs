@@ -22,6 +22,7 @@ pub mod parser;
 pub mod tracing_setup;
 pub mod utils;
 pub use event_bus::*;
+pub mod ui_theme;
 pub mod rag;
 #[cfg(test)]
 mod tests;
