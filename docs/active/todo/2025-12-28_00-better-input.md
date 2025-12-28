@@ -2,10 +2,10 @@
 - part of the overall list of improvements in `ploke/docs/active/todo/2025-12-27_00-general.md`
 
 [ ] Change the input area to be flexible. tracked in  It should:
-  - [ ] start with a single line and increase input size as the user keeps typing
+  - [x] start with a single line and increase input size as the user keeps typing
   up to the limit of half the screen
-  - [ ] change the input area so it doesn't have a border, but instead has a
-  different background color from the rest of the application
+  - [x] change the input area so it doesn't have a border, but instead has a
+  different background color from the rest of the application (light gray)
   - [ ] add ghost text for autocomplete on commands
     - [ ] stretch goal (include the pwd for files after an `@` symbol)
   - [ ] add a line above the input that appears whenever there are pending edit
@@ -17,3 +17,4 @@
   - [ ] Add semantic highlighting to fenced code blocks
     - [ ] add styling to markdown quote blocks
     - [ ] maybe also add header styling
+  - [ ] make the input box scrollable (e.g. detect and capture mouse hover + scroll)

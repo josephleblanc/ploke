@@ -2,7 +2,7 @@ use crate::app::AppEvent;
 use crate::app::types::Mode;
 use crate::app::view::EventSubscriber;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
@@ -21,13 +21,23 @@ impl InputView {
     pub fn desired_height(&self, buffer: &str, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2).max(1);
         let wrapped = textwrap::wrap(buffer, inner_width as usize);
-        let line_count = wrapped.len().max(1) as u16;
-        line_count.saturating_add(2)
+        wrapped.len().max(1) as u16 + 2
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, buffer: &str, mode: Mode, title: &str) {
-        // Wrap text to area width minus borders
-        let input_width = area.width.saturating_sub(2);
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        buffer: &str,
+        mode: Mode,
+        _title: &str,
+    ) {
+        let inner_area = area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        // Wrap text to inner area width
+        let input_width = inner_area.width.max(1);
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
         // scrollstate updated after auto-scroll below
 
@@ -57,7 +67,7 @@ impl InputView {
         self.cursor_col = col;
 
         // Auto-scroll to keep cursor visible and clamp within content
-        let inner_h: u16 = area.height.saturating_sub(2).max(1);
+        let inner_h: u16 = inner_area.height.max(1);
         let total_lines: u16 = input_wrapped.len() as u16;
 
         // Ensure cursor is within the visible window
@@ -83,22 +93,28 @@ impl InputView {
 
         // Build paragraph
         let input_text = Text::from_iter(input_wrapped);
+        let background_style = Style::default().bg(Color::Rgb(90, 90, 90));
+        let input_style = match mode {
+            Mode::Command => background_style.fg(Color::Blue),
+            _ => background_style.fg(Color::Rgb(220, 220, 220)),
+        };
+        let background = Block::default().borders(Borders::NONE).style(background_style);
         let input = Paragraph::new(input_text)
             .scroll((self.vscroll, 0))
-            .block(Block::bordered().title(title))
-            .style(match mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-                Mode::Command => Style::default().fg(Color::Cyan),
-            });
+            .block(Block::default().borders(Borders::NONE))
+            .style(input_style);
 
-        frame.render_widget(input, area);
+        frame.render_widget(background, area);
+        frame.render_widget(input, inner_area);
 
         // Manage cursor visibility/position
         match mode {
             Mode::Insert | Mode::Command => {
                 let visible_row = self.cursor_row.saturating_sub(self.vscroll);
-                frame.set_cursor_position((area.x + 1 + self.cursor_col, area.y + 1 + visible_row));
+                frame.set_cursor_position((
+                    inner_area.x + self.cursor_col,
+                    inner_area.y + visible_row,
+                ));
             }
             Mode::Normal => {
                 // No cursor positioning => hidden by terminal backend
@@ -120,5 +136,28 @@ impl InputView {
 impl EventSubscriber for InputView {
     fn on_event(&mut self, _event: &AppEvent) {
         // Currently no-op; placeholder for future input-related reactions to events.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InputView;
+
+    #[test]
+    fn desired_height_is_single_line_for_empty_buffer() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("", 10), 3);
+    }
+
+    #[test]
+    fn desired_height_wraps_long_lines() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("abcdefgh", 6), 4);
+    }
+
+    #[test]
+    fn desired_height_counts_explicit_newlines() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("a\nb\nc", 10), 5);
     }
 }

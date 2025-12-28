@@ -63,6 +63,30 @@ use view::components::embedding_browser::{
 };
 use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
 
+fn compute_input_height(
+    desired_input_height: u16,
+    frame_height: u16,
+    has_indexing: bool,
+    show_indicator: bool,
+) -> u16 {
+    let min_input_height = 3_u16;
+    let max_by_screen = frame_height / 2;
+    let mut fixed_height = 1_u16 + 1_u16 + 1_u16; // model info + status + minimum chat
+    if has_indexing {
+        fixed_height = fixed_height.saturating_add(3);
+    }
+    if show_indicator {
+        fixed_height = fixed_height.saturating_add(1);
+    }
+    let max_by_layout = frame_height.saturating_sub(fixed_height);
+    let max_input_height = max_by_screen.min(max_by_layout).max(1);
+    if max_input_height < min_input_height {
+        max_input_height
+    } else {
+        desired_input_height.clamp(min_input_height, max_input_height)
+    }
+}
+
 // Ensure terminal modes are always restored on unwind (panic or early return)
 struct TerminalModeGuard {
     enabled: bool,
@@ -455,22 +479,12 @@ impl App {
         let desired_input_height =
             self.input_view
                 .desired_height(&self.input_buffer, frame_area.width);
-        let min_input_height = 3_u16;
-        let max_by_screen = frame_area.height / 2;
-        let mut fixed_height = 1_u16 + 1_u16 + 1_u16; // model info + status + minimum chat
-        if self.indexing_state.is_some() {
-            fixed_height = fixed_height.saturating_add(3);
-        }
-        if show_indicator {
-            fixed_height = fixed_height.saturating_add(1);
-        }
-        let max_by_layout = frame_area.height.saturating_sub(fixed_height);
-        let mut max_input_height = max_by_screen.min(max_by_layout).max(1);
-        let input_height = if max_input_height < min_input_height {
-            max_input_height
-        } else {
-            desired_input_height.clamp(min_input_height, max_input_height)
-        };
+        let input_height = compute_input_height(
+            desired_input_height,
+            frame_area.height,
+            self.indexing_state.is_some(),
+            show_indicator,
+        );
 
         // ---------- Define Layout ----------
         let mut proto_layout = vec![
@@ -549,7 +563,7 @@ impl App {
             frame.render_widget(preview, preview_area);
         }
 
-        // Render input area with dynamic title
+        // Render input area
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
             (Mode::Command, CommandStyle::Slash) => "Slash Mode",
@@ -1544,5 +1558,28 @@ impl App {
     // Test-only accessor to shared AppState for integration tests via test_harness
     pub(crate) fn test_get_state(&self) -> Arc<AppState> {
         Arc::clone(&self.state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_input_height;
+
+    #[test]
+    fn input_height_clamps_to_screen_and_layout() {
+        let height = compute_input_height(50, 20, false, true);
+        assert_eq!(height, 10);
+    }
+
+    #[test]
+    fn input_height_uses_min_when_possible() {
+        let height = compute_input_height(3, 20, false, true);
+        assert_eq!(height, 3);
+    }
+
+    #[test]
+    fn input_height_falls_back_when_screen_is_tiny() {
+        let height = compute_input_height(10, 5, false, true);
+        assert_eq!(height, 1);
     }
 }
