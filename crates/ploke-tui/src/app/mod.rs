@@ -158,6 +158,7 @@ pub struct App {
     input_history_pos: Option<usize>,
     tool_verbosity: ToolVerbosity,
     confirmation_states: HashMap<Uuid, bool>,
+    suggestion_index: usize,
 }
 
 impl App {
@@ -196,6 +197,7 @@ impl App {
             input_history_pos: None,
             tool_verbosity,
             confirmation_states: HashMap::new(),
+            suggestion_index: 0,
         }
     }
 
@@ -482,6 +484,18 @@ impl App {
     }
 
     fn file_completion(&self, input: &str) -> Option<(String, String)> {
+        let (_, ghost, accept, _) = self.file_completion_suggestions(input, 0)?;
+        match (ghost, accept) {
+            (Some(ghost), Some(accept)) => Some((ghost, accept)),
+            _ => None,
+        }
+    }
+
+    fn file_completion_suggestions(
+        &self,
+        input: &str,
+        selection_index: usize,
+    ) -> Option<(Vec<CommandSuggestion>, Option<String>, Option<String>, usize)> {
         let at_idx = input.rfind('@')?;
         let after_at = &input[at_idx + 1..];
         if after_at.chars().any(char::is_whitespace) {
@@ -495,7 +509,7 @@ impl App {
                 ghost.push(std::path::MAIN_SEPARATOR);
             }
             let accept = format!("{}{}", input, ghost);
-            return Some((ghost, accept));
+            return Some((Vec::new(), Some(ghost), Some(accept), 0));
         }
 
         let fragment_path = std::path::Path::new(after_at);
@@ -534,46 +548,78 @@ impl App {
         }
 
         matches.sort_by(|a, b| a.0.cmp(&b.0));
-        let (name, is_dir) = &matches[0];
-        let mut ghost = name
-            .chars()
-            .skip(prefix.chars().count())
-            .collect::<String>();
-        if *is_dir && !ghost.ends_with(std::path::MAIN_SEPARATOR) {
-            ghost.push(std::path::MAIN_SEPARATOR);
+        let mut completions = Vec::new();
+        for (name, is_dir) in matches {
+            let mut ghost = name
+                .chars()
+                .skip(prefix.chars().count())
+                .collect::<String>();
+            if is_dir && !ghost.ends_with(std::path::MAIN_SEPARATOR) {
+                ghost.push(std::path::MAIN_SEPARATOR);
+            }
+            if ghost.is_empty() {
+                continue;
+            }
+            let mut display = name.clone();
+            if is_dir && !display.ends_with(std::path::MAIN_SEPARATOR) {
+                display.push(std::path::MAIN_SEPARATOR);
+            }
+            let accept = format!("{}{}", input, ghost);
+            completions.push((display, is_dir, ghost, accept));
         }
 
-        if ghost.is_empty() {
+        if completions.is_empty() {
             return None;
         }
 
-        let accept = format!("{}{}", input, ghost);
-        Some((ghost, accept))
+        let suggestions = completions
+            .iter()
+            .map(|(display, is_dir, _, _)| CommandSuggestion {
+                command: display.clone(),
+                description: if *is_dir {
+                    "dir".to_string()
+                } else {
+                    "file".to_string()
+                },
+            })
+            .collect::<Vec<_>>();
+        let selected_idx = selection_index.min(completions.len().saturating_sub(1));
+        let (_, _, ghost, accept) = &completions[selected_idx];
+        Some((
+            suggestions,
+            Some(ghost.clone()),
+            Some(accept.clone()),
+            selected_idx,
+        ))
     }
 
     fn command_completions(
         &self,
         mode: Mode,
-    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>) {
+        selection_index: usize,
+    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>, usize) {
+        if matches!(mode, Mode::Insert | Mode::Command) {
+            if let Some((suggestions, ghost, accept, selected_idx)) =
+                self.file_completion_suggestions(&self.input_buffer, selection_index)
+            {
+                return (suggestions, ghost, accept, selected_idx);
+            }
+        }
         if mode != Mode::Command {
-            return (Vec::new(), None, None);
+            return (Vec::new(), None, None, 0);
         }
 
         let mut chars = self.input_buffer.chars();
         let Some(prefix) = chars.next() else {
-            return (Vec::new(), None, None);
+            return (Vec::new(), None, None, 0);
         };
         if prefix != '/' && prefix != ':' {
-            return (Vec::new(), None, None);
-        }
-
-        if let Some((ghost, accept)) = self.file_completion(&self.input_buffer) {
-            return (Vec::new(), Some(ghost), Some(accept));
+            return (Vec::new(), None, None, 0);
         }
 
         let typed = chars.as_str();
         if typed.is_empty() {
-            return (Vec::new(), None, None);
+            return (Vec::new(), None, None, 0);
         }
         let typed_lower = typed.to_lowercase();
 
@@ -584,7 +630,7 @@ impl App {
             .collect();
 
         if matches.is_empty() {
-            return (Vec::new(), None, None);
+            return (Vec::new(), None, None, 0);
         }
 
         let suggestions = matches
@@ -595,19 +641,21 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        let first = matches[0].completion;
+        let selected_idx = selection_index.min(matches.len().saturating_sub(1));
+        let selected = matches[selected_idx];
+        let selected_completion = selected.completion;
         let typed_len = typed.chars().count();
-        let ghost_text = first
+        let ghost_text = selected_completion
             .chars()
             .skip(typed_len)
             .collect::<String>();
 
-        let mut accept_text = format!("{prefix}{}", matches[0].command);
-        if matches[0].completion != matches[0].command {
+        let mut accept_text = format!("{prefix}{}", selected.command);
+        if selected_completion != selected.command {
             accept_text.push(' ');
         }
 
-        (suggestions, Some(ghost_text), Some(accept_text))
+        (suggestions, Some(ghost_text), Some(accept_text), selected_idx)
     }
 
     /// Count pending edit proposals for UI banner display.
@@ -645,8 +693,13 @@ impl App {
         } else {
             self.mode
         };
-        let (command_suggestions, ghost_text, accept_text) =
-            self.command_completions(input_mode);
+        let (command_suggestions, ghost_text, accept_text, selected_suggestion_idx) =
+            self.command_completions(input_mode, self.suggestion_index);
+        if command_suggestions.is_empty() {
+            self.suggestion_index = 0;
+        } else if self.suggestion_index != selected_suggestion_idx {
+            self.suggestion_index = selected_suggestion_idx;
+        }
         let pending_edits = self.pending_edit_count();
         let pending_banner_height = if pending_edits > 0 { 1 } else { 0 };
         // Always show the currently selected model in the top-right
@@ -773,6 +826,11 @@ impl App {
         }
 
         // Render input box via InputView
+        let selected_suggestion = if command_suggestions.is_empty() {
+            None
+        } else {
+            Some(self.suggestion_index)
+        };
         self.input_view.render(
             frame,
             input_area,
@@ -781,6 +839,7 @@ impl App {
             &self.theme,
             ghost_text.as_deref(),
             &command_suggestions,
+            selected_suggestion,
         );
         // Add progress bar at bottom if indexing
         if let (Some(state), Some(indexing_idx)) = (&self.indexing_state, indexing_idx_opt) {
@@ -923,6 +982,13 @@ impl App {
 
         // Insert mode input history navigation
         if self.mode == Mode::Insert {
+            if let Some(action) = to_action(self.mode, key, self.command_style)
+                && matches!(action, Action::SuggestionPrev | Action::SuggestionNext)
+                && self.apply_suggestion_action(action)
+            {
+                self.needs_redraw = true;
+                return;
+            }
             use KeyCode::*;
             match key.code {
                 KeyCode::Up => {
@@ -1029,6 +1095,7 @@ impl App {
             Action::SwitchMode(new_mode) => {
                 self.mode = new_mode;
                 self.pending_char = None;
+                self.reset_suggestion_selection();
             }
             Action::InsertChar(c) => {
                 // While typing, keep the viewport stable (disable auto-centering on selection)
@@ -1041,6 +1108,7 @@ impl App {
                 {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
+                    self.reset_suggestion_selection();
                 } else {
                     self.add_input_char(c);
                 }
@@ -1087,6 +1155,7 @@ impl App {
                     self.conversation.request_bottom();
                     self.conversation.set_free_scrolling(true);
                     self.input_buffer.clear();
+                    self.reset_suggestion_selection();
                 }
             }
             Action::ExecuteCommand => {
@@ -1095,15 +1164,24 @@ impl App {
                 self.conversation.request_bottom();
                 self.conversation.set_free_scrolling(true);
                 self.input_buffer.clear();
+                self.reset_suggestion_selection();
                 self.mode = Mode::Insert;
             }
             Action::AcceptCompletion => {
-                if self.mode == Mode::Command {
-                    let (_, _, accept_text) = self.command_completions(self.mode);
+                if matches!(self.mode, Mode::Insert | Mode::Command) {
+                    let (_, _, accept_text, _) =
+                        self.command_completions(self.mode, self.suggestion_index);
                     if let Some(accept) = accept_text {
                         self.input_buffer = accept;
+                        self.reset_suggestion_selection();
                     }
                 }
+            }
+            Action::SuggestionPrev => {
+                self.apply_suggestion_action(Action::SuggestionPrev);
+            }
+            Action::SuggestionNext => {
+                self.apply_suggestion_action(Action::SuggestionNext);
             }
             Action::NavigateListUp => {
                 self.conversation.set_free_scrolling(false);
@@ -1203,21 +1281,25 @@ impl App {
                 } else {
                     self.input_buffer = ":hybrid ".to_string();
                 }
+                self.reset_suggestion_selection();
             }
             Action::OpenCommandColon => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
+                self.reset_suggestion_selection();
             }
             Action::OpenQuickModel => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/model ".to_string();
+                self.reset_suggestion_selection();
             }
             Action::OpenHelp => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/help".to_string();
+                self.reset_suggestion_selection();
             }
             Action::TogglePreview => {
                 self.pending_char = None;
@@ -1377,12 +1459,40 @@ impl App {
 
     fn handle_backspace(&mut self) {
         let _ = self.input_buffer.pop();
+        self.reset_suggestion_selection();
     }
 
     fn add_input_char(&mut self, c: char) {
         // Typing resets input-history browsing
         self.input_history_pos = None;
         self.input_buffer.push(c);
+        self.reset_suggestion_selection();
+    }
+
+    fn reset_suggestion_selection(&mut self) {
+        self.suggestion_index = 0;
+    }
+
+    fn apply_suggestion_action(&mut self, action: Action) -> bool {
+        let (suggestions, _, _, selected_idx) =
+            self.command_completions(self.mode, self.suggestion_index);
+        if suggestions.is_empty() {
+            return false;
+        }
+        match action {
+            Action::SuggestionPrev => {
+                if selected_idx == 0 {
+                    self.suggestion_index = suggestions.len().saturating_sub(1);
+                } else {
+                    self.suggestion_index = selected_idx - 1;
+                }
+            }
+            Action::SuggestionNext => {
+                self.suggestion_index = (selected_idx + 1) % suggestions.len();
+            }
+            _ => {}
+        }
+        true
     }
 
     /// Rebuild the per-conversation user-input history from the current path.
@@ -1414,12 +1524,14 @@ impl App {
                 let last = self.input_history.len().saturating_sub(1);
                 self.input_history_pos = Some(last);
                 self.input_buffer = self.input_history[last].clone();
+                self.reset_suggestion_selection();
             }
             Some(pos) => {
                 if pos > 0 {
                     let new_pos = pos - 1;
                     self.input_history_pos = Some(new_pos);
                     self.input_buffer = self.input_history[new_pos].clone();
+                    self.reset_suggestion_selection();
                 }
             }
         }
@@ -1441,10 +1553,12 @@ impl App {
                     let new_pos = pos + 1;
                     self.input_history_pos = Some(new_pos);
                     self.input_buffer = self.input_history[new_pos].clone();
+                    self.reset_suggestion_selection();
                 } else {
                     // Beyond the newest -> clear buffer and exit history mode
                     self.input_history_pos = None;
                     self.input_buffer.clear();
+                    self.reset_suggestion_selection();
                 }
             }
         }
@@ -1459,6 +1573,7 @@ impl App {
         }
         self.input_history_pos = Some(0);
         self.input_buffer = self.input_history[0].clone();
+        self.reset_suggestion_selection();
     }
 
     fn input_history_last(&mut self) {
@@ -1471,6 +1586,7 @@ impl App {
         let last = self.input_history.len().saturating_sub(1);
         self.input_history_pos = Some(last);
         self.input_buffer = self.input_history[last].clone();
+        self.reset_suggestion_selection();
     }
 
     fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {

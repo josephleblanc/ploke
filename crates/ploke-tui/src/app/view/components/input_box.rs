@@ -51,6 +51,7 @@ impl InputView {
         theme: &UiTheme,
         ghost_text: Option<&str>,
         suggestions: &[CommandSuggestion],
+        selected_suggestion: Option<usize>,
     ) {
         let desired_input_height = self.desired_height(buffer, area.width);
         let input_height = desired_input_height.min(area.height);
@@ -155,21 +156,32 @@ impl InputView {
             let suggestion_style = Style::default()
                 .bg(theme.input_suggestion_bg)
                 .fg(theme.input_suggestion_fg);
-            let desc_style = Style::default()
+            let base_desc_style = Style::default()
                 .bg(theme.input_suggestion_bg)
                 .fg(theme.input_suggestion_desc_fg);
             let mut lines: Vec<Line> = Vec::new();
-            for suggestion in suggestions.iter().take(suggestion_area.height as usize) {
+            for (idx, suggestion) in suggestions
+                .iter()
+                .take(suggestion_area.height as usize)
+                .enumerate()
+            {
+                let is_selected = selected_suggestion == Some(idx);
+                let command_style = if is_selected {
+                    suggestion_style
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    suggestion_style.add_modifier(Modifier::BOLD)
+                };
+                let desc_style = if is_selected {
+                    base_desc_style.add_modifier(Modifier::REVERSED)
+                } else {
+                    base_desc_style
+                };
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        suggestion.command.as_str(),
-                        suggestion_style.add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(suggestion.command.as_str(), command_style),
                     Span::raw("  "),
-                    Span::styled(
-                        suggestion.description.as_str(),
-                        desc_style.add_modifier(Modifier::DIM),
-                    ),
+                    Span::styled(suggestion.description.as_str(), desc_style.add_modifier(Modifier::DIM)),
                 ]));
             }
             let suggestion_text = Text::from(lines);
