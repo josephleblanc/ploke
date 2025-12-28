@@ -14,7 +14,10 @@
   application of code edits.
     - [x] implement a rough edit ordering priority, where only the newer item is
     applied when there is overlap.
-  - [ ] Add semantic highlighting to fenced code blocks
+  - [x] Add semantic highlighting to fenced code blocks
+    - chat history edit proposals should show minimal diffs (about 2 context lines) instead of full before/after files
+    - avoid duplicating diff content in LLM context (tool call + chat history)
     - [ ] add styling to markdown quote blocks
     - [ ] maybe also add header styling
   - [ ] make the input box scrollable (e.g. detect and capture mouse hover + scroll)
+  - [ ] handle TTL on conversation items

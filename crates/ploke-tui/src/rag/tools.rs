@@ -14,7 +14,7 @@ use ploke_error::{DomainError, InternalError};
 use ploke_io::read::{FileHashData, read_and_compute_filehash};
 use ploke_io::{Diff, NsWriteSnippetData, ReadStrategy};
 use ploke_rag::{RetrievalStrategy, RrfConfig, TokenBudget};
-use similar::TextDiff;
+use similar::{ChangeTag, TextDiff};
 use tracing::debug;
 
 use crate::tools::create_file::CreateFileCtx;
@@ -55,6 +55,103 @@ where
     U: Send + Sync + Clone + Serialize + for<'sec> Deserialize<'sec>,
 {
     async fn call_tool(&self, tool_input: T) -> R;
+}
+
+const CHAT_PREVIEW_CONTEXT_LINES: usize = 2;
+
+fn truncate_lines(text: &str, max_lines: usize) -> String {
+    let mut out = String::new();
+    for (i, line) in text.lines().enumerate() {
+        if i >= max_lines {
+            out.push_str("... [truncated]");
+            break;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+fn filter_unified_diff_with_context(text: &str, context_lines: usize) -> String {
+    if context_lines == 0 {
+        return text.to_string();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = vec![false; lines.len()];
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with("diff --git")
+            || line.starts_with("---")
+            || line.starts_with("+++")
+            || line.starts_with("@@")
+        {
+            keep[i] = true;
+            continue;
+        }
+
+        let is_add = line.starts_with('+') && !line.starts_with("+++");
+        let is_del = line.starts_with('-') && !line.starts_with("---");
+        if is_add || is_del {
+            let start = i.saturating_sub(context_lines);
+            let end = (i + context_lines).min(lines.len().saturating_sub(1));
+            for j in start..=end {
+                keep[j] = true;
+            }
+        }
+    }
+
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if keep[i] {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn diff_chunk_with_context(path: &PathBuf, before: &str, after: &str, context_lines: usize) -> String {
+    let diff = TextDiff::from_lines(before, after);
+    let mut out = String::new();
+    out.push_str(&format!("--- {}\n", path.display()));
+
+    let mut changes: Vec<(ChangeTag, &str)> = Vec::new();
+    for change in diff.iter_all_changes() {
+        changes.push((change.tag(), change.value()));
+    }
+
+    let mut keep = vec![false; changes.len()];
+    for (i, (tag, _)) in changes.iter().enumerate() {
+        if *tag == ChangeTag::Equal {
+            continue;
+        }
+        let start = i.saturating_sub(context_lines);
+        let end = (i + context_lines).min(changes.len().saturating_sub(1));
+        for j in start..=end {
+            keep[j] = true;
+        }
+    }
+
+    for (i, (tag, value)) in changes.iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+
+        let prefix = match tag {
+            ChangeTag::Delete => '-',
+            ChangeTag::Insert => '+',
+            ChangeTag::Equal => ' ',
+        };
+
+        out.push(prefix);
+        out.push(' ');
+        out.push_str(value.strip_suffix('\n').unwrap_or(value));
+        out.push('\n');
+    }
+    out
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -352,23 +449,8 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     // Build preview (reuse minimal version from prior implementation)
     let mut per_file: Vec<BeforeAfter> = Vec::new();
     let mut unified_diff = String::new();
+    let mut chat_preview_sections: Vec<String> = Vec::new();
 
-    // Define truncate function early so it can be used for stored content
-    let truncate = |s: &str| -> String {
-        let max = editing_cfg.max_preview_lines;
-        let mut out = String::new();
-        for (i, line) in s.lines().enumerate() {
-            if i >= max {
-                out.push_str("... [truncated]");
-                break;
-            }
-            if i > 0 {
-                out.push('\n');
-            }
-            out.push_str(line);
-        }
-        out
-    };
     for path in files_set.iter() {
         // Fetch full file content via IoManager (verified against tracking hash)
         let (file_hash, namespace) = edits
@@ -416,9 +498,15 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         };
         per_file.push(BeforeAfter {
             file_path: display_path.clone(),
-            before: truncate(&before),
-            after: truncate(&after),
+            before: truncate_lines(&before, editing_cfg.max_preview_lines),
+            after: truncate_lines(&after, editing_cfg.max_preview_lines),
         });
+        chat_preview_sections.push(diff_chunk_with_context(
+            &display_path,
+            &before,
+            &after,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        ));
         if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
             let header_a = format!("a/{}", display_path.display());
             let header_b = format!("b/{}", display_path.display());
@@ -453,19 +541,17 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
         "codeblock"
     };
 
-    let preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        truncate(&unified_diff)
+    let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+        let filtered = filter_unified_diff_with_context(
+            &unified_diff,
+            CHAT_PREVIEW_CONTEXT_LINES,
+        );
+        truncate_lines(&filtered, editing_cfg.max_preview_lines)
     } else {
-        let mut buf = String::new();
-        for ba in &per_file {
-            buf.push_str(&format!(
-                "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
-                ba.file_path.display(),
-                truncate(&ba.before),
-                truncate(&ba.after)
-            ));
-        }
-        buf
+        truncate_lines(
+            &chat_preview_sections.join("\n"),
+            editing_cfg.max_preview_lines,
+        )
     };
 
     let edit_len = edits.len();
@@ -507,27 +593,29 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     let summary = format!(
         r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
 Files:
-    {0}
+    {files}
 
-Preview (mode={preview_label}, first {1} lines per section):
+Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
 {preview_snippet}
 
 Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{2}"#,
-        display_files.join("\n  "),
-        editing_cfg.max_preview_lines,
-        if editing_cfg.auto_confirm_edits {
+Deny:     edit deny {request_id}{auto_confirm}"#,
+        files = display_files.join("\n  "),
+        preview_label = preview_label,
+        context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+        max_lines = editing_cfg.max_preview_lines,
+        preview_snippet = chat_preview_snippet,
+        auto_confirm = if editing_cfg.auto_confirm_edits {
             "\n\nAuto-approval enabled: applying now..."
         } else {
             ""
         },
     );
-    chat::add_msg_immediate(
+    chat::add_msg_immediate_sysinfo_unpinned(
         &state,
         &event_bus,
         Uuid::new_v4(),
         summary,
-        MessageKind::SysInfo,
     )
     .await;
 
@@ -768,29 +856,20 @@ pub async fn apply_ns_code_edit_tool(
             "codeblock"
         };
         let max_lines = editing_cfg.max_preview_lines;
-        let truncate = |s: &str| {
-            let mut out = String::new();
-            for (i, line) in s.lines().enumerate() {
-                if i >= max_lines {
-                    out.push_str("... [truncated]");
-                    break;
-                }
-                if i > 0 {
-                    out.push('\n');
-                }
-                out.push_str(line);
-            }
-            out
-        };
-        let preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            truncate(&unified_diff)
+        let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            let filtered = filter_unified_diff_with_context(
+                &unified_diff,
+                CHAT_PREVIEW_CONTEXT_LINES,
+            );
+            truncate_lines(&filtered, max_lines)
         } else {
-            format!(
-                "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
-                display_path.display(),
-                truncate(&per_file.before),
-                truncate(&per_file.after)
-            )
+            let chunk = diff_chunk_with_context(
+                &display_path,
+                &per_file.before,
+                &per_file.after,
+                CHAT_PREVIEW_CONTEXT_LINES,
+            );
+            truncate_lines(&chunk, max_lines)
         };
         let mut reg = state.proposals.write().await;
         reg.insert(
@@ -825,27 +904,29 @@ pub async fn apply_ns_code_edit_tool(
         let summary = format!(
             r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
 Files:
-    {0}
+    {files}
 
-Preview (mode={preview_label}, first {1} lines per section):
+Preview (mode={preview_label}, context={context_lines} lines, first {max_lines} lines):
 {preview_snippet}
 
 Approve:  edit approve {request_id}
-Deny:     edit deny {request_id}{2}"#,
-            display_files.join("\n  "),
-            max_lines,
-            if editing_cfg.auto_confirm_edits {
+Deny:     edit deny {request_id}{auto_confirm}"#,
+            files = display_files.join("\n  "),
+            preview_label = preview_label,
+            context_lines = CHAT_PREVIEW_CONTEXT_LINES,
+            max_lines = max_lines,
+            preview_snippet = chat_preview_snippet,
+            auto_confirm = if editing_cfg.auto_confirm_edits {
                 "\n\nAuto-approval enabled: applying now..."
             } else {
                 ""
             },
         );
-        chat::add_msg_immediate(
+        chat::add_msg_immediate_sysinfo_unpinned(
             &state,
             &event_bus,
             Uuid::new_v4(),
             summary,
-            MessageKind::SysInfo,
         )
         .await;
     }

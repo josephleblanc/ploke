@@ -321,14 +321,28 @@ impl App {
                             Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
-                                    self.conversation.scroll_lines_up(3);
-                                    self.conversation.set_free_scrolling(true);
+                                    if self.input_view.is_input_hovered(
+                                        mouse_event.column,
+                                        mouse_event.row,
+                                    ) {
+                                        self.input_view.scroll_prev();
+                                    } else {
+                                        self.conversation.scroll_lines_up(3);
+                                        self.conversation.set_free_scrolling(true);
+                                    }
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
                                 MouseEventKind::ScrollDown => {
-                                    self.conversation.scroll_lines_down(3);
-                                    self.conversation.set_free_scrolling(true);
+                                    if self.input_view.is_input_hovered(
+                                        mouse_event.column,
+                                        mouse_event.row,
+                                    ) {
+                                        self.input_view.scroll_next();
+                                    } else {
+                                        self.conversation.scroll_lines_down(3);
+                                        self.conversation.set_free_scrolling(true);
+                                    }
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
@@ -467,6 +481,76 @@ impl App {
         .await
     }
 
+    fn file_completion(&self, input: &str) -> Option<(String, String)> {
+        let at_idx = input.rfind('@')?;
+        let after_at = &input[at_idx + 1..];
+        if after_at.chars().any(char::is_whitespace) {
+            return None;
+        }
+
+        let cwd = std::env::current_dir().ok()?;
+        if after_at.is_empty() {
+            let mut ghost = cwd.display().to_string();
+            if !ghost.ends_with(std::path::MAIN_SEPARATOR) {
+                ghost.push(std::path::MAIN_SEPARATOR);
+            }
+            let accept = format!("{}{}", input, ghost);
+            return Some((ghost, accept));
+        }
+
+        let fragment_path = std::path::Path::new(after_at);
+        let (parent, prefix) = if after_at.ends_with(std::path::MAIN_SEPARATOR) {
+            (fragment_path, "")
+        } else {
+            let parent = fragment_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+            let prefix = fragment_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            (parent, prefix)
+        };
+
+        let search_root = if parent.is_absolute() {
+            parent.to_path_buf()
+        } else {
+            cwd.join(parent)
+        };
+
+        let mut matches: Vec<(String, bool)> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&search_root) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let name = file_name.to_string_lossy();
+                if !name.starts_with(prefix) {
+                    continue;
+                }
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                matches.push((name.to_string(), is_dir));
+            }
+        }
+
+        if matches.is_empty() {
+            return None;
+        }
+
+        matches.sort_by(|a, b| a.0.cmp(&b.0));
+        let (name, is_dir) = &matches[0];
+        let mut ghost = name
+            .chars()
+            .skip(prefix.chars().count())
+            .collect::<String>();
+        if *is_dir && !ghost.ends_with(std::path::MAIN_SEPARATOR) {
+            ghost.push(std::path::MAIN_SEPARATOR);
+        }
+
+        if ghost.is_empty() {
+            return None;
+        }
+
+        let accept = format!("{}{}", input, ghost);
+        Some((ghost, accept))
+    }
+
     fn command_completions(
         &self,
         mode: Mode,
@@ -481,6 +565,10 @@ impl App {
         };
         if prefix != '/' && prefix != ':' {
             return (Vec::new(), None, None);
+        }
+
+        if let Some((ghost, accept)) = self.file_completion(&self.input_buffer) {
+            return (Vec::new(), Some(ghost), Some(accept));
         }
 
         let typed = chars.as_str();
@@ -1690,6 +1778,9 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::compute_input_height;
+    use crate::test_utils::mock::create_mock_app;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
     fn input_height_clamps_to_screen_and_layout() {
@@ -1707,5 +1798,62 @@ mod tests {
     fn input_height_falls_back_when_screen_is_tiny() {
         let height = compute_input_height(10, 5, false, true, 0);
         assert_eq!(height, 1);
+    }
+
+    struct CwdGuard {
+        prev: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set_to(path: &std::path::Path) -> Self {
+            let prev = std::env::current_dir().expect("current dir");
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { prev }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    #[test]
+    fn file_completion_uses_cwd_for_bare_at() {
+        let temp = tempdir().expect("temp dir");
+        let _guard = CwdGuard::set_to(temp.path());
+        let app = create_mock_app();
+
+        let input = "/model load @";
+        let (ghost, accept) = app.file_completion(input).expect("completion");
+
+        let mut expected_ghost = temp.path().display().to_string();
+        if !expected_ghost.ends_with(std::path::MAIN_SEPARATOR) {
+            expected_ghost.push(std::path::MAIN_SEPARATOR);
+        }
+        assert_eq!(ghost, expected_ghost);
+        assert_eq!(accept, format!("{input}{expected_ghost}"));
+    }
+
+    #[test]
+    fn file_completion_resolves_temp_entries() {
+        let temp = tempdir().expect("temp dir");
+        std::fs::create_dir(temp.path().join("src")).expect("create src");
+        std::fs::write(temp.path().join("Cargo.toml"), "cargo").expect("write file");
+        std::fs::write(temp.path().join("src").join("main.rs"), "fn main() {}")
+            .expect("write file");
+        let _guard = CwdGuard::set_to(temp.path());
+        let app = create_mock_app();
+
+        let input_dir = "/open @s";
+        let (ghost_dir, accept_dir) = app.file_completion(input_dir).expect("dir completion");
+        assert_eq!(ghost_dir, format!("rc{}", std::path::MAIN_SEPARATOR));
+        assert_eq!(accept_dir, format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR));
+
+        let input_file = "/open @src/m";
+        let (ghost_file, accept_file) =
+            app.file_completion(input_file).expect("file completion");
+        assert_eq!(ghost_file, "ain.rs");
+        assert_eq!(accept_file, "/open @src/main.rs");
     }
 }

@@ -10,12 +10,15 @@ use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
 use textwrap;
 
 /// Encapsulates input box rendering and state (scroll, cursor).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct InputView {
     vscroll: u16,
     scrollstate: ScrollbarState,
     cursor_row: u16,
     cursor_col: u16,
+    follow_cursor: bool,
+    last_input_area: Rect,
+    last_buffer: String,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +28,14 @@ pub struct CommandSuggestion {
 }
 
 impl InputView {
+    pub fn is_input_hovered(&self, column: u16, row: u16) -> bool {
+        let area = self.last_input_area;
+        column >= area.x
+            && column < area.x.saturating_add(area.width)
+            && row >= area.y
+            && row < area.y.saturating_add(area.height)
+    }
+
     pub fn desired_height(&self, buffer: &str, area_width: u16) -> u16 {
         let inner_width = area_width.saturating_sub(2).max(1);
         let wrapped = textwrap::wrap(buffer, inner_width as usize);
@@ -60,6 +71,7 @@ impl InputView {
             vertical: 1,
             horizontal: 1,
         });
+        self.last_input_area = input_area;
         // Wrap text to inner area width
         let input_width = inner_area.width.max(1);
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
@@ -90,16 +102,24 @@ impl InputView {
         self.cursor_row = row;
         self.cursor_col = col;
 
+        if self.last_buffer != buffer {
+            self.last_buffer.clear();
+            self.last_buffer.push_str(buffer);
+            self.follow_cursor = true;
+        }
+
         // Auto-scroll to keep cursor visible and clamp within content
         let inner_h: u16 = inner_area.height.max(1);
         let total_lines: u16 = input_wrapped.len() as u16;
 
-        // Ensure cursor is within the visible window
-        if self.cursor_row >= self.vscroll.saturating_add(inner_h) {
-            self.vscroll = self.cursor_row.saturating_sub(inner_h).saturating_add(1);
-        }
-        if self.cursor_row < self.vscroll {
-            self.vscroll = self.cursor_row;
+        if self.follow_cursor {
+            // Ensure cursor is within the visible window
+            if self.cursor_row >= self.vscroll.saturating_add(inner_h) {
+                self.vscroll = self.cursor_row.saturating_sub(inner_h).saturating_add(1);
+            }
+            if self.cursor_row < self.vscroll {
+                self.vscroll = self.cursor_row;
+            }
         }
 
         // Clamp vscroll to valid range based on content height
@@ -164,8 +184,10 @@ impl InputView {
 
         if let Some(ghost) = ghost_text {
             if !ghost.is_empty() {
-                let visible_row = self.cursor_row.saturating_sub(self.vscroll);
-                if visible_row < inner_area.height {
+                let cursor_visible = self.cursor_row >= self.vscroll
+                    && self.cursor_row < self.vscroll.saturating_add(inner_h);
+                if cursor_visible {
+                    let visible_row = self.cursor_row.saturating_sub(self.vscroll);
                     let ghost_area = Rect {
                         x: inner_area.x.saturating_add(self.cursor_col),
                         y: inner_area.y.saturating_add(visible_row),
@@ -182,11 +204,15 @@ impl InputView {
         // Manage cursor visibility/position
         match mode {
             Mode::Insert | Mode::Command => {
-                let visible_row = self.cursor_row.saturating_sub(self.vscroll);
-                frame.set_cursor_position((
-                    inner_area.x + self.cursor_col,
-                    inner_area.y + visible_row,
-                ));
+                let cursor_visible = self.cursor_row >= self.vscroll
+                    && self.cursor_row < self.vscroll.saturating_add(inner_h);
+                if cursor_visible {
+                    let visible_row = self.cursor_row.saturating_sub(self.vscroll);
+                    frame.set_cursor_position((
+                        inner_area.x + self.cursor_col,
+                        inner_area.y + visible_row,
+                    ));
+                }
             }
             Mode::Normal => {
                 // No cursor positioning => hidden by terminal backend
@@ -195,13 +221,29 @@ impl InputView {
     }
 
     pub fn scroll_prev(&mut self) {
+        self.follow_cursor = false;
         self.vscroll = self.vscroll.saturating_sub(1);
         self.scrollstate = self.scrollstate.position(self.vscroll as usize);
     }
 
     pub fn scroll_next(&mut self) {
+        self.follow_cursor = false;
         self.vscroll = self.vscroll.saturating_add(1);
         self.scrollstate = self.scrollstate.position(self.vscroll as usize);
+    }
+}
+
+impl Default for InputView {
+    fn default() -> Self {
+        Self {
+            vscroll: 0,
+            scrollstate: ScrollbarState::default(),
+            cursor_row: 0,
+            cursor_col: 0,
+            follow_cursor: true,
+            last_input_area: Rect::default(),
+            last_buffer: String::new(),
+        }
     }
 }
 
