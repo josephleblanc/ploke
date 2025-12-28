@@ -4,8 +4,8 @@ use crate::app::types::Mode;
 use crate::app::view::EventSubscriber;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::Style;
-use ratatui::text::Text;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
 use textwrap;
 
@@ -16,6 +16,12 @@ pub struct InputView {
     scrollstate: ScrollbarState,
     cursor_row: u16,
     cursor_col: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandSuggestion {
+    pub command: String,
+    pub description: String,
 }
 
 impl InputView {
@@ -32,8 +38,25 @@ impl InputView {
         buffer: &str,
         mode: Mode,
         theme: &UiTheme,
+        ghost_text: Option<&str>,
+        suggestions: &[CommandSuggestion],
     ) {
-        let inner_area = area.inner(Margin {
+        let desired_input_height = self.desired_height(buffer, area.width);
+        let input_height = desired_input_height.min(area.height);
+        let suggestion_height = area.height.saturating_sub(input_height);
+        let suggestion_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: suggestion_height,
+        };
+        let input_area = Rect {
+            x: area.x,
+            y: area.y.saturating_add(suggestion_height),
+            width: area.width,
+            height: input_height,
+        };
+        let inner_area = input_area.inner(Margin {
             vertical: 1,
             horizontal: 1,
         });
@@ -105,8 +128,56 @@ impl InputView {
             .block(Block::default().borders(Borders::NONE))
             .style(input_style);
 
-        frame.render_widget(background, area);
+        frame.render_widget(background, input_area);
         frame.render_widget(input, inner_area);
+
+        if suggestion_area.height > 0 && !suggestions.is_empty() {
+            let suggestion_style = Style::default()
+                .bg(theme.input_suggestion_bg)
+                .fg(theme.input_suggestion_fg);
+            let desc_style = Style::default()
+                .bg(theme.input_suggestion_bg)
+                .fg(theme.input_suggestion_desc_fg);
+            let mut lines: Vec<Line> = Vec::new();
+            for suggestion in suggestions.iter().take(suggestion_area.height as usize) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        suggestion.command.as_str(),
+                        suggestion_style.add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        suggestion.description.as_str(),
+                        desc_style.add_modifier(Modifier::DIM),
+                    ),
+                ]));
+            }
+            let suggestion_text = Text::from(lines);
+            let suggestion_block = Block::default()
+                .borders(Borders::NONE)
+                .style(Style::default().bg(theme.input_suggestion_bg));
+            let suggestion_widget = Paragraph::new(suggestion_text)
+                .block(suggestion_block)
+                .style(Style::default().bg(theme.input_suggestion_bg));
+            frame.render_widget(suggestion_widget, suggestion_area);
+        }
+
+        if let Some(ghost) = ghost_text {
+            if !ghost.is_empty() {
+                let visible_row = self.cursor_row.saturating_sub(self.vscroll);
+                if visible_row < inner_area.height {
+                    let ghost_area = Rect {
+                        x: inner_area.x.saturating_add(self.cursor_col),
+                        y: inner_area.y.saturating_add(visible_row),
+                        width: inner_area.width.saturating_sub(self.cursor_col),
+                        height: 1,
+                    };
+                    let ghost_widget = Paragraph::new(ghost)
+                        .style(Style::default().fg(theme.input_ghost_fg).bg(theme.input_bg));
+                    frame.render_widget(ghost_widget, ghost_area);
+                }
+            }
+        }
 
         // Manage cursor visibility/position
         match mode {

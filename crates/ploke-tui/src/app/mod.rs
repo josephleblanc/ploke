@@ -30,7 +30,7 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::message_item::should_render_tool_buttons;
 use crate::app::view::components::conversation::ConversationView;
-use crate::app::view::components::input_box::InputView;
+use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
 use crate::tools::ToolVerbosity;
 use crate::ui_theme::UiTheme;
@@ -63,6 +63,7 @@ use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail,
 };
 use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
+use crate::app::commands::COMMAND_ENTRIES;
 
 fn compute_input_height(
     desired_input_height: u16,
@@ -464,6 +465,61 @@ impl App {
         .await
     }
 
+    fn command_completions(
+        &self,
+        mode: Mode,
+    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>) {
+        if mode != Mode::Command {
+            return (Vec::new(), None, None);
+        }
+
+        let mut chars = self.input_buffer.chars();
+        let Some(prefix) = chars.next() else {
+            return (Vec::new(), None, None);
+        };
+        if prefix != '/' && prefix != ':' {
+            return (Vec::new(), None, None);
+        }
+
+        let typed = chars.as_str();
+        if typed.is_empty() {
+            return (Vec::new(), None, None);
+        }
+        let typed_lower = typed.to_lowercase();
+
+        let matches: Vec<&crate::app::commands::CommandEntry> = COMMAND_ENTRIES
+            .iter()
+            .filter(|entry| entry.command.starts_with(&typed_lower))
+            .take(10)
+            .collect();
+
+        if matches.is_empty() {
+            return (Vec::new(), None, None);
+        }
+
+        let suggestions = matches
+            .iter()
+            .map(|entry| CommandSuggestion {
+                command: format!("{prefix}{}", entry.completion),
+                description: entry.description.to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let first = matches[0].completion;
+        let typed_len = typed.chars().count();
+        let ghost_text = first
+            .chars()
+            .skip(typed_len)
+            .collect::<String>();
+
+        let mut accept_text = format!("{prefix}{}", matches[0].command);
+        if matches[0].completion != matches[0].command {
+            accept_text.push(' ');
+        }
+
+        (suggestions, Some(ghost_text), Some(accept_text))
+    }
+
     /// Renders the user interface.
     fn draw<'a, I1, I2, T: RenderMsg + 'a>(
         &mut self,
@@ -477,12 +533,20 @@ impl App {
         I1: IntoIterator<Item = &'a T> + Clone,
         I2: IntoIterator<Item = &'a T>,
     {
+        let input_mode = if self.overlay_manager.is_active() {
+            Mode::Normal
+        } else {
+            self.mode
+        };
+        let (command_suggestions, ghost_text, accept_text) =
+            self.command_completions(input_mode);
         // Always show the currently selected model in the top-right
         let show_indicator = true;
         let frame_area = frame.area();
         let desired_input_height =
             self.input_view
-                .desired_height(&self.input_buffer, frame_area.width);
+                .desired_height(&self.input_buffer, frame_area.width)
+                .saturating_add(command_suggestions.len() as u16);
         let input_height = compute_input_height(
             desired_input_height,
             frame_area.height,
@@ -572,12 +636,10 @@ impl App {
             frame,
             input_area,
             &self.input_buffer,
-            if self.overlay_manager.is_active() {
-                Mode::Normal
-            } else {
-                self.mode
-            },
+            input_mode,
             &self.theme,
+            ghost_text.as_deref(),
+            &command_suggestions,
         );
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {
@@ -887,6 +949,14 @@ impl App {
                 self.conversation.set_free_scrolling(true);
                 self.input_buffer.clear();
                 self.mode = Mode::Insert;
+            }
+            Action::AcceptCompletion => {
+                if self.mode == Mode::Command {
+                    let (_, _, accept_text) = self.command_completions(self.mode);
+                    if let Some(accept) = accept_text {
+                        self.input_buffer = accept;
+                    }
+                }
             }
             Action::NavigateListUp => {
                 self.conversation.set_free_scrolling(false);

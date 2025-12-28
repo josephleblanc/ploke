@@ -6,7 +6,7 @@
   up to the limit of half the screen
   - [x] change the input area so it doesn't have a border, but instead has a
   different background color from the rest of the application (light gray)
-  - [ ] add ghost text for autocomplete on commands
+  - [x] add ghost text for autocomplete on commands
     - [ ] stretch goal (include the pwd for files after an `@` symbol)
   - [ ] add a line above the input that appears whenever there are pending edit
   proposals to approve. this will be an area that has a message like "Press

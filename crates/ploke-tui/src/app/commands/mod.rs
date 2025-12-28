@@ -90,5 +90,195 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
 
     Insert mode history:
       ↑/↓ - Navigate your previous user messages in this conversation
-      PageUp/PageDown - Jump to oldest/newest user message in history
+    PageUp/PageDown - Jump to oldest/newest user message in history
 "#;
+
+#[derive(Debug, Clone, Copy)]
+pub struct CommandEntry {
+    pub command: &'static str,
+    pub completion: &'static str,
+    pub description: &'static str,
+}
+
+pub const COMMAND_ENTRIES: &[CommandEntry] = &[
+    CommandEntry {
+        command: "index start",
+        completion: "index start [directory]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "index pause",
+        completion: "index pause",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "index resume",
+        completion: "index resume",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "index cancel",
+        completion: "index cancel",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "check api",
+        completion: "check api",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model list",
+        completion: "model list",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model info",
+        completion: "model info",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model use",
+        completion: "model use <name>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model refresh",
+        completion: "model refresh [--local]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model load",
+        completion: "model load [path]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model save",
+        completion: "model save [path] [--with-keys]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model search",
+        completion: "model search <model-name>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "embedding search",
+        completion: "embedding search <embedding-model>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "model providers",
+        completion: "model providers <model_id>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "provider strictness",
+        completion: "provider strictness <openrouter-only|allow-custom|allow-any>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "provider tools-only",
+        completion: "provider tools-only <on|off>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "provider select",
+        completion: "provider select <model_id> <provider_slug>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "provider pin",
+        completion: "provider pin <model_id> <provider_slug>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "bm25 rebuild",
+        completion: "bm25 rebuild",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "bm25 status",
+        completion: "bm25 status",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "bm25 save",
+        completion: "bm25 save <path>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "bm25 load",
+        completion: "bm25 load <path>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "bm25 search",
+        completion: "bm25 search <query> [top_k]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "hybrid",
+        completion: "hybrid <query> [top_k]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "preview",
+        completion: "preview [on|off|toggle]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "edit preview mode",
+        completion: "edit preview mode <code|diff>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "edit preview lines",
+        completion: "edit preview lines <N>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "edit auto",
+        completion: "edit auto <on|off>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "edit approve",
+        completion: "edit approve <request_id>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "edit deny",
+        completion: "edit deny <request_id>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "create approve",
+        completion: "create approve <request_id>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "create deny",
+        completion: "create deny <request_id>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "tool verbosity",
+        completion: "tool verbosity <minimal|normal|verbose|toggle>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "help",
+        completion: "help [topic]",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "search",
+        completion: "search <query>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "update",
+        completion: "update",
+        description: "TODO: add description",
+    },
+];

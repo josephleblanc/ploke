@@ -29,6 +29,7 @@ pub enum Action {
     Backspace,
     Submit,         // Enter in Insert mode
     ExecuteCommand, // Enter in Command mode
+    AcceptCompletion, // Tab in Command mode
 
     // Navigation (list/branches)
     NavigateListUp,
@@ -90,6 +91,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
             (m, KeyCode::Enter) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::ExecuteCommand)
             }
+            (m, KeyCode::Tab) if m.is_empty() => Some(Action::AcceptCompletion),
             (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::Backspace)
             }
