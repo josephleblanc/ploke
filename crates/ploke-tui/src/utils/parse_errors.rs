@@ -4,7 +4,8 @@ use syn_parser::error::SynParserError;
 
 const PARSE_NEXT_STEPS: &str = "Next steps:\n\
 - Run the `cargo` tool call in the crate root (e.g., `cargo check`) to surface syntax or manifest issues.\n\
-- Use `ns_read` to inspect the failing files, then `ns_patch`/`ns_write` to fix them.\n\
+- Use `read_file` to inspect the failing files, then `non_semantic_patch` to fix them.\n\
+- Paths must be absolute or crate-root-relative (e.g., `src/lib.rs`).\n\
 - Re-run parsing/indexing after fixes.";
 
 pub fn format_parse_failure(target_dir: &Path, err: &SynParserError) -> String {

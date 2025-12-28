@@ -651,7 +651,9 @@ pub async fn apply_ns_code_edit_tool(
         let abs_path =
             path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
                 ploke_error::Error::Domain(DomainError::Io {
-                    message: format!("invalid path: {err}"),
+                    message: format!(
+                        "invalid path: {err}. Paths must be absolute or crate-root-relative."
+                    ),
                 })
             })?;
 
@@ -716,23 +718,30 @@ pub async fn apply_ns_code_edit_tool(
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         })?;
 
-        let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
-            String::new(),
-            |mut acc, s| {
+        let unified_diff = patch
+            .hunks
+            .clone()
+            .into_iter()
+            .map(|h| h.to_string())
+            .fold(String::new(), |mut acc, s| {
                 acc.push_str(&s);
                 acc
-            },
-        );
+            });
 
         let apply_patch_result =
             mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
+        let display_path = abs_path
+            .strip_prefix(&crate_root)
+            .unwrap_or(abs_path.as_path())
+            .to_path_buf();
         let per_file = BeforeAfter {
-            file_path: abs_path,
+            file_path: display_path.clone(),
             before: content,
             after: apply_patch_result.new_content,
         };
         let options = editing_cfg.patch_cfg;
         let large_file_policy = editing_cfg.large_file_policy;
+        let file_path_for_registry = file_path.clone();
         let sn_write_data = NsWriteSnippetData {
             id: request_id,
             file_path,
@@ -743,7 +752,45 @@ pub async fn apply_ns_code_edit_tool(
             large_file_policy,
         };
         let edits_ns: Vec<NsWriteSnippetData> = vec![sn_write_data];
-        let files = Vec::new();
+        let files = vec![file_path_for_registry];
+        let display_files: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&crate_root)
+                    .map(|rp| rp.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string())
+            })
+            .collect();
+        let preview_label = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            "diff"
+        } else {
+            "codeblock"
+        };
+        let max_lines = editing_cfg.max_preview_lines;
+        let truncate = |s: &str| {
+            let mut out = String::new();
+            for (i, line) in s.lines().enumerate() {
+                if i >= max_lines {
+                    out.push_str("... [truncated]");
+                    break;
+                }
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str(line);
+            }
+            out
+        };
+        let preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
+            truncate(&unified_diff)
+        } else {
+            format!(
+                "--- {}\nBefore:\n```\n{}\n```\nAfter:\n```\n{}\n```\n",
+                display_path.display(),
+                truncate(&per_file.before),
+                truncate(&per_file.after)
+            )
+        };
         let mut reg = state.proposals.write().await;
         reg.insert(
             request_id,
@@ -771,6 +818,35 @@ pub async fn apply_ns_code_edit_tool(
                 is_semantic: false,
             },
         );
+
+        crate::app_state::handlers::proposals::save_proposals(&state).await;
+
+        let summary = format!(
+            r#"Staged code edits (request_id: {request_id}, call_id: {call_id:?}).
+Files:
+    {0}
+
+Preview (mode={preview_label}, first {1} lines per section):
+{preview_snippet}
+
+Approve:  edit approve {request_id}
+Deny:     edit deny {request_id}{2}"#,
+            display_files.join("\n  "),
+            max_lines,
+            if editing_cfg.auto_confirm_edits {
+                "\n\nAuto-approval enabled: applying now..."
+            } else {
+                ""
+            },
+        );
+        chat::add_msg_immediate(
+            &state,
+            &event_bus,
+            Uuid::new_v4(),
+            summary,
+            MessageKind::SysInfo,
+        )
+        .await;
     }
     Ok(())
 }

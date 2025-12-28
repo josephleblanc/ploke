@@ -54,10 +54,10 @@ pub async fn process_with_rag(
         return;
     }
 
-    // Obtain last user message and the current conversation path as LLM request messages
-    let guard = state.chat.read().await;
-    let (msg_id, user_msg) = {
-        match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
+    // Snapshot chat state up front to avoid holding the lock across awaits.
+    let (msg_id, user_msg, messages) = {
+        let guard = state.chat.read().await;
+        let (msg_id, user_msg) = match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
             Ok(maybe_msg) => match maybe_msg {
                 Some(msg) => msg,
                 None => {
@@ -69,11 +69,12 @@ pub async fn process_with_rag(
                 e.emit_error();
                 return;
             }
-        }
+        };
+        let messages = guard.current_path_as_llm_request_messages();
+        (msg_id, user_msg, messages)
     };
 
     if let Some(rag) = &state.rag {
-        let messages: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
         let budget = &state.budget;
         let (top_k, retrieval_strategy) = {
             let cfg = state.config.read().await;
@@ -98,7 +99,6 @@ pub async fn process_with_rag(
     }
 
     // Conversation-only fallback: prepend a short system notice then send PromptConstructed
-    let convo_only: Vec<RequestMessage> = guard.current_path_as_llm_request_messages();
     let (crate_loaded, first_tip): (bool, bool) = {
         let mut sys = state.system.write().await;
         let loaded = sys.focused_crate().is_some();
@@ -108,17 +108,15 @@ pub async fn process_with_rag(
         }
         (loaded, first)
     };
-    drop(guard);
-
     // If no crate is loaded, surface a user-facing tip in chat
     if !crate_loaded && first_tip {
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;
     }
-    let mut formatted: Vec<RequestMessage> = Vec::with_capacity(convo_only.len() + 1);
+    let mut formatted: Vec<RequestMessage> = Vec::with_capacity(messages.len() + 1);
     formatted.push(RequestMessage::new_system(
         "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.".to_string(),
     ));
-    formatted.extend(convo_only.into_iter());
+    formatted.extend(messages.into_iter());
 
     event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(
         ChatEvt::PromptConstructed {

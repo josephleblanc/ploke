@@ -36,6 +36,7 @@ pub struct ToolError {
     pub expected: Option<String>,
     pub received: Option<String>,
     pub snippet: Option<String>,
+    pub retry_hint: Option<String>,
     #[serde(skip)]
     pub audience: Audience,
     #[serde(skip)]
@@ -51,6 +52,7 @@ impl ToolError {
             expected: None,
             received: None,
             snippet: None,
+            retry_hint: None,
             audience: Audience::System,
             message: message.into(),
         }
@@ -73,6 +75,11 @@ impl ToolError {
 
     pub fn snippet(mut self, snippet: impl Into<String>) -> Self {
         self.snippet = Some(snippet.into());
+        self
+    }
+
+    pub fn retry_hint(mut self, hint: impl Into<String>) -> Self {
+        self.retry_hint = Some(hint.into());
         self
     }
 
@@ -126,6 +133,7 @@ impl ToolError {
             "received": self.received,
             "message": self.message,
             "snippet": self.snippet,
+            "retry_hint": self.retry_hint,
         })
     }
 

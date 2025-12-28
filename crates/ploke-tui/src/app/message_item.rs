@@ -39,7 +39,7 @@ where
         let mut height = h.max(1);
         
         if let Some(payload) = msg.tool_payload() {
-            if matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch) {
+            if should_render_tool_buttons(payload) {
                 height += 1;
             }
         }
@@ -122,7 +122,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
         
         // Render buttons if applicable
         if let Some(payload) = msg.tool_payload() {
-            if matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch) {
+            if should_render_tool_buttons(payload) {
                  let button_y_rel = content_lines as u16;
                  let button_y_abs = y_virtual + button_y_rel;
                  
@@ -175,4 +175,10 @@ fn render_message_content<T: RenderMsg>(msg: &T, verbosity: ToolVerbosity) -> St
         return payload.render(verbosity);
     }
     msg.content().to_string()
+}
+
+fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) -> bool {
+    matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch)
+        && payload.error.is_none()
+        && payload.request_id.is_some()
 }

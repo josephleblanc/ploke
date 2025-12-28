@@ -1,4 +1,6 @@
 use std::sync::Arc;
+#[cfg(feature = "test_harness")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -12,6 +14,24 @@ use crate::error::ErrorSeverity;
 use crate::event_bus::ErrorEvent;
 
 use super::chat::add_msg_immediate;
+
+#[cfg(feature = "test_harness")]
+static INDEXING_TEST_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "test_harness")]
+pub fn set_indexing_test_delay_ms(delay_ms: u64) {
+    INDEXING_TEST_DELAY_MS.store(delay_ms, Ordering::SeqCst);
+}
+
+async fn maybe_delay_indexing_for_test() {
+    #[cfg(feature = "test_harness")]
+    {
+        let delay_ms = INDEXING_TEST_DELAY_MS.load(Ordering::SeqCst);
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+    }
+}
 
 pub async fn index_workspace(
     state: &Arc<AppState>,
@@ -97,6 +117,8 @@ pub async fn index_workspace(
         crate::chat_history::MessageKind::SysInfo,
     )
     .await;
+
+    maybe_delay_indexing_for_test().await;
 
     let event_bus_clone = event_bus.clone();
     let progress_tx = Arc::clone(&event_bus.index_tx);

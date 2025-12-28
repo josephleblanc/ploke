@@ -32,7 +32,7 @@ lazy_static::lazy_static! {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
+                        "file": { "type": "string", "description": "Absolute or crate-root-relative file path." },
                         "diff": { "type": "string", "description": DIFF_DESCR },
                         "reasoning": {
                             "type": "string",
@@ -108,7 +108,7 @@ pub struct ApplyNsPatchResult {
 //  - [ ] add tests
 //      - [ ]  verify that NS_PATCH_PARAMETERS serializes into Value correctly.
 
-use super::{ToolDescr, ToolName};
+use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 impl super::Tool for NsPatch {
     type Output = ApplyNsPatchResult;
     type OwnedParams = NsPatchParamsOwned;
@@ -124,6 +124,20 @@ impl super::Tool for NsPatch {
 
     fn schema() -> &'static serde_json::Value {
         NS_PATCH_PARAMETERS.deref()
+    }
+
+    fn adapt_error(err: ToolInvocationError) -> ToolError {
+        let hint = "Use an absolute path or crate-root-relative file path (e.g., \"Cargo.toml\").";
+        match err {
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Io { message },
+            )) => ToolError::new(ToolName::NsPatch, ToolErrorCode::Io, message).retry_hint(hint),
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Ui { message },
+            )) => ToolError::new(ToolName::NsPatch, ToolErrorCode::InvalidFormat, message)
+                .retry_hint(hint),
+            other => other.into_tool_error(ToolName::NsPatch),
+        }
     }
 
     fn build(ctx: &super::Ctx) -> Self
@@ -208,10 +222,11 @@ mod tests {
             "properties": {
                 "patches": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "file": { "type": "string", "description": "Absolute or workspace-relative file path." },
+                            "file": { "type": "string", "description": "Absolute or crate-root-relative file path." },
                             "diff": { "type": "string", "description": DIFF_DESCR },
                             "reasoning": {
                                 "type": "string",

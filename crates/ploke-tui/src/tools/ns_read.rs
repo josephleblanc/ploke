@@ -7,11 +7,12 @@ use std::{borrow::Cow, ops::Deref as _, path::PathBuf};
 use ploke_core::file_hash::FileHash;
 use serde::{Deserialize, Serialize};
 
-use super::{ToolDescr, ToolName};
-use crate::{tools::ToolResult, utils::path_scoping};
+use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
+use crate::{tools::ToolResult, tools::tool_ui_error, utils::path_scoping};
 use ploke_io::{ReadFileRequest, ReadFileResponse, ReadRange, ReadStrategy};
+use tokio::fs;
 
-const FILE_DESC: &str = "Absolute or workspace-relative file path.";
+const FILE_DESC: &str = "Absolute or crate-root-relative file path.";
 const START_LINE_DESC: &str = "Optional 1-based line from which to start reading.";
 const END_LINE_DESC: &str = "Optional 1-based line at which to stop reading (inclusive).";
 const MAX_BYTES_DESC: &str = "Maximum number of UTF-8 bytes to return. Defaults to editor config.";
@@ -93,6 +94,21 @@ impl super::Tool for NsRead {
         NS_READ_PARAMETERS.deref()
     }
 
+    fn adapt_error(err: ToolInvocationError) -> ToolError {
+        let hint = "Use an absolute path or crate-root-relative file path (e.g., \"src/lib.rs\"). \
+Directories are not valid for read_file.";
+        match err {
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Io { message },
+            )) => ToolError::new(ToolName::NsRead, ToolErrorCode::Io, message).retry_hint(hint),
+            ToolInvocationError::Exec(ploke_error::Error::Domain(
+                ploke_error::DomainError::Ui { message },
+            )) => ToolError::new(ToolName::NsRead, ToolErrorCode::InvalidFormat, message)
+                .retry_hint(hint),
+            other => other.into_tool_error(ToolName::NsRead),
+        }
+    }
+
     fn build(_ctx: &super::Ctx) -> Self
     where
         Self: Sized,
@@ -148,9 +164,20 @@ impl super::Tool for NsRead {
         let abs_path =
             path_scoping::resolve_in_crate_root(&requested_path, &crate_root).map_err(|err| {
                 ploke_error::Error::Domain(DomainError::Io {
-                    message: format!("invalid path: {err}"),
+                    message: format!(
+                        "invalid path: {err}. Paths must be absolute or crate-root-relative."
+                    ),
                 })
             })?;
+
+        if let Ok(meta) = fs::metadata(&abs_path).await {
+            if meta.is_dir() {
+                return Err(tool_ui_error(
+                    "read_file expects a file path, not a directory. \
+Paths must be absolute or crate-root-relative (e.g., \"src/lib.rs\").",
+                ));
+            }
+        }
 
         let byte_cap = max_bytes
             .map(|v| v as usize)

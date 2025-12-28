@@ -1,0 +1,15 @@
+2025-12-28T01:08:58.439621Z  INFO indexing_freeze_test: starting indexing freeze repro test
+2025-12-28T01:08:58.441058Z  INFO indexing_freeze_test: sending index start for tests/fixture_crates/fixture_nodes
+2025-12-28T01:08:58.441084Z  INFO indexing_freeze_test: waiting for marker to land in chat
+2025-12-28T01:08:58.462727Z  INFO indexing_freeze_test: marker observed = true
+2025-12-28T01:08:58.462773Z  INFO indexing_freeze_test: test body completed = true
+2025-12-28T01:11:00.249954Z  INFO indexing_freeze_test: starting indexing freeze repro test
+2025-12-28T01:11:00.251286Z  INFO indexing_freeze_test: sending index start for tests/fixture_crates/fixture_nodes
+2025-12-28T01:11:00.251316Z  INFO indexing_freeze_test: waiting for marker to land in chat
+2025-12-28T01:11:00.272942Z  INFO indexing_freeze_test: marker observed = true
+2025-12-28T01:11:00.272982Z  INFO indexing_freeze_test: test body completed = true
+2025-12-28T01:12:34.318929Z  INFO indexing_freeze_test: starting indexing freeze repro test
+2025-12-28T01:12:34.320404Z  INFO indexing_freeze_test: sending index start for tests/fixture_crates/fixture_nodes
+2025-12-28T01:12:34.320432Z  INFO indexing_freeze_test: waiting for marker to land in chat
+2025-12-28T01:12:34.342092Z  INFO indexing_freeze_test: marker observed = true
+2025-12-28T01:12:34.342139Z  INFO indexing_freeze_test: test body completed = true

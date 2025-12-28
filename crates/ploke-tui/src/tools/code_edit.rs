@@ -134,8 +134,19 @@ pub async fn print_code_edit_results(
     let proposal_opt = { ctx.state.proposals.read().await.get(&request_id).cloned() };
     if let Some(prop) = proposal_opt {
         let crate_root = { ctx.state.system.read().await.focused_crate_root() };
-        let display_files: Vec<String> = prop
-            .files
+        let staged = if matches!(tool_name, ToolName::NsPatch) {
+            prop.edits_ns.len()
+        } else {
+            prop.edits.len()
+        };
+        let files: Vec<std::path::PathBuf> = if !prop.files.is_empty() {
+            prop.files.clone()
+        } else if matches!(tool_name, ToolName::NsPatch) {
+            prop.edits_ns.iter().map(|e| e.file_path.clone()).collect()
+        } else {
+            Vec::new()
+        };
+        let display_files: Vec<String> = files
             .iter()
             .map(|p| {
                 if let Some(root) = crate_root.as_ref() {
@@ -154,7 +165,7 @@ pub async fn print_code_edit_results(
         };
         let structured_result = ApplyCodeEditResult {
             ok: true,
-            staged: prop.edits.len(),
+            staged,
             applied: 0,
             files: display_files,
             preview_mode,

@@ -135,8 +135,12 @@ pub async fn state_manager(
                 workspace,
                 needs_parse,
             } => {
-                handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
-                    .await;
+                let state = Arc::clone(&state);
+                let event_bus = Arc::clone(&event_bus);
+                tokio::spawn(async move {
+                    handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
+                        .await;
+                });
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,
             StateCommand::ResumeIndexing => handlers::indexing::resume(&state).await,
