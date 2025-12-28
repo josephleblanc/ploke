@@ -39,6 +39,7 @@ pub async fn handle_embed_message(
 
             // CRITICAL: Use proper error handling instead of .expect() to prevent panics
             // that would corrupt terminal state via the global panic hook.
+            drop(chat_guard);
             let temp_embed = match state
                 .embedder
                 .generate_embeddings(vec![last_user_msg])
@@ -55,7 +56,6 @@ pub async fn handle_embed_message(
                     return;
                 }
             };
-            drop(chat_guard);
 
             // CRITICAL: Handle empty embedding results gracefully
             let embeddings = match temp_embed.into_iter().next() {

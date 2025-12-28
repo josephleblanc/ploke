@@ -529,10 +529,10 @@ impl ChatHistory {
     }
 
     /// Returns an iterator of Messages on the cached root -> tail path.
-    pub fn iter_path(&self) -> impl Iterator<Item = &Message> {
+    pub fn iter_path(&self) -> impl Iterator<Item = &Message> + Clone + '_ {
         self.path_cache
             .iter()
-            .filter_map(|id| self.messages.get(id))
+            .filter_map(move |id| self.messages.get(id))
     }
 
     /// Fast path length (root -> tail).

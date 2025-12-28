@@ -56,6 +56,11 @@ pub fn try_run_phases_and_collect(
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
 
+    let root_graph = results_with_errors
+        .iter()
+        .filter_map(|pr| pr.as_ref().ok())
+        .find(|pr| pr.crate_context.is_some());
+
     // Collect successful results, panicking if any file failed to parse in Phase 2
     let mut results = Vec::new();
     for result in results_with_errors {

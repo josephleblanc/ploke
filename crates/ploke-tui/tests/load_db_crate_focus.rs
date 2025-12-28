@@ -62,7 +62,7 @@ async fn crate_focus_assigns_absolute_root_from_db() {
         .await
         .expect("set crate focus");
 
-    // Verify crate_focus equals absolute root (no current_dir join)
+    // Verify focused root equals absolute root (no current_dir join)
     let got = state
         .system
         .crate_focus_for_test()

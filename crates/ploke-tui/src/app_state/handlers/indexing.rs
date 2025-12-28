@@ -1,15 +1,37 @@
 use std::sync::Arc;
+#[cfg(feature = "test_harness")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use ploke_io::path_policy::SymlinkPolicy;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::app_state::{AppState, handlers};
 use crate::chat_history::MessageKind;
 use crate::parser::run_parse;
+use crate::utils::parse_errors::format_parse_failure;
 use crate::{AppEvent, EventBus};
+use crate::error::ErrorSeverity;
+use crate::event_bus::ErrorEvent;
 
 use super::chat::add_msg_immediate;
+
+#[cfg(feature = "test_harness")]
+static INDEXING_TEST_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "test_harness")]
+pub fn set_indexing_test_delay_ms(delay_ms: u64) {
+    INDEXING_TEST_DELAY_MS.store(delay_ms, Ordering::SeqCst);
+}
+
+async fn maybe_delay_indexing_for_test() {
+    #[cfg(feature = "test_harness")]
+    {
+        let delay_ms = INDEXING_TEST_DELAY_MS.load(Ordering::SeqCst);
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+    }
+}
 
 pub async fn index_workspace(
     state: &Arc<AppState>,
@@ -28,7 +50,8 @@ pub async fn index_workspace(
     };
     let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
     let target_dir = {
-        match state.system.read().await.crate_focus.clone() {
+        let focused_root = { state.system.read().await.focused_crate_root() };
+        match focused_root {
             Some(path) => path,
             None => match std::env::current_dir() {
                 Ok(current_dir) => {
@@ -45,30 +68,46 @@ pub async fn index_workspace(
     };
 
     // Set crate focus to the resolved target directory and update IO roots
-    {
+    let policy = {
         let mut system_guard = state.system.write().await;
-        system_guard.crate_focus = Some(target_dir.clone());
+        system_guard.set_focus_from_root(target_dir.clone());
+        system_guard.derive_path_policy(&[])
+    };
+    if let Some(policy) = policy {
+        state
+            .io_handle
+            .update_roots(Some(policy.roots), Some(policy.symlink_policy))
+            .await;
     }
-    state
-        .io_handle
-        .update_roots(
-            Some(vec![target_dir.clone()]),
-            Some(SymlinkPolicy::DenyCrossRoot),
-        )
-        .await;
 
     if needs_parse {
         match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
-            Ok(_) => tracing::info!(
-                "Parse of target workspace {} successful",
-                &target_dir.display()
-            ),
+            Ok(_) => {
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_success();
+                }
+                tracing::info!(
+                    "Parse of target workspace {} successful",
+                    &target_dir.display()
+                );
+            }
             Err(e) => {
+                let msg = format_parse_failure(&target_dir, &e);
+                {
+                    let mut system_guard = state.system.write().await;
+                    system_guard.record_parse_failure(target_dir.clone(), msg.clone());
+                }
+                event_bus.send(AppEvent::Error(ErrorEvent {
+                    message: msg,
+                    severity: ErrorSeverity::Error,
+                }));
                 tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e);
                 return;
             }
         }
     }
+    tracing::info!("end parse");
 
     add_msg_immediate(
         state,
@@ -78,6 +117,8 @@ pub async fn index_workspace(
         crate::chat_history::MessageKind::SysInfo,
     )
     .await;
+
+    maybe_delay_indexing_for_test().await;
 
     let event_bus_clone = event_bus.clone();
     let progress_tx = Arc::clone(&event_bus.index_tx);

@@ -3,6 +3,9 @@ use crate::app::types::RenderMsg;
 use crate::app::view::rendering::highlight::{StyledSpan, highlight_message_lines};
 use crate::chat_history::MessageKind;
 use crate::tools::ToolVerbosity;
+use ploke_core::tool_types::ToolName;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 fn base_style_for_kind(kind: MessageKind) -> Style {
     match kind {
@@ -33,7 +36,14 @@ where
         let content = render_message_content(msg, tool_verbosity);
         let lines = highlight_message_lines(&content, base_style_for_kind(msg.kind()), eff_w);
         let h = lines.len() as u16;
-        let height = h.max(1);
+        let mut height = h.max(1);
+        
+        if let Some(payload) = msg.tool_payload() {
+            if should_render_tool_buttons(payload) {
+                height += 1;
+            }
+        }
+        
         heights.push(height);
         total_height = total_height.saturating_add(height);
     }
@@ -50,6 +60,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
     heights: &[u16],
     selected_index: Option<usize>,
     tool_verbosity: ToolVerbosity,
+    confirmation_states: &HashMap<Uuid, bool>,
 ) where
     I: IntoIterator<Item = &'a T>,
 {
@@ -86,6 +97,8 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
         if clamped_offset_y > y_virtual {
             start_line = (clamped_offset_y - y_virtual) as usize;
         }
+        
+        let content_lines = wrapped.len();
         for line in wrapped.into_iter().skip(start_line) {
             let mut spans = Vec::with_capacity(line.len() + 1);
             if is_selected {
@@ -106,7 +119,48 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
                 return;
             }
         }
+        
+        // Render buttons if applicable
+        if let Some(payload) = msg.tool_payload() {
+            if should_render_tool_buttons(payload) {
+                 let button_y_rel = content_lines as u16;
+                 let button_y_abs = y_virtual + button_y_rel;
+                 
+                 if button_y_abs >= clamped_offset_y && y_screen < viewport_height {
+                     let is_yes = confirmation_states.get(&msg.id()).copied().unwrap_or(true);
+                     
+                     let active_style = Style::new().bg(Color::Blue).fg(Color::White).bold();
+                     let inactive_style = Style::new().dim();
+                     
+                     let yes_span = if is_yes { Span::styled("[ Yes ]", active_style) } else { Span::styled("[ Yes ]", inactive_style) };
+                     let no_span = if !is_yes { Span::styled("[ No ]", active_style) } else { Span::styled("[ No ]", inactive_style) };
+                     
+                     let mut spans = Vec::new();
+                     if is_selected {
+                         spans.push(bar.clone());
+                     }
+                     spans.push(yes_span);
+                     spans.push(Span::raw("  "));
+                     spans.push(no_span);
+                     
+                     let para = Paragraph::new(Line::from(spans));
+                     let area = Rect::new(
+                        conversation_area.x + 1,
+                        conversation_area.y + y_screen,
+                        conversation_width,
+                        1,
+                     );
+                     frame.render_widget(para, area);
+                     y_screen = y_screen.saturating_add(1);
+                 }
+            }
+        }
+        
         y_virtual = y_virtual.saturating_add(height);
+        
+        if y_screen >= viewport_height {
+            return;
+        }
     }
 }
 
@@ -121,4 +175,10 @@ fn render_message_content<T: RenderMsg>(msg: &T, verbosity: ToolVerbosity) -> St
         return payload.render(verbosity);
     }
     msg.content().to_string()
+}
+
+fn should_render_tool_buttons(payload: &crate::tools::ToolUiPayload) -> bool {
+    matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch)
+        && payload.error.is_none()
+        && payload.request_id.is_some()
 }

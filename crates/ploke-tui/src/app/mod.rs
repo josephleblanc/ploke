@@ -19,6 +19,7 @@ pub mod utils;
 pub mod view;
 
 use super::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -43,6 +44,7 @@ use crossterm::event::{
 use crossterm::execute;
 use itertools::Itertools;
 use ploke_core::rag_types::ContextPart;
+use ploke_core::tool_types::ToolName;
 // use message_item::{measure_messages, render_messages}; // now handled by ConversationView
 use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
@@ -124,6 +126,7 @@ pub struct App {
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
     tool_verbosity: ToolVerbosity,
+    confirmation_states: HashMap<Uuid, bool>,
 }
 
 impl App {
@@ -160,6 +163,7 @@ impl App {
             input_history: Vec::new(),
             input_history_pos: None,
             tool_verbosity,
+            confirmation_states: HashMap::new(),
         }
     }
 
@@ -441,7 +445,7 @@ impl App {
         current_id: Uuid,
         current_token_totals: Option<ContextTokens>,
     ) where
-        I1: IntoIterator<Item = &'a T>,
+        I1: IntoIterator<Item = &'a T> + Clone,
         I2: IntoIterator<Item = &'a T>,
     {
         // Always show the currently selected model in the top-right
@@ -522,6 +526,7 @@ impl App {
             chat_area,
             selected_index_opt,
             self.tool_verbosity,
+            &self.confirmation_states,
         );
 
         // Right-side context preview (placeholder until wired to Rag events)
@@ -884,16 +889,38 @@ impl App {
                 self.pending_char = None;
             }
             Action::BranchPrev => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateBranch {
-                    direction: Previous,
-                });
+                let mut handled = false;
+                if let Some(selected) = self.list.selected() {
+                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
+                        self.confirmation_states.insert(*msg_id, true);
+                        handled = true;
+                        self.needs_redraw = true;
+                    }
+                }
+
+                if !handled {
+                    self.conversation.set_free_scrolling(false);
+                    self.pending_char = None;
+                    self.send_cmd(StateCommand::NavigateBranch {
+                        direction: Previous,
+                    });
+                }
             }
             Action::BranchNext => {
-                self.conversation.set_free_scrolling(false);
-                self.pending_char = None;
-                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+                let mut handled = false;
+                if let Some(selected) = self.list.selected() {
+                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
+                        self.confirmation_states.insert(*msg_id, false);
+                        handled = true;
+                        self.needs_redraw = true;
+                    }
+                }
+
+                if !handled {
+                    self.conversation.set_free_scrolling(false);
+                    self.pending_char = None;
+                    self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+                }
             }
             Action::ScrollLineDown => {
                 self.conversation.scroll_line_down();
@@ -966,6 +993,38 @@ impl App {
                 self.input_view.scroll_next();
             }
             Action::OpenContextSearch => todo!(),
+            Action::TriggerSelection => {
+                if let Some(selected) = self.list.selected() {
+                    let should_trigger = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            let guard = self.state.chat.0.read().await;
+                            let path = guard.get_full_path();
+                            if let Some(msg) = path.get(selected) {
+                                if let Some(payload) = msg.tool_payload() {
+                                    if let Some(req_id) = payload.request_id {
+                                        return Some(req_id);
+                                    }
+                                }
+                            }
+                            None
+                        })
+                    });
+
+                    if let Some(request_id) = should_trigger {
+                        let is_yes = self
+                            .confirmation_states
+                            .get(&self.conversation.interactive_tools.get(&selected).copied().unwrap_or_default())
+                            .copied()
+                            .unwrap_or(true);
+
+                        if is_yes {
+                            self.send_cmd(StateCommand::ApproveEdits { request_id });
+                        } else {
+                            self.send_cmd(StateCommand::DenyEdits { request_id });
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -38,7 +38,7 @@ use crate::llm::manager::loop_error::{
     RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error, classify_finish_reason,
     classify_llm_error, render_error_view,
 };
-use crate::tools::{ToolUiPayload, allowed_tool_names};
+use crate::tools::{ToolErrorWire, ToolUiPayload, allowed_tool_names};
 use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
@@ -723,8 +723,13 @@ pub async fn run_chat_session<R: Router>(
                             commit_phase = CommitPhase::ToolResultsCommitted;
                         }
                         Err(tool_error) => {
-                            let content =
-                                json!({ "ok": false, "error": tool_error.error }).to_string();
+                            let content = if let Some(wire) = ToolErrorWire::parse(&tool_error.error)
+                            {
+                                serde_json::to_string(&wire.llm)
+                                    .unwrap_or_else(|_| tool_error.error.clone())
+                            } else {
+                                json!({ "ok": false, "error": tool_error.error }).to_string()
+                            };
                             req.core
                                 .messages
                                 .push(RequestMessage::new_tool(content.clone(), call_id.clone()));

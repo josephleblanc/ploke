@@ -135,8 +135,12 @@ pub async fn state_manager(
                 workspace,
                 needs_parse,
             } => {
-                handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
-                    .await;
+                let state = Arc::clone(&state);
+                let event_bus = Arc::clone(&event_bus);
+                tokio::spawn(async move {
+                    handlers::indexing::index_workspace(&state, &event_bus, workspace, needs_parse)
+                        .await;
+                });
             }
             StateCommand::PauseIndexing => handlers::indexing::pause(&state).await,
             StateCommand::ResumeIndexing => handlers::indexing::resume(&state).await,
@@ -148,6 +152,19 @@ pub async fn state_manager(
 
             StateCommand::UpdateDatabase => {
                 handlers::db::update_database(&state, &event_bus).await;
+            }
+            StateCommand::RecordIndexCompleted => {
+                let mut sys = state.system.write().await;
+                if let Some(crate_id) = sys.crate_focus {
+                    let version = sys.record_index_complete(crate_id);
+                    tracing::debug!(
+                        "Indexing complete; crate_id={:?} version={}",
+                        crate_id,
+                        version
+                    );
+                } else {
+                    tracing::warn!("Indexing completed but no crate focus set");
+                }
             }
 
             StateCommand::EmbedMessage {

@@ -7,7 +7,6 @@
 use std::time::Duration;
 
 use ploke_core::ArcStr;
-use serde::Serialize;
 use tracing::info;
 use tracing::warn;
 
@@ -16,7 +15,6 @@ use crate::HTTP_TITLE;
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
 use crate::response::ToolCall;
-use crate::router_only::ApiRoute;
 use crate::router_only::{ChatCompRequest, Router};
 
 use super::LlmError;

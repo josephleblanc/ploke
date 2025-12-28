@@ -32,7 +32,7 @@ async fn code_item_edges_handles_trailing_module_separators() {
         .expect("fixture db")
         .clone();
 
-    // Build minimal AppState with crate_focus pointing at the fixture crate
+    // Build minimal AppState with focused crate pointing at the fixture crate
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(

@@ -754,7 +754,7 @@ async fn test_tool_result_structure() {
         let proposal = proposals.get(&request_id).expect("Proposal should exist");
 
         // Simulate the tool result construction logic from apply_code_edit_tool
-        let crate_root = harness.state.system.read().await.crate_focus.clone();
+        let crate_root = harness.state.system.read().await.focused_crate_root();
         let display_files: Vec<String> = proposal
             .files
             .iter()

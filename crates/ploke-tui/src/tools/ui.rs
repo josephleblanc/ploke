@@ -23,10 +23,13 @@ pub struct ToolUiField {
     pub value: ArcStr,
 }
 
+use uuid::Uuid;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolUiPayload {
     pub tool: ToolName,
     pub call_id: ArcStr,
+    pub request_id: Option<Uuid>,
     pub summary: String,
     pub fields: Vec<ToolUiField>,
     pub details: Option<String>,
@@ -40,6 +43,7 @@ impl ToolUiPayload {
         Self {
             tool,
             call_id,
+            request_id: None,
             summary: summary.into(),
             fields: Vec::new(),
             details: None,
@@ -47,6 +51,11 @@ impl ToolUiPayload {
             error: None,
             error_code: None,
         }
+    }
+
+    pub fn with_request_id(mut self, request_id: Uuid) -> Self {
+        self.request_id = Some(request_id);
+        self
     }
 
     pub fn with_field(mut self, name: impl Into<ArcStr>, value: impl Into<ArcStr>) -> Self {

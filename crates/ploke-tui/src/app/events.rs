@@ -87,6 +87,7 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
         AppEvent::IndexingCompleted => {
             info!("Indexing Succeeded!");
             app.indexing_state = None;
+            app.send_cmd(StateCommand::RecordIndexCompleted);
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg: String::from("Indexing Succeeded"),
                 kind: MessageKind::SysInfo,

@@ -159,7 +159,7 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
     //     call_id: ctx.call_id.clone(),
     // };
     let name = tool_call.function.name;
-    let args = tool_call.function.arguments;
+    let args = sanitize_tool_args(&tool_call.function.arguments);
     tracing::debug!(target: DEBUG_TOOLS,
         request_id = %ctx.request_id,
         call_id = ?tool_call.call_id,
@@ -399,6 +399,21 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
             cargo::CargoTool::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
+    }
+}
+
+const TOOL_ARG_SUFFIXES: [&str; 1] = ["<|tool_call_end|>"];
+
+fn sanitize_tool_args(args: &str) -> String {
+    let mut cutoff: Option<usize> = None;
+    for token in TOOL_ARG_SUFFIXES {
+        if let Some(idx) = args.find(token) {
+            cutoff = Some(cutoff.map_or(idx, |current| current.min(idx)));
+        }
+    }
+    match cutoff {
+        Some(idx) => args[..idx].trim().to_string(),
+        None => args.trim().to_string(),
     }
 }
 

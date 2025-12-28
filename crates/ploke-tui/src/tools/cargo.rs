@@ -438,8 +438,7 @@ impl Tool for CargoTool {
             .system
             .read()
             .await
-            .crate_focus
-            .clone()
+            .focused_crate_root()
             .ok_or_else(|| {
                 tool_ui_error("No crate is currently focused; load a workspace first.")
             })?;

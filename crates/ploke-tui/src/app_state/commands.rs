@@ -116,6 +116,8 @@ pub enum StateCommand {
     ResumeIndexing,
     CancelIndexing,
     UpdateDatabase,
+    /// Record indexing completion in SystemState (version + invalidations).
+    RecordIndexCompleted,
     EmbedMessage {
         new_msg_id: Uuid,
         completion_rx: oneshot::Receiver<()>,
@@ -248,6 +250,7 @@ impl StateCommand {
             CancelIndexing => "CancelIndexing",
             AddMessageImmediate { .. } => "AddMessageImmediate",
             UpdateDatabase => "UpdateDatabase",
+            RecordIndexCompleted => "RecordIndexCompleted",
             EmbedMessage { .. } => "EmbedMessage",
             SwitchModel { .. } => "SwitchModel",
             WriteQuery { .. } => "WriteQuery",

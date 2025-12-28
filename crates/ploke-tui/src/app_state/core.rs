@@ -1,7 +1,9 @@
+use chrono::Utc;
 use ploke_core::file_hash::LargeFilePolicy;
-use ploke_core::{ArcStr, TrackingHash};
+use ploke_core::{ArcStr, CrateId, CrateInfo, TrackingHash, WorkspaceRoots};
+use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -17,6 +19,7 @@ use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
 use ploke_embed::indexer::{IndexerCommand, IndexerTask, IndexingStatus};
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_io::path_policy::{PathPolicy, SymlinkPolicy};
 use ploke_io::{IoManagerHandle, NsWriteSnippetData, PatchApplyOptions};
 use ploke_rag::{RagService, TokenBudget};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -91,12 +94,22 @@ impl SystemState {
     #[cfg(feature = "test_harness")]
     pub async fn set_crate_focus_for_test(&self, p: std::path::PathBuf) {
         let mut guard = self.0.write().await;
-        guard.crate_focus = Some(p);
+        guard.set_focus_from_root(p);
     }
     #[cfg(feature = "test_harness")]
     pub async fn crate_focus_for_test(&self) -> Option<std::path::PathBuf> {
         let guard = self.0.read().await;
-        guard.crate_focus.clone()
+        guard.focused_crate_root()
+    }
+
+    pub async fn is_stale_err(&self) -> Result<(), ploke_error::Error> {
+        if self.read().await.focused_crate_stale() == Some(true) {
+            Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "Focused crate index is stale; reindex to query code items.".to_string(),
+            }))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -352,15 +365,152 @@ impl AppState {
 
 #[derive(Debug, Default)]
 pub struct SystemStatus {
-    pub(crate) crate_focus: Option<PathBuf>,
+    pub(crate) workspace_roots: WorkspaceRoots,
+    pub(crate) crate_focus: Option<CrateId>,
+    pub(crate) crate_versions: HashMap<CrateId, u64>,
+    pub(crate) crate_deps: HashMap<CrateId, Vec<CrateId>>,
+    pub(crate) invalidated_crates: HashSet<CrateId>,
     pub(crate) no_workspace_tip_shown: bool,
+    pub(crate) last_parse_failure: Option<ParseFailure>,
+    pub(crate) last_parse_success_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseFailure {
+    pub target_dir: PathBuf,
+    pub message: String,
+    pub occurred_at_ms: i64,
 }
 
 impl SystemStatus {
     pub fn new(crate_focus: Option<PathBuf>) -> Self {
+        let mut workspace_roots = WorkspaceRoots::default();
+        let mut crate_versions = HashMap::new();
+        let crate_focus = crate_focus.map(|path| {
+            let info = CrateInfo::from_root_path(path);
+            let id = info.id;
+            workspace_roots.upsert(info);
+            crate_versions.entry(id).or_insert(0);
+            id
+        });
         Self {
+            workspace_roots,
             crate_focus,
+            crate_versions,
+            crate_deps: HashMap::new(),
+            invalidated_crates: HashSet::new(),
             no_workspace_tip_shown: false,
+            last_parse_failure: None,
+            last_parse_success_ms: None,
         }
+    }
+
+    pub fn focused_crate(&self) -> Option<&CrateInfo> {
+        self.crate_focus
+            .and_then(|id| self.workspace_roots.find_by_id(id))
+    }
+
+    pub fn focused_crate_root(&self) -> Option<PathBuf> {
+        self.focused_crate().map(|info| info.root_path.clone())
+    }
+
+    pub fn focused_crate_name(&self) -> Option<&str> {
+        self.focused_crate().map(|info| info.name.as_str())
+    }
+
+    pub fn set_focus_from_root(&mut self, root: PathBuf) -> CrateId {
+        let info = CrateInfo::from_root_path(root);
+        let id = info.id;
+        self.workspace_roots.upsert(info);
+        self.crate_versions.entry(id).or_insert(0);
+        self.crate_focus = Some(id);
+        id
+    }
+
+    pub fn set_crate_deps(&mut self, crate_id: CrateId, deps: Vec<CrateId>) {
+        self.crate_deps.insert(crate_id, deps);
+    }
+
+    pub fn record_index_complete(&mut self, crate_id: CrateId) -> u64 {
+        let dependents = self.dependents_of(crate_id);
+        let version = self
+            .crate_versions
+            .entry(crate_id)
+            .and_modify(|v| *v += 1)
+            .or_insert(1);
+        self.invalidated_crates.remove(&crate_id);
+        for dependent in dependents {
+            self.invalidated_crates.insert(dependent);
+        }
+        *version
+    }
+
+    pub fn focused_crate_stale(&self) -> Option<bool> {
+        let crate_id = self.crate_focus?;
+        Some(self.invalidated_crates.contains(&crate_id))
+    }
+
+    pub fn record_parse_failure(&mut self, target_dir: PathBuf, message: String) {
+        self.last_parse_failure = Some(ParseFailure {
+            target_dir,
+            message,
+            occurred_at_ms: Utc::now().timestamp_millis(),
+        });
+    }
+
+    pub fn record_parse_success(&mut self) {
+        self.last_parse_failure = None;
+        self.last_parse_success_ms = Some(Utc::now().timestamp_millis());
+    }
+
+    pub fn last_parse_failure(&self) -> Option<&ParseFailure> {
+        self.last_parse_failure.as_ref()
+    }
+
+    fn dependents_of(&self, changed: CrateId) -> Vec<CrateId> {
+        self.crate_deps
+            .iter()
+            .filter_map(|(crate_id, deps)| {
+                if deps.contains(&changed) {
+                    Some(*crate_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn derive_path_policy(&self, extra_read_roots: &[PathBuf]) -> Option<PathPolicy> {
+        let focus_root = self.focused_crate_root()?;
+        let mut roots = Vec::with_capacity(1 + extra_read_roots.len());
+        roots.push(focus_root);
+        roots.extend(extra_read_roots.iter().cloned());
+        Some(PathPolicy {
+            roots,
+            symlink_policy: SymlinkPolicy::DenyCrossRoot,
+            require_absolute: true,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemStatus;
+    use std::path::PathBuf;
+
+    #[test]
+    fn record_index_complete_marks_dependents_stale() {
+        let mut status = SystemStatus::default();
+        let root_a = std::env::temp_dir().join("ploke_test_crate_a");
+        let root_b = std::env::temp_dir().join("ploke_test_crate_b");
+        let id_a = status.set_focus_from_root(root_a);
+        let id_b = status.set_focus_from_root(root_b);
+
+        status.set_crate_deps(id_b, vec![id_a]);
+
+        let version = status.record_index_complete(id_a);
+        assert_eq!(version, 1);
+        assert!(status.invalidated_crates.contains(&id_b));
+        assert!(!status.invalidated_crates.contains(&id_a));
     }
 }

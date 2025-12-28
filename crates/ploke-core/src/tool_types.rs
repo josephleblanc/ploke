@@ -147,7 +147,7 @@ pub enum ToolDescr {
     )]
     NsPatch,
     #[serde(
-        rename = "Read workspace files before editing. Supports optional line ranges and truncation limits to keep responses concise."
+        rename = "Read focused-crate files before editing. Paths must be absolute or crate-root-relative. Supports optional line ranges and truncation limits to keep responses concise."
     )]
     NsRead,
     #[serde(

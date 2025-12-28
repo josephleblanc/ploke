@@ -1,5 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use std::collections::HashMap;
+use uuid::Uuid;
+use ploke_core::tool_types::ToolName;
 
 use crate::app::AppEvent;
 use crate::app::message_item::{measure_messages, render_messages};
@@ -16,6 +19,7 @@ pub struct ConversationView {
     free_scrolling: bool,
     last_viewport_height: u16,
     last_chat_area: Rect,
+    pub interactive_tools: HashMap<usize, Uuid>,
 }
 
 impl ConversationView {
@@ -28,15 +32,25 @@ impl ConversationView {
         selected_index_opt: Option<usize>,
         tool_verbosity: crate::tools::ToolVerbosity,
     ) where
-        I: IntoIterator<Item = &'a T>,
+        I: IntoIterator<Item = &'a T> + Clone,
     {
         self.last_viewport_height = viewport_height;
 
         // 1) Measure
         let (total_height, heights) =
-            measure_messages(path, conversation_width, tool_verbosity, selected_index_opt);
+            measure_messages(path.clone(), conversation_width, tool_verbosity, selected_index_opt);
         self.content_height = total_height;
         self.item_heights = heights;
+        
+        // Populate interactive tools map
+        self.interactive_tools.clear();
+        for (i, msg) in path.into_iter().enumerate() {
+            if let Some(payload) = msg.tool_payload() {
+                if matches!(payload.tool, ToolName::ApplyCodeEdit | ToolName::NsPatch) {
+                    self.interactive_tools.insert(i, msg.id());
+                }
+            }
+        }
 
         // 2) Decide/adjust offset using current metrics
         let max_offset = self.content_height.saturating_sub(viewport_height);
@@ -101,6 +115,7 @@ impl ConversationView {
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
         tool_verbosity: crate::tools::ToolVerbosity,
+        confirmation_states: &HashMap<Uuid, bool>,
     ) where
         I: IntoIterator<Item = &'a T>,
     {
@@ -113,6 +128,7 @@ impl ConversationView {
             &self.item_heights,
             selected_index_opt,
             tool_verbosity,
+            confirmation_states,
         );
     }
 
