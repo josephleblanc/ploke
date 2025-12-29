@@ -155,6 +155,7 @@ fn error_code_label(code: ToolErrorCode) -> &'static str {
         ToolErrorCode::MalformedDiff => "malformed_diff",
         ToolErrorCode::InvalidFormat => "invalid_format",
         ToolErrorCode::Io => "io",
+        ToolErrorCode::Timeout => "timeout",
         ToolErrorCode::Internal => "internal",
     }
 }

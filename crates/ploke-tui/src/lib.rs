@@ -264,6 +264,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
     tokio::spawn(llm::manager::llm_manager(
+        event_bus.subscribe(EventPriority::Realtime),
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem

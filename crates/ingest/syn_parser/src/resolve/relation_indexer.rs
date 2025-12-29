@@ -113,7 +113,8 @@ pub trait RelationIndexer {
     /// The method never panics and does not allocate.
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
+    /// // Uses fixture graphs available only in the test harness.
     /// let parsed_graphs = (*PARSED_FIXTURE_CRATE_NODES).clone();
     /// let merged: ParsedCodeGraph = ParsedCodeGraph::merge_new(parsed_graphs).expect("Error parsing static graph");
     /// let tree = merged

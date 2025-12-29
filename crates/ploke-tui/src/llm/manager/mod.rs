@@ -111,7 +111,8 @@ struct EvtKey {
 }
 
 pub async fn llm_manager(
-    mut event_rx: broadcast::Receiver<AppEvent>,
+    mut rt_rx: broadcast::Receiver<AppEvent>,
+    mut bg_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     event_bus: Arc<EventBus>,
@@ -120,117 +121,173 @@ pub async fn llm_manager(
     let client = Client::new();
     let mut pending_requests: HashMap<EvtKey, ChatEvt> = HashMap::default();
     let mut ready_contexts: HashMap<EvtKey, ChatEvt> = HashMap::default();
+    let mut rt_closed = false;
+    let mut bg_closed = false;
 
     // Enters loop every time there is a new event.
     //  - Currently only receives:
     //      - AppEvent::Llm(Event::Request)
     //      - AppEvent::Llm(Event::PromptConstructed)
-    while let Ok(event) = event_rx.recv().await {
-        tracing::info!(?event);
-        match event {
-            AppEvent::Llm(LlmEvent::ChatCompletion(
-                request @ ChatEvt::Request {
-                    parent_id,
-                    request_msg_id,
-                    ..
-                },
-            )) => {
-                // pairing happens when PromptConstructed arrives for the same request_id.
-                let event_key = EvtKey { parent_id };
-                pending_requests.insert(event_key, request);
-            }
-            AppEvent::Llm(LlmEvent::ChatCompletion(
-                context @ ChatEvt::PromptConstructed { parent_id, .. },
-            )) => {
-                let event_key = EvtKey { parent_id };
-                if !pending_requests.contains_key(&event_key) {
-                    // no match, keep waiting
-                    ready_contexts.insert(event_key, context);
-                } else {
-                    // match found, process request
-                    let client_clone = client.clone();
-                    let req = pending_requests
-                        .remove(&event_key)
-                        .expect("Event key-val must exist");
-                    tokio::spawn(process_llm_request(
-                        req,
-                        Arc::clone(&state),
-                        cmd_tx.clone(),
-                        client_clone,
-                        event_bus.clone(),
-                        context,
-                    ));
+    loop {
+        tokio::select! {
+            evt = rt_rx.recv(), if !rt_closed => {
+                match evt {
+                    Ok(event) => handle_event(
+                        event,
+                        &client,
+                        &state,
+                        &cmd_tx,
+                        &event_bus,
+                        &mut pending_requests,
+                        &mut ready_contexts,
+                    ),
+                    Err(broadcast::error::RecvError::Closed) => {
+                        rt_closed = true;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(target: DEBUG_TOOLS, lagged = n, "LLM manager realtime channel lagged");
+                    }
                 }
             }
-            AppEvent::System(SystemEvent::ToolCallRequested {
-                tool_call,
+            evt = bg_rx.recv(), if !bg_closed => {
+                match evt {
+                    Ok(event) => handle_event(
+                        event,
+                        &client,
+                        &state,
+                        &cmd_tx,
+                        &event_bus,
+                        &mut pending_requests,
+                        &mut ready_contexts,
+                    ),
+                    Err(broadcast::error::RecvError::Closed) => {
+                        bg_closed = true;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(target: DEBUG_TOOLS, lagged = n, "LLM manager background channel lagged");
+                    }
+                }
+            }
+        }
+        if rt_closed && bg_closed {
+            tracing::warn!("LLM manager event channels closed; shutting down");
+            break;
+        }
+    }
+}
+
+fn handle_event(
+    event: AppEvent,
+    client: &Client,
+    state: &Arc<AppState>,
+    cmd_tx: &mpsc::Sender<StateCommand>,
+    event_bus: &Arc<EventBus>,
+    pending_requests: &mut HashMap<EvtKey, ChatEvt>,
+    ready_contexts: &mut HashMap<EvtKey, ChatEvt>,
+) {
+    tracing::info!(?event);
+    match event {
+        AppEvent::Llm(LlmEvent::ChatCompletion(
+            request @ ChatEvt::Request {
+                parent_id,
+                request_msg_id,
+                ..
+            },
+        )) => {
+            // pairing happens when PromptConstructed arrives for the same request_id.
+            let event_key = EvtKey { parent_id };
+            pending_requests.insert(event_key, request);
+        }
+        AppEvent::Llm(LlmEvent::ChatCompletion(
+            context @ ChatEvt::PromptConstructed { parent_id, .. },
+        )) => {
+            let event_key = EvtKey { parent_id };
+            if !pending_requests.contains_key(&event_key) {
+                // no match, keep waiting
+                ready_contexts.insert(event_key, context);
+            } else {
+                // match found, process request
+                let client_clone = client.clone();
+                let req = pending_requests
+                    .remove(&event_key)
+                    .expect("Event key-val must exist");
+                tokio::spawn(process_llm_request(
+                    req,
+                    Arc::clone(state),
+                    cmd_tx.clone(),
+                    client_clone,
+                    event_bus.clone(),
+                    context,
+                ));
+            }
+        }
+        AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }) => {
+            tracing::debug!(target: DEBUG_TOOLS,
+                request_id = %request_id,
+                parent_id = %parent_id,
+                call_id = ?tool_call.call_id,
+                tool = ?tool_call.function.name,
+                "Dispatching ToolEvent::Requested in LLM manager"
+            );
+            let state = Arc::clone(state);
+            let event_bus = Arc::clone(event_bus);
+
+            let ctx = crate::tools::Ctx {
+                state,
+                event_bus,
                 request_id,
                 parent_id,
-            }) => {
-                tracing::debug!(target: DEBUG_TOOLS,
-                    request_id = %request_id,
-                    parent_id = %parent_id,
-                    call_id = ?tool_call.call_id,
-                    tool = ?tool_call.function.name,
-                    "Dispatching ToolEvent::Requested in LLM manager"
-                );
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-
-                let ctx = crate::tools::Ctx {
-                    state,
-                    event_bus,
-                    request_id,
-                    parent_id,
-                    call_id: tool_call.call_id.clone(),
-                };
-                tokio::task::spawn(tools::process_tool(tool_call, ctx));
-            }
-            AppEvent::Llm(LlmEvent::Endpoint(endpoint::Event::Request {
-                model_key,
-                variant,
-                router,
-            })) => {
-                use ploke_llm::handle_endpoint_request_async;
-                let event_bus_clone = event_bus.clone();
-                let client_clone = client.clone();
-                tokio::task::spawn(async move {
-                    let response =
-                        handle_endpoint_request_async(client_clone, model_key, variant).await;
-                    event_bus_clone.send(AppEvent::Llm(LlmEvent::Endpoint(response)));
-                });
-            }
-            AppEvent::Llm(LlmEvent::Models(models::Event::Request { router })) => {
-                use std::str::FromStr;
-                // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
-                // the typed version for that specific router before making the request.
-                // + make model_id typed as ModelKey
-                let state = Arc::clone(&state);
-                let event_bus = Arc::clone(&event_bus);
-                let client = client.clone();
-
-                tokio::task::spawn(async move {
-                    use models::Event;
-                    let result = OpenRouter::fetch_models(&client)
-                        .await
-                        .map(Arc::new)
-                        .inspect_err(|e| {
-                            let msg = format!("Failed to fetch models from API: {}", e);
-                            tracing::warn!(msg);
-                            // Unblock the UI even on error with an empty provider list.
-                            event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
-                                models: None,
-                                search_keyword: None,
-                            })));
-                        });
-                    event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
-                        models: result.ok(),
-                        search_keyword: None,
-                    })));
-                });
-            }
-            _ => {}
+                call_id: tool_call.call_id.clone(),
+            };
+            tokio::task::spawn(tools::process_tool(tool_call, ctx));
         }
+        AppEvent::Llm(LlmEvent::Endpoint(endpoint::Event::Request {
+            model_key,
+            variant,
+            router,
+        })) => {
+            use ploke_llm::handle_endpoint_request_async;
+            let event_bus_clone = event_bus.clone();
+            let client_clone = client.clone();
+            tokio::task::spawn(async move {
+                let response = handle_endpoint_request_async(client_clone, model_key, variant).await;
+                event_bus_clone.send(AppEvent::Llm(LlmEvent::Endpoint(response)));
+            });
+        }
+        AppEvent::Llm(LlmEvent::Models(models::Event::Request { router })) => {
+            use std::str::FromStr;
+            // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
+            // the typed version for that specific router before making the request.
+            // + make model_id typed as ModelKey
+            let state = Arc::clone(state);
+            let event_bus = Arc::clone(event_bus);
+            let client = client.clone();
+
+            tokio::task::spawn(async move {
+                use models::Event;
+                let result = OpenRouter::fetch_models(&client)
+                    .await
+                    .map(Arc::new)
+                    .inspect_err(|e| {
+                        let msg = format!("Failed to fetch models from API: {}", e);
+                        tracing::warn!(msg);
+                        // Unblock the UI even on error with an empty provider list.
+                        event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
+                            models: None,
+                            search_keyword: None,
+                        })));
+                    });
+                event_bus.send(AppEvent::Llm(LlmEvent::Models(Event::Response {
+                    models: result.ok(),
+                    search_keyword: None,
+                })));
+            });
+        }
+        _ => {}
     }
 }
 
@@ -260,13 +317,13 @@ pub async fn process_llm_request(
         } // Not a request, do nothing
     };
 
-    let (messages, context_tokens) = match context {
+    let (mut messages, mut context_tokens) = match context {
         ChatEvt::PromptConstructed {
             parent_id,
             formatted_prompt,
         } => {
             let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
-            let tokens = formatted_prompt
+            let tokens: usize = formatted_prompt
                 .iter()
                 .map(|m| tokenizer.count(&m.content))
                 .sum();
@@ -277,6 +334,21 @@ pub async fn process_llm_request(
             return;
         }
     };
+
+    if let Some(focus_hint) = {
+        let sys = state.system.read().await;
+        sys.focused_crate().map(|info| {
+            format!(
+                "Focused crate: {} at {}. Workspace-wide graph is not loaded; tools operate on the focused crate. Cargo runs against the focused manifest unless a workspace package is specified.",
+                info.name.as_str(),
+                info.root_path.display()
+            )
+        })
+    } {
+        messages.insert(0, RequestMessage::new_system(focus_hint.clone()));
+        let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
+        context_tokens = context_tokens.saturating_add(tokenizer.count(&focus_hint));
+    }
 
     let active_model = {
         let cfg = state.config.read().await;

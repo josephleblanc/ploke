@@ -38,7 +38,7 @@ use crate::llm::manager::loop_error::{
     RetryStrategy, SessionOutcome, Verbosity, build_unknown_tool_error, classify_finish_reason,
     classify_llm_error, render_error_view,
 };
-use crate::tools::{ToolErrorWire, ToolUiPayload, allowed_tool_names};
+use crate::tools::{ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload, allowed_tool_names};
 use ploke_llm::LlmError;
 
 const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
@@ -1226,6 +1226,9 @@ pub async fn execute_tools_via_event_bus(
         waiters.insert(call.call_id.clone(), tx);
 
         let call_id = call.call_id.clone();
+        let call_id_for_error = call_id.clone();
+        let tool_name = call.function.name;
+        let timeout_secs = policy_timeout.as_secs();
         handles.push(async move {
             // timeout wrapper per call
             match tokio::time::timeout(policy_timeout, rx_one).await {
@@ -1239,9 +1242,20 @@ pub async fn execute_tools_via_event_bus(
                 ),
                 Err(_) => (
                     call_id,
-                    Err(ToolCallUiError {
-                        error: "Timed out waiting for tool result".into(),
-                        ui_payload: None,
+                    Err({
+                        let message = format!(
+                            "Timed out waiting for tool result after {timeout_secs}s"
+                        );
+                        let tool_error = ToolError::new(tool_name, ToolErrorCode::Timeout, message)
+                            .retry_hint(
+                                "Increase tool_call_timeout_secs or use a smaller command",
+                            );
+                        let ui_payload =
+                            Some(ToolUiPayload::from_error(call_id_for_error, &tool_error));
+                        ToolCallUiError {
+                            error: tool_error.to_wire_string(),
+                            ui_payload,
+                        }
                     }),
                 ),
             }

@@ -13,9 +13,9 @@
 //! accessing the resulting code graph and module tree for analysis.
 //!
 //! ```no_run
-//! use syn_parser::{run_phases_and_merge, ParserOutput, error::SynParserError};
+//! use syn_parser::{run_phases_and_merge, GraphAccess, ParserOutput};
 //!
-//! fn main() -> Result<(), SynParserError> {
+//! fn main() -> Result<(), ploke_error::Error> {
 //!     // The `fixture_name` should correspond to a directory in the `tests/fixtures`
 //!     // directory of the `ploke` workspace.
 //!     let fixture_name = "simple_crate";
