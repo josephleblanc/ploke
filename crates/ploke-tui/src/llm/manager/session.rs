@@ -931,6 +931,21 @@ pub async fn run_chat_session<R: Router>(
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    match state_cmd_tx.send(StateCommand::DecrementChatTtl).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                target: "chat-loop",
+                                "Decremented chat TTL after successful completion"
+                            );
+                        }
+                        Err(err) => {
+                        tracing::warn!(
+                            target: "chat-loop",
+                            error = %err,
+                            "Failed to decrement chat TTL after successful completion"
+                        );
+                        }
+                    }
                     return report;
                 }
                 Err(err) => {

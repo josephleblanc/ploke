@@ -243,6 +243,11 @@ impl InputView {
         self.vscroll = self.vscroll.saturating_add(1);
         self.scrollstate = self.scrollstate.position(self.vscroll as usize);
     }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub fn test_state(&self) -> (u16, u16, u16) {
+        (self.cursor_row, self.cursor_col, self.vscroll)
+    }
 }
 
 impl Default for InputView {

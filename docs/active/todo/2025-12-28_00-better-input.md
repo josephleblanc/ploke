@@ -21,3 +21,6 @@
     - [ ] maybe also add header styling
   - [ ] make the input box scrollable (e.g. detect and capture mouse hover + scroll)
   - [ ] handle TTL on conversation items
+    - [ ] TTL tick option: decrement after successful LLM completion (option 2)
+    - [ ] optionally add a system message asking the LLM to mark what is still relevant for the next user message, and drop items it marks as irrelevant
+      - [ ] DoD: LLM relevance pass emits a structured list of message IDs to keep/drop; dropped items are excluded from subsequent prompts, and behavior is logged in SysInfo for transparency
