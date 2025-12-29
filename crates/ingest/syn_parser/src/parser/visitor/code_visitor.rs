@@ -1533,7 +1533,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
-        let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
+        let impl_span = item_impl.extract_span_bytes();
+        let impl_name = name_impl(item_impl, impl_span); // Use helper to generate a name for the impl block
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -1719,7 +1720,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Create info struct and then the node
         let impl_node = ImplNode {
             id: impl_node_id,
-            span: item_impl.extract_span_bytes(),
+            span: impl_span,
             self_type: self_type_id,
             trait_type: trait_type_id,
             methods, // Pass the collected MethodNode Vec
@@ -2674,7 +2675,7 @@ use statement ident: {:?}
 }
 
 /// Helper function to name item_impol in visit_item_impl
-fn name_impl(item_impl: &ItemImpl) -> String {
+fn name_impl(item_impl: &ItemImpl, span: (usize, usize)) -> String {
     // Naming:
     // `impl MyStruct { ... }`
     // `self_type_str`: `"MyStruct"`
@@ -2724,6 +2725,8 @@ fn name_impl(item_impl: &ItemImpl) -> String {
     }
 
     name_parts.push(self_type_str);
+    // Include a deterministic span suffix to avoid duplicate impl IDs in the same module.
+    name_parts.push(format!("@{}:{}", span.0, span.1));
 
     name_parts.join(" ")
 }
