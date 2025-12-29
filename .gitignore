@@ -77,6 +77,7 @@ OpenCode.md
 
 # logging
 logs/
+*.log
 
 # query loading (per user)
 # query/

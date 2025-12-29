@@ -23,6 +23,7 @@ pub enum ToolErrorCode {
     MalformedDiff,
     InvalidFormat,
     Io,
+    Timeout,
     Internal,
 }
 

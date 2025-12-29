@@ -49,9 +49,8 @@ const MAX_TOOL_RESPONSE_BYTES: usize = 200 * 1024;
 const KILL_GRACE_SECS: u64 = 2;
 
 const COMMAND_DESC: &str = "Which cargo command to run: test or check.";
-const SCOPE_DESC: &str =
-    "Run against the focused manifest (default) or the workspace root manifest.";
-const PACKAGE_DESC: &str = "Optional workspace package name (workspace scope only).";
+const PACKAGE_DESC: &str =
+    "Optional workspace package name; providing it runs cargo from the workspace root.";
 const FEATURES_DESC: &str = "Optional feature list passed to --features.";
 const ALL_FEATURES_DESC: &str = "Enable all features (--all-features).";
 const NO_DEFAULT_FEATURES_DESC: &str = "Disable default features (--no-default-features).";
@@ -73,11 +72,6 @@ lazy_static::lazy_static! {
                 "type": "string",
                 "enum": ["test", "check"],
                 "description": COMMAND_DESC
-            },
-            "scope": {
-                "type": "string",
-                "enum": ["focused", "workspace"],
-                "description": SCOPE_DESC
             },
             "package": {
                 "type": "string",
@@ -181,12 +175,13 @@ impl Default for CargoScope {
 /// Parameters accepted by the cargo tool.
 ///
 /// These map to a constrained set of cargo flags and are validated before execution.
+/// Scope is chosen internally; providing a package implies workspace scope.
 ///
 /// ```rust
 /// use ploke_tui::tools::{cargo::CargoTool, Tool};
 ///
 /// let params = CargoTool::deserialize_params(
-///     r#"{"command":"check","scope":"focused","all_features":true}"#,
+///     r#"{"command":"check","all_features":true}"#,
 /// ).unwrap();
 /// assert!(params.all_features);
 /// ```
@@ -393,11 +388,14 @@ impl Tool for CargoTool {
     }
 
     fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolInvocationError> {
-        let params: CargoToolParams<'a> =
+        let mut params: CargoToolParams<'a> =
             serde_json::from_str(json).map_err(|e| ToolInvocationError::Deserialize {
                 source: e,
                 raw: Some(json.to_string()),
             })?;
+        if params.package.is_some() && matches!(params.scope, CargoScope::Focused) {
+            params.scope = CargoScope::Workspace;
+        }
         validate_params(&params)?;
         Ok(params)
     }
@@ -483,7 +481,8 @@ impl Tool for CargoTool {
             }
         }
 
-        let manifest_path = match params.scope {
+        let scope = resolve_scope(&params, &crate_root, &workspace_root);
+        let manifest_path = match scope {
             CargoScope::Focused => focused_manifest,
             CargoScope::Workspace => workspace_manifest,
         };
@@ -635,7 +634,7 @@ impl Tool for CargoTool {
             ok: status_reason == CargoStatusReason::Success,
             status_reason,
             command: params.command,
-            scope: params.scope,
+            scope,
             manifest_path: manifest_path.display().to_string(),
             exit_code,
             duration_ms: started.elapsed().as_millis() as u64,
@@ -683,18 +682,6 @@ impl Tool for CargoTool {
 }
 
 fn validate_params(params: &CargoToolParams<'_>) -> Result<(), ToolInvocationError> {
-    if matches!(params.scope, CargoScope::Focused) && params.package.is_some() {
-        return Err(ToolInvocationError::Validation(
-            ToolError::new(
-                ToolName::Cargo,
-                ToolErrorCode::InvalidFormat,
-                "package is only allowed when scope=workspace",
-            )
-            .field("package")
-            .expected("omit package when scope=focused")
-            .received("package provided"),
-        ));
-    }
     if params.all_features && params.features.as_ref().map_or(false, |v| !v.is_empty()) {
         return Err(ToolInvocationError::Validation(
             ToolError::new(
@@ -784,6 +771,20 @@ fn validate_name(field: &'static str, value: Option<&str>) -> Result<(), ToolInv
         ));
     }
     Ok(())
+}
+
+fn resolve_scope(
+    params: &CargoToolParams<'_>,
+    focused_root: &Path,
+    workspace_root: &Path,
+) -> CargoScope {
+    if matches!(params.scope, CargoScope::Workspace) || params.package.is_some() {
+        return CargoScope::Workspace;
+    }
+    if workspace_root == focused_root {
+        return CargoScope::Workspace;
+    }
+    CargoScope::Focused
 }
 
 async fn load_metadata(
@@ -1103,14 +1104,25 @@ fn enforce_response_cap(result: &mut CargoToolResult, max_bytes: usize) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
 
     #[test]
-    fn validate_params_rejects_package_with_focused_scope() {
-        let params = CargoToolParams {
+    fn deserialize_params_autoscopes_package_to_workspace() {
+        let params = CargoTool::deserialize_params(
+            r#"{"command":"check","package":"ploke-tui"}"#,
+        )
+        .unwrap();
+        assert!(matches!(params.scope, CargoScope::Workspace));
+    }
+
+    #[test]
+    fn resolve_scope_prefers_workspace_when_requested_or_single_root() {
+        let focused = Path::new("/repo/crates/ploke-tui");
+        let workspace = Path::new("/repo");
+
+        let base = CargoToolParams {
             command: CargoCommand::Check,
             scope: CargoScope::Focused,
-            package: Some(Cow::Borrowed("foo")),
+            package: None,
             features: None,
             all_features: false,
             no_default_features: false,
@@ -1124,7 +1136,31 @@ mod tests {
             benches: false,
             test_args: None,
         };
-        assert!(validate_params(&params).is_err());
+
+        let mut with_package = base.clone();
+        with_package.package = Some(Cow::Borrowed("ploke-tui"));
+        assert!(matches!(
+            resolve_scope(&with_package, focused, workspace),
+            CargoScope::Workspace
+        ));
+
+        let mut explicit_workspace = base.clone();
+        explicit_workspace.scope = CargoScope::Workspace;
+        assert!(matches!(
+            resolve_scope(&explicit_workspace, focused, workspace),
+            CargoScope::Workspace
+        ));
+
+        let same_root = Path::new("/repo");
+        assert!(matches!(
+            resolve_scope(&base, same_root, same_root),
+            CargoScope::Workspace
+        ));
+
+        assert!(matches!(
+            resolve_scope(&base, focused, workspace),
+            CargoScope::Focused
+        ));
     }
 
     #[test]

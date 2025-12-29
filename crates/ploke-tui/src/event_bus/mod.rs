@@ -191,8 +191,33 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SystemEvent;
+    use ploke_core::ArcStr;
+    use ploke_core::tool_types::{FunctionMarker, ToolName};
+    use ploke_llm::response::{FunctionCall, ToolCall};
+    use std::sync::Once;
     use std::sync::Arc;
     use tokio::time::{Duration, timeout};
+    use uuid::Uuid;
+    use tracing_subscriber::EnvFilter;
+
+    fn init_test_tracing() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let log_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/reports/tool_call_requested_realtime_trace.log");
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path);
+            if let Ok(file) = file {
+                let _ = tracing_subscriber::fmt()
+                    .with_env_filter(EnvFilter::from_default_env())
+                    .with_writer(file)
+                    .try_init();
+            }
+        });
+    }
 
     #[tokio::test]
     async fn ssot_forwards_indexing_completed_once() {
@@ -284,5 +309,39 @@ mod tests {
 
         // No additional IndexingFailed should be received immediately after
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn tool_call_requested_uses_realtime_channel() {
+        init_test_tracing();
+        let bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut rt_rx = bus.subscribe(EventPriority::Realtime);
+        let mut bg_rx = bus.subscribe(EventPriority::Background);
+        let request_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let tool_call = ToolCall {
+            call_id: ArcStr::from("tool_call_requested_rt"),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name: ToolName::ApplyCodeEdit,
+                arguments: "{}".to_string(),
+            },
+        };
+
+        bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }));
+
+        let ev = timeout(Duration::from_millis(200), rt_rx.recv())
+            .await
+            .expect("timeout waiting for ToolCallRequested")
+            .expect("realtime channel closed");
+        match ev {
+            AppEvent::System(SystemEvent::ToolCallRequested { .. }) => {}
+            other => panic!("expected ToolCallRequested, got {:?}", other),
+        }
+        assert!(bg_rx.try_recv().is_err());
     }
 }

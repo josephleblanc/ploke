@@ -8,7 +8,9 @@ use uuid::Uuid;
 
 use crate::EventBus;
 use crate::app_state::commands;
-use crate::chat_history::{Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent};
+use crate::chat_history::{
+    ContextStatus, Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent,
+};
 use crate::llm::{ChatEvt, LlmEvent};
 // use ploke_llm::manager::events::ChatEvt;
 use crate::tracing_setup::{CHAT_TARGET, MESSAGE_UPDATE_TARGET};
@@ -279,6 +281,9 @@ pub async fn add_tool_msg_immediate(
         );
     }
 }
+/// Add a message under the current parent and move focus to it.
+///
+/// SysInfo messages added here inherit the default context status (pinned).
 #[instrument(skip(state), level = "trace")]
 pub async fn add_msg_immediate(
     state: &Arc<AppState>,
@@ -333,6 +338,41 @@ pub async fn add_msg_immediate(
     }
 }
 
+/// Add a SysInfo message without pinning it into the LLM context window.
+///
+/// Use this for UI-only summaries that should appear in chat history but not
+/// be sent back to the model.
+pub async fn add_msg_immediate_sysinfo_unpinned(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+) {
+    trace!("Starting add_msg_immediate_sysinfo_unpinned");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+    let message_wrapper = chat_guard.add_message_sysinfo_with_context(
+        parent_id,
+        new_msg_id,
+        content.clone(),
+        ContextStatus::Unpinned,
+    );
+    drop(chat_guard);
+
+    if let Ok(message_id) = message_wrapper {
+        let mut chat_guard = state.chat.0.write().await;
+        chat_guard.current = message_id;
+        drop(chat_guard);
+
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    } else {
+        tracing::error!("Failed to add unpinned sysinfo message");
+    }
+}
+
+/// Add a message under the current parent without changing focus.
+///
+/// Useful for SysInfo updates that should not advance the chat selection.
 pub async fn add_msg_immediate_nofocus(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -367,6 +407,10 @@ pub async fn add_msg_immediate_nofocus(
     }
 }
 
+/// Add a message while preserving the current tail and selected child.
+///
+/// This is intended for SysInfo or background events that should not alter
+/// the user’s navigation position.
 pub async fn add_msg_immediate_background(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,

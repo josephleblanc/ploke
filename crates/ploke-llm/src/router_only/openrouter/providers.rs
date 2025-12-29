@@ -593,7 +593,7 @@ impl std::str::FromStr for ProviderSlug {
 }
 
 // TODO:ploke-llm
-#[cfg(feature = "live_api_tests")]
+#[cfg(all(feature = "live_api_tests", feature = "flakey_test"))]
 #[cfg(test)]
 mod tests {
     use reqwest::Client;

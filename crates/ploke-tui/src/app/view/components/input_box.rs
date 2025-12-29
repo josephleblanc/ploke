@@ -1,26 +1,80 @@
 use crate::app::AppEvent;
+use crate::ui_theme::UiTheme;
 use crate::app::types::Mode;
 use crate::app::view::EventSubscriber;
 use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Text;
+use ratatui::layout::{Margin, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, ScrollbarState};
 use textwrap;
 
 /// Encapsulates input box rendering and state (scroll, cursor).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct InputView {
     vscroll: u16,
     scrollstate: ScrollbarState,
     cursor_row: u16,
     cursor_col: u16,
+    follow_cursor: bool,
+    last_input_area: Rect,
+    last_buffer: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandSuggestion {
+    pub command: String,
+    pub description: String,
 }
 
 impl InputView {
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, buffer: &str, mode: Mode, title: &str) {
-        // Wrap text to area width minus borders
-        let input_width = area.width.saturating_sub(2);
+    pub fn is_input_hovered(&self, column: u16, row: u16) -> bool {
+        let area = self.last_input_area;
+        column >= area.x
+            && column < area.x.saturating_add(area.width)
+            && row >= area.y
+            && row < area.y.saturating_add(area.height)
+    }
+
+    pub fn desired_height(&self, buffer: &str, area_width: u16) -> u16 {
+        let inner_width = area_width.saturating_sub(2).max(1);
+        let wrapped = textwrap::wrap(buffer, inner_width as usize);
+        wrapped.len().max(1) as u16 + 2
+    }
+
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        buffer: &str,
+        mode: Mode,
+        theme: &UiTheme,
+        ghost_text: Option<&str>,
+        suggestions: &[CommandSuggestion],
+        selected_suggestion: Option<usize>,
+    ) {
+        let desired_input_height = self.desired_height(buffer, area.width);
+        let input_height = desired_input_height.min(area.height);
+        let suggestion_height = area.height.saturating_sub(input_height);
+        let suggestion_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: suggestion_height,
+        };
+        let input_area = Rect {
+            x: area.x,
+            y: area.y.saturating_add(suggestion_height),
+            width: area.width,
+            height: input_height,
+        };
+        let inner_area = input_area.inner(Margin {
+            vertical: 1,
+            horizontal: 1,
+        });
+        self.last_input_area = input_area;
+        // Wrap text to inner area width
+        let input_width = inner_area.width.max(1);
         let input_wrapped = textwrap::wrap(buffer, input_width as usize);
         // scrollstate updated after auto-scroll below
 
@@ -49,16 +103,24 @@ impl InputView {
         self.cursor_row = row;
         self.cursor_col = col;
 
+        if self.last_buffer != buffer {
+            self.last_buffer.clear();
+            self.last_buffer.push_str(buffer);
+            self.follow_cursor = true;
+        }
+
         // Auto-scroll to keep cursor visible and clamp within content
-        let inner_h: u16 = area.height.saturating_sub(2).max(1);
+        let inner_h: u16 = inner_area.height.max(1);
         let total_lines: u16 = input_wrapped.len() as u16;
 
-        // Ensure cursor is within the visible window
-        if self.cursor_row >= self.vscroll.saturating_add(inner_h) {
-            self.vscroll = self.cursor_row.saturating_sub(inner_h).saturating_add(1);
-        }
-        if self.cursor_row < self.vscroll {
-            self.vscroll = self.cursor_row;
+        if self.follow_cursor {
+            // Ensure cursor is within the visible window
+            if self.cursor_row >= self.vscroll.saturating_add(inner_h) {
+                self.vscroll = self.cursor_row.saturating_sub(inner_h).saturating_add(1);
+            }
+            if self.cursor_row < self.vscroll {
+                self.vscroll = self.cursor_row;
+            }
         }
 
         // Clamp vscroll to valid range based on content height
@@ -76,22 +138,93 @@ impl InputView {
 
         // Build paragraph
         let input_text = Text::from_iter(input_wrapped);
+        let background_style = Style::default().bg(theme.input_bg);
+        let input_style = match mode {
+            Mode::Command => background_style.fg(theme.input_command_fg),
+            _ => background_style.fg(theme.input_fg),
+        };
+        let background = Block::default().borders(Borders::NONE).style(background_style);
         let input = Paragraph::new(input_text)
             .scroll((self.vscroll, 0))
-            .block(Block::bordered().title(title))
-            .style(match mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-                Mode::Command => Style::default().fg(Color::Cyan),
-            });
+            .block(Block::default().borders(Borders::NONE))
+            .style(input_style);
 
-        frame.render_widget(input, area);
+        frame.render_widget(background, input_area);
+        frame.render_widget(input, inner_area);
+
+        if suggestion_area.height > 0 && !suggestions.is_empty() {
+            let suggestion_style = Style::default()
+                .bg(theme.input_suggestion_bg)
+                .fg(theme.input_suggestion_fg);
+            let base_desc_style = Style::default()
+                .bg(theme.input_suggestion_bg)
+                .fg(theme.input_suggestion_desc_fg);
+            let mut lines: Vec<Line> = Vec::new();
+            for (idx, suggestion) in suggestions
+                .iter()
+                .take(suggestion_area.height as usize)
+                .enumerate()
+            {
+                let is_selected = selected_suggestion == Some(idx);
+                let command_style = if is_selected {
+                    suggestion_style
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    suggestion_style.add_modifier(Modifier::BOLD)
+                };
+                let desc_style = if is_selected {
+                    base_desc_style.add_modifier(Modifier::REVERSED)
+                } else {
+                    base_desc_style
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(suggestion.command.as_str(), command_style),
+                    Span::raw("  "),
+                    Span::styled(suggestion.description.as_str(), desc_style.add_modifier(Modifier::DIM)),
+                ]));
+            }
+            let suggestion_text = Text::from(lines);
+            let suggestion_block = Block::default()
+                .borders(Borders::NONE)
+                .style(Style::default().bg(theme.input_suggestion_bg));
+            let suggestion_widget = Paragraph::new(suggestion_text)
+                .block(suggestion_block)
+                .style(Style::default().bg(theme.input_suggestion_bg));
+            frame.render_widget(suggestion_widget, suggestion_area);
+        }
+
+        if let Some(ghost) = ghost_text {
+            if !ghost.is_empty() {
+                let cursor_visible = self.cursor_row >= self.vscroll
+                    && self.cursor_row < self.vscroll.saturating_add(inner_h);
+                if cursor_visible {
+                    let visible_row = self.cursor_row.saturating_sub(self.vscroll);
+                    let ghost_area = Rect {
+                        x: inner_area.x.saturating_add(self.cursor_col),
+                        y: inner_area.y.saturating_add(visible_row),
+                        width: inner_area.width.saturating_sub(self.cursor_col),
+                        height: 1,
+                    };
+                    let ghost_widget = Paragraph::new(ghost)
+                        .style(Style::default().fg(theme.input_ghost_fg).bg(theme.input_bg));
+                    frame.render_widget(ghost_widget, ghost_area);
+                }
+            }
+        }
 
         // Manage cursor visibility/position
         match mode {
             Mode::Insert | Mode::Command => {
-                let visible_row = self.cursor_row.saturating_sub(self.vscroll);
-                frame.set_cursor_position((area.x + 1 + self.cursor_col, area.y + 1 + visible_row));
+                let cursor_visible = self.cursor_row >= self.vscroll
+                    && self.cursor_row < self.vscroll.saturating_add(inner_h);
+                if cursor_visible {
+                    let visible_row = self.cursor_row.saturating_sub(self.vscroll);
+                    frame.set_cursor_position((
+                        inner_area.x + self.cursor_col,
+                        inner_area.y + visible_row,
+                    ));
+                }
             }
             Mode::Normal => {
                 // No cursor positioning => hidden by terminal backend
@@ -100,18 +233,62 @@ impl InputView {
     }
 
     pub fn scroll_prev(&mut self) {
+        self.follow_cursor = false;
         self.vscroll = self.vscroll.saturating_sub(1);
         self.scrollstate = self.scrollstate.position(self.vscroll as usize);
     }
 
     pub fn scroll_next(&mut self) {
+        self.follow_cursor = false;
         self.vscroll = self.vscroll.saturating_add(1);
         self.scrollstate = self.scrollstate.position(self.vscroll as usize);
+    }
+
+    #[cfg(any(test, feature = "test_harness"))]
+    pub fn test_state(&self) -> (u16, u16, u16) {
+        (self.cursor_row, self.cursor_col, self.vscroll)
+    }
+}
+
+impl Default for InputView {
+    fn default() -> Self {
+        Self {
+            vscroll: 0,
+            scrollstate: ScrollbarState::default(),
+            cursor_row: 0,
+            cursor_col: 0,
+            follow_cursor: true,
+            last_input_area: Rect::default(),
+            last_buffer: String::new(),
+        }
     }
 }
 
 impl EventSubscriber for InputView {
     fn on_event(&mut self, _event: &AppEvent) {
         // Currently no-op; placeholder for future input-related reactions to events.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InputView;
+
+    #[test]
+    fn desired_height_is_single_line_for_empty_buffer() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("", 10), 3);
+    }
+
+    #[test]
+    fn desired_height_wraps_long_lines() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("abcdefgh", 6), 4);
+    }
+
+    #[test]
+    fn desired_height_counts_explicit_newlines() {
+        let view = InputView::default();
+        assert_eq!(view.desired_height("a\nb\nc", 10), 5);
     }
 }

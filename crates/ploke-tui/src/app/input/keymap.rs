@@ -29,6 +29,9 @@ pub enum Action {
     Backspace,
     Submit,         // Enter in Insert mode
     ExecuteCommand, // Enter in Command mode
+    AcceptCompletion, // Tab to accept ghost completion
+    SuggestionPrev,
+    SuggestionNext,
 
     // Navigation (list/branches)
     NavigateListUp,
@@ -36,6 +39,10 @@ pub enum Action {
     BranchPrev,
     BranchNext,
     TriggerSelection,
+    /// Approve all pending edit proposals (Shift+Y).
+    ApproveAllPendingEdits,
+    /// Deny all pending edit proposals (Shift+N).
+    DenyAllPendingEdits,
 
     // Scrolling
     PageUp,
@@ -73,6 +80,11 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
         Mode::Insert => match (key.modifiers, key.code) {
             (m, KeyCode::Esc) if m.is_empty() => Some(Action::SwitchMode(Mode::Normal)),
             (m, KeyCode::Enter) if m.is_empty() || m == KeyModifiers::SHIFT => Some(Action::Submit),
+            (m, KeyCode::Tab) if m.is_empty() => Some(Action::AcceptCompletion),
+            (m, KeyCode::Up) if m.is_empty() => Some(Action::SuggestionPrev),
+            (m, KeyCode::Down) if m.is_empty() => Some(Action::SuggestionNext),
+            (m, KeyCode::Char('p')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionPrev),
+            (m, KeyCode::Char('n')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionNext),
             (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::Backspace)
             }
@@ -90,6 +102,11 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
             (m, KeyCode::Enter) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::ExecuteCommand)
             }
+            (m, KeyCode::Tab) if m.is_empty() => Some(Action::AcceptCompletion),
+            (m, KeyCode::Up) if m.is_empty() => Some(Action::SuggestionPrev),
+            (m, KeyCode::Down) if m.is_empty() => Some(Action::SuggestionNext),
+            (m, KeyCode::Char('p')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionPrev),
+            (m, KeyCode::Char('n')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionNext),
             (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::Backspace)
             }
@@ -112,6 +129,8 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Char('q') => Some(Action::Quit),
                 KeyCode::Char('i') => Some(Action::SwitchMode(Mode::Insert)),
                 KeyCode::Enter => Some(Action::TriggerSelection),
+                KeyCode::Char('Y') => Some(Action::ApproveAllPendingEdits),
+                KeyCode::Char('N') => Some(Action::DenyAllPendingEdits),
 
                 KeyCode::Char('/') => Some(Action::OpenCommand),
                 KeyCode::Char(':') if matches!(style, CommandStyle::NeoVim) => {

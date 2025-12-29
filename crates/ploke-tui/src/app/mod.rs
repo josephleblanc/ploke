@@ -30,9 +30,10 @@ use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::message_item::should_render_tool_buttons;
 use crate::app::view::components::conversation::ConversationView;
-use crate::app::view::components::input_box::InputView;
+use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
 use crate::tools::ToolVerbosity;
+use crate::ui_theme::UiTheme;
 use crate::user_config::OPENROUTER_URL;
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
@@ -62,6 +63,33 @@ use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail,
 };
 use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
+use crate::app::commands::COMMAND_ENTRIES;
+
+fn compute_input_height(
+    desired_input_height: u16,
+    frame_height: u16,
+    has_indexing: bool,
+    show_indicator: bool,
+    pending_banner_height: u16,
+) -> u16 {
+    let min_input_height = 3_u16;
+    let max_by_screen = frame_height / 2;
+    let mut fixed_height = 1_u16 + 1_u16 + 1_u16; // model info + status + minimum chat
+    fixed_height = fixed_height.saturating_add(pending_banner_height);
+    if has_indexing {
+        fixed_height = fixed_height.saturating_add(3);
+    }
+    if show_indicator {
+        fixed_height = fixed_height.saturating_add(1);
+    }
+    let max_by_layout = frame_height.saturating_sub(fixed_height);
+    let max_input_height = max_by_screen.min(max_by_layout).max(1);
+    if max_input_height < min_input_height {
+        max_input_height
+    } else {
+        desired_input_height.clamp(min_input_height, max_input_height)
+    }
+}
 
 // Ensure terminal modes are always restored on unwind (panic or early return)
 struct TerminalModeGuard {
@@ -123,11 +151,14 @@ pub struct App {
     show_context_preview: bool,
     // Overlay manager (config + other overlays)
     overlay_manager: OverlayManager,
+    // UI theme (colors)
+    theme: UiTheme,
     // Input history browsing (Insert mode)
     input_history: Vec<String>,
     input_history_pos: Option<usize>,
     tool_verbosity: ToolVerbosity,
     confirmation_states: HashMap<Uuid, bool>,
+    suggestion_index: usize,
 }
 
 impl App {
@@ -161,10 +192,12 @@ impl App {
             needs_redraw: true,
             show_context_preview: false,
             overlay_manager: OverlayManager::default(),
+            theme: UiTheme::default(),
             input_history: Vec::new(),
             input_history_pos: None,
             tool_verbosity,
             confirmation_states: HashMap::new(),
+            suggestion_index: 0,
         }
     }
 
@@ -290,14 +323,28 @@ impl App {
                             Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
-                                    self.conversation.scroll_lines_up(3);
-                                    self.conversation.set_free_scrolling(true);
+                                    if self.input_view.is_input_hovered(
+                                        mouse_event.column,
+                                        mouse_event.row,
+                                    ) {
+                                        self.input_view.scroll_prev();
+                                    } else {
+                                        self.conversation.scroll_lines_up(3);
+                                        self.conversation.set_free_scrolling(true);
+                                    }
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
                                 MouseEventKind::ScrollDown => {
-                                    self.conversation.scroll_lines_down(3);
-                                    self.conversation.set_free_scrolling(true);
+                                    if self.input_view.is_input_hovered(
+                                        mouse_event.column,
+                                        mouse_event.row,
+                                    ) {
+                                        self.input_view.scroll_next();
+                                    } else {
+                                        self.conversation.scroll_lines_down(3);
+                                        self.conversation.set_free_scrolling(true);
+                                    }
                                     self.pending_char = None;
                                     self.needs_redraw = true;
                                 }
@@ -436,6 +483,198 @@ impl App {
         .await
     }
 
+    fn file_completion(&self, input: &str) -> Option<(String, String)> {
+        let (_, ghost, accept, _) = self.file_completion_suggestions(input, 0)?;
+        match (ghost, accept) {
+            (Some(ghost), Some(accept)) => Some((ghost, accept)),
+            _ => None,
+        }
+    }
+
+    fn file_completion_suggestions(
+        &self,
+        input: &str,
+        selection_index: usize,
+    ) -> Option<(Vec<CommandSuggestion>, Option<String>, Option<String>, usize)> {
+        let at_idx = input.rfind('@')?;
+        let after_at = &input[at_idx + 1..];
+        if after_at.chars().any(char::is_whitespace) {
+            return None;
+        }
+
+        let cwd = std::env::current_dir().ok()?;
+        if after_at.is_empty() {
+            let mut ghost = cwd.display().to_string();
+            if !ghost.ends_with(std::path::MAIN_SEPARATOR) {
+                ghost.push(std::path::MAIN_SEPARATOR);
+            }
+            let accept = format!("{}{}", input, ghost);
+            return Some((Vec::new(), Some(ghost), Some(accept), 0));
+        }
+
+        let fragment_path = std::path::Path::new(after_at);
+        let (parent, prefix) = if after_at.ends_with(std::path::MAIN_SEPARATOR) {
+            (fragment_path, "")
+        } else {
+            let parent = fragment_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+            let prefix = fragment_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            (parent, prefix)
+        };
+
+        let search_root = if parent.is_absolute() {
+            parent.to_path_buf()
+        } else {
+            cwd.join(parent)
+        };
+
+        let mut matches: Vec<(String, bool)> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&search_root) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let name = file_name.to_string_lossy();
+                if !name.starts_with(prefix) {
+                    continue;
+                }
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                matches.push((name.to_string(), is_dir));
+            }
+        }
+
+        if matches.is_empty() {
+            return None;
+        }
+
+        matches.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut completions = Vec::new();
+        for (name, is_dir) in matches {
+            let mut ghost = name
+                .chars()
+                .skip(prefix.chars().count())
+                .collect::<String>();
+            if is_dir && !ghost.ends_with(std::path::MAIN_SEPARATOR) {
+                ghost.push(std::path::MAIN_SEPARATOR);
+            }
+            if ghost.is_empty() {
+                continue;
+            }
+            let mut display = name.clone();
+            if is_dir && !display.ends_with(std::path::MAIN_SEPARATOR) {
+                display.push(std::path::MAIN_SEPARATOR);
+            }
+            let accept = format!("{}{}", input, ghost);
+            completions.push((display, is_dir, ghost, accept));
+        }
+
+        if completions.is_empty() {
+            return None;
+        }
+
+        let suggestions = completions
+            .iter()
+            .map(|(display, is_dir, _, _)| CommandSuggestion {
+                command: display.clone(),
+                description: if *is_dir {
+                    "dir".to_string()
+                } else {
+                    "file".to_string()
+                },
+            })
+            .collect::<Vec<_>>();
+        let selected_idx = selection_index.min(completions.len().saturating_sub(1));
+        let (_, _, ghost, accept) = &completions[selected_idx];
+        Some((
+            suggestions,
+            Some(ghost.clone()),
+            Some(accept.clone()),
+            selected_idx,
+        ))
+    }
+
+    fn command_completions(
+        &self,
+        mode: Mode,
+        selection_index: usize,
+    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>, usize) {
+        if matches!(mode, Mode::Insert | Mode::Command) {
+            if let Some((suggestions, ghost, accept, selected_idx)) =
+                self.file_completion_suggestions(&self.input_buffer, selection_index)
+            {
+                return (suggestions, ghost, accept, selected_idx);
+            }
+        }
+        if mode != Mode::Command {
+            return (Vec::new(), None, None, 0);
+        }
+
+        let mut chars = self.input_buffer.chars();
+        let Some(prefix) = chars.next() else {
+            return (Vec::new(), None, None, 0);
+        };
+        if prefix != '/' && prefix != ':' {
+            return (Vec::new(), None, None, 0);
+        }
+
+        let typed = chars.as_str();
+        if typed.is_empty() {
+            return (Vec::new(), None, None, 0);
+        }
+        let typed_lower = typed.to_lowercase();
+
+        let matches: Vec<&crate::app::commands::CommandEntry> = COMMAND_ENTRIES
+            .iter()
+            .filter(|entry| entry.command.starts_with(&typed_lower))
+            .take(10)
+            .collect();
+
+        if matches.is_empty() {
+            return (Vec::new(), None, None, 0);
+        }
+
+        let suggestions = matches
+            .iter()
+            .map(|entry| CommandSuggestion {
+                command: format!("{prefix}{}", entry.completion),
+                description: entry.description.to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let selected_idx = selection_index.min(matches.len().saturating_sub(1));
+        let selected = matches[selected_idx];
+        let selected_completion = selected.completion;
+        let typed_len = typed.chars().count();
+        let ghost_text = selected_completion
+            .chars()
+            .skip(typed_len)
+            .collect::<String>();
+
+        let mut accept_text = format!("{prefix}{}", selected.command);
+        if selected_completion != selected.command {
+            accept_text.push(' ');
+        }
+
+        (suggestions, Some(ghost_text), Some(accept_text), selected_idx)
+    }
+
+    /// Count pending edit proposals for UI banner display.
+    fn pending_edit_count(&self) -> usize {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let reg = self.state.proposals.read().await;
+                reg.values()
+                    .filter(|p| {
+                        matches!(
+                            p.status,
+                            crate::app_state::core::EditProposalStatus::Pending
+                        )
+                    })
+                    .count()
+            })
+        })
+    }
+
     /// Renders the user interface.
     fn draw<'a, I1, I2, T: RenderMsg + 'a>(
         &mut self,
@@ -449,27 +688,61 @@ impl App {
         I1: IntoIterator<Item = &'a T> + Clone,
         I2: IntoIterator<Item = &'a T>,
     {
+        let input_mode = if self.overlay_manager.is_active() {
+            Mode::Normal
+        } else {
+            self.mode
+        };
+        let (command_suggestions, ghost_text, accept_text, selected_suggestion_idx) =
+            self.command_completions(input_mode, self.suggestion_index);
+        if command_suggestions.is_empty() {
+            self.suggestion_index = 0;
+        } else if self.suggestion_index != selected_suggestion_idx {
+            self.suggestion_index = selected_suggestion_idx;
+        }
+        let pending_edits = self.pending_edit_count();
+        let pending_banner_height = if pending_edits > 0 { 1 } else { 0 };
         // Always show the currently selected model in the top-right
         let show_indicator = true;
+        let frame_area = frame.area();
+        let desired_input_height =
+            self.input_view
+                .desired_height(&self.input_buffer, frame_area.width)
+                .saturating_add(command_suggestions.len() as u16);
+        let input_height = compute_input_height(
+            desired_input_height,
+            frame_area.height,
+            self.indexing_state.is_some(),
+            show_indicator,
+            pending_banner_height,
+        );
 
         // ---------- Define Layout ----------
-        let mut proto_layout = if self.indexing_state.is_some() {
-            vec![
-                Constraint::Length(1),
-                Constraint::Percentage(80),
-                Constraint::Percentage(20),
-                Constraint::Length(1),
-                Constraint::Length(3),
-            ]
+        let mut proto_layout = vec![Constraint::Length(1), Constraint::Min(1)];
+        let pending_banner_idx_opt = if pending_banner_height > 0 {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(pending_banner_height));
+            Some(idx)
         } else {
-            vec![
-                Constraint::Length(1),
-                Constraint::Percentage(80),
-                Constraint::Percentage(20),
-                Constraint::Length(1),
-            ]
+            None
         };
-
+        let input_idx = {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(input_height));
+            idx
+        };
+        let status_idx = {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(1));
+            idx
+        };
+        let indexing_idx_opt = if self.indexing_state.is_some() {
+            let idx = proto_layout.len();
+            proto_layout.push(Constraint::Length(3));
+            Some(idx)
+        } else {
+            None
+        };
         if show_indicator {
             proto_layout.push(Constraint::Length(1));
         }
@@ -481,8 +754,9 @@ impl App {
 
         let model_info_area = main_layout[0];
         let chat_area_full = main_layout[1];
-        let input_area = main_layout[2];
-        let status_area = main_layout[3];
+        let pending_banner_area_opt = pending_banner_idx_opt.map(|idx| main_layout[idx]);
+        let input_area = main_layout[input_idx];
+        let status_area = main_layout[status_idx];
 
         // Optionally split chat into conversation (left) and context preview (right)
         let (chat_area, preview_area_opt) = if self.show_context_preview {
@@ -537,27 +811,38 @@ impl App {
             frame.render_widget(preview, preview_area);
         }
 
-        // Render input area with dynamic title
-        let input_title = match (self.mode, self.command_style) {
-            (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
-            (Mode::Command, CommandStyle::Slash) => "Slash Mode",
-            _ => "Input",
-        };
+        if let Some(pending_banner_area) = pending_banner_area_opt {
+            let banner = Paragraph::new(format!(
+                "Pending edit proposals: {}  |  Shift+Y approve all, Shift+N reject all",
+                pending_edits
+            ))
+            .style(
+                Style::new()
+                    .fg(self.theme.input_command_fg)
+                    .bg(self.theme.input_suggestion_bg),
+            )
+            .alignment(ratatui::layout::Alignment::Left);
+            frame.render_widget(banner, pending_banner_area);
+        }
 
         // Render input box via InputView
+        let selected_suggestion = if command_suggestions.is_empty() {
+            None
+        } else {
+            Some(self.suggestion_index)
+        };
         self.input_view.render(
             frame,
             input_area,
             &self.input_buffer,
-            if self.overlay_manager.is_active() {
-                Mode::Normal
-            } else {
-                self.mode
-            },
-            input_title,
+            input_mode,
+            &self.theme,
+            ghost_text.as_deref(),
+            &command_suggestions,
+            selected_suggestion,
         );
         // Add progress bar at bottom if indexing
-        if let Some(state) = &self.indexing_state {
+        if let (Some(state), Some(indexing_idx)) = (&self.indexing_state, indexing_idx_opt) {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
 
             let gauge = Gauge::default()
@@ -565,7 +850,7 @@ impl App {
                 .ratio(state.calc_progress())
                 .gauge_style(Style::new().light_blue());
 
-            frame.render_widget(gauge, main_layout[4]); // Bottom area
+            frame.render_widget(gauge, main_layout[indexing_idx]); // Bottom area
         }
 
         // Render Mode to text
@@ -697,6 +982,13 @@ impl App {
 
         // Insert mode input history navigation
         if self.mode == Mode::Insert {
+            if let Some(action) = to_action(self.mode, key, self.command_style)
+                && matches!(action, Action::SuggestionPrev | Action::SuggestionNext)
+                && self.apply_suggestion_action(action)
+            {
+                self.needs_redraw = true;
+                return;
+            }
             use KeyCode::*;
             match key.code {
                 KeyCode::Up => {
@@ -791,12 +1083,19 @@ impl App {
                     self.open_config_overlay();
                 }
             }
+            Action::ApproveAllPendingEdits => {
+                self.send_cmd(StateCommand::ApprovePendingEdits);
+            }
+            Action::DenyAllPendingEdits => {
+                self.send_cmd(StateCommand::DenyPendingEdits);
+            }
             Action::Quit => {
                 self.quit();
             }
             Action::SwitchMode(new_mode) => {
                 self.mode = new_mode;
                 self.pending_char = None;
+                self.reset_suggestion_selection();
             }
             Action::InsertChar(c) => {
                 // While typing, keep the viewport stable (disable auto-centering on selection)
@@ -809,6 +1108,7 @@ impl App {
                 {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
+                    self.reset_suggestion_selection();
                 } else {
                     self.add_input_char(c);
                 }
@@ -855,6 +1155,7 @@ impl App {
                     self.conversation.request_bottom();
                     self.conversation.set_free_scrolling(true);
                     self.input_buffer.clear();
+                    self.reset_suggestion_selection();
                 }
             }
             Action::ExecuteCommand => {
@@ -863,7 +1164,24 @@ impl App {
                 self.conversation.request_bottom();
                 self.conversation.set_free_scrolling(true);
                 self.input_buffer.clear();
+                self.reset_suggestion_selection();
                 self.mode = Mode::Insert;
+            }
+            Action::AcceptCompletion => {
+                if matches!(self.mode, Mode::Insert | Mode::Command) {
+                    let (_, _, accept_text, _) =
+                        self.command_completions(self.mode, self.suggestion_index);
+                    if let Some(accept) = accept_text {
+                        self.input_buffer = accept;
+                        self.reset_suggestion_selection();
+                    }
+                }
+            }
+            Action::SuggestionPrev => {
+                self.apply_suggestion_action(Action::SuggestionPrev);
+            }
+            Action::SuggestionNext => {
+                self.apply_suggestion_action(Action::SuggestionNext);
             }
             Action::NavigateListUp => {
                 self.conversation.set_free_scrolling(false);
@@ -963,21 +1281,25 @@ impl App {
                 } else {
                     self.input_buffer = ":hybrid ".to_string();
                 }
+                self.reset_suggestion_selection();
             }
             Action::OpenCommandColon => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
+                self.reset_suggestion_selection();
             }
             Action::OpenQuickModel => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/model ".to_string();
+                self.reset_suggestion_selection();
             }
             Action::OpenHelp => {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/help".to_string();
+                self.reset_suggestion_selection();
             }
             Action::TogglePreview => {
                 self.pending_char = None;
@@ -1137,12 +1459,40 @@ impl App {
 
     fn handle_backspace(&mut self) {
         let _ = self.input_buffer.pop();
+        self.reset_suggestion_selection();
     }
 
     fn add_input_char(&mut self, c: char) {
         // Typing resets input-history browsing
         self.input_history_pos = None;
         self.input_buffer.push(c);
+        self.reset_suggestion_selection();
+    }
+
+    fn reset_suggestion_selection(&mut self) {
+        self.suggestion_index = 0;
+    }
+
+    fn apply_suggestion_action(&mut self, action: Action) -> bool {
+        let (suggestions, _, _, selected_idx) =
+            self.command_completions(self.mode, self.suggestion_index);
+        if suggestions.is_empty() {
+            return false;
+        }
+        match action {
+            Action::SuggestionPrev => {
+                if selected_idx == 0 {
+                    self.suggestion_index = suggestions.len().saturating_sub(1);
+                } else {
+                    self.suggestion_index = selected_idx - 1;
+                }
+            }
+            Action::SuggestionNext => {
+                self.suggestion_index = (selected_idx + 1) % suggestions.len();
+            }
+            _ => {}
+        }
+        true
     }
 
     /// Rebuild the per-conversation user-input history from the current path.
@@ -1174,12 +1524,14 @@ impl App {
                 let last = self.input_history.len().saturating_sub(1);
                 self.input_history_pos = Some(last);
                 self.input_buffer = self.input_history[last].clone();
+                self.reset_suggestion_selection();
             }
             Some(pos) => {
                 if pos > 0 {
                     let new_pos = pos - 1;
                     self.input_history_pos = Some(new_pos);
                     self.input_buffer = self.input_history[new_pos].clone();
+                    self.reset_suggestion_selection();
                 }
             }
         }
@@ -1201,10 +1553,12 @@ impl App {
                     let new_pos = pos + 1;
                     self.input_history_pos = Some(new_pos);
                     self.input_buffer = self.input_history[new_pos].clone();
+                    self.reset_suggestion_selection();
                 } else {
                     // Beyond the newest -> clear buffer and exit history mode
                     self.input_history_pos = None;
                     self.input_buffer.clear();
+                    self.reset_suggestion_selection();
                 }
             }
         }
@@ -1219,6 +1573,7 @@ impl App {
         }
         self.input_history_pos = Some(0);
         self.input_buffer = self.input_history[0].clone();
+        self.reset_suggestion_selection();
     }
 
     fn input_history_last(&mut self) {
@@ -1231,6 +1586,7 @@ impl App {
         let last = self.input_history.len().saturating_sub(1);
         self.input_history_pos = Some(last);
         self.input_buffer = self.input_history[last].clone();
+        self.reset_suggestion_selection();
     }
 
     fn open_model_browser(&mut self, keyword: String, items: Vec<models::ResponseItem>) {
@@ -1532,5 +1888,88 @@ impl App {
     // Test-only accessor to shared AppState for integration tests via test_harness
     pub(crate) fn test_get_state(&self) -> Arc<AppState> {
         Arc::clone(&self.state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_input_height;
+    use crate::test_utils::mock::create_mock_app;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    #[test]
+    fn input_height_clamps_to_screen_and_layout() {
+        let height = compute_input_height(50, 20, false, true, 0);
+        assert_eq!(height, 10);
+    }
+
+    #[test]
+    fn input_height_uses_min_when_possible() {
+        let height = compute_input_height(3, 20, false, true, 0);
+        assert_eq!(height, 3);
+    }
+
+    #[test]
+    fn input_height_falls_back_when_screen_is_tiny() {
+        let height = compute_input_height(10, 5, false, true, 0);
+        assert_eq!(height, 1);
+    }
+
+    struct CwdGuard {
+        prev: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set_to(path: &std::path::Path) -> Self {
+            let prev = std::env::current_dir().expect("current dir");
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { prev }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    #[test]
+    fn file_completion_uses_cwd_for_bare_at() {
+        let temp = tempdir().expect("temp dir");
+        let _guard = CwdGuard::set_to(temp.path());
+        let app = create_mock_app();
+
+        let input = "/model load @";
+        let (ghost, accept) = app.file_completion(input).expect("completion");
+
+        let mut expected_ghost = temp.path().display().to_string();
+        if !expected_ghost.ends_with(std::path::MAIN_SEPARATOR) {
+            expected_ghost.push(std::path::MAIN_SEPARATOR);
+        }
+        assert_eq!(ghost, expected_ghost);
+        assert_eq!(accept, format!("{input}{expected_ghost}"));
+    }
+
+    #[test]
+    fn file_completion_resolves_temp_entries() {
+        let temp = tempdir().expect("temp dir");
+        std::fs::create_dir(temp.path().join("src")).expect("create src");
+        std::fs::write(temp.path().join("Cargo.toml"), "cargo").expect("write file");
+        std::fs::write(temp.path().join("src").join("main.rs"), "fn main() {}")
+            .expect("write file");
+        let _guard = CwdGuard::set_to(temp.path());
+        let app = create_mock_app();
+
+        let input_dir = "/open @s";
+        let (ghost_dir, accept_dir) = app.file_completion(input_dir).expect("dir completion");
+        assert_eq!(ghost_dir, format!("rc{}", std::path::MAIN_SEPARATOR));
+        assert_eq!(accept_dir, format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR));
+
+        let input_file = "/open @src/m";
+        let (ghost_file, accept_file) =
+            app.file_completion(input_file).expect("file completion");
+        assert_eq!(ghost_file, "ain.rs");
+        assert_eq!(accept_file, "/open @src/main.rs");
     }
 }

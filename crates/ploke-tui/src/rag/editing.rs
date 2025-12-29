@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     app_state::{core::EditProposalStatus, handlers::chat},
     chat_history::MessageKind,
@@ -492,6 +494,188 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, reques
             let msg = format!("Edits already applied for request_id {}", request_id);
             add_msg_imm(msg).await;
         }
+    }
+}
+
+/// Approve all pending edit proposals in a single pass.
+///
+/// Overlap handling: proposals are sorted newest-first, and only the most
+/// recent proposal is applied when edits overlap in the same file. Older
+/// overlapping proposals are marked stale with a note explaining why.
+#[tracing::instrument(skip(state, event_bus))]
+pub async fn approve_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let add_msg_imm = async move |msg: String| {
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
+    };
+
+    let mut pending: Vec<crate::app_state::core::EditProposal> = {
+        let reg = state.proposals.read().await;
+        reg.values()
+            .filter(|p| matches!(p.status, EditProposalStatus::Pending))
+            .cloned()
+            .collect()
+    };
+
+    if pending.is_empty() {
+        add_msg_imm("No pending edit proposals to approve".to_string()).await;
+        return;
+    }
+
+    pending.sort_by(|a, b| {
+        b.proposed_at_ms
+            .cmp(&a.proposed_at_ms)
+            .then(b.request_id.cmp(&a.request_id))
+    });
+
+    let mut occupied: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
+    let mut to_apply: Vec<Uuid> = Vec::new();
+    let mut to_stale: Vec<Uuid> = Vec::new();
+
+    for proposal in pending.iter() {
+        let ranges = proposal_ranges(proposal);
+        if overlaps_existing(&occupied, &ranges) {
+            to_stale.push(proposal.request_id);
+        } else {
+            mark_occupied(&mut occupied, &ranges);
+            to_apply.push(proposal.request_id);
+        }
+    }
+
+    if !to_stale.is_empty() {
+        let mut reg = state.proposals.write().await;
+        for request_id in &to_stale {
+            if let Some(p) = reg.get_mut(request_id) {
+                p.status = EditProposalStatus::Stale(
+                    "Overlaps with newer edit proposal".to_string(),
+                );
+            }
+        }
+        drop(reg);
+        for request_id in &to_stale {
+            add_msg_imm(format!(
+                "Skipped edits for request_id {} (overlaps with newer proposal)",
+                request_id
+            ))
+            .await;
+        }
+    }
+
+    for request_id in to_apply {
+        approve_edits(state, event_bus, request_id).await;
+    }
+
+    crate::app_state::handlers::proposals::save_proposals(state).await;
+}
+
+/// Deny every currently pending edit proposal.
+///
+/// This is a bulk convenience path that mirrors `deny_edits` behavior per
+/// proposal and reports when there is nothing to deny.
+#[tracing::instrument(skip(state, event_bus))]
+pub async fn deny_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    let add_msg_imm = async move |msg: String| {
+        chat::add_msg_immediate_background(
+            state,
+            event_bus,
+            Uuid::new_v4(),
+            msg,
+            MessageKind::SysInfo,
+        )
+        .await
+    };
+
+    let pending_ids: Vec<Uuid> = {
+        let reg = state.proposals.read().await;
+        reg.values()
+            .filter(|p| matches!(p.status, EditProposalStatus::Pending))
+            .map(|p| p.request_id)
+            .collect()
+    };
+
+    if pending_ids.is_empty() {
+        add_msg_imm("No pending edit proposals to deny".to_string()).await;
+        return;
+    }
+
+    for request_id in pending_ids {
+        deny_edits(state, event_bus, request_id).await;
+    }
+}
+
+/// Extract file ranges touched by a proposal for overlap detection.
+///
+/// For semantic edits, ranges are derived from explicit byte spans.
+/// For non-semantic edits or missing spans, the entire file is treated
+/// as touched to ensure we do not apply overlapping changes out of order.
+fn proposal_ranges(
+    proposal: &crate::app_state::core::EditProposal,
+) -> Vec<(PathBuf, usize, usize)> {
+    let mut ranges = Vec::new();
+
+    for edit in &proposal.edits {
+        let (start, end) = normalize_range(edit.start_byte, edit.end_byte);
+        ranges.push((edit.file_path.clone(), start, end));
+    }
+
+    for edit in &proposal.edits_ns {
+        ranges.push((edit.file_path.clone(), 0, usize::MAX));
+    }
+
+    if ranges.is_empty() {
+        for path in &proposal.files {
+            ranges.push((path.clone(), 0, usize::MAX));
+        }
+    }
+
+    ranges
+}
+
+/// Normalize a byte range to a non-empty, ordered interval.
+///
+/// This prevents zero-width ranges from incorrectly skipping overlap checks.
+fn normalize_range(start: usize, end: usize) -> (usize, usize) {
+    let (min, max) = if start <= end { (start, end) } else { (end, start) };
+    if min == max {
+        (min, min.saturating_add(1))
+    } else {
+        (min, max)
+    }
+}
+
+/// Check if any proposed ranges overlap previously accepted ranges.
+fn overlaps_existing(
+    occupied: &HashMap<PathBuf, Vec<(usize, usize)>>,
+    ranges: &[(PathBuf, usize, usize)],
+) -> bool {
+    for (path, start, end) in ranges {
+        if let Some(existing) = occupied.get(path) {
+            for (ex_start, ex_end) in existing {
+                if start < ex_end && ex_start < end {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Record accepted ranges for a proposal so older ones can be skipped when overlapping.
+fn mark_occupied(
+    occupied: &mut HashMap<PathBuf, Vec<(usize, usize)>>,
+    ranges: &[(PathBuf, usize, usize)],
+) {
+    for (path, start, end) in ranges {
+        occupied
+            .entry(path.clone())
+            .or_default()
+            .push((*start, *end));
     }
 }
 

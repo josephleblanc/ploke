@@ -467,10 +467,11 @@ impl ChatHistory {
                         .clone()
                         .expect("Tool calls must have Some tool_call_id"),
                 )),
-                // UI/system info messages are not part of the API payload; omit.
-                // NOTE: 2025-12-16
-                // Adding the sysinfo messages for now, want to try this out.
-                MessageKind::SysInfo => Some(ReqMsg::new_system(m.content.clone())),
+                // UI/system info messages are not part of the API payload unless explicitly pinned.
+                MessageKind::SysInfo => match m.context_status {
+                    ContextStatus::Pinned { .. } => Some(ReqMsg::new_system(m.content.clone())),
+                    ContextStatus::Unpinned => None,
+                },
             })
             .collect()
     }
@@ -572,6 +573,30 @@ impl ChatHistory {
     ) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         self.add_child(parent_id, child_id, &content, status, kind, None, None)
+    }
+
+    pub fn add_message_sysinfo_with_context(
+        &mut self,
+        parent_id: Uuid,
+        child_id: Uuid,
+        content: String,
+        context_status: ContextStatus,
+    ) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        let child = Message {
+            id: child_id,
+            parent: Some(parent_id),
+            children: Vec::new(),
+            selected_child: None,
+            content,
+            status,
+            metadata: None,
+            kind: MessageKind::SysInfo,
+            tool_call_id: None,
+            tool_payload: None,
+            context_status,
+        };
+        self.add_child_message(child)
     }
 
     pub fn add_message_system(

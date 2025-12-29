@@ -148,11 +148,12 @@ impl AppHarness {
 
         // LLM manager (background subscriber)
         {
+            let eb_rt = event_bus.subscribe(EventPriority::Realtime);
             let eb_bg = event_bus.subscribe(EventPriority::Background);
             let state_c = state.clone();
             let eb_c = event_bus.clone();
             let cmd_c = cmd_tx.clone();
-            tokio::spawn(llm_manager(eb_bg, state_c, cmd_c, eb_c));
+            tokio::spawn(llm_manager(eb_rt, eb_bg, state_c, cmd_c, eb_c));
         }
 
         // App + headless terminal + synthetic input stream

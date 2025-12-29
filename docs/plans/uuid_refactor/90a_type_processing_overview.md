@@ -37,6 +37,7 @@
 ## **3. Phase 2 Visiting (`code_visitor.rs`)**
 
 *   **Goal:** Traverse the `syn` AST, identify code items, generate IDs, extract metadata, and build the partial `CodeGraph`.
+*   **Note (2025-12-29):** This section claims `TypeId::generate_synthetic` does **not** use `parent_scope_id`. That is outdated; `TypeId::generate_synthetic` currently hashes `parent_scope_id` (see `ploke-core/src/lib.rs`), so `Self`/generic usages are already scoped by the current definition stack.
 *   **General Item Processing (`visit_item_*` methods):**
     *   When the visitor encounters an item like `ItemFn`, `ItemStruct`, `ItemMod`, etc.:
         *   It extracts the item's `name`.
