@@ -93,6 +93,20 @@ pub async fn state_manager(
             } => {
                 handlers::chat::add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
+            StateCommand::AddMessageAtTail {
+                msg,
+                kind,
+                new_msg_id,
+            } => {
+                handlers::chat::add_msg_immediate_at_tail(
+                    &state,
+                    &event_bus,
+                    new_msg_id,
+                    msg,
+                    kind,
+                )
+                .await;
+            }
             StateCommand::AddMessageTool {
                 msg,
                 kind,

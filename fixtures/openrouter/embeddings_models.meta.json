@@ -1,7 +1,7 @@
 {
   "fixture_file": "fixtures/openrouter/embeddings_models.json",
-  "tree_sha256": "8e5419457d9967f05da13930be85240a3533518eca7eff40390be5db5d429990",
-  "generated_at": "2025-12-15T18:57:13.024331507+00:00",
+  "tree_sha256": "a16839eace9260109b3463e2efd7e31b3b1f1cf5070cd349c8b1e3d869d5d05a",
+  "generated_at": "2025-12-29T18:09:14.203360489+00:00",
   "source_url": "https://openrouter.ai/api/v1/embeddings/models",
   "notes": "Generated via `cargo xtask regen-embedding-models`"
 }

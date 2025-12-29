@@ -54,6 +54,11 @@ pub enum StateCommand {
         kind: MessageKind,
         new_msg_id: Uuid,
     },
+    AddMessageAtTail {
+        msg: String,
+        kind: MessageKind,
+        new_msg_id: Uuid,
+    },
     AddMessageTool {
         msg: String,
         kind: MessageKind,
@@ -253,6 +258,7 @@ impl StateCommand {
             ResumeIndexing => "ResumeIndexing",
             CancelIndexing => "CancelIndexing",
             AddMessageImmediate { .. } => "AddMessageImmediate",
+            AddMessageAtTail { .. } => "AddMessageAtTail",
             UpdateDatabase => "UpdateDatabase",
             RecordIndexCompleted => "RecordIndexCompleted",
             EmbedMessage { .. } => "EmbedMessage",

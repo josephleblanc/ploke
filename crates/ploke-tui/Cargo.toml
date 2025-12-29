@@ -19,6 +19,7 @@ similar = "2"
 unicode-width = "0.1"
 syntect = "5"
 pulldown-cmark = "0.11"
+arboard = "3.4"
 
 # concurrency
 tokio = { workspace = true } # "full" for simplicity, you can narrow down later

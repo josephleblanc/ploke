@@ -7,6 +7,7 @@ use crate::llm::{EndpointKey, LlmEvent, ModelId, ModelKey, ModelVariant, Provide
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 use ploke_llm::manager::events::endpoint;
 pub mod commands;
+pub mod clipboard;
 pub mod editor;
 pub mod events;
 pub mod input;
@@ -29,6 +30,7 @@ use crate::app::overlay_manager::OverlayManager;
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
 use crate::app::message_item::should_render_tool_buttons;
+use crate::app::clipboard::SystemClipboard;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
@@ -159,6 +161,7 @@ pub struct App {
     tool_verbosity: ToolVerbosity,
     confirmation_states: HashMap<Uuid, bool>,
     suggestion_index: usize,
+    clipboard: Option<SystemClipboard>,
 }
 
 impl App {
@@ -198,6 +201,7 @@ impl App {
             tool_verbosity,
             confirmation_states: HashMap::new(),
             suggestion_index: 0,
+            clipboard: None,
         }
     }
 
@@ -429,7 +433,9 @@ impl App {
                                 _ => {}
                             }
                             },
-                            Event::Paste(_) => {},
+                            Event::Paste(text) => {
+                                self.on_paste(&text);
+                            },
                             Event::Resize(_, _) => { self.needs_redraw = true; },
                         }
                     }
@@ -1089,6 +1095,9 @@ impl App {
             Action::DenyAllPendingEdits => {
                 self.send_cmd(StateCommand::DenyPendingEdits);
             }
+            Action::CopySelection => {
+                self.copy_selected_message();
+            }
             Action::Quit => {
                 self.quit();
             }
@@ -1467,6 +1476,83 @@ impl App {
         self.input_history_pos = None;
         self.input_buffer.push(c);
         self.reset_suggestion_selection();
+    }
+
+    fn insert_input_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.input_history_pos = None;
+        if self.mode == Mode::Insert && self.input_buffer.is_empty() {
+            if self.command_style == CommandStyle::Slash && text.starts_with('/') {
+                self.mode = Mode::Command;
+            } else if self.command_style == CommandStyle::NeoVim && text.starts_with(':') {
+                self.mode = Mode::Command;
+            }
+        }
+        self.input_buffer.push_str(text);
+        self.pending_char = None;
+        self.reset_suggestion_selection();
+    }
+
+    fn on_paste(&mut self, text: &str) {
+        if self.mode == Mode::Normal || self.overlay_manager.is_active() {
+            return;
+        }
+        self.insert_input_text(text);
+        self.needs_redraw = true;
+    }
+
+    pub(crate) fn copy_selected_message(&mut self) {
+        let selected = self.list.selected();
+        let verbosity = self.tool_verbosity;
+        let content_opt = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let guard = self.state.chat.0.read().await;
+                let path = guard.get_full_path();
+                selected.and_then(|idx| path.get(idx).map(|msg| {
+                    if let Some(payload) = &msg.tool_payload {
+                        payload.render(verbosity)
+                    } else {
+                        msg.content.clone()
+                    }
+                }))
+            })
+        });
+
+        let Some(content) = content_opt else {
+            self.emit_sysinfo("Nothing to copy.");
+            return;
+        };
+
+        let clipboard = match self.clipboard.as_mut() {
+            Some(clipboard) => clipboard,
+            None => match SystemClipboard::new() {
+                Ok(clipboard) => {
+                    self.clipboard = Some(clipboard);
+                    self.clipboard.as_mut().unwrap()
+                }
+                Err(err) => {
+                    self.emit_sysinfo(format!("Clipboard unavailable: {err}"));
+                    return;
+                }
+            },
+        };
+
+        if let Err(err) = clipboard.set_text(&content) {
+            self.emit_sysinfo(format!("Copy failed: {err}"));
+            return;
+        }
+
+        self.emit_sysinfo("Copied selection.");
+    }
+
+    fn emit_sysinfo(&self, msg: impl Into<String>) {
+        self.send_cmd(StateCommand::AddMessageAtTail {
+            msg: msg.into(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
     }
 
     fn reset_suggestion_selection(&mut self) {

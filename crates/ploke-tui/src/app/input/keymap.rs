@@ -63,6 +63,9 @@ pub enum Action {
     ToggleToolVerbosity, // 'v'
     OpenConfigOverlay,   // 'o'
 
+    // Clipboard
+    CopySelection, // 'y'
+
     // Input widget scrolling (testing/dev keys)
     InputScrollPrev, // Ctrl+Up
     InputScrollNext, // Ctrl+Down
@@ -131,6 +134,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Enter => Some(Action::TriggerSelection),
                 KeyCode::Char('Y') => Some(Action::ApproveAllPendingEdits),
                 KeyCode::Char('N') => Some(Action::DenyAllPendingEdits),
+                KeyCode::Char('y') => Some(Action::CopySelection),
 
                 KeyCode::Char('/') => Some(Action::OpenCommand),
                 KeyCode::Char(':') if matches!(style, CommandStyle::NeoVim) => {
