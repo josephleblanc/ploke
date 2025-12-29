@@ -338,6 +338,43 @@ pub async fn add_msg_immediate(
     }
 }
 
+/// Add a message as the new tail without changing the current selection.
+#[instrument(skip(state), level = "trace")]
+pub async fn add_msg_immediate_at_tail(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
+    content: String,
+    kind: MessageKind,
+) {
+    trace!("Starting add_msg_immediate_at_tail");
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.tail;
+
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
+        MessageKind::System => {
+            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
+        }
+        MessageKind::Assistant => {
+            chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
+        }
+        MessageKind::Tool => {
+            panic!("Use add_tool_msg_immediate to add tool messages");
+        }
+        MessageKind::SysInfo => {
+            chat_guard.add_message_sysinfo(parent_id, new_msg_id, kind, content.clone())
+        }
+    };
+    drop(chat_guard);
+
+    if let Ok(message_id) = message_wrapper {
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+    } else {
+        tracing::error!("Failed to add message at tail of kind: {}", kind);
+    }
+}
+
 /// Add a SysInfo message without pinning it into the LLM context window.
 ///
 /// Use this for UI-only summaries that should appear in chat history but not

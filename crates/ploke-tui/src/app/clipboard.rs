@@ -31,6 +31,12 @@ pub struct SystemClipboard {
     inner: arboard::Clipboard,
 }
 
+impl fmt::Debug for SystemClipboard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SystemClipboard")
+    }
+}
+
 impl SystemClipboard {
     pub fn new() -> Result<Self, ClipboardError> {
         Ok(Self {

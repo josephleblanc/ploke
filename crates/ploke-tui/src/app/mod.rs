@@ -1548,7 +1548,7 @@ impl App {
     }
 
     fn emit_sysinfo(&self, msg: impl Into<String>) {
-        self.send_cmd(StateCommand::AddMessageImmediate {
+        self.send_cmd(StateCommand::AddMessageAtTail {
             msg: msg.into(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
