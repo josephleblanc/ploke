@@ -44,6 +44,7 @@ pub fn execute(app: &mut App, command: Command) {
     match command {
         Command::Help => show_command_help(app),
         Command::HelpTopic(topic) => show_topic_help(app, &topic),
+        Command::CopySelection => app.copy_selected_message(),
         Command::ModelList => list_models_async(app),
         Command::ModelInfo => show_model_info_async(app),
         Command::ModelSearch(keyword) => {

@@ -56,6 +56,7 @@ pub enum Command {
     ToolVerbositySet(ToolVerbosity),
     ToolVerbosityToggle,
     ToolVerbosityShow,
+    CopySelection,
     Raw(String),
     SearchContext(String),
 }
@@ -197,6 +198,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             }
         }
         "update" => Command::Update,
+        "copy" => Command::CopySelection,
         s if s.starts_with("edit preview mode ") => {
             let m = s
                 .trim_start_matches("edit preview mode ")

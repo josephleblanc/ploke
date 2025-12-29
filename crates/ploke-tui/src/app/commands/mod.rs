@@ -22,6 +22,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     index resume - Resume indexing
     index cancel - Cancel indexing
     check api - Check API key configuration
+    copy - Copy selected conversation message to clipboard
 
     model list - List available models
     model info - Show active model/provider settings
@@ -64,6 +65,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     / - Quick hybrid search prompt
     P - Toggle context preview
     v - Cycle tool verbosity (minimal -> normal -> verbose)
+    y - Copy selected message to clipboard
     j/↓ - Navigate down (selection)
     k/↑ - Navigate up (selection)
     J - Page down (scroll)
@@ -125,6 +127,11 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         command: "check api",
         completion: "check api",
         description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "copy",
+        completion: "copy",
+        description: "Copy the selected conversation message to clipboard",
     },
     CommandEntry {
         command: "model list",
