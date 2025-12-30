@@ -321,6 +321,7 @@ pub async fn process_llm_request(
         ChatEvt::PromptConstructed {
             parent_id,
             formatted_prompt,
+            context_plan: _context_plan,
         } => {
             let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
             let tokens: usize = formatted_prompt

@@ -1,6 +1,10 @@
 use crate::{
     chat_history::{ContextStatus, TurnsToLive},
-    llm::{ChatEvt, LlmEvent, manager::Role},
+    llm::{
+        ChatEvt, LlmEvent,
+        manager::{ApproxCharTokenizer, Role},
+        manager::events::{ContextPlan, ContextPlanMessage, ContextPlanRagPart},
+    },
 };
 use std::{ops::ControlFlow, path::PathBuf};
 
@@ -55,7 +59,7 @@ pub async fn process_with_rag(
     }
 
     // Snapshot chat state up front to avoid holding the lock across awaits.
-    let (msg_id, user_msg, messages) = {
+    let (msg_id, user_msg, messages, plan_messages) = {
         let guard = state.chat.read().await;
         let (msg_id, user_msg) = match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
             Ok(maybe_msg) => match maybe_msg {
@@ -70,8 +74,8 @@ pub async fn process_with_rag(
                 return;
             }
         };
-        let messages = guard.current_path_as_llm_request_messages();
-        (msg_id, user_msg, messages)
+        let (messages, plan_messages) = guard.current_path_as_llm_request_messages_with_plan();
+        (msg_id, user_msg, messages, plan_messages)
     };
 
     if let Some(rag) = &state.rag {
@@ -85,7 +89,22 @@ pub async fn process_with_rag(
             .await
         {
             Ok(rag_ctx) => {
-                let augmented_prompt = construct_context_from_rag(rag_ctx, messages, msg_id);
+                let context_plan = build_context_plan(
+                    Uuid::new_v4(),
+                    msg_id,
+                    &plan_messages,
+                    Some(&rag_ctx),
+                );
+                tracing::debug!(
+                    plan_id = %context_plan.plan_id,
+                    parent_id = %context_plan.parent_id,
+                    included_messages = context_plan.included_messages.len(),
+                    included_rag_parts = context_plan.included_rag_parts.len(),
+                    estimated_tokens = context_plan.estimated_total_tokens,
+                    "Context plan constructed"
+                );
+                let augmented_prompt =
+                    construct_context_from_rag(rag_ctx, messages, msg_id, context_plan);
                 event_bus.send(AppEvent::Llm(augmented_prompt));
                 return;
             }
@@ -113,15 +132,36 @@ pub async fn process_with_rag(
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;
     }
     let mut formatted: Vec<RequestMessage> = Vec::with_capacity(messages.len() + 1);
-    formatted.push(RequestMessage::new_system(
-        "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.".to_string(),
-    ));
+    let fallback_note = "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.";
+    formatted.push(RequestMessage::new_system(fallback_note.to_string()));
     formatted.extend(messages.into_iter());
+    let mut fallback_plan_messages = plan_messages;
+    let tokenizer = ApproxCharTokenizer::default();
+    fallback_plan_messages.push(ContextPlanMessage {
+        message_id: None,
+        kind: MessageKind::System,
+        estimated_tokens: tokenizer.count(fallback_note),
+    });
+    let context_plan = build_context_plan(
+        Uuid::new_v4(),
+        msg_id,
+        &fallback_plan_messages,
+        None,
+    );
+    tracing::debug!(
+        plan_id = %context_plan.plan_id,
+        parent_id = %context_plan.parent_id,
+        included_messages = context_plan.included_messages.len(),
+        included_rag_parts = context_plan.included_rag_parts.len(),
+        estimated_tokens = context_plan.estimated_total_tokens,
+        "Context plan constructed"
+    );
 
     event_bus.send(AppEvent::Llm(LlmEvent::ChatCompletion(
         ChatEvt::PromptConstructed {
             parent_id: msg_id,
             formatted_prompt: formatted,
+            context_plan,
         },
     )));
 }
@@ -143,6 +183,7 @@ fn construct_context_from_rag(
     ctx: AssembledContext,
     messages: Vec<RequestMessage>,
     parent_id: Uuid,
+    context_plan: ContextPlan,
 ) -> LlmEvent {
     use RequestMessage as ReqMsg;
 
@@ -166,6 +207,7 @@ fn construct_context_from_rag(
     LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
         parent_id,
         formatted_prompt: text,
+        context_plan,
     })
 }
 
@@ -176,4 +218,95 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
         ctx_part.canon_path.as_ref(),
         ctx_part.text
     )
+}
+
+fn build_context_plan(
+    plan_id: Uuid,
+    parent_id: Uuid,
+    plan_messages: &[ContextPlanMessage],
+    rag_ctx: Option<&AssembledContext>,
+) -> ContextPlan {
+    let tokenizer = ApproxCharTokenizer::default();
+    let mut rag_parts = Vec::new();
+    let mut rag_tokens = 0usize;
+    if let Some(ctx) = rag_ctx {
+        for part in &ctx.parts {
+            let estimated_tokens = tokenizer.count(&part.text);
+            rag_tokens = rag_tokens.saturating_add(estimated_tokens);
+            rag_parts.push(ContextPlanRagPart {
+                part_id: part.id,
+                file_path: part.file_path.as_ref().to_string(),
+                kind: part.kind,
+                estimated_tokens,
+                score: part.score,
+            });
+        }
+    }
+    let message_tokens: usize = plan_messages
+        .iter()
+        .map(|m| m.estimated_tokens)
+        .sum();
+
+    ContextPlan {
+        plan_id,
+        parent_id,
+        estimated_total_tokens: message_tokens.saturating_add(rag_tokens),
+        included_messages: plan_messages.to_vec(),
+        included_rag_parts: rag_parts,
+        rag_stats: rag_ctx.map(|ctx| ctx.stats.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ploke_core::rag_types::{CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath};
+
+    #[test]
+    fn context_plan_is_stable_for_fixed_inputs() {
+        let plan_id = Uuid::from_u128(1);
+        let parent_id = Uuid::from_u128(2);
+        let plan_messages = vec![
+            ContextPlanMessage {
+                message_id: Some(Uuid::from_u128(10)),
+                kind: MessageKind::User,
+                estimated_tokens: 3,
+            },
+            ContextPlanMessage {
+                message_id: Some(Uuid::from_u128(11)),
+                kind: MessageKind::Assistant,
+                estimated_tokens: 5,
+            },
+        ];
+        let ctx = AssembledContext {
+            parts: vec![ContextPart {
+                id: Uuid::from_u128(30),
+                file_path: NodeFilepath::new("src/lib.rs".to_string()),
+                canon_path: CanonPath::new("crate::lib::foo".to_string()),
+                ranges: vec![],
+                kind: ContextPartKind::Code,
+                text: "fn foo() {}".to_string(),
+                score: 0.5,
+                modality: Modality::Dense,
+            }],
+            stats: ContextStats {
+                total_tokens: 10,
+                files: 1,
+                parts: 1,
+                truncated_parts: 0,
+                dedup_removed: 0,
+            },
+        };
+
+        let plan_a = build_context_plan(plan_id, parent_id, &plan_messages, Some(&ctx));
+        let plan_b = build_context_plan(plan_id, parent_id, &plan_messages, Some(&ctx));
+
+        assert_eq!(plan_a.plan_id, plan_b.plan_id);
+        assert_eq!(plan_a.parent_id, plan_b.parent_id);
+        assert_eq!(plan_a.estimated_total_tokens, plan_b.estimated_total_tokens);
+        assert_eq!(plan_a.included_messages.len(), 2);
+        assert_eq!(plan_a.included_rag_parts.len(), 1);
+        assert_eq!(plan_a.included_rag_parts[0].file_path, "src/lib.rs");
+        assert_eq!(plan_a.rag_stats.as_ref().unwrap().parts, 1);
+    }
 }

@@ -97,6 +97,7 @@ async fn conversation_only_prompt_and_persistent_tip_without_workspace() {
                 Ok(AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
                     parent_id,
                     formatted_prompt,
+                    ..
                 }))) if parent_id == user_msg_id_1 => {
                     // Ensure the first message is the fallback system note we inject
                     assert!(

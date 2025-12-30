@@ -1,5 +1,7 @@
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
+use crate::llm::manager::ApproxCharTokenizer;
+use crate::llm::manager::events::ContextPlanMessage;
 use crate::rag::context::PROMPT_HEADER;
 use crate::{AppEvent, llm::manager::Role};
 
@@ -446,11 +448,26 @@ impl ChatHistory {
     pub(crate) fn current_path_as_llm_request_messages(
         &self,
     ) -> Vec<crate::llm::manager::RequestMessage> {
+        self.current_path_as_llm_request_messages_with_plan().0
+    }
+
+    pub(crate) fn current_path_as_llm_request_messages_with_plan(
+        &self,
+    ) -> (
+        Vec<crate::llm::manager::RequestMessage>,
+        Vec<ContextPlanMessage>,
+    ) {
         use crate::llm::manager::RequestMessage as ReqMsg;
 
-        self.current_path_ids()
-            .filter_map(|id| self.messages.get(&id))
-            .filter_map(|m| match m.kind {
+        let tokenizer = ApproxCharTokenizer::default();
+        let mut req_messages = Vec::new();
+        let mut plan_messages = Vec::new();
+
+        for id in self.current_path_ids() {
+            let Some(m) = self.messages.get(&id) else {
+                continue;
+            };
+            let maybe_req = match m.kind {
                 MessageKind::User => Some(ReqMsg::new_user(m.content.clone())),
                 MessageKind::Assistant => Some(ReqMsg::new_assistant(m.content.clone())),
                 MessageKind::System => {
@@ -472,8 +489,20 @@ impl ChatHistory {
                     ContextStatus::Pinned { .. } => Some(ReqMsg::new_system(m.content.clone())),
                     ContextStatus::Unpinned => None,
                 },
-            })
-            .collect()
+            };
+
+            if let Some(req) = maybe_req {
+                let estimated_tokens = tokenizer.count(&req.content);
+                req_messages.push(req);
+                plan_messages.push(ContextPlanMessage {
+                    message_id: Some(id),
+                    kind: m.kind,
+                    estimated_tokens,
+                });
+            }
+        }
+
+        (req_messages, plan_messages)
     }
     /// Creates a new ChatHistory with the systm prompt message.
     ///

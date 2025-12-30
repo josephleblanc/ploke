@@ -1,4 +1,7 @@
-use ploke_core::ArcStr;
+use ploke_core::{
+    ArcStr,
+    rag_types::{ContextPartKind, ContextStats},
+};
 use ploke_core::tool_types::ToolName;
 use ploke_llm::{
     LLMMetadata, LlmError, RequestMessage,
@@ -6,6 +9,34 @@ use ploke_llm::{
 };
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::chat_history::MessageKind;
+
+#[derive(Clone, Debug)]
+pub struct ContextPlan {
+    pub plan_id: Uuid,
+    pub parent_id: Uuid,
+    pub estimated_total_tokens: usize,
+    pub included_messages: Vec<ContextPlanMessage>,
+    pub included_rag_parts: Vec<ContextPlanRagPart>,
+    pub rag_stats: Option<ContextStats>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextPlanMessage {
+    pub message_id: Option<Uuid>,
+    pub kind: MessageKind,
+    pub estimated_tokens: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextPlanRagPart {
+    pub part_id: Uuid,
+    pub file_path: String,
+    pub kind: ContextPartKind,
+    pub estimated_tokens: usize,
+    pub score: f32,
+}
 
 #[derive(Clone, Debug)]
 pub enum LlmEvent {
@@ -81,6 +112,7 @@ pub enum ChatEvt {
     PromptConstructed {
         parent_id: Uuid,
         formatted_prompt: Vec<RequestMessage>,
+        context_plan: ContextPlan,
     },
 }
 
