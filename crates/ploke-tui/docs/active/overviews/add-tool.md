@@ -1,35 +1,46 @@
 # How to add a new tool with config
 
-## A. Create type label, e.g. 
+This guide is the canonical checklist for adding a new tool to `ploke-tui`. It reflects the
+current split between `ploke-core` (tool names/descriptions) and `ploke-tui` (tool wiring).
+
+## A. Create the tool type and module
+
+1. Add a new module in `crates/ploke-tui/src/tools/` (e.g., `list_dir.rs`).
+2. Define a label type:
 
 ```rust
-pub struct NsPatch;
+pub struct ListDir;
 ```
 
-## B. implement `Tool` for the label type
+## B. Implement `Tool` for the label type
 
 ```rust
-impl Tool for NsPatch {
+impl Tool for ListDir {
   // methods
 }
 ```
 
-On writing the `Tool` methods:
+Before wiring, define:
+- Params/owned params structs (borrowed + owned).
+- Output struct serialized into `ToolResult.content` (JSON).
+- Any helper enums or validation helpers needed for clean parsing.
 
-1. `name`
+### 1) `name`
 
-- add a new variant to `ToolName` enum
-- this is the name that will be exposed to the llm as a tool call
+- Add a new variant to `ToolName` in `crates/ploke-core/src/tool_types.rs`.
+- Update `ToolName::ALL` and `ToolName::as_str`.
+- This is the name exposed to the LLM as a tool call.
 
-2. `description`
+### 2) `description`
 
-- add a new variant to `ToolDescr`
-- new variant should be marked with `#serde(rename = "<description>"]`
-- this description will be exposed to the LLM, and should provide concise instructions on when/where/how to use the tool
+- Add a new variant to `ToolDescr` in `crates/ploke-core/src/tool_types.rs`.
+- The new variant should be marked with `#[serde(rename = "<description>")]`.
+- This description is exposed to the LLM and should provide concise instructions on when/where/how
+  to use the tool.
 
-3. `schema`
+### 3) `schema`
 
-- create a `lazy_static` with the json representation of the tool
+- Create a `lazy_static` with the JSON Schema for the tool parameters.
 
 e.g.
 ```rust
@@ -63,21 +74,32 @@ lazy_static::lazy_static! {
 }
 ```
 
-- ensure tests are added for the json value translation, and that the output contains the expected descriptions.
+- Ensure tests are added for the JSON schema value and that the output contains the expected
+  descriptions.
+
+### 4) Error handling
+
+- Prefer `ToolInvocationError` mapping and `ToolError` helpers in
+  `crates/ploke-tui/src/tools/error.rs`.
+- For user-facing validation failures, return `tool_ui_error(...)` from `execute`.
+- For I/O failures, return `tool_io_error(...)` or map them to `ToolErrorCode::Io`.
 
 ## C. Register the tool with the runtime
 
-1. Add the new type to `pub mod ...` in `ploke/crates/ploke-tui/src/tools/mod.rs`.
-2. Extend `ToolName` and `ToolDescr` enums with the new entry and description.
-3. Update `process_tool` to deserialize, execute, and emit events for the new tool.
+1. Add the new module to `pub mod ...` in `crates/ploke-tui/src/tools/mod.rs`.
+2. Update `process_tool` to deserialize, execute, and emit events for the new tool.
+3. Add the tool to the LLM tool list in `crates/ploke-tui/src/llm/manager/mod.rs`.
 4. If the tool needs other crates, wire their contexts inside `Tool::build` or `execute`.
+5. If the tool needs a shared output type, add it to `ploke-core` instead of duplicating.
 
 ## D. Execution + tests
 
 1. Implement `Tool::execute` with the correct ctx wiring before sending work to other crates.
-2. Emit `emit_err` on any deserialization/validation failures.
-3. Add unit tests covering schema, `into_owned`, and at least one execution path (mock dependencies when possible).
-4. Run the relevant `cargo test -p <crate>` targets before submitting changes.
+2. Emit `emit_err` on any deserialization/validation failures (see `ToolInvocationError` in
+   `crates/ploke-tui/src/tools/error.rs` for mapping guidance).
+3. If the tool returns structured data, add a `ToolUiPayload` summary for UI visibility.
+4. Add unit tests covering schema, `into_owned`, and at least one execution path (mock dependencies when possible).
+5. Run the relevant `cargo test -p <crate>` targets before submitting changes.
 
 ## E. Cross-crate work
 

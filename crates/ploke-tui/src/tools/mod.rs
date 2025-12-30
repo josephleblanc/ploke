@@ -50,6 +50,7 @@ pub mod error;
 pub mod get_code_edges;
 pub mod ns_patch;
 pub mod ns_read;
+pub mod list_dir;
 pub mod ui;
 pub mod validators;
 
@@ -370,6 +371,33 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             get_code_edges::CodeItemEdges::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::ListDir => {
+            let params = list_dir::ListDir::deserialize_params(&args).map_err(|err| {
+                let terr = list_dir::ListDir::adapt_error(err);
+                list_dir::ListDir::emit_err(&ctx, terr.clone());
+                color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+            })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = list_dir::ListDir::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = list_dir::ListDir::adapt_error(ToolInvocationError::Exec(e));
+                    list_dir::ListDir::emit_err(&ctx, terr.clone());
+                    color_eyre::eyre::eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            list_dir::ListDir::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::Cargo => {

@@ -46,7 +46,7 @@ use crate::{
     chat_history::{ContextTokens, MessageKind, TokenKind},
     tools::{
         self, Tool as _, ToolDefinition, cargo::CargoTool, code_edit::GatCodeEdit,
-        create_file::CreateFile, ns_patch::NsPatch, ns_read::NsRead,
+        create_file::CreateFile, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
         request_code_context::RequestCodeContextGat,
     },
     tracing_setup::TOKENS_TARGET,
@@ -454,6 +454,7 @@ async fn prepare_and_run_llm_call(
         CodeItemLookup::tool_def(),
         CodeItemEdges::tool_def(),
         CargoTool::tool_def(),
+        ListDir::tool_def(),
     ];
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
