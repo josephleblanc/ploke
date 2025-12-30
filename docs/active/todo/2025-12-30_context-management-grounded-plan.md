@@ -12,13 +12,52 @@ Baseline (current code):
 
 ## Tickets
 
-- CM-01 ContextPlan snapshot artifact + tracing + deterministic test
-- CM-02 Retention classes (Sticky/Leased) + decrement TTL only for included items
+- CM-01 ContextPlan snapshot artifact + tracing + deterministic test (done)
+- CM-02 Retention classes (Sticky/Leased) + decrement TTL only for included items (done)
 - CM-03 Tool episode atomicity (group tool call + result)
 - CM-04 Light pack default for RAG context + config knob
 - CM-05 Leased cap + activation ordering
 - CM-06 Context Mode (Off/Light/Heavy) + budget meter line
 - CM-07 Golden determinism test pinned to ContextPlan fixture
+
+## Progress
+
+- CM-01 done: ContextPlan structs wired into PromptConstructed, plan built in RAG + fallback paths,
+  debug-traced, deterministic unit test added in `crates/ploke-tui/src/rag/context.rs`.
+- Test note: `cargo test -p ploke-tui` currently fails in preexisting `app::tests::file_completion_*`
+  (missing Tokio runtime); CM-01 test passes.
+- CM-02 done: added `RetentionClass` (Sticky/Leased), set base prompt to Sticky, and threaded
+  included message ids from `ContextPlan` into `DecrementChatTtl` so only included leased items
+  decrement.
+- CM-03 notes: tool grouping likely belongs in `ChatHistory::current_path_as_llm_request_messages_with_plan`
+  (`crates/ploke-tui/src/chat_history.rs`) since `tool_call_id` is already tracked on messages.
+  Tool calls are generated in `crates/ploke-tui/src/llm/manager/session.rs` via tool events and
+  recorded through `StateCommand::AddMessageTool` (`crates/ploke-tui/src/app_state/commands.rs`).
+  The current prompt assembly includes tool messages individually; grouping should ensure assistant
+  tool-call + tool result (and optional assistant preamble) are included/excluded together,
+  probably by buffering items keyed by `tool_call_id` before finalizing the prompt list.
+- CM-03 WIP: `ChatHistory::current_path_as_llm_request_messages_with_plan` now synthesizes assistant
+  tool-call messages (from `tool_payload`) and groups them directly before tool results to preserve
+  tool call/response atomicity in the prompt.
+- CM-03 test: `tool_episode_groups_call_and_result` in `crates/ploke-tui/src/chat_history.rs`.
+- CM-04 done: default RAG snippets are truncated to a small line window with kind/score headers,
+  `rag.per_part_max_tokens` config drives `TokenBudget` for base RAG and `request_code_context`.
+- CM-04 test: `reformat_context_to_system_truncates_and_includes_meta` in
+  `crates/ploke-tui/src/rag/context.rs`.
+- CM-04 impl notes: truncation uses `DEFAULT_CONTEXT_PART_MAX_LINES` (16) and appends
+  `... [truncated]`; token estimates for `ContextPlan` use the truncated text. RAG budget is
+  derived in `rag_budget_from_config` and applied in `crates/ploke-tui/src/lib.rs` during
+  `AppState` creation. `request_code_context` now respects `rag.per_part_max_tokens`.
+- CM-04 notes: light-pack truncation should live in `crates/ploke-tui/src/rag/context.rs`
+  (`reformat_context_to_system`), which currently renders full snippets as system messages. Add a
+  per-part token/line cap (likely via `TokenBudget`) and include score + kind in the header.
+  Plumb config from `crates/ploke-tui/src/user_config.rs` into the RAG call path
+  (`crates/ploke-tui/src/app_state/core.rs`) so the UI/default mode can control the per-part limit.
+- CM-04 additional notes: `ContextPart` rendering is visible in the context browser UI
+  (`crates/ploke-tui/src/app/view/components/context_browser.rs`), so header changes (score/kind) will
+  be immediately visible without UI work; ensure truncation preserves header + a consistent excerpt
+  window and avoids cutting mid-line. Consider a small default line cap (12–20) and apply it before
+  formatting so token estimates remain aligned with what is sent.
 
 ## Work items (ordered, concrete)
 

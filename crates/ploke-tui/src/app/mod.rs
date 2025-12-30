@@ -6,8 +6,8 @@ use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{EndpointKey, LlmEvent, ModelId, ModelKey, ModelVariant, ProviderKey};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 use ploke_llm::manager::events::endpoint;
-pub mod commands;
 pub mod clipboard;
+pub mod commands;
 pub mod editor;
 pub mod events;
 pub mod input;
@@ -24,13 +24,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::app::clipboard::SystemClipboard;
 use crate::app::input::keymap::{Action, to_action};
+use crate::app::message_item::should_render_tool_buttons;
 use crate::app::overlay::OverlayAction;
 use crate::app::overlay_manager::OverlayManager;
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
-use crate::app::message_item::should_render_tool_buttons;
-use crate::app::clipboard::SystemClipboard;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
@@ -54,6 +54,7 @@ use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
+use crate::app::commands::COMMAND_ENTRIES;
 use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
@@ -65,7 +66,6 @@ use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail,
 };
 use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
-use crate::app::commands::COMMAND_ENTRIES;
 
 fn compute_input_height(
     desired_input_height: u16,
@@ -501,7 +501,12 @@ impl App {
         &self,
         input: &str,
         selection_index: usize,
-    ) -> Option<(Vec<CommandSuggestion>, Option<String>, Option<String>, usize)> {
+    ) -> Option<(
+        Vec<CommandSuggestion>,
+        Option<String>,
+        Option<String>,
+        usize,
+    )> {
         let at_idx = input.rfind('@')?;
         let after_at = &input[at_idx + 1..];
         if after_at.chars().any(char::is_whitespace) {
@@ -522,7 +527,9 @@ impl App {
         let (parent, prefix) = if after_at.ends_with(std::path::MAIN_SEPARATOR) {
             (fragment_path, "")
         } else {
-            let parent = fragment_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+            let parent = fragment_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
             let prefix = fragment_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -603,7 +610,12 @@ impl App {
         &self,
         mode: Mode,
         selection_index: usize,
-    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>, usize) {
+    ) -> (
+        Vec<CommandSuggestion>,
+        Option<String>,
+        Option<String>,
+        usize,
+    ) {
         if matches!(mode, Mode::Insert | Mode::Command) {
             if let Some((suggestions, ghost, accept, selected_idx)) =
                 self.file_completion_suggestions(&self.input_buffer, selection_index)
@@ -661,7 +673,12 @@ impl App {
             accept_text.push(' ');
         }
 
-        (suggestions, Some(ghost_text), Some(accept_text), selected_idx)
+        (
+            suggestions,
+            Some(ghost_text),
+            Some(accept_text),
+            selected_idx,
+        )
     }
 
     /// Count pending edit proposals for UI banner display.
@@ -711,10 +728,10 @@ impl App {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
         let frame_area = frame.area();
-        let desired_input_height =
-            self.input_view
-                .desired_height(&self.input_buffer, frame_area.width)
-                .saturating_add(command_suggestions.len() as u16);
+        let desired_input_height = self
+            .input_view
+            .desired_height(&self.input_buffer, frame_area.width)
+            .saturating_add(command_suggestions.len() as u16);
         let input_height = compute_input_height(
             desired_input_height,
             frame_area.height,
@@ -1347,7 +1364,14 @@ impl App {
                     if let Some(request_id) = should_trigger {
                         let is_yes = self
                             .confirmation_states
-                            .get(&self.conversation.interactive_tools.get(&selected).copied().unwrap_or_default())
+                            .get(
+                                &self
+                                    .conversation
+                                    .interactive_tools
+                                    .get(&selected)
+                                    .copied()
+                                    .unwrap_or_default(),
+                            )
                             .copied()
                             .unwrap_or(true);
 
@@ -1510,13 +1534,15 @@ impl App {
             tokio::runtime::Handle::current().block_on(async {
                 let guard = self.state.chat.0.read().await;
                 let path = guard.get_full_path();
-                selected.and_then(|idx| path.get(idx).map(|msg| {
-                    if let Some(payload) = &msg.tool_payload {
-                        payload.render(verbosity)
-                    } else {
-                        msg.content.clone()
-                    }
-                }))
+                selected.and_then(|idx| {
+                    path.get(idx).map(|msg| {
+                        if let Some(payload) = &msg.tool_payload {
+                            payload.render(verbosity)
+                        } else {
+                            msg.content.clone()
+                        }
+                    })
+                })
             })
         });
 
@@ -2020,8 +2046,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn file_completion_uses_cwd_for_bare_at() {
+    #[tokio::test]
+    async fn file_completion_uses_cwd_for_bare_at() {
         let temp = tempdir().expect("temp dir");
         let _guard = CwdGuard::set_to(temp.path());
         let app = create_mock_app();
@@ -2050,11 +2076,13 @@ mod tests {
         let input_dir = "/open @s";
         let (ghost_dir, accept_dir) = app.file_completion(input_dir).expect("dir completion");
         assert_eq!(ghost_dir, format!("rc{}", std::path::MAIN_SEPARATOR));
-        assert_eq!(accept_dir, format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR));
+        assert_eq!(
+            accept_dir,
+            format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR)
+        );
 
         let input_file = "/open @src/m";
-        let (ghost_file, accept_file) =
-            app.file_completion(input_file).expect("file completion");
+        let (ghost_file, accept_file) = app.file_completion(input_file).expect("file completion");
         assert_eq!(ghost_file, "ain.rs");
         assert_eq!(accept_file, "/open @src/main.rs");
     }

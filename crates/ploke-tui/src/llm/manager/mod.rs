@@ -8,7 +8,7 @@ mod session;
 // NOTE:ploke-llm 2025-12-14
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
-mod events;
+pub(crate) mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
 
@@ -317,18 +317,23 @@ pub async fn process_llm_request(
         } // Not a request, do nothing
     };
 
-    let (mut messages, mut context_tokens) = match context {
+    let (mut messages, mut context_tokens, included_message_ids) = match context {
         ChatEvt::PromptConstructed {
             parent_id,
             formatted_prompt,
-            context_plan: _context_plan,
+            context_plan,
         } => {
             let tokenizer = ploke_llm::manager::ApproxCharTokenizer::default();
             let tokens: usize = formatted_prompt
                 .iter()
                 .map(|m| tokenizer.count(&m.content))
                 .sum();
-            (formatted_prompt, tokens)
+            let included_message_ids = context_plan
+                .included_messages
+                .iter()
+                .filter_map(|msg| msg.message_id)
+                .collect();
+            (formatted_prompt, tokens, included_message_ids)
         }
         _ => {
             tracing::debug!("No prompt constructed, do nothing");
@@ -408,6 +413,7 @@ pub async fn process_llm_request(
         &state,
         &client,
         messages,
+        included_message_ids,
         event_bus.clone(),
         assistant_message_id,
         parent_id,
@@ -439,6 +445,7 @@ async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     messages: Vec<RequestMessage>,
+    included_message_ids: Vec<Uuid>,
     event_bus: Arc<EventBus>,
     assistant_message_id: Uuid,
     parent_id: Uuid,
@@ -517,6 +524,7 @@ async fn prepare_and_run_llm_call(
         assistant_message_id,
         event_bus,
         cmd_tx.clone(),
+        included_message_ids,
         policy,
         finish_policy,
         http_timeout,

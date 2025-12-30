@@ -2,10 +2,11 @@ use crate::{
     chat_history::{ContextStatus, TurnsToLive},
     llm::{
         ChatEvt, LlmEvent,
-        manager::{ApproxCharTokenizer, Role},
+        manager::Role,
         manager::events::{ContextPlan, ContextPlanMessage, ContextPlanRagPart},
     },
 };
+use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use std::{ops::ControlFlow, path::PathBuf};
 
 use once_cell::sync::Lazy;
@@ -29,8 +30,11 @@ pub static PROMPT_HEADER: &str = r#"
 You are a highly skilled software engineer, specializing in the Rust programming language.
 
 You will be asked to provide some assistance in collaborating with the user.
+RAG snippets are intentionally brief; request deeper context with the request_code_context tool.
 <-- END SYSTEM PROMPT -->
 "#;
+
+const DEFAULT_CONTEXT_PART_MAX_LINES: usize = 16;
 
 /// Reads the just-submitted user message and:
 /// - uses rag strategy to find similar items from the code graph
@@ -212,12 +216,35 @@ fn construct_context_from_rag(
 }
 
 fn reformat_context_to_system(ctx_part: ContextPart) -> String {
+    let snippet = truncate_context_text(&ctx_part.text, DEFAULT_CONTEXT_PART_MAX_LINES);
     format!(
-        "file_path: {}\ncanon_path: {}\ncode_snippet: {}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
-        ctx_part.text
+        ctx_part.kind.to_static_str(),
+        ctx_part.score,
+        snippet
     )
+}
+
+fn truncate_context_text(text: &str, max_lines: usize) -> String {
+    let mut out_lines = Vec::new();
+    let mut truncated = false;
+    for (idx, line) in text.lines().enumerate() {
+        if idx >= max_lines {
+            truncated = true;
+            break;
+        }
+        out_lines.push(line);
+    }
+    let mut out = out_lines.join("\n");
+    if truncated {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("... [truncated]");
+    }
+    out
 }
 
 fn build_context_plan(
@@ -231,7 +258,8 @@ fn build_context_plan(
     let mut rag_tokens = 0usize;
     if let Some(ctx) = rag_ctx {
         for part in &ctx.parts {
-            let estimated_tokens = tokenizer.count(&part.text);
+            let truncated = truncate_context_text(&part.text, DEFAULT_CONTEXT_PART_MAX_LINES);
+            let estimated_tokens = tokenizer.count(&truncated);
             rag_tokens = rag_tokens.saturating_add(estimated_tokens);
             rag_parts.push(ContextPlanRagPart {
                 part_id: part.id,
@@ -308,5 +336,42 @@ mod tests {
         assert_eq!(plan_a.included_rag_parts.len(), 1);
         assert_eq!(plan_a.included_rag_parts[0].file_path, "src/lib.rs");
         assert_eq!(plan_a.rag_stats.as_ref().unwrap().parts, 1);
+    }
+
+    #[test]
+    fn reformat_context_to_system_truncates_and_includes_meta() {
+        let mut text = String::new();
+        let total_lines = DEFAULT_CONTEXT_PART_MAX_LINES + 2;
+        for idx in 0..total_lines {
+            if idx > 0 {
+                text.push('\n');
+            }
+            text.push_str(&format!("line {idx}"));
+        }
+        let part = ContextPart {
+            id: Uuid::from_u128(40),
+            file_path: NodeFilepath::new("src/main.rs".to_string()),
+            canon_path: CanonPath::new("crate::main".to_string()),
+            ranges: vec![],
+            kind: ContextPartKind::Doc,
+            text,
+            score: 0.42,
+            modality: Modality::Dense,
+        };
+
+        let rendered = reformat_context_to_system(part);
+
+        assert!(rendered.contains("kind: Doc"));
+        assert!(rendered.contains("score: 0.420"));
+        assert!(rendered.contains("line 0"));
+        assert!(rendered.contains(&format!(
+            "line {}",
+            DEFAULT_CONTEXT_PART_MAX_LINES - 1
+        )));
+        assert!(!rendered.contains(&format!(
+            "line {}",
+            DEFAULT_CONTEXT_PART_MAX_LINES
+        )));
+        assert!(rendered.contains("... [truncated]"));
     }
 }

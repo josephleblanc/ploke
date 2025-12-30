@@ -1,12 +1,15 @@
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
-use crate::llm::manager::ApproxCharTokenizer;
 use crate::llm::manager::events::ContextPlanMessage;
 use crate::rag::context::PROMPT_HEADER;
 use crate::{AppEvent, llm::manager::Role};
+use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 
 use fxhash::FxHashMap as HashMap;
 use once_cell::sync::Lazy;
+use ploke_core::tool_types::FunctionMarker;
+use ploke_llm::response::{FunctionCall, ToolCall};
+use std::collections::HashSet;
 use std::fmt;
 use std::hash::RandomState;
 use std::io::Write as _;
@@ -105,14 +108,12 @@ impl MessageUpdate {
     /// Validates the update against current message state
     // TODO: Add a path for MessageStatus::Generating => MessageStatus::Completed
     pub fn validate(&self, current_status: &MessageStatus) -> Result<(), UpdateError> {
-        // Completed messages are immutable
-        if matches!(current_status, MessageStatus::Completed)
-            && (self.content.is_some()
-                || self.append_content.is_some()
-                || self.status.is_some()
-                || self.metadata.is_some())
-        {
-            return Err(UpdateError::ImmutableMessage);
+        if matches!(current_status, MessageStatus::Completed) {
+            let content_update =
+                self.content.is_some() || self.append_content.is_some() || self.status.is_some();
+            if content_update {
+                return Err(UpdateError::ImmutableMessage);
+            }
         }
 
         // TODO: Consider whether this is a good idea or not - I like the idea of having some kind
@@ -244,6 +245,21 @@ impl ContextTokens {
     }
 }
 
+/// The retention class for a pinned message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+pub enum RetentionClass {
+    /// Always keep in context; TTL never decrements.
+    Sticky,
+    /// Decrement TTL when included in prompt assembly.
+    Leased,
+}
+
+impl Default for RetentionClass {
+    fn default() -> Self {
+        Self::Leased
+    }
+}
+
 /// The status of the message in the current LLM context window.
 /// Pinned indicates that the message should be kept in the messages sent to the LLM, while
 /// Unpinned messages are left out of messages sent to the LLM.
@@ -255,6 +271,8 @@ pub enum ContextStatus {
     /// The information on why an item is pinned, and how long until it will either be automatically
     /// be removed from the context or reviewed and potentially re-pinned.
     Pinned {
+        /// Sticky messages never decrement TTL; Leased messages do.
+        retention: RetentionClass,
         /// Number of LLM calls this message will live, defaults to 15
         turns_to_live: TurnsToLive,
         /// Optional reason this item is pinned
@@ -270,6 +288,7 @@ impl Default for ContextStatus {
     fn default() -> Self {
         Self::Pinned {
             // sane default, somewhat arbitrary
+            retention: RetentionClass::default(),
             turns_to_live: TurnsToLive::default(),
             reason: None,
             pinned_by: None,
@@ -386,6 +405,7 @@ impl Message {
 
 pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
     let context_status = ContextStatus::Pinned {
+        retention: RetentionClass::Sticky,
         turns_to_live: TurnsToLive::Unlimited,
         reason: Some(ArcStr::from(
             "Base system prompt should be pinned for entire conversation.",
@@ -444,7 +464,7 @@ impl ChatHistory {
     /// - Includes User, Assistant, and System messages.
     /// - Skips System messages with empty content (root sentinel).
     /// - Skips SysInfo (UI/diagnostic) messages.
-    /// - Skips Tool messages for now (requires tool_call_id which is not tracked here).
+    /// - Groups tool calls + tool results as atoms (tool call synthesized from tool metadata).
     pub(crate) fn current_path_as_llm_request_messages(
         &self,
     ) -> Vec<crate::llm::manager::RequestMessage> {
@@ -462,6 +482,21 @@ impl ChatHistory {
         let tokenizer = ApproxCharTokenizer::default();
         let mut req_messages = Vec::new();
         let mut plan_messages = Vec::new();
+        let mut seen_tool_calls: HashSet<ArcStr> = HashSet::new();
+
+        let tool_call_from_message = |message: &Message| -> Option<ToolCall> {
+            let tool_call_id = message.tool_call_id.clone()?;
+            let payload = message.tool_payload.as_ref()?;
+            Some(ToolCall {
+                call_id: tool_call_id,
+                call_type: FunctionMarker,
+                function: FunctionCall {
+                    name: payload.tool,
+                    // Tool args are not stored on tool results; preserve the call id and name.
+                    arguments: "{}".to_string(),
+                },
+            })
+        };
 
         for id in self.current_path_ids() {
             let Some(m) = self.messages.get(&id) else {
@@ -478,12 +513,25 @@ impl ChatHistory {
                     }
                 }
                 // Tool messages.
-                MessageKind::Tool => Some(ReqMsg::new_tool(
-                    m.content.clone(),
-                    m.tool_call_id
-                        .clone()
-                        .expect("Tool calls must have Some tool_call_id"),
-                )),
+                MessageKind::Tool => {
+                    let Some(tool_call_id) = m.tool_call_id.clone() else {
+                        continue;
+                    };
+                    let Some(tool_call) = tool_call_from_message(m) else {
+                        continue;
+                    };
+                    if seen_tool_calls.insert(tool_call_id.clone()) {
+                        let req = ReqMsg::new_assistant_with_tool_calls(None, vec![tool_call]);
+                        let estimated_tokens = tokenizer.count(&req.content);
+                        req_messages.push(req);
+                        plan_messages.push(ContextPlanMessage {
+                            message_id: None,
+                            kind: MessageKind::Assistant,
+                            estimated_tokens,
+                        });
+                    }
+                    Some(ReqMsg::new_tool(m.content.clone(), tool_call_id))
+                }
                 // UI/system info messages are not part of the API payload unless explicitly pinned.
                 MessageKind::SysInfo => match m.context_status {
                     ContextStatus::Pinned { .. } => Some(ReqMsg::new_system(m.content.clone())),
@@ -1171,16 +1219,21 @@ impl ChatHistory {
         )
     }
 
-    /// Decrement turns to live of messages in the currently selected message history.
+    /// Decrement turns to live of messages included in the current prompt assembly.
     /// Changes the context_status from Limited to NoneRemaining if turns to live goes from 1 to 0,
     /// indicating that the message will either be automatically left out of the LLM context or
     /// will need review and repinning.
-    pub fn decrement_ttl(&mut self) {
-        for msg_id in self.path_cache.iter() {
+    pub fn decrement_ttl(&mut self, included_message_ids: &[Uuid]) {
+        for msg_id in included_message_ids {
             self.messages
                 .entry(*msg_id)
                 .and_modify(|m| match &mut m.context_status {
                     ContextStatus::Pinned {
+                        retention: RetentionClass::Sticky,
+                        ..
+                    } => {}
+                    ContextStatus::Pinned {
+                        retention: RetentionClass::Leased,
                         turns_to_live: ttl, ..
                     } => {
                         if let TurnsToLive::Limited(n) = ttl {
@@ -1213,6 +1266,7 @@ pub(crate) async fn atomic_write(
 mod tests {
     use super::*;
     use crate::llm::manager::Role as LlmRole;
+    use crate::tools::{ToolName, ToolUiPayload};
     use tempfile::tempdir;
 
     #[test]
@@ -1649,7 +1703,7 @@ mod tests {
         )
         .unwrap();
 
-        // Add a Tool message – currently excluded (missing tool_call_id context)
+        // Add a Tool message off the active path
         let tool = Uuid::new_v4();
         ch.add_child(
             info,
@@ -1698,6 +1752,7 @@ mod tests {
 
         // Add a tool message with an explicit call id
         let tool_call_id = ArcStr::from("call-123");
+        let payload = ToolUiPayload::new(ToolName::NsRead, tool_call_id.clone(), "read");
         let tool_msg_id = Uuid::new_v4();
         ch.add_message_tool(
             user,
@@ -1705,7 +1760,7 @@ mod tests {
             MessageKind::Tool,
             "tool output".to_string(),
             Some(tool_call_id.clone()),
-            None,
+            Some(payload),
         )
         .unwrap();
 
@@ -1719,6 +1774,63 @@ mod tests {
         assert_eq!(last.tool_call_id, Some(tool_call_id));
         assert_eq!(last.content, "tool output");
     }
+
+    #[test]
+    fn tool_episode_groups_call_and_result() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let user = Uuid::new_v4();
+        ch.add_message_user(root, user, "Run the tool".to_string())
+            .unwrap();
+
+        let assistant = Uuid::new_v4();
+        ch.add_child(
+            user,
+            assistant,
+            "Calling tools...",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let tool_call_id = ArcStr::from("call-atom");
+        let payload = ToolUiPayload::new(ToolName::NsRead, tool_call_id.clone(), "read");
+        let tool_msg_id = Uuid::new_v4();
+        ch.add_message_tool(
+            assistant,
+            tool_msg_id,
+            MessageKind::Tool,
+            "tool output".to_string(),
+            Some(tool_call_id.clone()),
+            Some(payload),
+        )
+        .unwrap();
+
+        ch.current = tool_msg_id;
+        ch.rebuild_path_cache();
+
+        let (msgs, plan) = ch.current_path_as_llm_request_messages_with_plan();
+        let tool_idx = msgs
+            .iter()
+            .position(|m| m.role == LlmRole::Tool)
+            .expect("tool message should be present");
+        let tool_call_msg = &msgs[tool_idx - 1];
+        assert_eq!(tool_call_msg.role, LlmRole::Assistant);
+        let tool_calls = tool_call_msg
+            .tool_calls
+            .as_ref()
+            .expect("assistant tool-call message should carry tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].call_id, tool_call_id);
+
+        assert_eq!(plan[tool_idx].message_id, Some(tool_msg_id));
+        assert_eq!(plan[tool_idx - 1].message_id, None);
+        assert_eq!(plan[tool_idx - 1].kind, MessageKind::Assistant);
+    }
+
 
     #[test]
     fn record_usage_delta_accumulates() {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use cozo::DataValue;
 use ploke_db::QueryResult;
 use ploke_embed::local::EmbeddingConfig;
-use ploke_rag::RagService;
+use ploke_rag::{RagService, TokenBudget};
 use ploke_core::ArcStr;
 use syn_parser::parser::nodes::ToCozoUuid;
 

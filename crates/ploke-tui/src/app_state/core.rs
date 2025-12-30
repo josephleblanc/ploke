@@ -244,6 +244,13 @@ impl From<UserConfig> for RuntimeConfig {
     }
 }
 
+pub fn rag_budget_from_config(rag: &RagUserConfig) -> TokenBudget {
+    TokenBudget {
+        per_part_max: rag.per_part_max_tokens,
+        ..TokenBudget::default()
+    }
+}
+
 impl RuntimeConfig {
     /// Convert the live runtime config back into a persisted UserConfig for saving.
     pub fn to_user_config(&self) -> UserConfig {

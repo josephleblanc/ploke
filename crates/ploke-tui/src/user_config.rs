@@ -380,6 +380,8 @@ impl ChatTimeoutStrategy {
 pub struct RagUserConfig {
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    #[serde(default = "default_rag_per_part_max_tokens")]
+    pub per_part_max_tokens: usize,
     #[serde(default)]
     pub strategy: RetrievalStrategyUser,
     #[serde(default = "default_bm25_timeout_ms")]
@@ -398,6 +400,7 @@ impl Default for RagUserConfig {
     fn default() -> Self {
         Self {
             top_k: default_top_k(),
+            per_part_max_tokens: default_rag_per_part_max_tokens(),
             strategy: RetrievalStrategyUser::default(),
             bm25_timeout_ms: default_bm25_timeout_ms(),
             bm25_retry_backoff_ms: default_bm25_retry_backoff_ms(),
@@ -411,6 +414,7 @@ impl Default for RagUserConfig {
 impl RagUserConfig {
     pub fn validated(self) -> Self {
         let top_k = self.top_k.clamp(1, 200);
+        let per_part_max_tokens = self.per_part_max_tokens.clamp(32, 4096);
         let bm25_timeout_ms = self.bm25_timeout_ms.clamp(10, 5_000);
         let bm25_retry_backoff_ms = if self.bm25_retry_backoff_ms.is_empty() {
             default_bm25_retry_backoff_ms()
@@ -429,6 +433,7 @@ impl RagUserConfig {
         });
         Self {
             top_k,
+            per_part_max_tokens,
             strategy: self.strategy,
             bm25_timeout_ms,
             bm25_retry_backoff_ms,
@@ -507,6 +512,10 @@ fn default_top_k() -> usize {
     15
 }
 
+fn default_rag_per_part_max_tokens() -> usize {
+    256
+}
+
 fn default_bm25_timeout_ms() -> u64 {
     250
 }
@@ -551,6 +560,7 @@ mod tests {
 
             [rag]
             top_k = 20
+            per_part_max_tokens = 160
             bm25_timeout_ms = 300
             bm25_retry_backoff_ms = [50, 100]
             strict_bm25_by_default = true
@@ -561,6 +571,7 @@ mod tests {
         assert_eq!(cfg.tool_retries, 3);
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
         assert_eq!(cfg.rag.top_k, 20);
+        assert_eq!(cfg.rag.per_part_max_tokens, 160);
 
         let serialized = toml::to_string(&cfg).expect("serialize");
         assert!(serialized.contains("tool_retries"));

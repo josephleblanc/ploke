@@ -79,7 +79,9 @@ pub enum StateCommand {
         id: Uuid,
     },
     /// Decrement the chat history "turns to live"
-    DecrementChatTtl,
+    DecrementChatTtl {
+        included_message_ids: Vec<Uuid>,
+    },
     DeleteNode {
         id: Uuid,
     },
@@ -289,7 +291,7 @@ impl StateCommand {
             ApproveCreations { .. } => "ApproveCreations",
             DenyCreations { .. } => "DenyCreations",
             SelectModelProvider { .. } => "SelectModelProvider",
-            DecrementChatTtl => "DecrementChatTtl",
+            DecrementChatTtl { .. } => "DecrementChatTtl",
             SelectEmbeddingModel { .. } => "SelectEmbeddingModel",
             UpdateContextTokens { .. } => "UpdateContextTokens",
         }
