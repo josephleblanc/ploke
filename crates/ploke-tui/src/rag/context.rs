@@ -3,7 +3,9 @@ use crate::{
     llm::{
         ChatEvt, LlmEvent,
         manager::Role,
-        manager::events::{ContextPlan, ContextPlanMessage, ContextPlanRagPart},
+        manager::events::{
+            ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,
+        },
     },
 };
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -63,8 +65,12 @@ pub async fn process_with_rag(
     }
 
     // Snapshot chat state up front to avoid holding the lock across awaits.
-    let (msg_id, user_msg, messages, plan_messages) = {
-        let guard = state.chat.read().await;
+    let max_leased_tokens = {
+        let cfg = state.config.read().await;
+        cfg.context_management.max_leased_tokens
+    };
+    let (msg_id, user_msg, messages, plan_messages, excluded_plan_messages) = {
+        let mut guard = state.chat.write().await;
         let (msg_id, user_msg) = match guard.last_user_msg().inspect_err(|e| e.emit_error()) {
             Ok(maybe_msg) => match maybe_msg {
                 Some(msg) => msg,
@@ -78,8 +84,15 @@ pub async fn process_with_rag(
                 return;
             }
         };
-        let (messages, plan_messages) = guard.current_path_as_llm_request_messages_with_plan();
-        (msg_id, user_msg, messages, plan_messages)
+        let (messages, plan_messages, excluded_plan_messages) =
+            guard.current_path_as_llm_request_messages_with_plan(Some(max_leased_tokens));
+        (
+            msg_id,
+            user_msg,
+            messages,
+            plan_messages,
+            excluded_plan_messages,
+        )
     };
 
     if let Some(rag) = &state.rag {
@@ -97,6 +110,7 @@ pub async fn process_with_rag(
                     Uuid::new_v4(),
                     msg_id,
                     &plan_messages,
+                    &excluded_plan_messages,
                     Some(&rag_ctx),
                 );
                 tracing::debug!(
@@ -146,10 +160,12 @@ pub async fn process_with_rag(
         kind: MessageKind::System,
         estimated_tokens: tokenizer.count(fallback_note),
     });
+    let fallback_excluded_messages = excluded_plan_messages;
     let context_plan = build_context_plan(
         Uuid::new_v4(),
         msg_id,
         &fallback_plan_messages,
+        &fallback_excluded_messages,
         None,
     );
     tracing::debug!(
@@ -251,6 +267,7 @@ fn build_context_plan(
     plan_id: Uuid,
     parent_id: Uuid,
     plan_messages: &[ContextPlanMessage],
+    excluded_messages: &[ContextPlanExcludedMessage],
     rag_ctx: Option<&AssembledContext>,
 ) -> ContextPlan {
     let tokenizer = ApproxCharTokenizer::default();
@@ -280,6 +297,7 @@ fn build_context_plan(
         parent_id,
         estimated_total_tokens: message_tokens.saturating_add(rag_tokens),
         included_messages: plan_messages.to_vec(),
+        excluded_messages: excluded_messages.to_vec(),
         included_rag_parts: rag_parts,
         rag_stats: rag_ctx.map(|ctx| ctx.stats.clone()),
     }
@@ -326,8 +344,8 @@ mod tests {
             },
         };
 
-        let plan_a = build_context_plan(plan_id, parent_id, &plan_messages, Some(&ctx));
-        let plan_b = build_context_plan(plan_id, parent_id, &plan_messages, Some(&ctx));
+        let plan_a = build_context_plan(plan_id, parent_id, &plan_messages, &[], Some(&ctx));
+        let plan_b = build_context_plan(plan_id, parent_id, &plan_messages, &[], Some(&ctx));
 
         assert_eq!(plan_a.plan_id, plan_b.plan_id);
         assert_eq!(plan_a.parent_id, plan_b.parent_id);

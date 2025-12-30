@@ -272,6 +272,7 @@ fn run_case(
         let theme = UiTheme::default();
         let msg = Message {
             id: Uuid::new_v4(),
+            branch_id: Uuid::nil(),
             status: MessageStatus::Completed,
             metadata: None,
             parent: None,
@@ -282,6 +283,8 @@ fn run_case(
             tool_call_id: None,
             tool_payload: None,
             context_status: ContextStatus::default(),
+            last_included_turn: None,
+            include_count: 0,
         };
         let messages = vec![msg];
         convo.prepare(

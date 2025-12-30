@@ -59,6 +59,13 @@ re: `docs/active/plans/context-management/context-management.md`
     on-write at fork)?
   - How will you treat negative feedback (tool errors, user rejections) in activation scoring and
     promotion?
+  - CM-05: Should the leased cap be token-based (`max_leased_tokens`) or item-count based, and where
+    should it live in config?
+  - CM-05: Ordering for leased activation—`last_included_turn` desc then `include_count` desc, then a
+    stable id for determinism?
+  - CM-05: What is the canonical “turn” counter for `last_included_turn` (TurnId vs request counter)?
+  - CM-05: Apply the cap to grouped tool episodes (post CM-03) or individual messages?
+  - CM-05: Should excluded leased items be recorded in ContextPlan with a Budget exclusion reason?
 
   Overall, the framing is strong and coherent; the main gaps are determinism contracts, branch
   concurrency rules, and measurable success criteria.

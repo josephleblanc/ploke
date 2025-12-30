@@ -1,6 +1,8 @@
 use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
-use crate::llm::manager::events::ContextPlanMessage;
+use crate::llm::manager::events::{
+    ContextExclusionReason, ContextPlanExcludedMessage, ContextPlanMessage,
+};
 use crate::rag::context::PROMPT_HEADER;
 use crate::{AppEvent, llm::manager::Role};
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -9,7 +11,7 @@ use fxhash::FxHashMap as HashMap;
 use once_cell::sync::Lazy;
 use ploke_core::tool_types::FunctionMarker;
 use ploke_llm::response::{FunctionCall, ToolCall};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::hash::RandomState;
 use std::io::Write as _;
@@ -58,6 +60,8 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use uuid::Uuid;
+
+pub type BranchId = Uuid;
 
 /// Represents the possible states of a message during its lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +196,8 @@ impl UpdateFailedEvent {
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
+    /// Branch identifier for this message's conversation path.
+    pub branch_id: BranchId,
     pub status: MessageStatus,
     // TODO: Maybe change Message to be LLM/human, or create a wrapper to differentiate.
     /// Metadata on LLM message
@@ -214,6 +220,10 @@ pub struct Message {
     pub tool_payload: Option<crate::tools::ToolUiPayload>,
     /// The status of the message in the current LLM context window.
     pub context_status: ContextStatus,
+    /// Last turn counter in which this message was included (leased only).
+    pub last_included_turn: Option<u64>,
+    /// Count of times this message was included (leased only).
+    pub include_count: u32,
 }
 
 /// Running aggregates for the conversation.
@@ -242,6 +252,23 @@ pub struct ContextTokens {
 impl ContextTokens {
     pub const fn new(count: usize, kind: TokenKind) -> Self {
         Self { count, kind }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchState {
+    pub id: BranchId,
+    pub last_turn: u64,
+}
+
+impl BranchState {
+    pub const fn new(id: BranchId) -> Self {
+        Self { id, last_turn: 0 }
+    }
+
+    pub fn bump_turn(&mut self) -> u64 {
+        self.last_turn = self.last_turn.saturating_add(1);
+        self.last_turn
     }
 }
 
@@ -414,6 +441,7 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
     };
     Message {
         id: Uuid::new_v4(),
+        branch_id: Uuid::nil(),
         status: crate::chat_history::MessageStatus::Completed,
         metadata: None,
         parent: None,
@@ -424,6 +452,8 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
         tool_call_id: None,
         tool_payload: None,
         context_status,
+        last_included_turn: None,
+        include_count: 0,
     }
 });
 
@@ -439,7 +469,7 @@ pub(crate) static BASE_SYSTEM_PROMPT: Lazy<Message> = Lazy::new(|| {
 /// `uparrow` and `downarrow`).
 /// New messages tracks are also created when multiple responses are desired to a user input.
 // TODO: Needs updating for concurrency (DashMap? Something else?)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ChatHistory {
     /// All messages in the conversation history, indexed by UUID
     pub messages: HashMap<Uuid, Message>,
@@ -449,12 +479,20 @@ pub struct ChatHistory {
     pub tail: Uuid,
     /// Cached path from root to tail for fast, zero-alloc iteration during render
     path_cache: Vec<Uuid>,
+    /// Per-branch counters for activation ordering.
+    branch_states: BTreeMap<BranchId, BranchState>,
     /// Scroll bar support
     pub scroll_bar: Option<ScrollbarState>,
     /// Approximate running totals for the conversation.
     pub totals: ConversationTotals,
     /// Latest counted tokens for the currently constructed prompt/context.
     pub current_context_tokens: Option<ContextTokens>,
+}
+
+impl Default for ChatHistory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChatHistory {
@@ -466,22 +504,36 @@ impl ChatHistory {
     /// - Skips SysInfo (UI/diagnostic) messages.
     /// - Groups tool calls + tool results as atoms (tool call synthesized from tool metadata).
     pub(crate) fn current_path_as_llm_request_messages(
-        &self,
+        &mut self,
     ) -> Vec<crate::llm::manager::RequestMessage> {
-        self.current_path_as_llm_request_messages_with_plan().0
+        self.current_path_as_llm_request_messages_with_plan(None).0
     }
 
     pub(crate) fn current_path_as_llm_request_messages_with_plan(
-        &self,
+        &mut self,
+        max_leased_tokens: Option<usize>,
     ) -> (
         Vec<crate::llm::manager::RequestMessage>,
         Vec<ContextPlanMessage>,
+        Vec<ContextPlanExcludedMessage>,
     ) {
         use crate::llm::manager::RequestMessage as ReqMsg;
 
+        #[derive(Clone)]
+        struct Atom {
+            req_messages: Vec<ReqMsg>,
+            plan_messages: Vec<ContextPlanMessage>,
+            message_ids: Vec<Uuid>,
+            context_status: ContextStatus,
+            kind: MessageKind,
+            estimated_tokens: usize,
+            stable_id: Uuid,
+            last_included_turn: Option<u64>,
+            include_count: u32,
+        }
+
         let tokenizer = ApproxCharTokenizer::default();
-        let mut req_messages = Vec::new();
-        let mut plan_messages = Vec::new();
+        let mut atoms: Vec<Atom> = Vec::new();
         let mut seen_tool_calls: HashSet<ArcStr> = HashSet::new();
 
         let tool_call_from_message = |message: &Message| -> Option<ToolCall> {
@@ -502,65 +554,246 @@ impl ChatHistory {
             let Some(m) = self.messages.get(&id) else {
                 continue;
             };
-            let maybe_req = match m.kind {
-                MessageKind::User => Some(ReqMsg::new_user(m.content.clone())),
-                MessageKind::Assistant => Some(ReqMsg::new_assistant(m.content.clone())),
+            match m.kind {
+                MessageKind::User => {
+                    let req = ReqMsg::new_user(m.content.clone());
+                    let estimated_tokens = tokenizer.count(&req.content);
+                    atoms.push(Atom {
+                        req_messages: vec![req],
+                        plan_messages: vec![ContextPlanMessage {
+                            message_id: Some(id),
+                            kind: m.kind,
+                            estimated_tokens,
+                        }],
+                        message_ids: vec![id],
+                        context_status: m.context_status.clone(),
+                        kind: m.kind,
+                        estimated_tokens,
+                        stable_id: id,
+                        last_included_turn: m.last_included_turn,
+                        include_count: m.include_count,
+                    });
+                }
+                MessageKind::Assistant => {
+                    let req = ReqMsg::new_assistant(m.content.clone());
+                    let estimated_tokens = tokenizer.count(&req.content);
+                    atoms.push(Atom {
+                        req_messages: vec![req],
+                        plan_messages: vec![ContextPlanMessage {
+                            message_id: Some(id),
+                            kind: m.kind,
+                            estimated_tokens,
+                        }],
+                        message_ids: vec![id],
+                        context_status: m.context_status.clone(),
+                        kind: m.kind,
+                        estimated_tokens,
+                        stable_id: id,
+                        last_included_turn: m.last_included_turn,
+                        include_count: m.include_count,
+                    });
+                }
                 MessageKind::System => {
                     if m.content.trim().is_empty() {
-                        None
-                    } else {
-                        Some(ReqMsg::new_system(m.content.clone()))
+                        continue;
                     }
+                    let req = ReqMsg::new_system(m.content.clone());
+                    let estimated_tokens = tokenizer.count(&req.content);
+                    atoms.push(Atom {
+                        req_messages: vec![req],
+                        plan_messages: vec![ContextPlanMessage {
+                            message_id: Some(id),
+                            kind: m.kind,
+                            estimated_tokens,
+                        }],
+                        message_ids: vec![id],
+                        context_status: m.context_status.clone(),
+                        kind: m.kind,
+                        estimated_tokens,
+                        stable_id: id,
+                        last_included_turn: m.last_included_turn,
+                        include_count: m.include_count,
+                    });
                 }
-                // Tool messages.
                 MessageKind::Tool => {
                     let Some(tool_call_id) = m.tool_call_id.clone() else {
                         continue;
                     };
+                    if !seen_tool_calls.insert(tool_call_id.clone()) {
+                        continue;
+                    }
                     let Some(tool_call) = tool_call_from_message(m) else {
                         continue;
                     };
-                    if seen_tool_calls.insert(tool_call_id.clone()) {
-                        let req = ReqMsg::new_assistant_with_tool_calls(None, vec![tool_call]);
+                    let assistant_req = ReqMsg::new_assistant_with_tool_calls(None, vec![tool_call]);
+                    let tool_req = ReqMsg::new_tool(m.content.clone(), tool_call_id);
+                    let assistant_tokens = tokenizer.count(&assistant_req.content);
+                    let tool_tokens = tokenizer.count(&tool_req.content);
+                    atoms.push(Atom {
+                        req_messages: vec![assistant_req, tool_req],
+                        plan_messages: vec![
+                            ContextPlanMessage {
+                                message_id: None,
+                                kind: MessageKind::Assistant,
+                                estimated_tokens: assistant_tokens,
+                            },
+                            ContextPlanMessage {
+                                message_id: Some(id),
+                                kind: MessageKind::Tool,
+                                estimated_tokens: tool_tokens,
+                            },
+                        ],
+                        message_ids: vec![id],
+                        context_status: m.context_status.clone(),
+                        kind: MessageKind::Tool,
+                        estimated_tokens: assistant_tokens.saturating_add(tool_tokens),
+                        stable_id: id,
+                        last_included_turn: m.last_included_turn,
+                        include_count: m.include_count,
+                    });
+                }
+                MessageKind::SysInfo => match m.context_status {
+                    ContextStatus::Pinned { .. } => {
+                        let req = ReqMsg::new_system(m.content.clone());
                         let estimated_tokens = tokenizer.count(&req.content);
-                        req_messages.push(req);
-                        plan_messages.push(ContextPlanMessage {
-                            message_id: None,
-                            kind: MessageKind::Assistant,
+                        atoms.push(Atom {
+                            req_messages: vec![req],
+                            plan_messages: vec![ContextPlanMessage {
+                                message_id: Some(id),
+                                kind: m.kind,
+                                estimated_tokens,
+                            }],
+                            message_ids: vec![id],
+                            context_status: m.context_status.clone(),
+                            kind: m.kind,
                             estimated_tokens,
+                            stable_id: id,
+                            last_included_turn: m.last_included_turn,
+                            include_count: m.include_count,
                         });
                     }
-                    Some(ReqMsg::new_tool(m.content.clone(), tool_call_id))
-                }
-                // UI/system info messages are not part of the API payload unless explicitly pinned.
-                MessageKind::SysInfo => match m.context_status {
-                    ContextStatus::Pinned { .. } => Some(ReqMsg::new_system(m.content.clone())),
-                    ContextStatus::Unpinned => None,
+                    ContextStatus::Unpinned => {}
                 },
-            };
-
-            if let Some(req) = maybe_req {
-                let estimated_tokens = tokenizer.count(&req.content);
-                req_messages.push(req);
-                plan_messages.push(ContextPlanMessage {
-                    message_id: Some(id),
-                    kind: m.kind,
-                    estimated_tokens,
-                });
             }
         }
 
-        (req_messages, plan_messages)
+        let branch_id = self.current_branch_id();
+        let turn_counter = self.next_branch_turn(branch_id);
+        let token_cap = max_leased_tokens.unwrap_or(usize::MAX);
+
+        let mut leased_candidates: Vec<(Uuid, usize, Option<u64>, u32)> = Vec::new();
+        for atom in &atoms {
+            if let ContextStatus::Pinned {
+                retention: RetentionClass::Leased,
+                turns_to_live: TurnsToLive::NoneRemaining,
+                ..
+            } = atom.context_status
+            {
+                continue;
+            }
+            if let ContextStatus::Pinned {
+                retention: RetentionClass::Leased,
+                ..
+            } = atom.context_status
+            {
+                leased_candidates.push((
+                    atom.stable_id,
+                    atom.estimated_tokens,
+                    atom.last_included_turn,
+                    atom.include_count,
+                ));
+            }
+        }
+
+        leased_candidates.sort_by(|a, b| {
+            let a_turn = a.2.unwrap_or(0);
+            let b_turn = b.2.unwrap_or(0);
+            b_turn
+                .cmp(&a_turn)
+                .then_with(|| b.3.cmp(&a.3))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+
+        let mut kept_leased: HashSet<Uuid> = HashSet::new();
+        let mut used_tokens = 0usize;
+        for (stable_id, estimated_tokens, _, _) in leased_candidates {
+            if used_tokens.saturating_add(estimated_tokens) > token_cap && !kept_leased.is_empty() {
+                continue;
+            }
+            used_tokens = used_tokens.saturating_add(estimated_tokens);
+            kept_leased.insert(stable_id);
+        }
+
+        let mut req_messages = Vec::new();
+        let mut plan_messages = Vec::new();
+        let mut excluded_messages = Vec::new();
+
+        for atom in atoms {
+            match atom.context_status.clone() {
+                ContextStatus::Pinned {
+                    retention: RetentionClass::Sticky,
+                    ..
+                } => {
+                    req_messages.extend(atom.req_messages);
+                    plan_messages.extend(atom.plan_messages);
+                }
+                ContextStatus::Pinned {
+                    retention: RetentionClass::Leased,
+                    turns_to_live: TurnsToLive::NoneRemaining,
+                    ..
+                } => {
+                    for message_id in atom.message_ids {
+                        excluded_messages.push(ContextPlanExcludedMessage {
+                            message_id,
+                            kind: atom.kind,
+                            estimated_tokens: atom.estimated_tokens,
+                            reason: ContextExclusionReason::TtlExpired,
+                        });
+                    }
+                }
+                ContextStatus::Pinned {
+                    retention: RetentionClass::Leased,
+                    ..
+                } => {
+                    if kept_leased.contains(&atom.stable_id) {
+                        for message_id in &atom.message_ids {
+                            if let Some(m) = self.messages.get_mut(message_id) {
+                                m.last_included_turn = Some(turn_counter);
+                                m.include_count = m.include_count.saturating_add(1);
+                            }
+                        }
+                        req_messages.extend(atom.req_messages);
+                        plan_messages.extend(atom.plan_messages);
+                    } else {
+                        for message_id in atom.message_ids {
+                            excluded_messages.push(ContextPlanExcludedMessage {
+                                message_id,
+                                kind: atom.kind,
+                                estimated_tokens: atom.estimated_tokens,
+                                reason: ContextExclusionReason::Budget,
+                            });
+                        }
+                    }
+                }
+                ContextStatus::Unpinned => {}
+            }
+        }
+
+        (req_messages, plan_messages, excluded_messages)
     }
     /// Creates a new ChatHistory with the systm prompt message.
     ///
     /// The root message serves as the starting point for all conversations.
     /// Its content is intentionally left empty to allow natural branching.
     pub fn new() -> Self {
-        let root = BASE_SYSTEM_PROMPT.clone();
+        let mut root = BASE_SYSTEM_PROMPT.clone();
+        let branch_id = Uuid::new_v4();
+        root.branch_id = branch_id;
         let root_id = root.id;
         let mut messages = HashMap::default();
         messages.insert(root.id, root);
+        let mut branch_states = BTreeMap::new();
+        branch_states.insert(branch_id, BranchState::new(branch_id));
         Self {
             messages,
             current: root_id,
@@ -568,6 +801,7 @@ impl ChatHistory {
             tail: root_id,
             // initialize cached path with root
             path_cache: vec![root_id],
+            branch_states,
             scroll_bar: None,
             totals: ConversationTotals::default(),
             current_context_tokens: None,
@@ -604,6 +838,23 @@ impl ChatHistory {
         }
         path.reverse();
         self.path_cache = path;
+    }
+
+    fn current_branch_id(&self) -> BranchId {
+        self.messages
+            .get(&self.tail)
+            .map(|m| m.branch_id)
+            .unwrap_or_else(Uuid::nil)
+    }
+
+    fn ensure_branch_state(&mut self, branch_id: BranchId) -> &mut BranchState {
+        self.branch_states
+            .entry(branch_id)
+            .or_insert_with(|| BranchState::new(branch_id))
+    }
+
+    fn next_branch_turn(&mut self, branch_id: BranchId) -> u64 {
+        self.ensure_branch_state(branch_id).bump_turn()
     }
 
     /// Returns an iterator of Messages on the cached root -> tail path.
@@ -662,6 +913,7 @@ impl ChatHistory {
         let status = MessageStatus::Completed;
         let child = Message {
             id: child_id,
+            branch_id: Uuid::nil(),
             parent: Some(parent_id),
             children: Vec::new(),
             selected_child: None,
@@ -672,6 +924,8 @@ impl ChatHistory {
             tool_call_id: None,
             tool_payload: None,
             context_status,
+            last_included_turn: None,
+            include_count: 0,
         };
         self.add_child_message(child)
     }
@@ -727,8 +981,15 @@ impl ChatHistory {
         tool_call_id: Option<ArcStr>,
         tool_payload: Option<crate::tools::ToolUiPayload>,
     ) -> Result<Uuid, ChatError> {
+        let parent = self
+            .messages
+            .get_mut(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+        let branch_id = parent.branch_id;
+
         let child = Message {
             id: child_id,
+            branch_id,
             parent: Some(parent_id),
             children: Vec::new(),
             selected_child: None,
@@ -739,12 +1000,9 @@ impl ChatHistory {
             tool_call_id,
             tool_payload,
             context_status: ContextStatus::default(),
+            last_included_turn: None,
+            include_count: 0,
         };
-
-        let parent = self
-            .messages
-            .get_mut(&parent_id)
-            .ok_or(ChatError::ParentNotFound(parent_id))?;
 
         parent.children.push(child_id);
         parent.selected_child = Some(child_id);
@@ -776,6 +1034,11 @@ impl ChatHistory {
             .messages
             .get_mut(&parent_id)
             .ok_or(ChatError::ParentNotFound(parent_id))?;
+        let branch_id = parent.branch_id;
+        let mut child = child;
+        if child.branch_id.is_nil() {
+            child.branch_id = branch_id;
+        }
 
         parent.children.push(child_id);
         parent.selected_child = Some(child_id);
@@ -815,7 +1078,28 @@ impl ChatHistory {
 
         // Reuse add_child but with the sibling's parent, and generate a new message id
         let new_id = Uuid::new_v4();
-        self.add_child(parent_id, new_id, content, status, kind, None, None)
+        let new_branch_id = Uuid::new_v4();
+        let child = Message {
+            id: new_id,
+            branch_id: new_branch_id,
+            parent: Some(parent_id),
+            children: Vec::new(),
+            selected_child: None,
+            content: content.to_string(),
+            status,
+            metadata: None,
+            kind,
+            tool_call_id: None,
+            tool_payload: None,
+            context_status: ContextStatus::default(),
+            last_included_turn: None,
+            include_count: 0,
+        };
+        let id = self.add_child_message(child)?;
+        self.branch_states
+            .entry(new_branch_id)
+            .or_insert_with(|| BranchState::new(new_branch_id));
+        Ok(id)
     }
 
     /// Deletes a message and its descendant subtree from the conversation history.
@@ -1812,7 +2096,7 @@ mod tests {
         ch.current = tool_msg_id;
         ch.rebuild_path_cache();
 
-        let (msgs, plan) = ch.current_path_as_llm_request_messages_with_plan();
+        let (msgs, plan, _) = ch.current_path_as_llm_request_messages_with_plan(None);
         let tool_idx = msgs
             .iter()
             .position(|m| m.role == LlmRole::Tool)
@@ -1829,6 +2113,45 @@ mod tests {
         assert_eq!(plan[tool_idx].message_id, Some(tool_msg_id));
         assert_eq!(plan[tool_idx - 1].message_id, None);
         assert_eq!(plan[tool_idx - 1].kind, MessageKind::Assistant);
+    }
+
+    #[test]
+    fn leased_cap_respects_activation_ordering() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_message_user(root, u1, "aaaa".to_string()).unwrap();
+        let u2 = Uuid::new_v4();
+        ch.add_message_user(u1, u2, "bbbb".to_string()).unwrap();
+        let u3 = Uuid::new_v4();
+        ch.add_message_user(u2, u3, "cccc".to_string()).unwrap();
+
+        ch.current = u3;
+        ch.rebuild_path_cache();
+
+        if let Some(m) = ch.messages.get_mut(&u1) {
+            m.last_included_turn = Some(5);
+            m.include_count = 1;
+        }
+        if let Some(m) = ch.messages.get_mut(&u2) {
+            m.last_included_turn = Some(2);
+            m.include_count = 10;
+        }
+        if let Some(m) = ch.messages.get_mut(&u3) {
+            m.last_included_turn = Some(5);
+            m.include_count = 0;
+        }
+
+        let (_msgs, plan, excluded) = ch.current_path_as_llm_request_messages_with_plan(Some(2));
+        let included_ids: Vec<Uuid> = plan.iter().filter_map(|m| m.message_id).collect();
+        assert!(included_ids.contains(&u1));
+        assert!(included_ids.contains(&u3));
+        assert!(!included_ids.contains(&u2));
+
+        assert!(excluded.iter().any(|e| {
+            e.message_id == u2 && e.reason == ContextExclusionReason::Budget
+        }));
     }
 
 

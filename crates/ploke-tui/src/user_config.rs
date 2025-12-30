@@ -116,10 +116,12 @@ fn default_cargo_test_timeout_secs() -> u64 {
     600
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CtxPrefs {
+    #[serde(default)]
     pub strategy: CtxStrategy,
-    // more here...
+    #[serde(default = "default_max_leased_tokens")]
+    pub max_leased_tokens: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,6 +139,25 @@ pub const DEFAULT_CONTEXT_TURNS_TO_LIVE: u16 = 15;
 impl Default for CtxStrategy {
     fn default() -> Self {
         Self::Automatic(DEFAULT_CONTEXT_TURNS_TO_LIVE)
+    }
+}
+
+impl Default for CtxPrefs {
+    fn default() -> Self {
+        Self {
+            strategy: CtxStrategy::default(),
+            max_leased_tokens: default_max_leased_tokens(),
+        }
+    }
+}
+
+impl CtxPrefs {
+    pub fn validated(self) -> Self {
+        let max_leased_tokens = self.max_leased_tokens.clamp(128, 200_000);
+        Self {
+            strategy: self.strategy,
+            max_leased_tokens,
+        }
     }
 }
 
@@ -532,6 +553,10 @@ fn default_tool_retries() -> u32 {
     2
 }
 
+fn default_max_leased_tokens() -> usize {
+    2_048
+}
+
 fn default_llm_timeout_secs() -> u64 {
     ploke_llm::LLM_TIMEOUT_SECS
 }
@@ -565,6 +590,9 @@ mod tests {
             bm25_retry_backoff_ms = [50, 100]
             strict_bm25_by_default = true
             strategy = { Hybrid = { rrf = { k = 40.0, weight_bm25 = 1.0, weight_dense = 2.0 }, mmr = { lambda = 0.7, sim_metric = { Cosine = {} }, candidate_pool = 30 } } }
+
+            [context_management]
+            max_leased_tokens = 2400
         "#;
 
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
@@ -572,6 +600,7 @@ mod tests {
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
         assert_eq!(cfg.rag.top_k, 20);
         assert_eq!(cfg.rag.per_part_max_tokens, 160);
+        assert_eq!(cfg.context_management.max_leased_tokens, 2400);
 
         let serialized = toml::to_string(&cfg).expect("serialize");
         assert!(serialized.contains("tool_retries"));

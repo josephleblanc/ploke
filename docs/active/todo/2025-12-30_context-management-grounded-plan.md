@@ -16,6 +16,7 @@ Baseline (current code):
 - CM-02 Retention classes (Sticky/Leased) + decrement TTL only for included items (done)
 - CM-03 Tool episode atomicity (group tool call + result)
 - CM-04 Light pack default for RAG context + config knob
+- CM-04.5 Branch identity + per-branch turn counters
 - CM-05 Leased cap + activation ordering
 - CM-06 Context Mode (Off/Light/Heavy) + budget meter line
 - CM-07 Golden determinism test pinned to ContextPlan fixture
@@ -48,6 +49,14 @@ Baseline (current code):
   `... [truncated]`; token estimates for `ContextPlan` use the truncated text. RAG budget is
   derived in `rag_budget_from_config` and applied in `crates/ploke-tui/src/lib.rs` during
   `AppState` creation. `request_code_context` now respects `rag.per_part_max_tokens`.
+- CM-04.5 done: added per-branch activation counters with a stable `branch_id` on `Message` so
+  leased activation ordering is deterministic across concurrent branches.
+- CM-05 WIP: leased cap ordering now uses `last_included_turn` + `include_count` and records
+  excluded leased items in ContextPlan with Budget/TtlExpired reasons; config lives in
+  `context_management.max_leased_tokens` and selection is applied in
+  `ChatHistory::current_path_as_llm_request_messages_with_plan`.
+- CM-05 test: `leased_cap_respects_activation_ordering` in
+  `crates/ploke-tui/src/chat_history.rs`.
 - CM-04 notes: light-pack truncation should live in `crates/ploke-tui/src/rag/context.rs`
   (`reformat_context_to_system`), which currently renders full snippets as system messages. Add a
   per-part token/line cap (likely via `TokenBudget`) and include score + kind in the header.
@@ -92,11 +101,16 @@ Baseline (current code):
   `crates/ploke-tui/src/app_state/core.rs` when calling `rag.get_context`.
 - Update system prompt/tooling guidance to prefer `request_code_context` for deeper dives.
 
+4.5) Branch identity + per-branch turn counters
+- Add `branch_id` to `Message` and inherit it in `add_child`; create a new branch id in `add_sibling`.
+- Track per-branch `last_turn` via a `BTreeMap<BranchId, BranchState>` on `ChatHistory`.
+- Use the branch counter to stamp `last_included_turn` when leased items are included.
+
 5) Leased cap + simple activation ordering
 - Add `last_included_turn` + `include_count` to message metadata in `crates/ploke-tui/src/chat_history.rs`.
 - When assembling prompts, order leased items by `last_included_turn` desc, then `include_count`.
-- Apply a `max_leased_tokens` cap using `cap_messages_by_tokens` in
-  `crates/ploke-tui/src/llm/manager/mod.rs`.
+- Apply a `max_leased_tokens` cap in `ChatHistory::current_path_as_llm_request_messages_with_plan`
+  using the same ApproxCharTokenizer used for other token estimates.
 
 6) Context Mode (Off/Light/Heavy) + budget meter (UI)
 - Add `CtxMode` to `crates/ploke-tui/src/user_config.rs`.

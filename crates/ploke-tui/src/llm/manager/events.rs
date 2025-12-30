@@ -18,6 +18,7 @@ pub struct ContextPlan {
     pub parent_id: Uuid,
     pub estimated_total_tokens: usize,
     pub included_messages: Vec<ContextPlanMessage>,
+    pub excluded_messages: Vec<ContextPlanExcludedMessage>,
     pub included_rag_parts: Vec<ContextPlanRagPart>,
     pub rag_stats: Option<ContextStats>,
 }
@@ -27,6 +28,20 @@ pub struct ContextPlanMessage {
     pub message_id: Option<Uuid>,
     pub kind: MessageKind,
     pub estimated_tokens: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextPlanExcludedMessage {
+    pub message_id: Uuid,
+    pub kind: MessageKind,
+    pub estimated_tokens: usize,
+    pub reason: ContextExclusionReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextExclusionReason {
+    Budget,
+    TtlExpired,
 }
 
 #[derive(Clone, Debug)]
