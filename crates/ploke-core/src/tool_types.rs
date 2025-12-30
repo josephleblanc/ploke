@@ -18,10 +18,12 @@ pub enum ToolName {
     CodeItemEdges,
     #[serde(rename = "cargo")]
     Cargo,
+    #[serde(rename = "list_dir")]
+    ListDir,
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 8] = [
+    pub const ALL: [ToolName; 9] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::CreateFile,
@@ -30,6 +32,7 @@ impl ToolName {
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
         ToolName::Cargo,
+        ToolName::ListDir,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,6 +46,7 @@ impl ToolName {
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
             Cargo => "cargo",
+            ListDir => "list_dir",
         }
     }
 }
@@ -167,6 +171,10 @@ Pro tip: use it with parallel tool calls to look up as many code items as you wa
     CodeItemEdges,
     #[serde(rename = "Run cargo check or cargo test with JSON diagnostics output.")]
     Cargo,
+    #[serde(
+        rename = "List files in a directory (crate-root scoped) without shell access. Returns a structured entry list with names, kinds, and optional size/mtime metadata."
+    )]
+    ListDir,
 }
 
 #[cfg(test)]
