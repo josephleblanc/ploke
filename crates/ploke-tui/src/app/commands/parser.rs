@@ -59,6 +59,7 @@ pub enum Command {
     CopySelection,
     Raw(String),
     SearchContext(String),
+    OpenContextPlan,
 }
 
 /// Parse the input buffer into a Command, stripping the style prefix.
@@ -274,6 +275,7 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
             let search_term = s.trim_start_matches("search ").trim();
             Command::SearchContext(search_term.to_string())
         }
+        "contextplan" | "context plan" => Command::OpenContextPlan,
         other => Command::Raw(other.to_string()),
     }
 }

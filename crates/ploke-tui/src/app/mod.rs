@@ -162,6 +162,7 @@ pub struct App {
     confirmation_states: HashMap<Uuid, bool>,
     suggestion_index: usize,
     clipboard: Option<SystemClipboard>,
+    context_plan_history: Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>,
 }
 
 impl App {
@@ -202,6 +203,9 @@ impl App {
             confirmation_states: HashMap::new(),
             suggestion_index: 0,
             clipboard: None,
+            context_plan_history: Arc::new(std::sync::RwLock::new(
+                context_plan::ContextPlanHistory::default(),
+            )),
         }
     }
 
@@ -1427,6 +1431,10 @@ impl App {
                 self.input_view.scroll_next();
             }
             Action::OpenContextSearch => todo!(),
+            Action::OpenContextPlan => {
+                self.pending_char = None;
+                self.open_context_plan_overlay();
+            }
             Action::TriggerSelection => {
                 if let Some(selected) = self.list.selected() {
                     let should_trigger = tokio::task::block_in_place(|| {
@@ -1842,6 +1850,14 @@ impl App {
         let search_items = Self::build_context_search_items(retrieved_items);
         self.overlay_manager
             .open_context_browser(ContextSearchState::with_items(search_input, search_items));
+        self.needs_redraw = true;
+    }
+
+    fn open_context_plan_overlay(&mut self) {
+        let overlay = crate::app::view::components::context_plan_overlay::ContextPlanOverlayState::new(
+            self.context_plan_history.clone(),
+        );
+        self.overlay_manager.open_context_plan(overlay);
         self.needs_redraw = true;
     }
 

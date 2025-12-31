@@ -60,6 +60,7 @@ pub enum Action {
     TogglePreview,       // 'P'
     OpenApprovals,       // 'a'
     OpenContextSearch,   // `s`
+    OpenContextPlan,     // `p`
     ToggleToolVerbosity, // 'v'
     OpenConfigOverlay,   // 'o'
     CycleContextMode,    // Ctrl+f
@@ -149,6 +150,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 KeyCode::Char('v') => Some(Action::ToggleToolVerbosity),
                 KeyCode::Char('e') => Some(Action::OpenApprovals),
                 KeyCode::Char('s') => Some(Action::OpenContextSearch),
+                KeyCode::Char('p') => Some(Action::OpenContextPlan),
                 KeyCode::Char('o') => Some(Action::OpenConfigOverlay),
 
                 KeyCode::Char('k') | KeyCode::Up => Some(Action::NavigateListUp),

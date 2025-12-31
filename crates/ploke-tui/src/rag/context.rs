@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
     chat_history::{AnnotationKind, Message, MessageAnnotation, MessageKind},
+    context_plan::ContextPlanSnapshot,
     error::ErrorExt as _,
     llm::manager::RequestMessage,
     user_config::CtxMode,
@@ -117,6 +118,9 @@ pub async fn process_with_rag(
                         &excluded_plan_messages,
                         Some(&rag_ctx),
                     );
+                    event_bus.send(AppEvent::ContextPlanSnapshot(
+                        ContextPlanSnapshot::new(context_plan.clone(), Some(rag_ctx.clone())),
+                    ));
                     tracing::debug!(
                         plan_id = %context_plan.plan_id,
                         parent_id = %context_plan.parent_id,
@@ -196,6 +200,9 @@ pub async fn process_with_rag(
         &fallback_excluded_messages,
         None,
     );
+    event_bus.send(AppEvent::ContextPlanSnapshot(
+        ContextPlanSnapshot::new(context_plan.clone(), None),
+    ));
     tracing::debug!(
         plan_id = %context_plan.plan_id,
         parent_id = %context_plan.parent_id,

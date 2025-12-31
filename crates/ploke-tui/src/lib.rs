@@ -14,6 +14,7 @@
 pub mod app;
 pub mod app_state;
 pub mod chat_history;
+pub mod context_plan;
 pub mod error;
 pub mod event_bus;
 pub mod file_man;
@@ -351,6 +352,7 @@ pub enum AppEvent {
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
     ContextSearch(SearchEvent),
+    ContextPlanSnapshot(context_plan::ContextPlanSnapshot),
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
@@ -398,6 +400,7 @@ impl AppEvent {
             AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
             AppEvent::Rag(_) => EventPriority::Background,
+            AppEvent::ContextPlanSnapshot(_) => EventPriority::Realtime,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
             AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => {

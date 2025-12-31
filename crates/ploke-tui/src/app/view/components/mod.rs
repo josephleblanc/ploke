@@ -1,6 +1,7 @@
 pub mod approvals;
 pub mod config_overlay;
 pub mod context_browser;
+pub mod context_plan_overlay;
 pub mod conversation;
 pub mod embedding_browser;
 pub mod input_box;

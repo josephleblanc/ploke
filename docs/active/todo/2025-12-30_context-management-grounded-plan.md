@@ -37,7 +37,7 @@ Baseline (current code):
   The current prompt assembly includes tool messages individually; grouping should ensure assistant
   tool-call + tool result (and optional assistant preamble) are included/excluded together,
   probably by buffering items keyed by `tool_call_id` before finalizing the prompt list.
-- CM-03 WIP: `ChatHistory::current_path_as_llm_request_messages_with_plan` now synthesizes assistant
+- CM-03: `ChatHistory::current_path_as_llm_request_messages_with_plan` now synthesizes assistant
   tool-call messages (from `tool_payload`) and groups them directly before tool results to preserve
   tool call/response atomicity in the prompt.
 - CM-03 test: `tool_episode_groups_call_and_result` in `crates/ploke-tui/src/chat_history.rs`.
@@ -67,9 +67,6 @@ Baseline (current code):
   applied in `ChatHistory::current_path_as_llm_request_messages_with_plan`.
 - CM-05 tests: `leased_cap_respects_activation_ordering` and
   `leased_cap_prefers_newest_when_never_included` in `crates/ploke-tui/src/chat_history.rs`.
-- Test note: `cargo test -p ploke-tui` still fails in preexisting file completion tests:
-  `app::tests::file_completion_resolves_temp_entries` (Tokio runtime missing in bm25_service)
-  and `app::tests::file_completion_uses_cwd_for_bare_at` (cwd mismatch vs temp dir).
 - CM-06 partial: added `CtxMode` (Off/Light/Heavy) config under `context_management` with per-mode
   `top_k` and `per_part_max_tokens` (Heavy defaults to 3x), RAG retrieval skips entirely on Off,
   and a minimal SysInfo budget meter is emitted when RAG runs (parts + estimated tokens). UI
@@ -171,7 +168,7 @@ After this feature set:
   never actually sees the context management feedback.
 - [ ] Ask a small question first; note that RAG snippets are short “light pack” cards
   (header includes kind + score).
-  - question: Where can I see these? Somewhere in the logs? Tell me where to find them.
+  - question: Where can I see these? Somewhere in the logs?
 - [ ] Use request_code_context on a symbol the model mentions; confirm the returned
   context is deeper than the auto pack.
 - [ ] Trigger a tool call (e.g., list files) and then inspect if the tool call + tool

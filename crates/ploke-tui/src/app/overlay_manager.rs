@@ -14,6 +14,7 @@ use crate::app::view::components::config_overlay::{
     ConfigOverlayState, render_config_overlay,
 };
 use crate::app::view::components::context_browser::{ContextSearchState, render_context_search};
+use crate::app::view::components::context_plan_overlay::ContextPlanOverlayState;
 use crate::app::view::components::embedding_browser::{
     EmbeddingBrowserState, compute_embedding_browser_scroll, render_embedding_browser,
 };
@@ -28,6 +29,7 @@ pub enum ActiveOverlay {
     ModelBrowser(ModelBrowserState),
     EmbeddingBrowser(EmbeddingBrowserState),
     ContextBrowser(ContextSearchState),
+    ContextPlan(ContextPlanOverlayState),
     Approvals(ApprovalsState),
 }
 
@@ -63,6 +65,10 @@ impl OverlayManager {
 
     pub fn open_context_browser(&mut self, state: ContextSearchState) {
         self.replace_active(ActiveOverlay::ContextBrowser(state));
+    }
+
+    pub fn open_context_plan(&mut self, state: ContextPlanOverlayState) {
+        self.replace_active(ActiveOverlay::ContextPlan(state));
     }
 
     pub fn open_approvals(&mut self, state: ApprovalsState) {
@@ -166,6 +172,7 @@ impl OverlayManager {
             ActiveOverlay::ContextBrowser(state) => {
                 input::context_browser::handle_context_browser_input(state, key)
             }
+            ActiveOverlay::ContextPlan(state) => handle_overlay_input(state, key),
             ActiveOverlay::Approvals(state) => {
                 handle_overlay_input(state, key)
             }
@@ -199,6 +206,9 @@ impl OverlayManager {
                 ActiveOverlay::ContextBrowser(overlay) => {
                     Self::render_context_browser(frame, overlay);
                 }
+                ActiveOverlay::ContextPlan(overlay) => {
+                    render_overlay(overlay, frame, state);
+                }
                 ActiveOverlay::Approvals(overlay) => {
                     render_overlay(overlay, frame, state);
                 }
@@ -212,6 +222,9 @@ impl OverlayManager {
                 ActiveOverlay::Approvals(overlay) => {
                     tick_overlay(overlay, dt);
                 }
+                ActiveOverlay::ContextPlan(overlay) => {
+                    tick_overlay(overlay, dt);
+                }
                 _ => {}
             }
         }
@@ -221,6 +234,7 @@ impl OverlayManager {
         match self.active.as_ref() {
             Some(ActiveOverlay::Approvals(_)) => Some(OverlayKind::Approvals),
             Some(ActiveOverlay::ContextBrowser(_)) => Some(OverlayKind::ContextBrowser),
+            Some(ActiveOverlay::ContextPlan(_)) => Some(OverlayKind::ContextPlan),
             Some(ActiveOverlay::EmbeddingBrowser(_)) => Some(OverlayKind::EmbeddingBrowser),
             Some(ActiveOverlay::ModelBrowser(_)) => Some(OverlayKind::ModelBrowser),
             Some(ActiveOverlay::Config(_)) => None,

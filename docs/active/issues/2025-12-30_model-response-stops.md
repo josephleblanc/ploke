@@ -15,4 +15,6 @@ This looks like an error of some kind. The logs for this chat are found in the f
 
 If other chats result in the same issue, those logs will also be found below:
 
-`ploke/crates/ploke-tui/logs/ploke_20251230_181816_65267.log`
+`crates/ploke-tui/logs/ploke_20251230_181816_65267.log`
+
+`crates/ploke-tui/logs/ploke_20251231_081429_15271.log`
