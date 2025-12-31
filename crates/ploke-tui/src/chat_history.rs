@@ -226,6 +226,20 @@ pub struct Message {
     pub include_count: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnotationKind {
+    Hint,
+    Info,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageAnnotation {
+    pub audience: crate::tools::Audience,
+    pub kind: AnnotationKind,
+    pub text: String,
+}
+
 /// Running aggregates for the conversation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ConversationTotals {
@@ -487,6 +501,8 @@ pub struct ChatHistory {
     pub totals: ConversationTotals,
     /// Latest counted tokens for the currently constructed prompt/context.
     pub current_context_tokens: Option<ContextTokens>,
+    /// Per-message annotations rendered inline in the UI.
+    pub message_annotations: HashMap<Uuid, Vec<MessageAnnotation>>,
 }
 
 impl Default for ChatHistory {
@@ -813,6 +829,7 @@ impl ChatHistory {
             scroll_bar: None,
             totals: ConversationTotals::default(),
             current_context_tokens: None,
+            message_annotations: HashMap::default(),
         }
     }
 
@@ -1149,6 +1166,7 @@ impl ChatHistory {
         // Remove all collected nodes
         for node in to_delete {
             self.messages.remove(&node);
+            self.message_annotations.remove(&node);
         }
 
         // Adjust tail/current if they were part of the deleted subtree
@@ -1221,6 +1239,8 @@ impl ChatHistory {
             }
         }
 
+        self.message_annotations.remove(&id);
+
         // Track selection adjustments
         let deletes_current = self.current == id;
         let deletes_tail = self.tail == id;
@@ -1240,6 +1260,19 @@ impl ChatHistory {
         self.rebuild_path_cache();
 
         Some(self.current)
+    }
+
+    pub fn add_annotation(&mut self, message_id: Uuid, annotation: MessageAnnotation) {
+        self.message_annotations
+            .entry(message_id)
+            .or_default()
+            .push(annotation);
+    }
+
+    pub fn annotations_for(&self, message_id: Uuid) -> Option<&[MessageAnnotation]> {
+        self.message_annotations
+            .get(&message_id)
+            .map(|items| items.as_slice())
     }
 
     /// Gets the index position of a message within its parent's children list

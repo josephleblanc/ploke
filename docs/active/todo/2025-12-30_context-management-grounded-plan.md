@@ -49,6 +49,16 @@ Baseline (current code):
   `... [truncated]`; token estimates for `ContextPlan` use the truncated text. RAG budget is
   derived in `rag_budget_from_config` and applied in `crates/ploke-tui/src/lib.rs` during
   `AppState` creation. `request_code_context` now respects `rag.per_part_max_tokens`.
+- CM-04 notes: light-pack truncation should live in `crates/ploke-tui/src/rag/context.rs`
+  (`reformat_context_to_system`), which currently renders full snippets as system messages. Add a
+  per-part token/line cap (likely via `TokenBudget`) and include score + kind in the header.
+  Plumb config from `crates/ploke-tui/src/user_config.rs` into the RAG call path
+  (`crates/ploke-tui/src/app_state/core.rs`) so the UI/default mode can control the per-part limit.
+- CM-04 additional notes: `ContextPart` rendering is visible in the context browser UI
+  (`crates/ploke-tui/src/app/view/components/context_browser.rs`), so header changes (score/kind) will
+  be immediately visible without UI work; ensure truncation preserves header + a consistent excerpt
+  window and avoids cutting mid-line. Consider a small default line cap (12–20) and apply it before
+  formatting so token estimates remain aligned with what is sent.
 - CM-04.5 done: added per-branch activation counters with a stable `branch_id` on `Message` so
   leased activation ordering is deterministic across concurrent branches.
 - CM-05 done: leased cap ordering uses `last_included_turn` + `include_count`, with path-recency
@@ -64,11 +74,11 @@ Baseline (current code):
   `top_k` and `per_part_max_tokens` (Heavy defaults to 3x), RAG retrieval skips entirely on Off,
   and a minimal SysInfo budget meter is emitted when RAG runs (parts + estimated tokens). UI
   supports Ctrl+f cycling (Normal mode only) plus config overlay entries for mode/top_k/per-part.
-- CM-06 remaining:
-  - Add context mode indicator to the footer panel left of `ctx tokens: <amount>`.
-  - Make Ctrl+f cycle mode in Insert mode too.
-  - Config overlay: support +/- to adjust numeric values by 1 and Shift+/- by 10.
-  - Wire config overlay selections to update runtime config (apply changes).
+- CM-06 complete:
+  - [x] Add context mode indicator to the footer panel left of `ctx tokens: <amount>`.
+  - [x] Make Ctrl+f cycle mode in Insert mode too.
+  - [x] Config overlay: support +/- to adjust numeric values by 1 and Shift+/- by 10.
+  - [x] Wire config overlay selections to update runtime config (apply changes).
   - Implementation notes (2025-12-30):
     - Footer now renders `ctx mode: <Off|Light|Heavy>` to the left of `ctx tokens`.
     - Ctrl+f cycles mode in Insert/Normal via keymap (Ctrl+f binding added for Insert).
@@ -76,16 +86,6 @@ Baseline (current code):
       runtime config (not persisted); help text updated accordingly.
     - Runtime config updates happen on config overlay input; app updates command style/tool verbosity
       fields for immediate UI consistency.
-- CM-04 notes: light-pack truncation should live in `crates/ploke-tui/src/rag/context.rs`
-  (`reformat_context_to_system`), which currently renders full snippets as system messages. Add a
-  per-part token/line cap (likely via `TokenBudget`) and include score + kind in the header.
-  Plumb config from `crates/ploke-tui/src/user_config.rs` into the RAG call path
-  (`crates/ploke-tui/src/app_state/core.rs`) so the UI/default mode can control the per-part limit.
-- CM-04 additional notes: `ContextPart` rendering is visible in the context browser UI
-  (`crates/ploke-tui/src/app/view/components/context_browser.rs`), so header changes (score/kind) will
-  be immediately visible without UI work; ensure truncation preserves header + a consistent excerpt
-  window and avoids cutting mid-line. Consider a small default line cap (12–20) and apply it before
-  formatting so token estimates remain aligned with what is sent.
 
 ## Work items (ordered, concrete)
 
@@ -144,3 +144,44 @@ Notes:
 - `request_code_context` already supports a `token_budget` argument and is the current “expand” tool.
 - ContextBrowser UI already renders `ContextPart` (`crates/ploke-tui/src/app/view/components/context_browser.rs`),
   so a truncated/annotated context part will be visible without new UI work.
+
+## User experience changes (before/after)
+
+Before this feature set:
+- Context was assembled as a long, expanding tail of conversation + full RAG snippets.
+- Tool call/results could be split apart, so partial tool traces leaked into the prompt.
+- Auto-retrieval could feel heavy, with little user-visible explanation of what was included.
+- TTL decreased globally, so early tool spam could linger even when not included.
+
+After this feature set:
+- Context is assembled as a explainable plan, with tool episodes kept together.
+- RAG defaults to a light pack (short snippets with metadata); deeper context is requested explicitly.
+- Leased items decay only when actually included, and a leased token cap limits bloat.
+- Context mode (Off/Light/Heavy) is visible and user-controlled, with a small budget meter line after retrieval.
+
+## Manual Verification
+- [/] Check the footer: confirm ctx mode: Off|Light|Heavy updates as you cycle
+  (Ctrl+f) in both Normal and Insert.
+  - [x] verified that the UI updates
+  - [ ] verified that the context management config also updates
+- [x] Watch the SysInfo line after each user message: verify mode label, parts count,
+  and estimated tokens look sane.
+  - issue found: A SysInfo line appears just after user input, but is then
+  overwritten or otherwise replaced (maybe by a message update) so the user
+  never actually sees the context management feedback.
+- [ ] Ask a small question first; note that RAG snippets are short “light pack” cards
+  (header includes kind + score).
+  - question: Where can I see these? Somewhere in the logs? Tell me where to find them.
+- [ ] Use request_code_context on a symbol the model mentions; confirm the returned
+  context is deeper than the auto pack.
+- [ ] Trigger a tool call (e.g., list files) and then inspect if the tool call + tool
+  result stay adjacent in the prompt (no orphan tool output).
+- [/] Send a few turns and see if older tool outputs/leased items fall out when not
+  included (TTL only decrements when included).
+  - seems to work, as ctx tokens decreases significantly after the next user
+  message, and not in the middle of the llm's tool calling loop between user
+  messages.
+- [ ] Try switching to CtxMode::Off and ask a question; confirm only conversation
+  history is used and no RAG SysInfo line appears.
+- [ ] If the context browser UI is visible, verify the truncated snippet and header
+  metadata match what the model sees.

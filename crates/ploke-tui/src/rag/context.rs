@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
-    chat_history::{Message, MessageKind},
+    chat_history::{AnnotationKind, Message, MessageAnnotation, MessageKind},
     error::ErrorExt as _,
     llm::manager::RequestMessage,
     user_config::CtxMode,
@@ -136,13 +136,12 @@ pub async fn process_with_rag(
                         "CTX: {} | parts={} | est_tokens={} | tip: open context overlay for details",
                         mode_label, rag_parts, rag_token_est
                     );
-                    chat::add_msg_immediate_sysinfo_unpinned(
-                        state,
-                        event_bus,
-                        Uuid::new_v4(),
-                        meter,
-                    )
-                    .await;
+                    let annotation = MessageAnnotation {
+                        audience: crate::tools::Audience::User,
+                        kind: AnnotationKind::Info,
+                        text: meter,
+                    };
+                    chat::add_message_annotation(state, event_bus, msg_id, annotation).await;
                     let augmented_prompt =
                         construct_context_from_rag(rag_ctx, messages, msg_id, context_plan);
                     event_bus.send(AppEvent::Llm(augmented_prompt));
@@ -343,7 +342,12 @@ fn build_context_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_history::{
+        ChatHistory, ContextStatus, MessageKind, MessageStatus, RetentionClass, TurnsToLive,
+    };
+    use crate::tools::{ToolName, ToolUiPayload};
     use ploke_core::rag_types::{CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath};
+    use std::collections::HashMap;
 
     #[test]
     fn context_plan_is_stable_for_fixed_inputs() {
@@ -428,5 +432,219 @@ mod tests {
             DEFAULT_CONTEXT_PART_MAX_LINES
         )));
         assert!(rendered.contains("... [truncated]"));
+    }
+
+    fn label_message_id(
+        message_id: Option<Uuid>,
+        root_id: Uuid,
+        labels: &HashMap<Uuid, &'static str>,
+    ) -> String {
+        match message_id {
+            None => "tool_call".to_string(),
+            Some(id) if id == root_id => "root_system".to_string(),
+            Some(id) => labels
+                .get(&id)
+                .copied()
+                .unwrap_or("unknown")
+                .to_string(),
+        }
+    }
+
+    fn label_part_id(part_id: Uuid, labels: &HashMap<Uuid, &'static str>) -> String {
+        labels
+            .get(&part_id)
+            .copied()
+            .unwrap_or("unknown")
+            .to_string()
+    }
+
+    fn snapshot_context_plan(
+        plan: &ContextPlan,
+        root_id: Uuid,
+        message_labels: &HashMap<Uuid, &'static str>,
+        part_labels: &HashMap<Uuid, &'static str>,
+    ) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("plan_id: {}\n", plan.plan_id));
+        out.push_str(&format!(
+            "parent_id: {}\n",
+            label_message_id(Some(plan.parent_id), root_id, message_labels)
+        ));
+        out.push_str(&format!(
+            "estimated_total_tokens: {}\n",
+            plan.estimated_total_tokens
+        ));
+        out.push_str("included_messages:\n");
+        for msg in &plan.included_messages {
+            out.push_str(&format!(
+                "- id: {} kind: {:?} tokens: {}\n",
+                label_message_id(msg.message_id, root_id, message_labels),
+                msg.kind,
+                msg.estimated_tokens
+            ));
+        }
+        out.push_str("excluded_messages:\n");
+        for msg in &plan.excluded_messages {
+            out.push_str(&format!(
+                "- id: {} kind: {:?} tokens: {} reason: {:?}\n",
+                label_message_id(Some(msg.message_id), root_id, message_labels),
+                msg.kind,
+                msg.estimated_tokens,
+                msg.reason
+            ));
+        }
+        out.push_str("included_rag_parts:\n");
+        for part in &plan.included_rag_parts {
+            out.push_str(&format!(
+                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}\n",
+                label_part_id(part.part_id, part_labels),
+                part.file_path,
+                part.kind,
+                part.estimated_tokens,
+                part.score
+            ));
+        }
+        out.push_str("rag_stats:\n");
+        match &plan.rag_stats {
+            Some(stats) => {
+                out.push_str(&format!(
+                    "- tokens: {} files: {} parts: {} truncated: {} dedup: {}\n",
+                    stats.total_tokens,
+                    stats.files,
+                    stats.parts,
+                    stats.truncated_parts,
+                    stats.dedup_removed
+                ));
+            }
+            None => {
+                out.push_str("- none\n");
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn context_plan_golden_snapshot_from_chat_history() {
+        let mut ch = ChatHistory::new();
+        let root_id = ch.current;
+
+        let user_id = Uuid::from_u128(10);
+        ch.add_message_user(root_id, user_id, "Check status.".to_string())
+            .unwrap();
+
+        let assistant_id = Uuid::from_u128(11);
+        ch.add_child(
+            user_id,
+            assistant_id,
+            "Working on it.",
+            MessageStatus::Completed,
+            MessageKind::Assistant,
+            None,
+            None,
+        )
+        .unwrap();
+
+        if let Some(msg) = ch.messages.get_mut(&assistant_id) {
+            msg.context_status = ContextStatus::Pinned {
+                retention: RetentionClass::Leased,
+                turns_to_live: TurnsToLive::NoneRemaining,
+                reason: None,
+                pinned_by: None,
+            };
+        }
+
+        let tool_id = Uuid::from_u128(12);
+        let tool_call_id = ArcStr::from("call-1");
+        let payload = ToolUiPayload::new(ToolName::NsRead, tool_call_id.clone(), "read");
+        ch.add_message_tool(
+            assistant_id,
+            tool_id,
+            MessageKind::Tool,
+            "tool output".to_string(),
+            Some(tool_call_id),
+            Some(payload),
+        )
+        .unwrap();
+
+        if let Some(msg) = ch.messages.get_mut(&user_id) {
+            msg.last_included_turn = Some(2);
+        }
+        if let Some(msg) = ch.messages.get_mut(&tool_id) {
+            msg.last_included_turn = Some(1);
+        }
+
+        ch.current = tool_id;
+        ch.rebuild_path_cache();
+
+        let (_msgs, plan_messages, excluded_messages) =
+            ch.current_path_as_llm_request_messages_with_plan(Some(4));
+
+        let rag_ctx = AssembledContext {
+            parts: vec![
+                ContextPart {
+                    id: Uuid::from_u128(100),
+                    file_path: NodeFilepath::new("src/lib.rs".to_string()),
+                    canon_path: CanonPath::new("crate::lib::a".to_string()),
+                    ranges: vec![],
+                    kind: ContextPartKind::Code,
+                    text: "fn a() {}".to_string(),
+                    score: 0.2,
+                    modality: Modality::Dense,
+                },
+                ContextPart {
+                    id: Uuid::from_u128(101),
+                    file_path: NodeFilepath::new("src/main.rs".to_string()),
+                    canon_path: CanonPath::new("crate::main::b".to_string()),
+                    ranges: vec![],
+                    kind: ContextPartKind::Doc,
+                    text: "struct B;".to_string(),
+                    score: 0.8,
+                    modality: Modality::Dense,
+                },
+            ],
+            stats: ContextStats {
+                total_tokens: 12,
+                files: 2,
+                parts: 2,
+                truncated_parts: 0,
+                dedup_removed: 0,
+            },
+        };
+
+        let plan = build_context_plan(
+            Uuid::from_u128(1),
+            user_id,
+            &plan_messages,
+            &excluded_messages,
+            Some(&rag_ctx),
+        );
+
+        let message_labels = HashMap::from([
+            (user_id, "user"),
+            (assistant_id, "assistant"),
+            (tool_id, "tool"),
+        ]);
+        let part_labels =
+            HashMap::from([(Uuid::from_u128(100), "part_a"), (Uuid::from_u128(101), "part_b")]);
+
+        let snapshot = snapshot_context_plan(&plan, root_id, &message_labels, &part_labels);
+        let expected = "\
+plan_id: 00000000-0000-0000-0000-000000000001
+parent_id: user
+estimated_total_tokens: 91
+included_messages:
+- id: root_system kind: System tokens: 81
+- id: user kind: User tokens: 4
+excluded_messages:
+- id: assistant kind: Assistant tokens: 4 reason: TtlExpired
+- id: tool kind: Tool tokens: 7 reason: Budget
+included_rag_parts:
+- id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200
+- id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800
+rag_stats:
+- tokens: 12 files: 2 parts: 2 truncated: 0 dedup: 0
+";
+
+        assert_eq!(snapshot, expected);
     }
 }

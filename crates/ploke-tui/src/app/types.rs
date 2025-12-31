@@ -11,7 +11,7 @@ Intended usage:
 - The App struct stores Mode for modal behavior (Normal/Insert/Command).
 */
 
-use crate::chat_history::{Message, MessageKind};
+use crate::chat_history::{Message, MessageAnnotation, MessageKind};
 use crate::tools::ToolUiPayload;
 use uuid::Uuid;
 
@@ -45,6 +45,7 @@ pub struct RenderableMessage {
     pub(crate) kind: MessageKind,
     pub(crate) content: String,
     pub(crate) tool_payload: Option<ToolUiPayload>,
+    pub(crate) annotations: Vec<MessageAnnotation>,
 }
 
 /// A lightweight trait for rendering without cloning.
@@ -54,6 +55,7 @@ pub trait RenderMsg {
     fn kind(&self) -> MessageKind;
     fn content(&self) -> &str;
     fn tool_payload(&self) -> Option<&ToolUiPayload>;
+    fn annotations(&self) -> Option<&[MessageAnnotation]>;
 }
 
 impl RenderMsg for RenderableMessage {
@@ -70,6 +72,10 @@ impl RenderMsg for RenderableMessage {
     fn tool_payload(&self) -> Option<&ToolUiPayload> {
         self.tool_payload.as_ref()
     }
+
+    fn annotations(&self) -> Option<&[MessageAnnotation]> {
+        Some(self.annotations.as_slice())
+    }
 }
 
 impl RenderMsg for Message {
@@ -85,5 +91,9 @@ impl RenderMsg for Message {
 
     fn tool_payload(&self) -> Option<&ToolUiPayload> {
         self.tool_payload.as_ref()
+    }
+
+    fn annotations(&self) -> Option<&[MessageAnnotation]> {
+        None
     }
 }

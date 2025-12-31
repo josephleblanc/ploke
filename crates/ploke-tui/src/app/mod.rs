@@ -325,7 +325,20 @@ impl App {
                     let config_guard = app_state.config.read().await;
                     config_guard.context_management.mode
                 };
-                let path_len = history_guard.path_len();
+                let renderable_path: Vec<crate::app::types::RenderableMessage> = history_guard
+                    .iter_path()
+                    .map(|msg| crate::app::types::RenderableMessage {
+                        id: msg.id,
+                        kind: msg.kind,
+                        content: msg.content.clone(),
+                        tool_payload: msg.tool_payload.clone(),
+                        annotations: history_guard
+                            .annotations_for(msg.id)
+                            .unwrap_or(&[])
+                            .to_vec(),
+                    })
+                    .collect();
+                let path_len = renderable_path.len();
                 let current_id = history_guard.current;
                 let current_token_totals: Option<ContextTokens> =
                     history_guard.current_context_tokens;
@@ -334,8 +347,8 @@ impl App {
                 terminal.draw(|frame| {
                     self.draw(
                         frame,
-                        history_guard.iter_path(),
-                        history_guard.iter_path(),
+                        renderable_path.iter(),
+                        renderable_path.iter(),
                         path_len,
                         current_id,
                         current_token_totals,
