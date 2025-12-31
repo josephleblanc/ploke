@@ -120,8 +120,32 @@ fn default_cargo_test_timeout_secs() -> u64 {
 pub struct CtxPrefs {
     #[serde(default)]
     pub strategy: CtxStrategy,
+    #[serde(default = "default_ctx_mode")]
+    pub mode: CtxMode,
+    #[serde(default = "default_ctx_mode_config")]
+    pub modes: CtxModeConfig,
     #[serde(default = "default_max_leased_tokens")]
     pub max_leased_tokens: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CtxMode {
+    Off,
+    Light,
+    Heavy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CtxModeProfile {
+    pub top_k: usize,
+    pub per_part_max_tokens: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CtxModeConfig {
+    pub light: CtxModeProfile,
+    pub heavy: CtxModeProfile,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -146,6 +170,8 @@ impl Default for CtxPrefs {
     fn default() -> Self {
         Self {
             strategy: CtxStrategy::default(),
+            mode: default_ctx_mode(),
+            modes: default_ctx_mode_config(),
             max_leased_tokens: default_max_leased_tokens(),
         }
     }
@@ -156,7 +182,43 @@ impl CtxPrefs {
         let max_leased_tokens = self.max_leased_tokens.clamp(128, 200_000);
         Self {
             strategy: self.strategy,
+            mode: self.mode,
+            modes: self.modes.validated(),
             max_leased_tokens,
+        }
+    }
+
+    pub fn mode_profile(&self) -> Option<&CtxModeProfile> {
+        match self.mode {
+            CtxMode::Off => None,
+            CtxMode::Light => Some(&self.modes.light),
+            CtxMode::Heavy => Some(&self.modes.heavy),
+        }
+    }
+}
+
+impl Default for CtxMode {
+    fn default() -> Self {
+        CtxMode::Light
+    }
+}
+
+impl CtxModeProfile {
+    fn validated(self) -> Self {
+        let top_k = self.top_k.clamp(1, 200);
+        let per_part_max_tokens = self.per_part_max_tokens.clamp(32, 4096);
+        Self {
+            top_k,
+            per_part_max_tokens,
+        }
+    }
+}
+
+impl CtxModeConfig {
+    fn validated(self) -> Self {
+        Self {
+            light: self.light.validated(),
+            heavy: self.heavy.validated(),
         }
     }
 }
@@ -505,6 +567,22 @@ fn default_tool_call_timeout_secs() -> u64 {
     30
 }
 
+fn default_ctx_mode() -> CtxMode {
+    CtxMode::Light
+}
+
+fn default_ctx_mode_config() -> CtxModeConfig {
+    let light = CtxModeProfile {
+        top_k: default_top_k(),
+        per_part_max_tokens: default_rag_per_part_max_tokens(),
+    };
+    let heavy = CtxModeProfile {
+        top_k: light.top_k.saturating_mul(3),
+        per_part_max_tokens: light.per_part_max_tokens.saturating_mul(3),
+    };
+    CtxModeConfig { light, heavy }
+}
+
 fn default_tool_call_chain_limit() -> usize {
     100
 }
@@ -592,7 +670,16 @@ mod tests {
             strategy = { Hybrid = { rrf = { k = 40.0, weight_bm25 = 1.0, weight_dense = 2.0 }, mmr = { lambda = 0.7, sim_metric = { Cosine = {} }, candidate_pool = 30 } } }
 
             [context_management]
+            mode = "light"
             max_leased_tokens = 2400
+
+            [context_management.modes.light]
+            top_k = 20
+            per_part_max_tokens = 160
+
+            [context_management.modes.heavy]
+            top_k = 60
+            per_part_max_tokens = 480
         "#;
 
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
@@ -600,6 +687,8 @@ mod tests {
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
         assert_eq!(cfg.rag.top_k, 20);
         assert_eq!(cfg.rag.per_part_max_tokens, 160);
+        assert_eq!(cfg.context_management.mode, CtxMode::Light);
+        assert_eq!(cfg.context_management.modes.light.top_k, 20);
         assert_eq!(cfg.context_management.max_leased_tokens, 2400);
 
         let serialized = toml::to_string(&cfg).expect("serialize");

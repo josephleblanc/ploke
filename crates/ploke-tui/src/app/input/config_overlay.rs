@@ -31,6 +31,18 @@ pub fn handle_config_overlay_input(overlay: &mut ConfigOverlayState, key: KeyEve
         KeyCode::Enter | KeyCode::Char(' ') => {
             overlay.activate();
         }
+        KeyCode::Char('=') => {
+            overlay.adjust_numeric_value(1);
+        }
+        KeyCode::Char('+') => {
+            overlay.adjust_numeric_value(10);
+        }
+        KeyCode::Char('-') => {
+            overlay.adjust_numeric_value(-1);
+        }
+        KeyCode::Char('_') => {
+            overlay.adjust_numeric_value(-10);
+        }
         KeyCode::Char('c') => {
             overlay.pane = ConfigOverlayPane::Categories;
             overlay.normalize_indices();

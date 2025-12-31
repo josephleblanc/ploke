@@ -62,6 +62,7 @@ pub enum Action {
     OpenContextSearch,   // `s`
     ToggleToolVerbosity, // 'v'
     OpenConfigOverlay,   // 'o'
+    CycleContextMode,    // Ctrl+f
 
     // Clipboard
     CopySelection, // 'y'
@@ -88,6 +89,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
             (m, KeyCode::Down) if m.is_empty() => Some(Action::SuggestionNext),
             (m, KeyCode::Char('p')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionPrev),
             (m, KeyCode::Char('n')) if m == KeyModifiers::CONTROL => Some(Action::SuggestionNext),
+            (m, KeyCode::Char('f')) if m == KeyModifiers::CONTROL => Some(Action::CycleContextMode),
             (m, KeyCode::Backspace) if m.is_empty() || m == KeyModifiers::SHIFT => {
                 Some(Action::Backspace)
             }
@@ -124,6 +126,7 @@ pub fn to_action(mode: Mode, key: KeyEvent, style: CommandStyle) -> Option<Actio
                 return match key.code {
                     KeyCode::Char('n') => Some(Action::ScrollLineDown),
                     KeyCode::Char('p') => Some(Action::ScrollLineUp),
+                    KeyCode::Char('f') => Some(Action::CycleContextMode),
                     _ => None,
                 };
             }

@@ -51,12 +51,31 @@ Baseline (current code):
   `AppState` creation. `request_code_context` now respects `rag.per_part_max_tokens`.
 - CM-04.5 done: added per-branch activation counters with a stable `branch_id` on `Message` so
   leased activation ordering is deterministic across concurrent branches.
-- CM-05 WIP: leased cap ordering now uses `last_included_turn` + `include_count` and records
-  excluded leased items in ContextPlan with Budget/TtlExpired reasons; config lives in
-  `context_management.max_leased_tokens` and selection is applied in
-  `ChatHistory::current_path_as_llm_request_messages_with_plan`.
-- CM-05 test: `leased_cap_respects_activation_ordering` in
-  `crates/ploke-tui/src/chat_history.rs`.
+- CM-05 done: leased cap ordering uses `last_included_turn` + `include_count`, with path-recency
+  fallback for never-included items; excluded leased items are recorded in ContextPlan with
+  Budget/TtlExpired reasons. Config lives in `context_management.max_leased_tokens` and selection is
+  applied in `ChatHistory::current_path_as_llm_request_messages_with_plan`.
+- CM-05 tests: `leased_cap_respects_activation_ordering` and
+  `leased_cap_prefers_newest_when_never_included` in `crates/ploke-tui/src/chat_history.rs`.
+- Test note: `cargo test -p ploke-tui` still fails in preexisting file completion tests:
+  `app::tests::file_completion_resolves_temp_entries` (Tokio runtime missing in bm25_service)
+  and `app::tests::file_completion_uses_cwd_for_bare_at` (cwd mismatch vs temp dir).
+- CM-06 partial: added `CtxMode` (Off/Light/Heavy) config under `context_management` with per-mode
+  `top_k` and `per_part_max_tokens` (Heavy defaults to 3x), RAG retrieval skips entirely on Off,
+  and a minimal SysInfo budget meter is emitted when RAG runs (parts + estimated tokens). UI
+  supports Ctrl+f cycling (Normal mode only) plus config overlay entries for mode/top_k/per-part.
+- CM-06 remaining:
+  - Add context mode indicator to the footer panel left of `ctx tokens: <amount>`.
+  - Make Ctrl+f cycle mode in Insert mode too.
+  - Config overlay: support +/- to adjust numeric values by 1 and Shift+/- by 10.
+  - Wire config overlay selections to update runtime config (apply changes).
+  - Implementation notes (2025-12-30):
+    - Footer now renders `ctx mode: <Off|Light|Heavy>` to the left of `ctx tokens`.
+    - Ctrl+f cycles mode in Insert/Normal via keymap (Ctrl+f binding added for Insert).
+    - Config overlay supports +/- (shift=10) on numeric values and applies changes immediately to
+      runtime config (not persisted); help text updated accordingly.
+    - Runtime config updates happen on config overlay input; app updates command style/tool verbosity
+      fields for immediate UI consistency.
 - CM-04 notes: light-pack truncation should live in `crates/ploke-tui/src/rag/context.rs`
   (`reformat_context_to_system`), which currently renders full snippets as system messages. Add a
   per-part token/line cap (likely via `TokenBudget`) and include score + kind in the header.

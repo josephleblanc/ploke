@@ -23,6 +23,7 @@ use crate::{
     chat_history::{Message, MessageKind},
     error::ErrorExt as _,
     llm::manager::RequestMessage,
+    user_config::CtxMode,
 };
 
 use super::*;
@@ -65,9 +66,14 @@ pub async fn process_with_rag(
     }
 
     // Snapshot chat state up front to avoid holding the lock across awaits.
-    let max_leased_tokens = {
+    let (max_leased_tokens, ctx_mode, ctx_profile, retrieval_strategy) = {
         let cfg = state.config.read().await;
-        cfg.context_management.max_leased_tokens
+        (
+            cfg.context_management.max_leased_tokens,
+            cfg.context_management.mode,
+            cfg.context_management.mode_profile().cloned(),
+            cfg.rag.strategy.to_runtime(),
+        )
     };
     let (msg_id, user_msg, messages, plan_messages, excluded_plan_messages) = {
         let mut guard = state.chat.write().await;
@@ -96,42 +102,61 @@ pub async fn process_with_rag(
     };
 
     if let Some(rag) = &state.rag {
-        let budget = &state.budget;
-        let (top_k, retrieval_strategy) = {
-            let cfg = state.config.read().await;
-            (cfg.rag.top_k, cfg.rag.strategy.to_runtime())
-        };
-        match rag
-            .get_context(&user_msg, top_k, budget, &retrieval_strategy)
-            .await
-        {
-            Ok(rag_ctx) => {
-                let context_plan = build_context_plan(
-                    Uuid::new_v4(),
-                    msg_id,
-                    &plan_messages,
-                    &excluded_plan_messages,
-                    Some(&rag_ctx),
-                );
-                tracing::debug!(
-                    plan_id = %context_plan.plan_id,
-                    parent_id = %context_plan.parent_id,
-                    included_messages = context_plan.included_messages.len(),
-                    included_rag_parts = context_plan.included_rag_parts.len(),
-                    estimated_tokens = context_plan.estimated_total_tokens,
-                    "Context plan constructed"
-                );
-                let augmented_prompt =
-                    construct_context_from_rag(rag_ctx, messages, msg_id, context_plan);
-                event_bus.send(AppEvent::Llm(augmented_prompt));
-                return;
-            }
-            Err(e) => {
-                e.emit_error();
-                tracing::error!("RAG get_context failed; falling back to conversation-only prompt");
+        if let Some(profile) = ctx_profile {
+            let mut budget = state.budget.clone();
+            budget.per_part_max = profile.per_part_max_tokens;
+            match rag
+                .get_context(&user_msg, profile.top_k, &budget, &retrieval_strategy)
+                .await
+            {
+                Ok(rag_ctx) => {
+                    let context_plan = build_context_plan(
+                        Uuid::new_v4(),
+                        msg_id,
+                        &plan_messages,
+                        &excluded_plan_messages,
+                        Some(&rag_ctx),
+                    );
+                    tracing::debug!(
+                        plan_id = %context_plan.plan_id,
+                        parent_id = %context_plan.parent_id,
+                        included_messages = context_plan.included_messages.len(),
+                        included_rag_parts = context_plan.included_rag_parts.len(),
+                        estimated_tokens = context_plan.estimated_total_tokens,
+                        "Context plan constructed"
+                    );
+                    let rag_token_est: usize = context_plan
+                        .included_rag_parts
+                        .iter()
+                        .map(|part| part.estimated_tokens)
+                        .sum();
+                    let rag_parts = context_plan.included_rag_parts.len();
+                    let mode_label = ctx_mode_label(ctx_mode);
+                    let meter = format!(
+                        "CTX: {} | parts={} | est_tokens={} | tip: open context overlay for details",
+                        mode_label, rag_parts, rag_token_est
+                    );
+                    chat::add_msg_immediate_sysinfo_unpinned(
+                        state,
+                        event_bus,
+                        Uuid::new_v4(),
+                        meter,
+                    )
+                    .await;
+                    let augmented_prompt =
+                        construct_context_from_rag(rag_ctx, messages, msg_id, context_plan);
+                    event_bus.send(AppEvent::Llm(augmented_prompt));
+                    return;
+                }
+                Err(e) => {
+                    e.emit_error();
+                    tracing::error!(
+                        "RAG get_context failed; falling back to conversation-only prompt"
+                    );
+                }
             }
         }
-    } else {
+    } else if ctx_mode != CtxMode::Off {
         add_msg("No RAG configured; using conversation-only prompt").await;
     }
 
@@ -150,7 +175,11 @@ pub async fn process_with_rag(
         add_msg("No workspace is selected. Tip: use 'index start <path>' to index a project or 'load crate <name>' to load a saved database. Proceeding without code context.").await;
     }
     let mut formatted: Vec<RequestMessage> = Vec::with_capacity(messages.len() + 1);
-    let fallback_note = "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG.";
+    let fallback_note = if ctx_mode == CtxMode::Off {
+        "Context mode is Off; proceeding without code context."
+    } else {
+        "No workspace context loaded; proceeding without code context. Index or load a workspace to enable RAG."
+    };
     formatted.push(RequestMessage::new_system(fallback_note.to_string()));
     formatted.extend(messages.into_iter());
     let mut fallback_plan_messages = plan_messages;
@@ -261,6 +290,14 @@ fn truncate_context_text(text: &str, max_lines: usize) -> String {
         out.push_str("... [truncated]");
     }
     out
+}
+
+fn ctx_mode_label(mode: CtxMode) -> &'static str {
+    match mode {
+        CtxMode::Off => "Off",
+        CtxMode::Light => "Light",
+        CtxMode::Heavy => "Heavy",
+    }
 }
 
 fn build_context_plan(

@@ -530,6 +530,7 @@ impl ChatHistory {
             stable_id: Uuid,
             last_included_turn: Option<u64>,
             include_count: u32,
+            path_index: usize,
         }
 
         let tokenizer = ApproxCharTokenizer::default();
@@ -550,7 +551,7 @@ impl ChatHistory {
             })
         };
 
-        for id in self.current_path_ids() {
+        for (path_index, id) in self.current_path_ids().enumerate() {
             let Some(m) = self.messages.get(&id) else {
                 continue;
             };
@@ -572,6 +573,7 @@ impl ChatHistory {
                         stable_id: id,
                         last_included_turn: m.last_included_turn,
                         include_count: m.include_count,
+                        path_index,
                     });
                 }
                 MessageKind::Assistant => {
@@ -591,6 +593,7 @@ impl ChatHistory {
                         stable_id: id,
                         last_included_turn: m.last_included_turn,
                         include_count: m.include_count,
+                        path_index,
                     });
                 }
                 MessageKind::System => {
@@ -613,6 +616,7 @@ impl ChatHistory {
                         stable_id: id,
                         last_included_turn: m.last_included_turn,
                         include_count: m.include_count,
+                        path_index,
                     });
                 }
                 MessageKind::Tool => {
@@ -650,6 +654,7 @@ impl ChatHistory {
                         stable_id: id,
                         last_included_turn: m.last_included_turn,
                         include_count: m.include_count,
+                        path_index,
                     });
                 }
                 MessageKind::SysInfo => match m.context_status {
@@ -670,6 +675,7 @@ impl ChatHistory {
                             stable_id: id,
                             last_included_turn: m.last_included_turn,
                             include_count: m.include_count,
+                            path_index,
                         });
                     }
                     ContextStatus::Unpinned => {}
@@ -681,7 +687,7 @@ impl ChatHistory {
         let turn_counter = self.next_branch_turn(branch_id);
         let token_cap = max_leased_tokens.unwrap_or(usize::MAX);
 
-        let mut leased_candidates: Vec<(Uuid, usize, Option<u64>, u32)> = Vec::new();
+        let mut leased_candidates: Vec<(Uuid, usize, Option<u64>, u32, usize)> = Vec::new();
         for atom in &atoms {
             if let ContextStatus::Pinned {
                 retention: RetentionClass::Leased,
@@ -701,6 +707,7 @@ impl ChatHistory {
                     atom.estimated_tokens,
                     atom.last_included_turn,
                     atom.include_count,
+                    atom.path_index,
                 ));
             }
         }
@@ -711,12 +718,13 @@ impl ChatHistory {
             b_turn
                 .cmp(&a_turn)
                 .then_with(|| b.3.cmp(&a.3))
+                .then_with(|| b.4.cmp(&a.4))
                 .then_with(|| a.0.cmp(&b.0))
         });
 
         let mut kept_leased: HashSet<Uuid> = HashSet::new();
         let mut used_tokens = 0usize;
-        for (stable_id, estimated_tokens, _, _) in leased_candidates {
+        for (stable_id, estimated_tokens, _, _, _) in leased_candidates {
             if used_tokens.saturating_add(estimated_tokens) > token_cap && !kept_leased.is_empty() {
                 continue;
             }
@@ -2149,6 +2157,38 @@ mod tests {
         assert!(included_ids.contains(&u3));
         assert!(!included_ids.contains(&u2));
 
+        assert!(excluded.iter().any(|e| {
+            e.message_id == u2 && e.reason == ContextExclusionReason::Budget
+        }));
+    }
+
+    #[test]
+    fn leased_cap_prefers_newest_when_never_included() {
+        let mut ch = ChatHistory::new();
+        let root = ch.current;
+
+        let u1 = Uuid::new_v4();
+        ch.add_message_user(root, u1, "aaaa".to_string()).unwrap();
+        let u2 = Uuid::new_v4();
+        ch.add_message_user(u1, u2, "bbbb".to_string()).unwrap();
+        let u3 = Uuid::new_v4();
+        ch.add_message_user(u2, u3, "cccc".to_string()).unwrap();
+
+        ch.current = u3;
+        ch.rebuild_path_cache();
+
+        let tokenizer = ApproxCharTokenizer::default();
+        let cap = tokenizer.count("cccc");
+        let (_msgs, plan, excluded) = ch.current_path_as_llm_request_messages_with_plan(Some(cap));
+        let included_ids: Vec<Uuid> = plan.iter().filter_map(|m| m.message_id).collect();
+
+        assert!(included_ids.contains(&u3));
+        assert!(!included_ids.contains(&u1));
+        assert!(!included_ids.contains(&u2));
+
+        assert!(excluded.iter().any(|e| {
+            e.message_id == u1 && e.reason == ContextExclusionReason::Budget
+        }));
         assert!(excluded.iter().any(|e| {
             e.message_id == u2 && e.reason == ContextExclusionReason::Budget
         }));

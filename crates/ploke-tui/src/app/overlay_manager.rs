@@ -131,6 +131,20 @@ impl OverlayManager {
         }
     }
 
+    pub fn config_state(&self) -> Option<&ConfigOverlayState> {
+        match self.active.as_ref() {
+            Some(ActiveOverlay::Config(state)) => Some(state),
+            _ => None,
+        }
+    }
+
+    pub fn config_state_mut(&mut self) -> Option<&mut ConfigOverlayState> {
+        match self.active.as_mut() {
+            Some(ActiveOverlay::Config(state)) => Some(state),
+            _ => None,
+        }
+    }
+
     pub fn handle_input(&mut self, key: KeyEvent) -> Vec<OverlayAction> {
         let Some(active) = self.active.as_mut() else {
             return Vec::new();

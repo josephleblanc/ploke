@@ -36,7 +36,7 @@ use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
 use crate::tools::ToolVerbosity;
 use crate::ui_theme::UiTheme;
-use crate::user_config::OPENROUTER_URL;
+use crate::user_config::{CtxMode, OPENROUTER_URL};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -235,6 +235,35 @@ impl App {
         self.apply_tool_verbosity(next, true);
     }
 
+    fn cycle_context_mode(&mut self) {
+        let state = self.state.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            let next = {
+                let mut cfg = state.config.write().await;
+                let next = match cfg.context_management.mode {
+                    CtxMode::Off => CtxMode::Light,
+                    CtxMode::Light => CtxMode::Heavy,
+                    CtxMode::Heavy => CtxMode::Off,
+                };
+                cfg.context_management.mode = next;
+                next
+            };
+            let label = match next {
+                CtxMode::Off => "Off",
+                CtxMode::Light => "Light",
+                CtxMode::Heavy => "Heavy",
+            };
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: format!("Context mode set to {}", label),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+        });
+    }
+
     fn send_cmd(&self, cmd: StateCommand) {
         // Use try_send to prevent the UI from blocking
         if let Err(e) = self.cmd_tx.try_send(cmd) {
@@ -292,6 +321,10 @@ impl App {
                 // Prepare data for this frame by reading from AppState without allocating per-frame.
                 let app_state = Arc::clone(&self.state);
                 let history_guard = app_state.chat.0.read().await;
+                let ctx_mode = {
+                    let config_guard = app_state.config.read().await;
+                    config_guard.context_management.mode
+                };
                 let path_len = history_guard.path_len();
                 let current_id = history_guard.current;
                 let current_token_totals: Option<ContextTokens> =
@@ -306,6 +339,7 @@ impl App {
                         path_len,
                         current_id,
                         current_token_totals,
+                        ctx_mode,
                     )
                 })?;
                 self.needs_redraw = false;
@@ -707,6 +741,7 @@ impl App {
         path_len: usize,
         current_id: Uuid,
         current_token_totals: Option<ContextTokens>,
+        ctx_mode: CtxMode,
     ) where
         I1: IntoIterator<Item = &'a T> + Clone,
         I2: IntoIterator<Item = &'a T>,
@@ -896,6 +931,16 @@ impl App {
                 .block(Block::default().borders(Borders::NONE))
                 .style(Style::new().fg(Color::Blue))
         };
+        let context_mode = {
+            let label = match ctx_mode {
+                CtxMode::Off => "Off",
+                CtxMode::Light => "Light",
+                CtxMode::Heavy => "Heavy",
+            };
+            Paragraph::new(format!("ctx mode: {}", label))
+                .block(Block::default().borders(Borders::NONE))
+                .style(Style::new().fg(Color::Blue))
+        };
 
         // -- Handle Scrollbars --
         // TODO: how to make this work?
@@ -914,6 +959,7 @@ impl App {
         // -- first nested
         frame.render_widget(status_bar, status_line_area[0]);
         frame.render_widget(node_status, status_line_area[1]);
+        frame.render_widget(context_mode, status_line_area[2]);
         frame.render_widget(context_tracker, status_line_area[3]);
 
         // -- model indicator (always visible)
@@ -983,6 +1029,28 @@ impl App {
         // Intercept overlay manager keys
         if self.overlay_manager.is_active() {
             let actions = self.overlay_manager.handle_input(key);
+            if let Some(config_overlay) = self.overlay_manager.config_state_mut()
+                && config_overlay.dirty
+            {
+                let command_style = config_overlay.selected_command_style();
+                let tool_verbosity = config_overlay.selected_tool_verbosity();
+                let state = self.state.clone();
+                let mut config_guard = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { state.config.write().await })
+                });
+                let changed = config_overlay.apply_to_runtime_config(&mut config_guard);
+                if let Some(style) = command_style {
+                    self.command_style = style;
+                }
+                if let Some(verbosity) = tool_verbosity {
+                    self.tool_verbosity = verbosity;
+                }
+                if changed {
+                    self.needs_redraw = true;
+                }
+                config_overlay.dirty = false;
+            }
             self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
@@ -1335,6 +1403,10 @@ impl App {
                 self.pending_char = None;
                 self.cycle_tool_verbosity();
             }
+            Action::CycleContextMode => {
+                self.pending_char = None;
+                self.cycle_context_mode();
+            }
             Action::InputScrollPrev => {
                 self.input_view.scroll_prev();
             }
@@ -1417,6 +1489,7 @@ impl App {
             }
         }
     }
+
 
     fn handle_selected_approval(&mut self, approve: bool) {
         let Some(st) = self.overlay_manager.approvals_state() else {
