@@ -1856,6 +1856,7 @@ impl App {
     fn open_context_plan_overlay(&mut self) {
         let overlay = crate::app::view::components::context_plan_overlay::ContextPlanOverlayState::new(
             self.context_plan_history.clone(),
+            self.theme.clone(),
         );
         self.overlay_manager.open_context_plan(overlay);
         self.needs_redraw = true;

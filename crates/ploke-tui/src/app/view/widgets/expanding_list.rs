@@ -91,6 +91,7 @@ pub struct ExpandingListState {
 ///     normal_style: Style::default(),
 ///     detail_style: Style::default(),
 ///     selected_style: Style::default(),
+///     selected_detail_style: Style::default(),
 /// };
 /// ```
 pub struct ExpandingList<'a, T> {
@@ -98,6 +99,7 @@ pub struct ExpandingList<'a, T> {
     pub normal_style: Style,
     pub detail_style: Style,
     pub selected_style: Style,
+    pub selected_detail_style: Style,
 }
 
 impl<'a, T> ExpandingList<'a, T>
@@ -134,6 +136,14 @@ where
     /// Computes a scroll offset that keeps the selection visible.
     pub fn compute_scroll(area: Rect, items: &[T], state: &mut ExpandingListState) {
         state.viewport_height = area.height;
+        if items.is_empty() {
+            state.selected = 0;
+            state.vscroll = 0;
+            return;
+        }
+        if state.selected >= items.len() {
+            state.selected = items.len().saturating_sub(1);
+        }
         let total = Self::total_lines(items);
         let focus = Self::focus_line(items, state.selected);
         let vh = state.viewport_height as usize;
@@ -186,7 +196,7 @@ where
                 self.normal_style
             };
             let detail_style = if is_selected {
-                self.selected_style
+                self.selected_detail_style
             } else {
                 self.detail_style
             };
