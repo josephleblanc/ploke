@@ -211,6 +211,16 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
 
     let params: CreateFileParamsOwned = typed_req.clone();
 
+    if let Err(err) = crate::tools::validators::validate_file_path_basic(
+        name,
+        "file_path",
+        &params.file_path,
+        false,
+    ) {
+        tool_call_params.tool_call_failed_error(err);
+        return;
+    }
+
     // Resolve absolute path against crate root when relative
     let crate_root = { state.system.read().await.focused_crate_root() };
     let abs_path = {
@@ -219,7 +229,16 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
             match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
                 Ok(pb) => pb,
                 Err(err) => {
-                    tool_call_params.tool_call_failed(format!("invalid path: {}", err));
+                    let retry_context = json!({
+                        "input_path": params.file_path.as_str(),
+                        "crate_root": root.display().to_string(),
+                    });
+                    let tool_error = tool_call_params
+                        .tool_error_from_message(format!("invalid path: {}", err))
+                        .field("file_path")
+                        .retry_hint("Use a workspace-relative or absolute path to a .rs file.")
+                        .retry_context(retry_context);
+                    tool_call_params.tool_call_failed_error(tool_error);
                     return;
                 }
             }
@@ -235,8 +254,20 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     tracing::debug!(crate_root = ?crate_root, abs_path = ?abs_path);
 
     // Restrict to .rs files
-    if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
-        tool_call_params.tool_call_failed("only .rs files are supported".to_string());
+    let provided_ext = abs_path.extension().and_then(|e| e.to_str());
+    if provided_ext != Some("rs") {
+        let retry_context = json!({
+            "input_path": params.file_path.as_str(),
+            "resolved_path": abs_path.display().to_string(),
+            "extension": provided_ext,
+            "expected_extension": "rs",
+        });
+        let tool_error = tool_call_params
+            .tool_error_from_message("only .rs files are supported")
+            .field("file_path")
+            .retry_hint("Provide a Rust source file path ending in `.rs`.")
+            .retry_context(retry_context);
+        tool_call_params.tool_call_failed_error(tool_error);
         return;
     }
 
@@ -244,7 +275,16 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
         Some("overwrite") => OnExists::Overwrite,
         Some("error") | None => OnExists::Error,
         Some(other) => {
-            tool_call_params.tool_call_failed(format!("invalid on_exists: {}", other));
+            let retry_context = json!({
+                "on_exists": other,
+                "expected": ["error", "overwrite"],
+            });
+            let tool_error = tool_call_params
+                .tool_error_from_message(format!("invalid on_exists: {}", other))
+                .field("on_exists")
+                .retry_hint("Use `on_exists: \"error\"` or `on_exists: \"overwrite\"`.")
+                .retry_context(retry_context);
+            tool_call_params.tool_call_failed_error(tool_error);
             return;
         }
     };
