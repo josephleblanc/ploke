@@ -1,4 +1,6 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+
+use ploke_io::path_policy::{PathPolicy, normalize_target_path_allow_missing};
 
 /// Resolve a user-supplied path within a crate root.
 ///
@@ -18,45 +20,12 @@ pub fn resolve_in_crate_root<P: AsRef<Path>, R: AsRef<Path>>(
         return Err("invalid crate_root".to_string());
     }
 
-    let root_norm = normalize(root);
     let target = if p.is_absolute() {
-        normalize(p)
+        p.to_path_buf()
     } else {
-        normalize(&root_norm.join(p))
+        root.join(p)
     };
-
-    if is_within(&target, &root_norm) {
-        Ok(target)
-    } else {
-        Err("path resolves outside crate root".to_string())
-    }
-}
-
-fn normalize(path: &Path) -> PathBuf {
-    let mut res = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::Prefix(prefix) => res.push(prefix.as_os_str()),
-            Component::RootDir => res.push(Component::RootDir.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                // Do not pop past root
-                let _ = res.pop();
-            }
-            Component::Normal(seg) => res.push(seg),
-        }
-    }
-    res
-}
-
-fn is_within(target: &Path, root: &Path) -> bool {
-    // Ensure root is a prefix of target on component boundary
-    if root.as_os_str().is_empty() {
-        return false;
-    }
-    // Fast path
-    if target.starts_with(root) {
-        return true;
-    }
-    false
+    let policy = PathPolicy::new(vec![root.to_path_buf()]);
+    normalize_target_path_allow_missing(&target, &policy, "read")
+        .map_err(|err| err.to_string())
 }

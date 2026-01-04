@@ -1,6 +1,6 @@
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
-use crate::rag::tools::apply_code_edit_tool;
+use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool};
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::rag_types::ApplyCodeEditResult;
@@ -8,7 +8,9 @@ use ploke_db::NodeType;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
+use similar::TextDiff;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 // ============================================================================
 // Prerequisites:

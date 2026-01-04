@@ -143,7 +143,12 @@ mod tests {
 
     #[test]
     fn file_path_with_unicode_is_invalid_when_disallowed() {
-        let err = validate_file_path_basic(ToolName::CreateFile, "file_path", "src/maß.rs", false)
+        let err = validate_file_path_basic(
+            ToolName::CreateFile,
+            "file_path",
+            "src/ma\u{00df}.rs",
+            false,
+        )
             .expect_err("expected unicode error");
         let ctx = err.retry_context.expect("retry context");
         assert_eq!(ctx.get("reason").and_then(|v| v.as_str()), Some("non_ascii"));

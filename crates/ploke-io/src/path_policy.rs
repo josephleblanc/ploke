@@ -23,6 +23,23 @@ fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn lexical_normalize_abs(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::RootDir => out.push(comp.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(seg) => out.push(seg),
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+        }
+    }
+    out
+}
+
 /// Strict canonicalization that returns an IoError on failure.
 /// This ensures the path exists and we avoid accidental traversal outside roots.
 fn canonicalize_strict(path: &Path, operation: &'static str) -> Result<PathBuf, IoError> {
@@ -90,6 +107,27 @@ pub fn normalize_target_path(path: &Path, policy: &PathPolicy) -> Result<PathBuf
     normalize_against_roots_with_policy(path, &policy.roots, policy.symlink_policy)
 }
 
+/// Normalize a path against configured roots without requiring the target to exist.
+pub fn normalize_target_path_allow_missing(
+    path: &Path,
+    policy: &PathPolicy,
+    operation: &'static str,
+) -> Result<PathBuf, IoError> {
+    if policy.require_absolute && !path.is_absolute() {
+        return Err(IoError::FileOperation {
+            operation,
+            path: path.to_path_buf(),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    }
+
+    normalize_against_roots_allow_missing(path, &policy.roots, policy.symlink_policy, operation)
+}
+
 /// Normalize a path against configured roots using a symlink policy.
 /// Currently enforces strict canonicalization, then checks containment using the provided policy.
 ///
@@ -133,23 +171,6 @@ pub(crate) fn normalize_against_roots_with_policy(
         SymlinkPolicy::Follow => {
             // Lexical containment (prevents '..' traversal) without following symlinks,
             // then strict canonicalization for consistent hashing/IO.
-            fn lexical_normalize_abs(p: &Path) -> PathBuf {
-                use std::path::Component;
-                let mut out = PathBuf::new();
-                for comp in p.components() {
-                    match comp {
-                        Component::RootDir => out.push(comp.as_os_str()),
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            out.pop();
-                        }
-                        Component::Normal(seg) => out.push(seg),
-                        Component::Prefix(prefix) => out.push(prefix.as_os_str()),
-                    }
-                }
-                out
-            }
-
             let lex_path = lexical_normalize_abs(path);
             let within = roots.iter().any(|r| {
                 let lex_root = lexical_normalize_abs(r);
@@ -171,6 +192,92 @@ pub(crate) fn normalize_against_roots_with_policy(
             let canon = canonicalize_strict(path, "read")?;
             Ok(canon)
         }
+    }
+}
+
+fn normalize_against_roots_allow_missing(
+    path: &Path,
+    roots: &[PathBuf],
+    policy: SymlinkPolicy,
+    operation: &'static str,
+) -> Result<PathBuf, IoError> {
+    if !path.is_absolute() {
+        return Err(IoError::FileOperation {
+            operation,
+            path: path.to_path_buf(),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            )),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    }
+
+    let lex_path = lexical_normalize_abs(path);
+
+    let match_result = roots.iter().find_map(|root| {
+        let lex_root = lexical_normalize_abs(root);
+        if !lex_path.starts_with(&lex_root) {
+            return None;
+        }
+        if matches!(policy, SymlinkPolicy::DenyCrossRoot) {
+            return Some(validate_existing_prefixes_within_root(
+                &lex_path,
+                &lex_root,
+                operation,
+            )
+            .map(|_| lex_root));
+        }
+        Some(Ok(lex_root))
+    });
+
+    match match_result {
+        Some(Ok(_)) => Ok(lex_path),
+        Some(Err(err)) => Err(err),
+        None => Err(path_outside_roots_error(lex_path, operation)),
+    }
+}
+
+fn validate_existing_prefixes_within_root(
+    lex_path: &Path,
+    lex_root: &Path,
+    operation: &'static str,
+) -> Result<(), IoError> {
+    let canon_root = canonicalize_best_effort(lex_root);
+    let mut prefix = lex_root.to_path_buf();
+
+    if prefix.exists() {
+        let canon = canonicalize_strict(&prefix, operation)?;
+        if !canon.starts_with(&canon_root) {
+            return Err(path_outside_roots_error(lex_path.to_path_buf(), operation));
+        }
+    }
+
+    if let Ok(rel) = lex_path.strip_prefix(lex_root) {
+        for comp in rel.components() {
+            prefix.push(comp);
+            if !prefix.exists() {
+                continue;
+            }
+            let canon = canonicalize_strict(&prefix, operation)?;
+            if !canon.starts_with(&canon_root) {
+                return Err(path_outside_roots_error(lex_path.to_path_buf(), operation));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn path_outside_roots_error(path: PathBuf, operation: &'static str) -> IoError {
+    IoError::FileOperation {
+        operation,
+        path,
+        source: Arc::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path outside configured roots",
+        )),
+        kind: std::io::ErrorKind::InvalidInput,
     }
 }
 

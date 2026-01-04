@@ -14,11 +14,9 @@ use uuid::Uuid;
 use crate::app::overlay::{OverlayAction, OverlayKind};
 use crate::app::utils::truncate_uuid;
 use crate::app::view::rendering::highlight::{
-    highlight_message_lines, styled_to_ratatui_lines, StyledLine, StyledSpan,
+    StyledLine, StyledSpan, highlight_message_lines, styled_to_ratatui_lines,
 };
-use crate::app::view::widgets::expanding_list::{
-    ExpandingItem, ExpandingList, ExpandingListState,
-};
+use crate::app::view::widgets::expanding_list::{ExpandingItem, ExpandingList, ExpandingListState};
 use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
@@ -55,9 +53,16 @@ impl ContextPlanFilter {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ContextPlanItemKey {
-    IncludedMessage { message_id: Option<Uuid>, index: usize },
-    ExcludedMessage { message_id: Uuid },
-    RagPart { part_id: Uuid },
+    IncludedMessage {
+        message_id: Option<Uuid>,
+        index: usize,
+    },
+    ExcludedMessage {
+        message_id: Uuid,
+    },
+    RagPart {
+        part_id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -155,16 +160,10 @@ impl ContextPlanOverlayState {
             KeyCode::Up | KeyCode::Char('k') => self.select_prev(),
             KeyCode::Down | KeyCode::Char('j') => self.select_next(),
             KeyCode::Enter | KeyCode::Char(' ') => self.toggle_expanded_selected(),
-            KeyCode::Char('H')
-            | KeyCode::Char('h')
-                if shift =>
-            {
+            KeyCode::Char('H') | KeyCode::Char('h') if shift => {
                 self.step_history_prev();
             }
-            KeyCode::Char('L')
-            | KeyCode::Char('l')
-                if shift =>
-            {
+            KeyCode::Char('L') | KeyCode::Char('l') if shift => {
                 self.step_history_next();
             }
             KeyCode::Left if shift => {
@@ -200,7 +199,10 @@ impl ContextPlanOverlayState {
         let body_height = area.height.saturating_sub(footer_height);
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(body_height), Constraint::Length(footer_height)])
+            .constraints([
+                Constraint::Length(body_height),
+                Constraint::Length(footer_height),
+            ])
             .split(area);
         let body_area = layout[0];
         let footer_area = layout[1];
@@ -234,10 +236,7 @@ impl ContextPlanOverlayState {
             let (summary_area, list_area) = if summary_height > 0 {
                 let layout = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(summary_height),
-                        Constraint::Min(1),
-                    ])
+                    .constraints([Constraint::Length(summary_height), Constraint::Min(1)])
                     .split(inner);
                 (Some(layout[0]), layout[1])
             } else {
@@ -321,21 +320,24 @@ impl ContextPlanOverlayState {
         if self.rows.is_empty() {
             return;
         }
-        let current = self.list_state.selected.min(self.rows.len().saturating_sub(1));
+        let current = self
+            .list_state
+            .selected
+            .min(self.rows.len().saturating_sub(1));
         if let Some(section_idx) = self.section_for_index(current) {
             let section = &self.sections[section_idx];
-            if current <= section.first_item_index {
-                if let Some(prev_idx) = self.prev_section_index(section_idx) {
-                    let prev_section = &self.sections[prev_idx];
-                    let target = self
-                        .section_last_selection
-                        .get(&prev_section.kind)
-                        .copied()
-                        .unwrap_or(prev_section.last_item_index);
-                    self.list_state.selected = target;
-                    self.remember_section_selection(target);
-                    return;
-                }
+            if current <= section.first_item_index
+                && let Some(prev_idx) = self.prev_section_index(section_idx)
+            {
+                let prev_section = &self.sections[prev_idx];
+                let target = self
+                    .section_last_selection
+                    .get(&prev_section.kind)
+                    .copied()
+                    .unwrap_or(prev_section.last_item_index);
+                self.list_state.selected = target;
+                self.remember_section_selection(target);
+                return;
             }
         }
         for idx in (0..current).rev() {
@@ -351,17 +353,20 @@ impl ContextPlanOverlayState {
         if self.rows.is_empty() {
             return;
         }
-        let current = self.list_state.selected.min(self.rows.len().saturating_sub(1));
+        let current = self
+            .list_state
+            .selected
+            .min(self.rows.len().saturating_sub(1));
         if let Some(section_idx) = self.section_for_index(current) {
             let section = &self.sections[section_idx];
-            if current >= section.last_item_index {
-                if let Some(next_idx) = self.next_section_index(section_idx) {
-                    let next_section = &self.sections[next_idx];
-                    let target = next_section.first_item_index;
-                    self.list_state.selected = target;
-                    self.remember_section_selection(target);
-                    return;
-                }
+            if current >= section.last_item_index
+                && let Some(next_idx) = self.next_section_index(section_idx)
+            {
+                let next_section = &self.sections[next_idx];
+                let target = next_section.first_item_index;
+                self.list_state.selected = target;
+                self.remember_section_selection(target);
+                return;
             }
         }
         let mut idx = current.saturating_add(1);
@@ -379,7 +384,10 @@ impl ContextPlanOverlayState {
         if self.sections.is_empty() {
             return;
         }
-        let current = self.list_state.selected.min(self.rows.len().saturating_sub(1));
+        let current = self
+            .list_state
+            .selected
+            .min(self.rows.len().saturating_sub(1));
         let section_idx = match self.section_for_index(current) {
             Some(idx) => idx,
             None => return,
@@ -442,9 +450,9 @@ impl ContextPlanOverlayState {
     }
 
     fn section_for_index(&self, idx: usize) -> Option<usize> {
-        self.sections.iter().position(|section| {
-            idx >= section.first_item_index && idx <= section.last_item_index
-        })
+        self.sections
+            .iter()
+            .position(|section| idx >= section.first_item_index && idx <= section.last_item_index)
     }
 
     fn next_section_index(&self, idx: usize) -> Option<usize> {
@@ -499,7 +507,8 @@ impl ContextPlanOverlayState {
                 self.snippet_visible.remove(&part_id);
             } else {
                 self.snippet_visible.insert(part_id);
-                self.expanded.insert(ContextPlanItemKey::RagPart { part_id });
+                self.expanded
+                    .insert(ContextPlanItemKey::RagPart { part_id });
             }
         }
     }
@@ -508,7 +517,10 @@ impl ContextPlanOverlayState {
         if self.rows.is_empty() {
             return None;
         }
-        let idx = self.list_state.selected.min(self.rows.len().saturating_sub(1));
+        let idx = self
+            .list_state
+            .selected
+            .min(self.rows.len().saturating_sub(1));
         match self.rows.get(idx) {
             Some(ContextPlanRow::IncludedMessage { key, .. }) => Some(*key),
             Some(ContextPlanRow::ExcludedMessage { key, .. }) => Some(*key),
@@ -643,10 +655,14 @@ fn build_rows(
         filter,
         ContextPlanFilter::All | ContextPlanFilter::ExcludedAll
     );
-    let include_excluded_budget =
-        matches!(filter, ContextPlanFilter::ExcludedBudget | ContextPlanFilter::ExcludedAll);
-    let include_excluded_ttl =
-        matches!(filter, ContextPlanFilter::ExcludedTtlExpired | ContextPlanFilter::ExcludedAll);
+    let include_excluded_budget = matches!(
+        filter,
+        ContextPlanFilter::ExcludedBudget | ContextPlanFilter::ExcludedAll
+    );
+    let include_excluded_ttl = matches!(
+        filter,
+        ContextPlanFilter::ExcludedTtlExpired | ContextPlanFilter::ExcludedAll
+    );
     let include_rag = matches!(filter, ContextPlanFilter::All);
 
     if include_included && !plan.included_messages.is_empty() {
@@ -697,7 +713,9 @@ fn build_rows(
         });
         let first_item_index = rows.len();
         for part in &plan.included_rag_parts {
-            let key = ContextPlanItemKey::RagPart { part_id: part.part_id };
+            let key = ContextPlanItemKey::RagPart {
+                part_id: part.part_id,
+            };
             rows.push(ContextPlanRow::RagPart {
                 key,
                 part: part.clone(),
@@ -725,9 +743,7 @@ fn build_rows(
             rows.push(ContextPlanRow::Header {
                 title: format!(
                     "Excluded (Budget) — {} items, {} tok ({:.1}%)",
-                    excluded_budget_count,
-                    excluded_budget_tokens,
-                    percent
+                    excluded_budget_count, excluded_budget_tokens, percent
                 ),
                 kind: ContextPlanHeaderKind::Section(ContextPlanSectionKind::ExcludedBudget),
             });
@@ -769,9 +785,7 @@ fn build_rows(
             rows.push(ContextPlanRow::Header {
                 title: format!(
                     "Excluded (TTL) — {} items, {} tok ({:.1}%)",
-                    excluded_ttl_count,
-                    excluded_ttl_tokens,
-                    percent
+                    excluded_ttl_count, excluded_ttl_tokens, percent
                 ),
                 kind: ContextPlanHeaderKind::Section(ContextPlanSectionKind::ExcludedTtl),
             });
@@ -829,7 +843,9 @@ fn build_display_items(
         match row {
             ContextPlanRow::Header { title, kind } => {
                 let header_style = match kind {
-                    ContextPlanHeaderKind::Plan => Style::default().fg(theme.context_plan_header_fg),
+                    ContextPlanHeaderKind::Plan => {
+                        Style::default().fg(theme.context_plan_header_fg)
+                    }
                     ContextPlanHeaderKind::Section(_) => {
                         Style::default().fg(theme.context_plan_section_fg)
                     }
@@ -892,9 +908,15 @@ fn build_display_items(
                 );
                 let mut details = Vec::new();
                 if expanded {
-                    details.push(Line::from(format!("    message_id: {}", truncate_uuid(*message_id))));
+                    details.push(Line::from(format!(
+                        "    message_id: {}",
+                        truncate_uuid(*message_id)
+                    )));
                     details.push(Line::from(format!("    kind: {}", kind)));
-                    details.push(Line::from(format!("    estimated_tokens: {}", estimated_tokens)));
+                    details.push(Line::from(format!(
+                        "    estimated_tokens: {}",
+                        estimated_tokens
+                    )));
                     details.push(Line::from(format!("    reason: {:?}", reason)));
                     if let Some(preview) = message_previews.get(message_id) {
                         details.push(Line::from(format!("    preview: {}", preview)));
@@ -916,20 +938,15 @@ fn build_display_items(
                     part.score,
                     part.estimated_tokens
                 );
-                let title_path = truncate_path_start(
-                    &display_path,
-                    title_width as usize,
-                    "  [rag] ",
-                    &suffix,
-                );
-                let title = format!(
-                    "  [rag] {}{}",
-                    title_path,
-                    suffix
-                );
+                let title_path =
+                    truncate_path_start(&display_path, title_width as usize, "  [rag] ", &suffix);
+                let title = format!("  [rag] {}{}", title_path, suffix);
                 let mut details = Vec::new();
                 if expanded {
-                    details.push(Line::from(format!("    part_id: {}", truncate_uuid(part.part_id))));
+                    details.push(Line::from(format!(
+                        "    part_id: {}",
+                        truncate_uuid(part.part_id)
+                    )));
                     details.push(Line::from(format!("    file_path: {}", display_path)));
                     details.push(Line::from(format!(
                         "    kind: {}",
@@ -944,8 +961,12 @@ fn build_display_items(
                 if snippet_visible.contains(&part.part_id) {
                     match part_cache.get(&part.part_id) {
                         Some(ctx_part) => {
-                            let mut snippet_lines =
-                                highlight_snippet_lines(ctx_part, detail_width, show_snippet_gutter, theme);
+                            let mut snippet_lines = highlight_snippet_lines(
+                                ctx_part,
+                                detail_width,
+                                show_snippet_gutter,
+                                theme,
+                            );
                             details.append(&mut snippet_lines);
                         }
                         None => {
@@ -1046,8 +1067,12 @@ fn build_token_summary_lines(
                 }
             }
             MessageKind::Tool => tool_tokens = tool_tokens.saturating_add(msg.estimated_tokens),
-            MessageKind::System => system_tokens = system_tokens.saturating_add(msg.estimated_tokens),
-            MessageKind::SysInfo => sysinfo_tokens = sysinfo_tokens.saturating_add(msg.estimated_tokens),
+            MessageKind::System => {
+                system_tokens = system_tokens.saturating_add(msg.estimated_tokens)
+            }
+            MessageKind::SysInfo => {
+                sysinfo_tokens = sysinfo_tokens.saturating_add(msg.estimated_tokens)
+            }
         }
     }
     lines.push(Line::from(vec![
@@ -1176,10 +1201,7 @@ fn truncate_snippet_text(text: &str, max_lines: usize) -> (String, bool) {
 
 fn trim_trailing_empty_lines(lines: &mut Vec<Line<'static>>) {
     while let Some(last) = lines.last() {
-        let is_empty = last
-            .spans
-            .iter()
-            .all(|span| span.content.is_empty());
+        let is_empty = last.spans.iter().all(|span| span.content.is_empty());
         if is_empty {
             lines.pop();
         } else {
@@ -1357,7 +1379,10 @@ fn truncate_preview(input: &str, max_width: usize) -> String {
 fn centered_overlay_area(area: Rect, width_ratio: u16, height_ratio: u16, v_margin: u16) -> Rect {
     let w = area.width.saturating_mul(width_ratio) / 10;
     let mut h = area.height.saturating_mul(height_ratio) / 10;
-    let max_h = area.height.saturating_sub(v_margin.saturating_mul(2)).max(1);
+    let max_h = area
+        .height
+        .saturating_sub(v_margin.saturating_mul(2))
+        .max(1);
     h = h.min(max_h);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;

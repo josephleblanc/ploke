@@ -1057,6 +1057,7 @@ impl App {
                         .block_on(async { state.config.write().await })
                 });
                 let changed = config_overlay.apply_to_runtime_config(&mut config_guard);
+                drop(config_guard);
                 if let Some(style) = command_style {
                     self.command_style = style;
                 }
