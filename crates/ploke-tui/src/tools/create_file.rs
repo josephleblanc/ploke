@@ -7,6 +7,7 @@ use crate::{
     },
     chat_history::MessageKind,
     rag::editing,
+    tools::validators::{validate_file_extension_allowlist, validate_file_path_basic},
 };
 use ploke_core::rag_types::CreateFileResult;
 use similar::TextDiff;
@@ -211,63 +212,55 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
 
     let params: CreateFileParamsOwned = typed_req.clone();
 
-    if let Err(err) = crate::tools::validators::validate_file_path_basic(
-        name,
-        "file_path",
-        &params.file_path,
-        false,
-    ) {
+    if let Err(err) = validate_file_path_basic(name, "file_path", &params.file_path, false) {
         tool_call_params.tool_call_failed_error(err);
         return;
     }
 
     // Resolve absolute path against crate root when relative
     let crate_root = { state.system.read().await.focused_crate_root() };
+    let crate_root = match crate_root {
+        Some(root) => root,
+        None => {
+            let tool_error = tool_call_params
+                .tool_error_from_message(
+                    "no crate is focused; load a workspace before creating files",
+                )
+                .field("file_path")
+                .retry_hint("Focus a crate/workspace, then provide a crate-root-relative path.");
+            tool_call_params.tool_call_failed_error(tool_error);
+            return;
+        }
+    };
     let abs_path = {
         let p = std::path::PathBuf::from(&params.file_path);
-        if let Some(root) = crate_root.as_ref() {
-            match crate::utils::path_scoping::resolve_in_crate_root(&p, root) {
-                Ok(pb) => pb,
-                Err(err) => {
-                    let retry_context = json!({
-                        "input_path": params.file_path.as_str(),
-                        "crate_root": root.display().to_string(),
-                    });
-                    let tool_error = tool_call_params
-                        .tool_error_from_message(format!("invalid path: {}", err))
-                        .field("file_path")
-                        .retry_hint("Use a workspace-relative or absolute path to a .rs file.")
-                        .retry_context(retry_context);
-                    tool_call_params.tool_call_failed_error(tool_error);
-                    return;
-                }
+        match crate::utils::path_scoping::resolve_in_crate_root(&p, &crate_root) {
+            Ok(pb) => pb,
+            Err(err) => {
+                let retry_context = json!({
+                    "input_path": params.file_path.as_str(),
+                    "crate_root": crate_root.display().to_string(),
+                });
+                let tool_error = tool_call_params
+                    .tool_error_from_message(format!("invalid path: {}", err))
+                    .field("file_path")
+                    .retry_hint("Use a workspace-relative or absolute path within the crate.")
+                    .retry_context(retry_context);
+                tool_call_params.tool_call_failed_error(tool_error);
+                return;
             }
-        } else if p.is_absolute() {
-            p
-        } else {
-            tracing::warn!("No crate focus set, falling back to pwd");
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join(p)
         }
     };
     tracing::debug!(crate_root = ?crate_root, abs_path = ?abs_path);
 
-    // Restrict to .rs files
-    let provided_ext = abs_path.extension().and_then(|e| e.to_str());
-    if provided_ext != Some("rs") {
-        let retry_context = json!({
-            "input_path": params.file_path.as_str(),
-            "resolved_path": abs_path.display().to_string(),
-            "extension": provided_ext,
-            "expected_extension": "rs",
-        });
-        let tool_error = tool_call_params
-            .tool_error_from_message("only .rs files are supported")
-            .field("file_path")
-            .retry_hint("Provide a Rust source file path ending in `.rs`.")
-            .retry_context(retry_context);
-        tool_call_params.tool_call_failed_error(tool_error);
+    let tooling_cfg = { state.config.read().await.tooling.clone() };
+    if let Err(err) = validate_file_extension_allowlist(
+        name,
+        "file_path",
+        &abs_path,
+        &tooling_cfg.create_file_extensions,
+    ) {
+        tool_call_params.tool_call_failed_error(err);
         return;
     }
 
@@ -328,13 +321,11 @@ pub async fn create_file_tool(tool_call_params: CreateFileCtx) {
     let editing_cfg = { state.config.read().await.editing.clone() };
     let before = String::new();
     let after = create_req.content.clone();
-    let display_path = if let Some(root) = crate_root.as_ref() {
+    let display_path = {
         abs_path
-            .strip_prefix(root)
+            .strip_prefix(&crate_root)
             .unwrap_or(abs_path.as_path())
             .to_path_buf()
-    } else {
-        abs_path.clone()
     };
 
     let truncate = |s: &str| -> String {
@@ -489,7 +480,7 @@ lazy_static::lazy_static! {
     static ref CREATE_FILE_PARAMETERS: serde_json::Value = json!({
         "type": "object",
         "properties": {
-            "file_path": { "type": "string", "description": "Absolute or workspace-relative path to new Rust file (.rs)." },
+            "file_path": { "type": "string", "description": "Absolute or workspace-relative path to new text file; allowed extensions come from tooling.create_file_extensions." },
             "content": { "type": "string", "description": "Full file content." },
             "on_exists": { "type": "string", "enum": ["error", "overwrite"], "description": "Policy when file already exists (default: error)." },
             "create_parents": { "type": "boolean", "description": "Create parent directories if missing (default: false)." }

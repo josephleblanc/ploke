@@ -111,10 +111,9 @@ impl AppHarness {
         };
         // Use the path for the target fixture that was used to create the backup database in
         // TEST_DB_NODES
-        let system = SystemState::new(SystemStatus::new(Some(
-            PathBuf::from_str("tests/fixture_crates/fixture_nodes")
-                .expect("incorrect fixture format"),
-        )));
+        let mut fixture_root = workspace_root();
+        fixture_root.push("tests/fixture_crates/fixture_nodes");
+        let system = SystemState::new(SystemStatus::new(Some(fixture_root)));
 
         // Shared app state
         let state = Arc::new(AppState {

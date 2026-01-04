@@ -117,6 +117,89 @@ pub fn validate_file_path_basic(
     Ok(())
 }
 
+pub fn validate_file_extension_allowlist(
+    tool: ToolName,
+    field: &'static str,
+    path: &std::path::Path,
+    allowed: &[String],
+) -> Result<(), ToolError> {
+    if allowed.is_empty() {
+        return Err(ToolError::new(
+            tool,
+            ToolErrorCode::InvalidFormat,
+            "no allowed file extensions configured",
+        )
+        .field(field)
+        .retry_hint("Ask the user to configure tooling.create_file_extensions.")
+        .retry_context(json!({
+            "allowlist_len": 0,
+        })));
+    }
+
+    let mut normalized_allowed: Vec<String> = Vec::with_capacity(allowed.len());
+    for ext in allowed {
+        let trimmed = ext.trim();
+        if trimmed.is_empty() {
+            return Err(ToolError::new(
+                tool,
+                ToolErrorCode::InvalidFormat,
+                "allowed file extension list contains an empty entry",
+            )
+            .field(field)
+            .retry_hint("Remove empty entries from tooling.create_file_extensions.")
+            .retry_context(json!({
+                "allowlist": allowed,
+            })));
+        }
+        normalized_allowed.push(
+            trimmed
+                .trim_start_matches('.')
+                .to_ascii_lowercase(),
+        );
+    }
+
+    let allow_all = normalized_allowed
+        .iter()
+        .any(|ext| ext == "*" || ext == "any");
+
+    let provided_ext = path.extension().and_then(|e| e.to_str());
+    let normalized_ext = provided_ext.map(|e| e.trim().to_ascii_lowercase());
+    if !allow_all {
+        let Some(ext) = normalized_ext.as_deref() else {
+            return Err(ToolError::new(
+                tool,
+                ToolErrorCode::InvalidFormat,
+                "file path is missing an extension",
+            )
+            .field(field)
+            .retry_hint("Provide a file path with an extension.")
+            .retry_context(json!({
+                "path": path.display().to_string(),
+                "allowed_extensions": normalized_allowed,
+            })));
+        };
+
+        if !normalized_allowed.iter().any(|allowed| allowed == ext) {
+            return Err(ToolError::new(
+                tool,
+                ToolErrorCode::InvalidFormat,
+                "file extension not allowed",
+            )
+            .field(field)
+            .expected(normalized_allowed.join(", "))
+            .received(ext.to_string())
+            .retry_hint("Use an allowed file extension.")
+            .retry_context(json!({
+                "path": path.display().to_string(),
+                "extension": ext,
+                "allowed_extensions": normalized_allowed,
+            })));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +241,77 @@ mod tests {
     fn file_path_valid_passes() {
         validate_file_path_basic(ToolName::CreateFile, "file_path", "src/lib.rs", false)
             .expect("valid path");
+    }
+
+    #[test]
+    fn extension_allowlist_empty_is_invalid() {
+        let err = validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("src/lib.rs"),
+            &[],
+        )
+        .expect_err("expected empty allowlist error");
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(err.field, Some("file_path"));
+    }
+
+    #[test]
+    fn extension_allowlist_rejects_empty_entry() {
+        let err = validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("src/lib.rs"),
+            &["".to_string()],
+        )
+        .expect_err("expected empty entry error");
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+    }
+
+    #[test]
+    fn extension_allowlist_rejects_missing_extension() {
+        let err = validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("README"),
+            &["md".to_string()],
+        )
+        .expect_err("expected missing extension error");
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+    }
+
+    #[test]
+    fn extension_allowlist_rejects_disallowed_extension() {
+        let err = validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("README.md"),
+            &["rs".to_string()],
+        )
+        .expect_err("expected disallowed extension error");
+        assert_eq!(err.code, ToolErrorCode::InvalidFormat);
+        assert_eq!(err.received.as_deref(), Some("md"));
+    }
+
+    #[test]
+    fn extension_allowlist_allows_matching_extension() {
+        validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("README.MD"),
+            &["md".to_string()],
+        )
+        .expect("expected allowed extension");
+    }
+
+    #[test]
+    fn extension_allowlist_allows_special_any() {
+        validate_file_extension_allowlist(
+            ToolName::CreateFile,
+            "file_path",
+            std::path::Path::new("README.adoc"),
+            &["any".to_string()],
+        )
+        .expect("expected any extension allowed");
     }
 }

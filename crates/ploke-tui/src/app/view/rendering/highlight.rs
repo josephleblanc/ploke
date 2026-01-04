@@ -1051,7 +1051,7 @@ mod tests {
 |------|---------|-----------------|
 | `request_code_context` | Ask the repository for additional code snippets up to a token budget. | `search_term` (optional string), `token_budget` (optional integer) |
 | `apply_code_edit` | Apply canonical edits to one or more Rust nodes identified by their canonical path. | `edits` array – each with `canon`, `code`, `file`, `node_type`; optional `confidence` |
-| `create_file` | Atomically create a new Rust source file (staged for approval). | `file_path`, `content`; optional `create_parents`, `on_exists` |
+| `create_file` | Atomically create a new text file (staged for approval). | `file_path`, `content`; optional `create_parents`, `on_exists` |
 | `non_semantic_patch` | Apply raw unified‑diff patches (useful for non‑Rust files or when the semantic parser fails). | `patches` array – each with `diff`, `file`, `reasoning`; optional `confidence` |
 | `read_file` | Read a file (with optional line‑range and byte limits). | `file`, optional `start_line`, `end_line`, `max_bytes` |
 | `code_item_lookup` | Look up the definition of a known code item (better than grep). | `file_path`, `item_name`, `module_path`, `node_kind` |

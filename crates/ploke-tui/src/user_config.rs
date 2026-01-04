@@ -97,6 +97,9 @@ pub struct ToolingConfig {
     pub cargo_check_timeout_secs: u64,
     #[serde(default = "default_cargo_test_timeout_secs")]
     pub cargo_test_timeout_secs: u64,
+    /// Allowed file extensions for create_file (e.g. ["rs", "md"]). Use "*" or "any" to allow all.
+    #[serde(default = "default_create_file_extensions")]
+    pub create_file_extensions: Vec<String>,
 }
 
 impl Default for ToolingConfig {
@@ -104,6 +107,7 @@ impl Default for ToolingConfig {
         Self {
             cargo_check_timeout_secs: default_cargo_check_timeout_secs(),
             cargo_test_timeout_secs: default_cargo_test_timeout_secs(),
+            create_file_extensions: default_create_file_extensions(),
         }
     }
 }
@@ -114,6 +118,20 @@ fn default_cargo_check_timeout_secs() -> u64 {
 
 fn default_cargo_test_timeout_secs() -> u64 {
     600
+}
+
+fn default_create_file_extensions() -> Vec<String> {
+    vec![
+        "rs".to_string(),
+        "md".to_string(),
+        "txt".to_string(),
+        "toml".to_string(),
+        "yaml".to_string(),
+        "yml".to_string(),
+        "json".to_string(),
+        "ini".to_string(),
+        "cfg".to_string(),
+    ]
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
