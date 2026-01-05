@@ -19,6 +19,20 @@ pub struct OpenAIConfig {
     pub model: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TruncatePolicy {
+    Truncate,
+    Reject,
+    PassThrough,
+}
+
+impl Default for TruncatePolicy {
+    fn default() -> Self {
+        Self::Truncate
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct OpenRouterConfig {
     /// OpenRouter model id, e.g. `openai/text-embedding-3-small`.
@@ -52,6 +66,9 @@ pub struct OpenRouterConfig {
     /// Per-request timeout in seconds for embeddings.
     #[serde(default = "default_openrouter_timeout_secs")]
     pub timeout_secs: u64,
+    /// Controls how the backend handles overlong snippets.
+    #[serde(default)]
+    pub truncate_policy: TruncatePolicy,
 }
 
 impl Default for OpenRouterConfig {
@@ -67,6 +84,7 @@ impl Default for OpenRouterConfig {
             max_backoff_ms: default_openrouter_max_backoff_ms(),
             input_type: None,
             timeout_secs: default_openrouter_timeout_secs(),
+            truncate_policy: TruncatePolicy::Truncate,
         }
     }
 }

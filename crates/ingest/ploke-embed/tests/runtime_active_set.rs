@@ -10,7 +10,7 @@ use ploke_core::embeddings::{
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
 use ploke_db::Database;
 use ploke_embed::{
-    config::OpenRouterConfig,
+    config::{OpenRouterConfig, TruncatePolicy},
     indexer::{EmbeddingProcessor, EmbeddingSource},
     providers::openrouter::OpenRouterBackend,
     runtime::EmbeddingRuntime,
@@ -37,6 +37,7 @@ fn cfg(model: &str, dims: usize) -> OpenRouterConfig {
         max_backoff_ms: 5,
         input_type: Some("code-snippet".into()),
         timeout_secs: 5,
+        truncate_policy: TruncatePolicy::Truncate,
     }
 }
 

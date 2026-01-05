@@ -1,4 +1,14 @@
 #![cfg(feature = "live_api_tests")]
+//! Live OpenRouter embedding tests.
+//!
+//! These tests validate two separate configuration concepts for OpenRouter embeddings:
+//! - `OpenRouterConfig::request_dimensions`: the request parameter sent to OpenRouter to ask
+//!   for truncated vectors (when supported by the model/provider).
+//! - `OpenRouterConfig::dimensions`: the expected vector length used locally to validate
+//!   returned embeddings and to name embedding-set relations.
+//!
+//! The tests below ensure that when we request a specific dimension (e.g. 256), the returned
+//! vectors match that size and the embedding-set relation naming reflects the requested dims.
 
 use std::{
     collections::BTreeSet,
@@ -15,7 +25,7 @@ use ploke_db::{multi_embedding::db_ext::EmbeddingExt as _, Database};
 use ploke_db::{multi_embedding::hnsw_ext::HnswExt as _, DbError};
 use ploke_embed::{
     cancel_token::CancellationToken,
-    config::OpenRouterConfig,
+    config::{OpenRouterConfig, TruncatePolicy},
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerCommand, IndexerTask},
     providers::openrouter::OpenRouterBackend,
     runtime::EmbeddingRuntime,
@@ -93,7 +103,9 @@ fn openrouter_cfg(model: &str, dims: usize) -> OpenRouterConfig {
     OpenRouterConfig {
         model: model.to_string(),
         dimensions: Some(dims),
-        request_dimensions: None,
+        // Explicitly request the desired vector length from OpenRouter; this is distinct
+        // from the local validation expectation (`dimensions`).
+        request_dimensions: Some(dims),
         max_in_flight: 2,
         requests_per_second: None,
         max_attempts: 5,
@@ -101,6 +113,7 @@ fn openrouter_cfg(model: &str, dims: usize) -> OpenRouterConfig {
         max_backoff_ms: 10_000,
         input_type: Some("code-snippet".into()),
         timeout_secs: 30,
+        truncate_policy: TruncatePolicy::Truncate,
     }
 }
 
@@ -381,6 +394,8 @@ struct MatrixRunSummary {
 async fn live_openrouter_matrix_fixture_tracking_hash() -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
+    // Matrix coverage: verify multiple models/dims can index end-to-end while the requested
+    // dimension is honored and per-set relation names remain unique.
     let matrix: Vec<(&str, usize)> = vec![
         ("sentence-transformers/all-minilm-l6-v2", 384),
         ("openai/text-embedding-3-small", 256),
@@ -436,6 +451,9 @@ async fn live_openrouter_dimensions_override_text_embedding_3_small_256(
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
+    // This test ensures that OpenRouter honors the request-dimensions override for
+    // `openai/text-embedding-3-small` and that the local embedding-set naming includes
+    // the requested dimension suffix.
     let model = "openai/text-embedding-3-small";
     let dims = 256usize;
 
@@ -484,6 +502,8 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256(
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
+    // This test exercises the indexing pipeline and validates the persisted vector size in DB
+    // matches the requested dimension (not the model default).
     let fixture = "fixture_tracking_hash";
     let model = "openai/text-embedding-3-small";
     let dims = 256usize;

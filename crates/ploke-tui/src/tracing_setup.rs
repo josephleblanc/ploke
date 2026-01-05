@@ -57,6 +57,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target("ploke_tui", level)
         .with_target("ploke_db", level)
         .with_target("ploke_embed", level)
+        .with_target("embed-pipeline", level)
         .with_target("ploke_io", level)
         .with_target("ploke_transform", level)
         .with_target("ploke_rag", level)

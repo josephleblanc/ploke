@@ -1,4 +1,9 @@
-use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{self, MissedTickBehavior};
@@ -6,9 +11,10 @@ use tracing::instrument;
 
 use crate::{
     cancel_token::CancellationListener,
-    config::OpenRouterConfig,
+    config::{OpenRouterConfig, TruncatePolicy},
     error::{truncate_string, EmbedError},
 };
+use ploke_llm::request::models as openrouter_models;
 
 use ploke_llm::embeddings::{EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest};
 use ploke_llm::router_only::openrouter::embed::{
@@ -38,9 +44,14 @@ impl RetryConfig {
 #[derive(Debug)]
 pub struct OpenRouterBackend {
     pub model: ModelId,
+    /// the expected vector length the backend will enforce. It’s used for response validation
+    /// (rejects mismatches)
     pub dimensions: usize,
+    /// the optional request hint sent to OpenRouter to ask for truncated vectors. It’s not
+    /// guaranteed to be honored, and many providers ignore it.
     request_dimensions: Option<u32>,
     input_type: Option<String>,
+    truncate_policy: TruncatePolicy,
 
     client: reqwest::Client,
     in_flight: Arc<Semaphore>,
@@ -97,6 +108,7 @@ impl OpenRouterBackend {
             dimensions: dims,
             request_dimensions: cfg.request_dimensions.map(|d| d as u32),
             input_type: cfg.input_type.clone(),
+            truncate_policy: cfg.truncate_policy,
             client,
             in_flight: Arc::new(Semaphore::new(cfg.max_in_flight.max(1))),
             rps_limiter,
@@ -298,6 +310,8 @@ impl OpenRouterBackend {
             return Ok(Vec::new());
         }
 
+        let snippets = self.apply_truncation_policy(snippets)?;
+
         // Concurrency gate (in-flight) + optional RPS limiter.
         let _permit = self.acquire_permit(cancel).await?;
         self.rps_tick(cancel).await?;
@@ -491,6 +505,122 @@ impl OpenRouterBackend {
             EmbedError::Network("OpenRouter embedding request failed (unknown error)".into())
         }))
     }
+
+    fn apply_truncation_policy(
+        &self,
+        mut snippets: Vec<String>,
+    ) -> Result<Vec<String>, EmbedError> {
+        if self.truncate_policy == TruncatePolicy::PassThrough {
+            return Ok(snippets);
+        }
+        let max_chars = self.max_snippet_chars();
+        let Some(max_chars) = max_chars else {
+            tracing::warn!(
+                target: "embed-pipeline",
+                model = %self.model,
+                "No context length available; skipping snippet truncation"
+            );
+            return Ok(snippets);
+        };
+
+        match self.truncate_policy {
+            TruncatePolicy::Truncate => {
+                let truncated = truncate_snippets_in_place(&mut snippets, max_chars);
+                if truncated > 0 {
+                    tracing::warn!(
+                        target: "embed-pipeline",
+                        truncated_snippets = truncated,
+                        max_chars = max_chars,
+                        "Truncated snippets to max length"
+                    );
+                }
+                Ok(snippets)
+            }
+            TruncatePolicy::Reject => {
+                if let Some((idx, len)) = snippets.iter().enumerate().find_map(|(idx, s)| {
+                    let len = s.chars().count();
+                    (len > max_chars).then_some((idx, len))
+                }) {
+                    return Err(EmbedError::Embedding(format!(
+                        "snippet {idx} exceeds max length: {len} > {max_chars}"
+                    )));
+                }
+                Ok(snippets)
+            }
+            TruncatePolicy::PassThrough => Ok(snippets),
+        }
+    }
+
+    fn max_snippet_chars(&self) -> Option<usize> {
+        let model_id = self.model.to_string();
+        if let Some(tokens) = openrouter_embedding_context_length(&model_id) {
+            return Some((tokens as usize).saturating_mul(4));
+        }
+        let max_chars = self.dimensions.saturating_mul(24);
+        tracing::warn!(
+            target: "embed-pipeline",
+            model = %model_id,
+            dims = self.dimensions,
+            max_chars = max_chars,
+            "No OpenRouter context length found; using dims-based fallback"
+        );
+        Some(max_chars)
+    }
+}
+
+fn openrouter_embedding_context_length(model_id: &str) -> Option<u32> {
+    static MODEL_CONTEXT: OnceLock<HashMap<String, u32>> = OnceLock::new();
+    let map = MODEL_CONTEXT.get_or_init(|| {
+        let json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/openrouter/embeddings_models.json"
+        ));
+        let parsed: Result<openrouter_models::Response, _> = serde_json::from_str(json);
+        match parsed {
+            Ok(resp) => resp
+                .data
+                .into_iter()
+                .filter_map(|item| {
+                    let ctx = item.context_length.or(item.top_provider.context_length)?;
+                    Some((item.id.to_string(), ctx))
+                })
+                .collect(),
+            Err(err) => {
+                tracing::warn!(
+                    target: "embed-pipeline",
+                    error = %err,
+                    "Failed to parse OpenRouter embeddings model fixture"
+                );
+                HashMap::new()
+            }
+        }
+    });
+    map.get(model_id).copied()
+}
+
+fn truncate_snippets_in_place(snippets: &mut [String], max_chars: usize) -> usize {
+    let mut truncated = 0;
+    for (idx, snippet) in snippets.iter_mut().enumerate() {
+        let original_chars = snippet.chars().count();
+        if original_chars <= max_chars {
+            continue;
+        }
+        let truncate_idx = snippet
+            .char_indices()
+            .nth(max_chars)
+            .map(|(idx, _)| idx)
+            .unwrap_or(snippet.len());
+        snippet.truncate(truncate_idx);
+        truncated += 1;
+        tracing::warn!(
+            target: "embed-pipeline",
+            snippet_index = idx,
+            original_chars = original_chars,
+            max_chars = max_chars,
+            "Truncated snippet for embedding"
+        );
+    }
+    truncated
 }
 
 #[cfg(test)]
@@ -518,6 +648,7 @@ mod tests {
             max_backoff_ms: 1,
             input_type: Some("code-snippet".into()),
             timeout_secs: 5,
+            truncate_policy: TruncatePolicy::Truncate,
         }
     }
 
@@ -628,6 +759,39 @@ mod tests {
         assert!(
             matches!(err, EmbedError::Cancelled(_)),
             "expected cancellation error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn truncates_long_snippet_using_model_context() {
+        let cfg = OpenRouterConfig {
+            model: "mistralai/codestral-embed-2505".to_string(),
+            dimensions: Some(1536),
+            request_dimensions: None,
+            max_in_flight: 1,
+            requests_per_second: None,
+            max_attempts: 1,
+            initial_backoff_ms: 1,
+            max_backoff_ms: 1,
+            input_type: Some("code-snippet".into()),
+            timeout_secs: 5,
+            truncate_policy: TruncatePolicy::Truncate,
+        };
+        let backend = OpenRouterBackend::new_with_env(&cfg, test_env("http://example.invalid"))
+            .expect("backend init");
+        let max_chars = backend
+            .max_snippet_chars()
+            .expect("fixture should define context length");
+
+        let snippet = "a".repeat(max_chars + 10);
+        let out = backend
+            .apply_truncation_policy(vec![snippet])
+            .expect("truncation should succeed");
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].chars().count(),
+            max_chars,
+            "snippet should be truncated to max chars"
         );
     }
 
@@ -754,6 +918,7 @@ mod tests {
                 max_backoff_ms: 10_000,
                 input_type: Some("code-snippet".into()),
                 timeout_secs: 40,
+                truncate_policy: TruncatePolicy::Truncate,
             }
         }
 
