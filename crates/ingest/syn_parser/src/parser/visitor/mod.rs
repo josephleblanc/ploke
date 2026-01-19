@@ -466,7 +466,8 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
     }
 }
 
-/// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
+/// Process multiple files in parallel using rayon 
+///
 /// Takes DiscoveryOutput and distributes work to analyze_file_phase2.
 pub fn analyze_files_parallel(
     discovery_output: &DiscoveryOutput, // Takes output from Phase 1

@@ -7,97 +7,114 @@ use syn_parser::{parser::nodes::ModuleNodeId, resolve::id_resolver::CanonIdResol
 
 use crate::common::build_tree_for_tests; // Helper to build graph and tree
 
-mod canon_resolver_tests {
-    use syn_parser::{error::SynParserError, parser::nodes::AnyNodeId};
+use syn_parser::{error::SynParserError, parser::nodes::AnyNodeId};
 
-    use super::*; // Import items from parent module
+/// Test that `resolve_all` runs to completion without returning any errors.
+#[test]
+fn test_resolve_all_no_errors() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    let fixture_name = "file_dir_detection";
+    let (graph, tree) = build_tree_for_tests(fixture_name);
+    let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
 
-    /// Test that `resolve_all` runs to completion without returning any errors.
-    #[test]
-    #[cfg(feature = "type_bearing_ids")]
-    fn test_resolve_all_no_errors() {
-        let _ = env_logger::builder()
-            .is_test(true)
-            .format_timestamp(None) // Disable timestamps
-            .try_init();
-        let fixture_name = "file_dir_detection";
-        let (graph, tree) = build_tree_for_tests(fixture_name);
-        let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
+    let results: Vec<_> = resolver.resolve_all().collect();
 
-        let results: Vec<_> = resolver.resolve_all().collect();
-
-        for result in results {
-            assert!(
-                result.is_ok(),
-                "resolve_all returned an error: {:?}",
-                result.err()
-            );
-        }
+    for result in results {
+        assert!(
+            result.is_ok(),
+            "resolve_all returned an error: {:?}",
+            result.err()
+        );
     }
+}
 
-    /// Test that the number of resolved IDs matches the number of items defined
-    /// within the modules indexed by the ModuleTree's path_index.
-    #[test]
-    fn test_resolve_all_count() -> Result<(), SynParserError> {
-        let fixture_name = "file_dir_detection";
-        let (graph, tree) = build_tree_for_tests(fixture_name);
-        let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
+/// Test that `resolve_all` runs to completion without returning any errors.
+#[test]
+fn test_resolve_all_no_errors_nodes() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    let fixture_name = "fixture_nodes";
+    let (graph, tree) = build_tree_for_tests(fixture_name);
+    let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
 
-        // Collect successful results, panicking on error as per previous test
-        let resolved_ids: Vec<(AnyNodeId, CanonId)> = resolver
-            .resolve_all()
-            .map(|res| res.expect("resolve_all failed during count test"))
-            .collect();
+    let results: Vec<_> = resolver.resolve_all().collect();
 
-        // Calculate the expected count from the tree's path_index
-        let mut expected_count = 0;
-        let mut processed_items = HashSet::new(); // Track items to avoid double counting if modules overlap (shouldn't happen with path_index)
+    for result in results {
+        assert!(
+            result.is_ok(),
+            "resolve_all returned an error: {:?}",
+            result.err()
+        );
+    }
+}
 
-        for &any_id in tree.path_index().values() {
-            let module_id: ModuleNodeId = any_id.try_into()?;
-            if let Some(module_node) = tree.modules().get(&module_id) {
-                if let Some(items) = module_node.items() {
-                    for item_id in items {
-                        if processed_items.insert(*item_id) {
-                            expected_count += 1;
-                        }
+/// Test that the number of resolved IDs matches the number of items defined
+/// within the modules indexed by the ModuleTree's path_index.
+#[test]
+fn test_resolve_all_count() -> Result<(), SynParserError> {
+    let fixture_name = "file_dir_detection";
+    let (graph, tree) = build_tree_for_tests(fixture_name);
+    let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
+
+    // Collect successful results, panicking on error as per previous test
+    let resolved_ids: Vec<(AnyNodeId, CanonId)> = resolver
+        .resolve_all()
+        .map(|res| res.expect("resolve_all failed during count test"))
+        .collect();
+
+    // Calculate the expected count from the tree's path_index
+    let mut expected_count = 0;
+    let mut processed_items = HashSet::new(); // Track items to avoid double counting if modules overlap (shouldn't happen with path_index)
+
+    for &any_id in tree.path_index().values() {
+        let module_id: ModuleNodeId = any_id.try_into()?;
+        if let Some(module_node) = tree.modules().get(&module_id) {
+            if let Some(items) = module_node.items() {
+                for item_id in items {
+                    if processed_items.insert(*item_id) {
+                        expected_count += 1;
                     }
                 }
             }
         }
-
-        assert_eq!(
-            resolved_ids.len(),
-            expected_count,
-            "Number of resolved IDs ({}) does not match expected count ({}) from indexed modules",
-            resolved_ids.len(),
-            expected_count
-        );
-        Ok(())
     }
 
-    /// Test that all CanonIds generated by resolve_all are the Resolved variant.
-    #[test]
-    fn test_resolved_ids_are_resolved() {
-        let fixture_name = "file_dir_detection";
-        let (graph, tree) = build_tree_for_tests(fixture_name);
-        let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
+    assert_eq!(
+        resolved_ids.len(),
+        expected_count,
+        "Number of resolved IDs ({}) does not match expected count ({}) from indexed modules",
+        resolved_ids.len(),
+        expected_count
+    );
+    Ok(())
+}
 
-        // Collect successful results
-        let resolved_ids: Vec<(AnyNodeId, CanonId)> = resolver
-            .resolve_all()
-            .map(|res| res.expect("resolve_all failed during resolved variant test"))
-            .collect();
+/// Test that all CanonIds generated by resolve_all are the Resolved variant.
+#[test]
+fn test_resolved_ids_are_resolved() {
+    let fixture_name = "file_dir_detection";
+    let (graph, tree) = build_tree_for_tests(fixture_name);
+    let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
 
-        assert!(!resolved_ids.is_empty(), "Resolver did not produce any IDs");
+    // Collect successful results
+    let resolved_ids: Vec<(AnyNodeId, CanonId)> = resolver
+        .resolve_all()
+        .map(|res| res.expect("resolve_all failed during resolved variant test"))
+        .collect();
 
-        for (original_id, canon_id) in resolved_ids {
-            assert!(
-                canon_id.is_resolved(),
-                "Generated CanonId for original NodeId {} is not the Resolved variant: {}",
-                original_id,
-                canon_id
-            );
-        }
+    assert!(!resolved_ids.is_empty(), "Resolver did not produce any IDs");
+
+    for (original_id, canon_id) in resolved_ids {
+        assert!(
+            canon_id.is_resolved(),
+            "Generated CanonId for original NodeId {} is not the Resolved variant: {}",
+            original_id,
+            canon_id
+        );
     }
 }

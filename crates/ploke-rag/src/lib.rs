@@ -57,12 +57,12 @@
 //! let fused = rag.hybrid_search("module visibility rules", 15).await?;
 //!
 //! // Assemble a context for downstream prompting.
-//! let budget = TokenBudget { max_total: 1024, per_file_max: 512, per_part_max: 256, reserves: None };
+//! let budget = TokenBudget { max_total: 1024, per_file_max: 512, per_part_max: 256 };
 //! let ctx = rag.get_context(
 //!     "module visibility rules",
 //!     12,
 //!     &budget,
-//!     RetrievalStrategy::Hybrid { rrf: Default::default(), mmr: None },
+//!     &RetrievalStrategy::Hybrid { rrf: Default::default(), mmr: None },
 //! ).await?;
 //! # Ok(()) }
 //! ```

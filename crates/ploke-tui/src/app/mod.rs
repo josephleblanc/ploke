@@ -667,12 +667,11 @@ impl App {
         Option<String>,
         usize,
     ) {
-        if matches!(mode, Mode::Insert | Mode::Command) {
-            if let Some((suggestions, ghost, accept, selected_idx)) =
+        if matches!(mode, Mode::Insert | Mode::Command)
+            && let Some((suggestions, ghost, accept, selected_idx)) =
                 self.file_completion_suggestions(&self.input_buffer, selection_index)
-            {
-                return (suggestions, ghost, accept, selected_idx);
-            }
+        {
+            return (suggestions, ghost, accept, selected_idx);
         }
         if mode != Mode::Command {
             return (Vec::new(), None, None, 0);
@@ -1053,8 +1052,7 @@ impl App {
                 let tool_verbosity = config_overlay.selected_tool_verbosity();
                 let state = self.state.clone();
                 let mut config_guard = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(async { state.config.write().await })
+                    tokio::runtime::Handle::current().block_on(async { state.config.write().await })
                 });
                 let changed = config_overlay.apply_to_runtime_config(&mut config_guard);
                 drop(config_guard);
@@ -1321,12 +1319,12 @@ impl App {
             }
             Action::BranchPrev => {
                 let mut handled = false;
-                if let Some(selected) = self.list.selected() {
-                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
-                        self.confirmation_states.insert(*msg_id, true);
-                        handled = true;
-                        self.needs_redraw = true;
-                    }
+                if let Some(selected) = self.list.selected()
+                    && let Some(msg_id) = self.conversation.interactive_tools.get(&selected)
+                {
+                    self.confirmation_states.insert(*msg_id, true);
+                    handled = true;
+                    self.needs_redraw = true;
                 }
 
                 if !handled {
@@ -1339,12 +1337,12 @@ impl App {
             }
             Action::BranchNext => {
                 let mut handled = false;
-                if let Some(selected) = self.list.selected() {
-                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
-                        self.confirmation_states.insert(*msg_id, false);
-                        handled = true;
-                        self.needs_redraw = true;
-                    }
+                if let Some(selected) = self.list.selected()
+                    && let Some(msg_id) = self.conversation.interactive_tools.get(&selected)
+                {
+                    self.confirmation_states.insert(*msg_id, false);
+                    handled = true;
+                    self.needs_redraw = true;
                 }
 
                 if !handled {
@@ -1442,14 +1440,22 @@ impl App {
                         tokio::runtime::Handle::current().block_on(async {
                             let guard = self.state.chat.0.read().await;
                             let path = guard.get_full_path();
-                            if let Some(msg) = path.get(selected) {
-                                if let Some(payload) = msg.tool_payload() {
-                                    if should_render_tool_buttons(payload) {
-                                        if let Some(req_id) = payload.request_id {
-                                            return Some(req_id);
-                                        }
-                                    }
-                                }
+                            // NOTE: replaced this conditional with the functional approach below
+                            // for clarity.
+                            //
+                            // if let Some(msg) = path.get(selected)
+                            //     && let Some(payload) = msg.tool_payload()
+                            //     && should_render_tool_buttons(payload)
+                            //     && let Some(req_id) = payload.request_id
+                            // {
+                            //     return Some(req_id);
+                            // }
+                            let req_id = path.get(selected)
+                                .and_then(|msg| msg.tool_payload())
+                                .filter(|p| should_render_tool_buttons(p))
+                                .and_then(|payload| payload.request_id);
+                            if req_id.is_some() {
+                                return req_id;
                             }
                             None
                         })
@@ -1511,7 +1517,6 @@ impl App {
             }
         }
     }
-
 
     fn handle_selected_approval(&mut self, approve: bool) {
         let Some(st) = self.overlay_manager.approvals_state() else {
@@ -1855,10 +1860,11 @@ impl App {
     }
 
     fn open_context_plan_overlay(&mut self) {
-        let overlay = crate::app::view::components::context_plan_overlay::ContextPlanOverlayState::new(
-            self.context_plan_history.clone(),
-            self.theme.clone(),
-        );
+        let overlay =
+            crate::app::view::components::context_plan_overlay::ContextPlanOverlayState::new(
+                self.context_plan_history.clone(),
+                self.theme.clone(),
+            );
         self.overlay_manager.open_context_plan(overlay);
         self.needs_redraw = true;
     }
@@ -2167,8 +2173,8 @@ mod tests {
         assert_eq!(accept, format!("{input}{expected_ghost}"));
     }
 
-    #[test]
-    fn file_completion_resolves_temp_entries() {
+    #[tokio::test]
+    async fn file_completion_resolves_temp_entries() {
         let temp = tempdir().expect("temp dir");
         std::fs::create_dir(temp.path().join("src")).expect("create src");
         std::fs::write(temp.path().join("Cargo.toml"), "cargo").expect("write file");
