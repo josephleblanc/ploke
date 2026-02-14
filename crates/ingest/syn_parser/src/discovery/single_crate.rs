@@ -633,7 +633,7 @@ pub struct CrateContext {
     pub name: String,
     /// The resolved version string for the crate (e.g., "0.1.0").
     pub version: String,
-    /// The UUID namespace derived for this specific crate version using
+    /// The UUID namespace derived for this specific crate using
     /// `Uuid::new_v5(&PROJECT_NAMESPACE_UUID, ...)`.
     pub namespace: Uuid,
     /// The absolute path to the crate's root directory (containing Cargo.toml).
@@ -858,7 +858,7 @@ impl DiscoveryOutput {
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    _project_root: &Path,      // Keep for potential future use
+    workspace_root: &Path,      // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
@@ -1000,27 +1000,19 @@ pub fn run_discovery_phase(
     })
 }
 
-/// Derives a deterministic UUID v5 namespace for a specific crate version.
+/// Derives a deterministic UUID v5 namespace for a specific crate.
 ///
 /// This function is intended to run single-threaded as part of the discovery setup.
 ///
 /// # Arguments
 /// * `name` - The name of the crate.
-/// * `version` - The version of the crate.
 ///
 /// # Returns
-/// A `Uuid` representing the namespace for this crate version, derived from
+/// A `Uuid` representing the namespace for this crate, derived from
 /// the `PROJECT_NAMESPACE_UUID`.
-// NOTE: Known Design Limitation
-// * Currently uses full version, e.g. "0.5.142", requiring full re-map for smaller changes.
-//  * Consider using semver as default, and adding a config (not implemented) for user-specific
-//  choices on frequency of remap (breaking, major, minor, never, etc) due to versioning changes.
-//  * Fine for now.
-pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
-    // Combine name and version to form the unique identifier string within the project namespace.
-    // Using "@" is a common convention.
-    let name_version = format!("{}@{}", name, version);
-    Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name_version.as_bytes())
+pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
+    // Combine crate name within the project namespace for stable UUIDs across version changes.
+    Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name.as_bytes())
 }
 
 #[cfg(test)]
@@ -1044,9 +1036,9 @@ mod tests {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.1");
         let ns3 = derive_crate_namespace("other-crate", "1.0.0");
-        assert_ne!(
+        assert_eq!(
             ns1, ns2,
-            "Different versions should produce different namespaces"
+            "Different versions should produce the same namespace"
         );
         assert_ne!(
             ns1, ns3,
