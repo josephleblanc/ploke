@@ -144,6 +144,7 @@ impl OpenRouterBackend {
     ) -> Result<tokio::sync::OwnedSemaphorePermit, EmbedError> {
         if let Some(cancel) = cancel {
             tokio::select! {
+                biased;
                 _ = cancel.cancelled() => {
                     Err(EmbedError::Cancelled("OpenRouter embeddings cancelled".into()))
                 }
