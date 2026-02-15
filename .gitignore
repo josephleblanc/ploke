@@ -83,7 +83,6 @@ logs/
 # query/
 
 # temporary
-docs/active/AGENT_FORUM.md
 docs/dependency_details/cozo/notes/vectors.md
 .env
 /local-target
@@ -91,6 +90,9 @@ docs/dependency_details/cozo/notes/vectors.md
 .scratch*
 crates/ploke-tui/local-target/
 crates/ingest/ploke-transform/test-logs/
+
+# archived docs no longer useful
+docs/archive
 
 # cursor settings
 .cursor/
