@@ -1,3 +1,4 @@
+
 Okay, let's perform a full review of the old `#[cfg(not(feature = "type_bearing_ids"))]` tests in `const_static.rs` and compare their coverage to what the new macros (`paranoid_test_name_check!` and `paranoid_test_fields_and_values_const!`) provide.
 
 **Goal:** Determine if the new macros are sufficient replacements for the old tests, allowing us to remove the old ones while preserving their intent via comments.
