@@ -160,9 +160,7 @@ pub fn render_messages<'a, I, T: RenderMsg + 'a>(
                 let button_y_rel = content_lines.saturating_add(annotation_count) as u16;
                 let button_y_abs = y_virtual.saturating_add(button_y_rel);
 
-                if remaining_skip > 0 {
-                    remaining_skip = remaining_skip.saturating_sub(1);
-                } else if button_y_abs >= clamped_offset_y && y_screen < viewport_height {
+                if remaining_skip == 0 && button_y_abs >= clamped_offset_y && y_screen < viewport_height {
                     let is_yes = confirmation_states.get(&msg.id()).copied().unwrap_or(true);
 
                     let active_style = Style::new().bg(Color::Blue).fg(Color::White).bold();
@@ -266,4 +264,87 @@ fn tool_payload_status(payload: &crate::tools::ToolUiPayload) -> Option<&str> {
         .iter()
         .find(|field| field.name.as_ref() == "status")
         .map(|field| field.value.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat_history::{ContextStatus, Message, MessageKind, MessageStatus};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn tool_message() -> Message {
+        let payload = crate::tools::ToolUiPayload::new(
+            ToolName::ApplyCodeEdit,
+            "call-1".into(),
+            "edit staged",
+        )
+        .with_request_id(Uuid::new_v4())
+        .with_field("status", "pending");
+
+        Message {
+            id: Uuid::new_v4(),
+            branch_id: Uuid::nil(),
+            status: MessageStatus::Completed,
+            metadata: None,
+            parent: None,
+            children: Vec::new(),
+            selected_child: None,
+            content: String::new(),
+            kind: MessageKind::Tool,
+            tool_call_id: None,
+            tool_payload: Some(payload),
+            context_status: ContextStatus::default(),
+            last_included_turn: None,
+            include_count: 0,
+        }
+    }
+
+    fn render_single_line(msgs: &[Message], offset_y: u16) -> String {
+        let area = Rect::new(0, 0, 60, 1);
+        let (_, heights) = measure_messages(msgs.iter(), area.width, ToolVerbosity::Minimal, None);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).expect("terminal");
+        let confirmation_states = HashMap::new();
+        terminal
+            .draw(|frame| {
+                render_messages(
+                    frame,
+                    msgs.iter(),
+                    area.width,
+                    area,
+                    offset_y,
+                    &heights,
+                    None,
+                    ToolVerbosity::Minimal,
+                    &confirmation_states,
+                );
+            })
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        let mut line = String::new();
+        for x in 0..area.width {
+            line.push_str(buf.cell((x, 0)).expect("cell").symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn tool_buttons_render_on_scrolled_row() {
+        let msgs = vec![tool_message()];
+        let top_row = render_single_line(&msgs, 0);
+        let button_row = render_single_line(&msgs, 1);
+
+        assert!(
+            top_row.contains("Tool: apply_code_edit"),
+            "expected tool content on first row, got: {top_row}"
+        );
+        assert!(
+            !top_row.contains("[ Yes ]"),
+            "did not expect buttons on first row, got: {top_row}"
+        );
+        assert!(
+            button_row.contains("[ Yes ]") && button_row.contains("[ No ]"),
+            "expected approval buttons when scrolled, got: {button_row}"
+        );
+    }
 }
