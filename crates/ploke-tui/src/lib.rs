@@ -14,6 +14,7 @@
 pub mod app;
 pub mod app_state;
 pub mod chat_history;
+pub mod context_plan;
 pub mod error;
 pub mod event_bus;
 pub mod file_man;
@@ -49,7 +50,8 @@ pub mod test_harness;
 use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
-    core::RuntimeConfig, events::SystemEvent, state_manager,
+    core::{RuntimeConfig, rag_budget_from_config},
+    events::SystemEvent, state_manager,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -62,7 +64,7 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
-use ploke_rag::{RagConfig, TokenBudget};
+use ploke_rag::RagConfig;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing::instrument;
@@ -214,6 +216,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
     // tokio::spawn(context_manager.run());
 
+    let rag_budget = rag_budget_from_config(&runtime_cfg.rag);
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::new(runtime_cfg),
@@ -227,8 +230,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         proposals: RwLock::new(HashMap::new()),
         create_proposals: RwLock::new(HashMap::new()),
         rag,
-        // TODO: Add TokenBudget fields to Config
-        budget: TokenBudget::default(),
+        budget: rag_budget,
     });
 
     // Load persisted proposals (best-effort) before starting subsystems
@@ -350,6 +352,7 @@ pub enum AppEvent {
     MessageUpdated(MessageUpdatedEvent),
     Rag(RagEvent),
     ContextSearch(SearchEvent),
+    ContextPlanSnapshot(context_plan::ContextPlanSnapshot),
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
@@ -397,6 +400,7 @@ impl AppEvent {
             AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
             AppEvent::Rag(_) => EventPriority::Background,
+            AppEvent::ContextPlanSnapshot(_) => EventPriority::Realtime,
             AppEvent::EventBusStarted => EventPriority::Realtime,
             AppEvent::GenerateContext(_) => EventPriority::Background,
             AppEvent::Llm(llm::LlmEvent::ChatCompletion(ChatEvt::Request { .. })) => {

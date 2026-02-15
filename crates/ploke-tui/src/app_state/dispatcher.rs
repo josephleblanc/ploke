@@ -411,9 +411,11 @@ pub async fn state_manager(
                     model_id,
                 )));
             }
-            StateCommand::DecrementChatTtl => {
+            StateCommand::DecrementChatTtl {
+                included_message_ids,
+            } => {
                 let mut chat_history = state.chat.write().await;
-                chat_history.decrement_ttl();
+                chat_history.decrement_ttl(&included_message_ids);
             }
             StateCommand::SelectEmbeddingModel { model_id, provider } => {
                 // TODO:multi-router 2025-12-15

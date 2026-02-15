@@ -544,6 +544,7 @@ pub async fn run_chat_session<R: Router>(
     assistant_message_id: Uuid,
     event_bus: Arc<EventBus>,
     state_cmd_tx: mpsc::Sender<StateCommand>,
+    included_message_ids: Vec<Uuid>,
     policy: TuiToolPolicy,
     finish_policy: FinishPolicy,
     http_timeout: Duration,
@@ -931,7 +932,12 @@ pub async fn run_chat_session<R: Router>(
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
-                    match state_cmd_tx.send(StateCommand::DecrementChatTtl).await {
+                    match state_cmd_tx
+                        .send(StateCommand::DecrementChatTtl {
+                            included_message_ids: included_message_ids.clone(),
+                        })
+                        .await
+                    {
                         Ok(()) => {
                             tracing::info!(
                                 target: "chat-loop",

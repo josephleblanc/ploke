@@ -595,10 +595,17 @@ mod tests {
         assert!(!parsed.data.endpoints.is_empty(), "no endpoints returned");
         let has_id = parsed.data.endpoints.iter().all(|e| !e.name.0.is_empty());
         assert!(has_id, "provider_id must be present");
-        for e in &parsed.data.endpoints {
-            let p = &e.pricing;
-            assert!(p.request >= Some(0.0));
-            assert!(p.image >= Some(0.0));
+        for ep in &parsed.data.endpoints {
+            let p = &ep.pricing;
+            if p.request.is_some() {
+                // NOTE: As of 2025-02-15 deepseek-chat-v3.1 no longer uses the "request" field
+                // here. This field represents a fixed cost per request sent, and was previously
+                // 0.0.
+                assert!(p.request >= Some(0.0));
+            }
+            if p.image.is_some() {
+                assert!(p.image >= Some(0.0));
+            }
             assert!(p.prompt >= 0.0);
             assert!(p.completion >= 0.0);
         }
@@ -708,8 +715,10 @@ mod tests {
 
         let completion = pricing.get("completion").unwrap();
         str_or_num_to_f64(completion);
-        let image = pricing.get("image").unwrap();
-        str_or_num_to_f64(image);
+
+        let image = pricing.get("image");
+        assert!(image.is_none());
+
         let discount = pricing.get("discount").unwrap();
         let de_discount = crate::utils::se_de::string_to_f64_opt_zero(discount);
         // eprintln!("de_discount:\n{:?}", de_discount);

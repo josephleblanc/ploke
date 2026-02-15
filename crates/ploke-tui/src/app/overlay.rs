@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::app::input;
 use crate::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use crate::app::view::components::context_plan_overlay::ContextPlanOverlayState;
 
 use crate::ModelId;
 use crate::app_state::AppState;
@@ -31,6 +32,7 @@ pub enum OverlayAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayKind {
     Approvals,
+    ContextPlan,
     ContextBrowser,
     EmbeddingBrowser,
     ModelBrowser,
@@ -118,6 +120,22 @@ impl Overlay for ApprovalsState {
         let y = frame.area().y + (frame.area().height.saturating_sub(h)) / 2;
         let overlay_area = ratatui::layout::Rect::new(x, y, w, h);
         let _ = render_approvals_overlay(frame, overlay_area, state, self);
+    }
+
+    fn tick(&mut self, _dt: Duration) {}
+}
+
+impl Overlay for ContextPlanOverlayState {
+    fn on_open(&mut self) {}
+
+    fn on_close(&mut self) {}
+
+    fn handle_input(&mut self, key: KeyEvent) -> Vec<OverlayAction> {
+        self.handle_key(key)
+    }
+
+    fn render(&mut self, frame: &mut Frame<'_>, state: &std::sync::Arc<AppState>) {
+        self.render(frame, state);
     }
 
     fn tick(&mut self, _dt: Duration) {}

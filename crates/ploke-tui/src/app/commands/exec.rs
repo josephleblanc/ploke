@@ -274,6 +274,9 @@ pub fn execute(app: &mut App, command: Command) {
                 search_term
             );
         }
+        Command::OpenContextPlan => {
+            app.open_context_plan_overlay();
+        }
         Command::Raw(cmd) => execute_legacy(app, &cmd),
     }
 }

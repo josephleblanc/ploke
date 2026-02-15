@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Paragraph};
 
 use crate::app_state::RuntimeConfig;
 use crate::tools::ToolVerbosity;
-use crate::user_config::CommandStyle;
+use crate::user_config::{CommandStyle, CtxMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigOverlayPane {
@@ -78,6 +78,49 @@ impl ConfigOverlayState {
             cfg.rag.strict_bm25_by_default,
         )];
 
+        let context_top_k_values = [
+            3_usize, 5, 8, 10, 12, 16, 20, 30, 40, 60, 80, 100, 150, 200,
+        ];
+        let context_per_part_values = [
+            32_usize, 64, 96, 128, 160, 256, 320, 512, 768, 1024, 1536, 2048, 3072, 4096,
+        ];
+        let context_items = vec![
+            enum_item(
+                "Context Mode",
+                "Cycle auto-retrieval intensity (Off/Light/Heavy).",
+                &["Off", "Light", "Heavy"],
+                match cfg.context_management.mode {
+                    CtxMode::Off => 0,
+                    CtxMode::Light => 1,
+                    CtxMode::Heavy => 2,
+                },
+            ),
+            numeric_item(
+                "Light top_k",
+                "Retrieved parts count in Light mode.",
+                &context_top_k_values,
+                cfg.context_management.modes.light.top_k,
+            ),
+            numeric_item(
+                "Light per-part max",
+                "Token cap per part in Light mode.",
+                &context_per_part_values,
+                cfg.context_management.modes.light.per_part_max_tokens,
+            ),
+            numeric_item(
+                "Heavy top_k",
+                "Retrieved parts count in Heavy mode.",
+                &context_top_k_values,
+                cfg.context_management.modes.heavy.top_k,
+            ),
+            numeric_item(
+                "Heavy per-part max",
+                "Token cap per part in Heavy mode.",
+                &context_per_part_values,
+                cfg.context_management.modes.heavy.per_part_max_tokens,
+            ),
+        ];
+
         let embedding_items = vec![
             enum_item(
                 "Device Preference",
@@ -118,6 +161,10 @@ impl ConfigOverlayState {
             ConfigOverlayCategory {
                 name: "RAG".to_string(),
                 items: rag_items,
+            },
+            ConfigOverlayCategory {
+                name: "Context".to_string(),
+                items: context_items,
             },
             ConfigOverlayCategory {
                 name: "Embedding".to_string(),
@@ -315,6 +362,201 @@ impl ConfigOverlayState {
         self.item_idx = self.item_idx.min(item_len - 1);
         self.sync_value_idx();
     }
+
+    pub fn adjust_numeric_value(&mut self, delta: i64) -> bool {
+        if self.pane != ConfigOverlayPane::Values {
+            return false;
+        }
+        let Some(item) = self.current_item_mut() else {
+            return false;
+        };
+        let current = item
+            .values
+            .get(item.selected)
+            .and_then(|v| v.parse::<i64>().ok());
+        let Some(current) = current else {
+            return false;
+        };
+        let mut numeric_values: Vec<i64> = item
+            .values
+            .iter()
+            .map(|v| v.parse::<i64>().ok())
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
+        if numeric_values.len() != item.values.len() {
+            return false;
+        }
+        let next = (current + delta).max(1);
+        if next == current {
+            return false;
+        }
+        if !numeric_values.contains(&next) {
+            numeric_values.push(next);
+        }
+        numeric_values.sort_unstable();
+        numeric_values.dedup();
+        item.values = numeric_values.iter().map(|v| v.to_string()).collect();
+        item.selected = numeric_values
+            .iter()
+            .position(|v| *v == next)
+            .unwrap_or(0);
+        self.value_idx = item.selected.min(item.values.len().saturating_sub(1));
+        self.dirty = true;
+        true
+    }
+
+    pub fn apply_to_runtime_config(&self, cfg: &mut RuntimeConfig) -> bool {
+        let mut changed = false;
+
+        if let Some(value) = self.selected_value("UI", "Command Style") {
+            let next = match value {
+                "Slash" => CommandStyle::Slash,
+                "NeoVim" => CommandStyle::NeoVim,
+                _ => cfg.command_style,
+            };
+            if cfg.command_style != next {
+                cfg.command_style = next;
+                changed = true;
+            }
+        }
+        if let Some(value) = self.selected_value("UI", "Tool Verbosity") {
+            let next = match value {
+                "Minimal" => ToolVerbosity::Minimal,
+                "Normal" => ToolVerbosity::Normal,
+                "Verbose" => ToolVerbosity::Verbose,
+                _ => cfg.tool_verbosity,
+            };
+            if cfg.tool_verbosity != next {
+                cfg.tool_verbosity = next;
+                changed = true;
+            }
+        }
+        if let Some(value) = self.selected_value("Chat", "Retry Without Tools") {
+            if let Some(next) = parse_bool(value) {
+                if cfg.chat_policy.retry_without_tools_on_404 != next {
+                    cfg.chat_policy.retry_without_tools_on_404 = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("RAG", "Strict BM25") {
+            if let Some(next) = parse_bool(value) {
+                if cfg.rag.strict_bm25_by_default != next {
+                    cfg.rag.strict_bm25_by_default = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Context", "Context Mode") {
+            let next = match value {
+                "Off" => CtxMode::Off,
+                "Light" => CtxMode::Light,
+                "Heavy" => CtxMode::Heavy,
+                _ => cfg.context_management.mode,
+            };
+            if cfg.context_management.mode != next {
+                cfg.context_management.mode = next;
+                changed = true;
+            }
+        }
+        if let Some(value) = self.selected_value("Context", "Light top_k") {
+            if let Ok(next) = value.parse::<usize>() {
+                if cfg.context_management.modes.light.top_k != next {
+                    cfg.context_management.modes.light.top_k = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Context", "Light per-part max") {
+            if let Ok(next) = value.parse::<usize>() {
+                if cfg.context_management.modes.light.per_part_max_tokens != next {
+                    cfg.context_management.modes.light.per_part_max_tokens = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Context", "Heavy top_k") {
+            if let Ok(next) = value.parse::<usize>() {
+                if cfg.context_management.modes.heavy.top_k != next {
+                    cfg.context_management.modes.heavy.top_k = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Context", "Heavy per-part max") {
+            if let Ok(next) = value.parse::<usize>() {
+                if cfg.context_management.modes.heavy.per_part_max_tokens != next {
+                    cfg.context_management.modes.heavy.per_part_max_tokens = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Embedding", "Device Preference") {
+            let next = match value {
+                "Auto" => DevicePreference::Auto,
+                "ForceCpu" => DevicePreference::ForceCpu,
+                "ForceGpu" => DevicePreference::ForceGpu,
+                _ => cfg.embedding_local.device_preference,
+            };
+            if cfg.embedding_local.device_preference != next {
+                cfg.embedding_local.device_preference = next;
+                changed = true;
+            }
+        }
+        if let Some(value) = self.selected_value("Embedding", "Allow Fallback") {
+            if let Some(next) = parse_bool(value) {
+                if cfg.embedding_local.allow_fallback != next {
+                    cfg.embedding_local.allow_fallback = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Embedding", "Approximate GELU") {
+            if let Some(next) = parse_bool(value) {
+                if cfg.embedding_local.approximate_gelu != next {
+                    cfg.embedding_local.approximate_gelu = next;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(value) = self.selected_value("Embedding", "Use .pth Weights") {
+            if let Some(next) = parse_bool(value) {
+                if cfg.embedding_local.use_pth != next {
+                    cfg.embedding_local.use_pth = next;
+                    changed = true;
+                }
+            }
+        }
+
+        changed
+    }
+
+    pub fn selected_command_style(&self) -> Option<CommandStyle> {
+        self.selected_value("UI", "Command Style")
+            .and_then(|value| match value {
+                "Slash" => Some(CommandStyle::Slash),
+                "NeoVim" => Some(CommandStyle::NeoVim),
+                _ => None,
+            })
+    }
+
+    pub fn selected_tool_verbosity(&self) -> Option<ToolVerbosity> {
+        self.selected_value("UI", "Tool Verbosity")
+            .and_then(|value| match value {
+                "Minimal" => Some(ToolVerbosity::Minimal),
+                "Normal" => Some(ToolVerbosity::Normal),
+                "Verbose" => Some(ToolVerbosity::Verbose),
+                _ => None,
+            })
+    }
+
+    fn selected_value(&self, category: &str, item_label: &str) -> Option<&str> {
+        let category = self.categories.iter().find(|cat| cat.name == category)?;
+        let item = category.items.iter().find(|item| item.label == item_label)?;
+        item.values
+            .get(item.selected)
+            .map(|value| value.as_str())
+    }
 }
 
 pub fn render_config_overlay(frame: &mut Frame<'_>, cfg: &ConfigOverlayState) {
@@ -382,13 +624,13 @@ pub fn render_config_overlay(frame: &mut Frame<'_>, cfg: &ConfigOverlayState) {
 
     let footer_text = if cfg.help_visible {
         format!(
-            "Keys: tab/shift+tab=change pane  ↑/↓=navigate  Enter=select value  q/Esc=close\n\
-             Note: changes are staged only (apply/persist not wired yet).\n\
+            "Keys: tab/shift+tab=change pane  ↑/↓=navigate  Enter=select value  +/- adjust numbers (shift=10)\n\
+             Note: changes apply immediately to runtime config (not yet persisted).\n\
              {desc}"
         )
     } else {
         format!(
-            "{} \n ? Help  | Enter select  | Tab pane  | q/Esc close",
+            "{} \n ? Help  | Enter select  | +/- adjust (shift=10)  | Tab pane  | q/Esc close",
             desc
         )
     };
@@ -428,6 +670,38 @@ fn enum_item(
         description: description.to_string(),
         values: values.iter().map(|v| v.to_string()).collect(),
         selected: selected.min(values.len().saturating_sub(1)),
+    }
+}
+
+fn numeric_item(
+    label: &str,
+    description: &str,
+    values: &[usize],
+    current: usize,
+) -> ConfigOverlayItem {
+    let mut options: Vec<usize> = values.to_vec();
+    if !options.contains(&current) {
+        options.push(current);
+    }
+    options.sort_unstable();
+    options.dedup();
+    let selected = options
+        .iter()
+        .position(|v| *v == current)
+        .unwrap_or(0);
+    ConfigOverlayItem {
+        label: label.to_string(),
+        description: description.to_string(),
+        values: options.iter().map(|v| v.to_string()).collect(),
+        selected,
+    }
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
     }
 }
 

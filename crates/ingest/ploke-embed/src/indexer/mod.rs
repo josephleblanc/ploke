@@ -8,6 +8,7 @@ use crate::providers::openrouter::OpenRouterBackend;
 use crate::runtime::EmbeddingRuntime;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
+use ploke_core::embeddings::EmbeddingSet;
 use ploke_core::EmbeddingData;
 use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
@@ -19,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{self, Instant};
-use tracing::{info_span, instrument};
+use tracing::{field, info_span, instrument};
 use uuid::Uuid;
 
 use crate::cancel_token::CancellationHandle;
@@ -786,13 +787,44 @@ impl IndexerTask {
             tracing::trace!("BM25 service not configured; skipping sparse indexing for this batch");
         }
 
-        let embeddings = self
+        let embed_span = info_span!(
+            "embed_batch",
+            provider = field::Empty,
+            model = field::Empty,
+            rel_name = field::Empty,
+            shape_dimension = field::Empty,
+            shape_dtype = field::Empty,
+            runtime_dims = field::Empty,
+            batch_size = self.batch_size,
+            num_to_embed = num_to_embed,
+            valid_data = valid_data.len(),
+            valid_snippets = valid_snippets.len(),
+        );
+        let _embed_guard = embed_span.enter();
+
+        let active_set = self.embedding_runtime.current_active_set().ok();
+        let runtime_dims = self.embedding_runtime.dimensions().ok();
+        let embed_snippets = valid_snippets.clone();
+        let embeddings = match self
             .embedding_runtime
             .generate_embeddings_with_cancel(
-                valid_snippets,
+                embed_snippets,
                 Some(&self.cancellation_token.listener()),
             )
-            .await?;
+            .await
+        {
+            Ok(embeddings) => embeddings,
+            Err(err) => {
+                record_embed_span_metadata(&embed_span, active_set.as_ref(), runtime_dims);
+                log_embedding_failure_context(
+                    &err,
+                    &valid_data,
+                    &valid_nodes,
+                    &valid_snippets,
+                );
+                return Err(err);
+            }
+        };
         tracing::trace!(
             "Processed embeddings {} with dimension {:?}",
             embeddings.len(),
@@ -820,6 +852,78 @@ impl IndexerTask {
         self.db.update_embeddings_batch(updates)?;
         tracing::info!("Finished processing batch");
         Ok(())
+    }
+}
+
+fn record_embed_span_metadata(
+    span: &tracing::Span,
+    active_set: Option<&EmbeddingSet>,
+    runtime_dims: Option<usize>,
+) {
+    if let Some(set) = active_set {
+        span.record("provider", field::display(&set.provider));
+        span.record("model", field::display(&set.model));
+        span.record("rel_name", field::display(&set.rel_name));
+        span.record("shape_dimension", field::debug(set.shape.dimension));
+        span.record("shape_dtype", field::display(set.shape.dtype_tag()));
+    } else {
+        span.record("provider", field::display("unknown"));
+        span.record("model", field::display("unknown"));
+        span.record("rel_name", field::display("unknown"));
+        span.record("shape_dimension", field::debug("unknown"));
+        span.record("shape_dtype", field::display("unknown"));
+    }
+    if let Some(dims) = runtime_dims {
+        span.record("runtime_dims", field::debug(dims));
+    } else {
+        span.record("runtime_dims", field::debug("unknown"));
+    }
+}
+
+fn log_embedding_failure_context(
+    error: &EmbedError,
+    valid_data: &[EmbeddingData],
+    valid_nodes: &[NodeType],
+    valid_snippets: &[String],
+) {
+    tracing::error!(
+        target: "embed-pipeline",
+        error = ?error,
+        "Embedding batch failed; logging snippet context"
+    );
+
+    let entry_count = valid_data.len().min(valid_snippets.len()).min(valid_nodes.len());
+    if valid_data.len() != valid_snippets.len() || valid_data.len() != valid_nodes.len() {
+        tracing::error!(
+            target: "embed-pipeline",
+            data_len = valid_data.len(),
+            node_len = valid_nodes.len(),
+            snippet_len = valid_snippets.len(),
+            "Embedding failure context length mismatch; logging min length"
+        );
+    }
+
+    for (idx, ((data, node_type), snippet)) in valid_data
+        .iter()
+        .zip(valid_nodes.iter())
+        .zip(valid_snippets.iter())
+        .take(entry_count)
+        .enumerate()
+    {
+        tracing::error!(
+            target: "embed-pipeline",
+            snippet_index = idx,
+            node_type = ?node_type,
+            node_id = %data.id,
+            node_name = %data.name,
+            file_path = %data.file_path.display(),
+            start_byte = data.start_byte,
+            end_byte = data.end_byte,
+            snippet_len = snippet.len(),
+            snippet_chars = snippet.chars().count(),
+            snippet = %snippet,
+            "Embedding snippet context"
+        );
     }
 }
 

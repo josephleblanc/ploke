@@ -43,49 +43,11 @@ mod tests {
         use tracing::info;
 
         init_tracing_once();
-        // let db = Database::init_with_schema()?;
-        // let db = Database::new( ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")? );
         let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
             "fixture_nodes",
         )?);
 
-        // let mut target_file = workspace_root();
-        // target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-        // let prior_rels_vec = db.relations_vec()?;
-        // db.import_from_backup(&target_file, &prior_rels_vec)
-        //     .map_err(ploke_db::DbError::from)
-        //     .map_err(ploke_error::Error::from)?;
-        // let embedding_set = &db.active_embedding_set;
-        //
-        // let before_is_index_registered = db.is_hnsw_index_registered(embedding_set)?;
-        // info!(?before_is_index_registered);
-        //
-        // let before_is_vector_embedding_registered = db.is_vector_embedding_registered(embedding_set)?;
-        // info!(?before_is_vector_embedding_registered);
-        // // db.create_embedding_index(&embedding_set)?;
-        // let create_index = create_index_primary(&db);
-        // info!(?create_index);
-        // create_index?;
-        //
-        // let after_is_index_registered = db.is_hnsw_index_registered(embedding_set)?;
-        // info!(?after_is_index_registered);
-        //
-        // let count_pending_after = db.count_pending_embeddings()?;
-        // info!(?count_pending_after);
-
         Ok(Arc::new(db))
-
-        // let embedding_set = ploke_core::embeddings::EmbeddingSet::default();
-        //
-        // let r2 = db.ensure_embedding_relation(&db.active_embedding_set.clone());
-        // tracing::info!(ensure_embedding_relation = ?r2);
-        // r2?;
-        //
-        // let r3 = db.create_embedding_index(&db.active_embedding_set.clone());
-        // tracing::info!(create_embedding_index = ?r3);
-        // r3?;
-        //
-        // let database = Database::from(db);
     }
 
     fn runtime_for(db: &Arc<Database>, processor: EmbeddingProcessor) -> Arc<EmbeddingRuntime> {
@@ -209,16 +171,6 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, Error> = {
             default_test_db_setup()
-            // let db = Database::init_with_schema()?;
-            //
-            // let mut target_file = workspace_root();
-            // target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
-            // let prior_rels_vec = db.relations_vec()?;
-            // db.import_from_backup(&target_file, &prior_rels_vec)
-            //     .map_err(ploke_db::DbError::from)
-            //     .map_err(ploke_error::Error::from)?;
-            // create_index_primary(&db)?;
-            // Ok(Arc::new( db ))
         };
     }
 
@@ -277,7 +229,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
@@ -315,7 +266,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_rebuild() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -336,7 +286,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -378,12 +327,8 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
-        // let db = TEST_DB_NODES
-        //     .as_ref()
-        //     .expect("Must set up TEST_DB_NODES correctly.");
 
         let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let new_db = Database::new(base_db);
@@ -411,7 +356,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_fallback() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
@@ -440,7 +384,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_structs() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -467,7 +410,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_enums() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -494,13 +436,12 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
-    // TODO: Turn into a regression test
     async fn test_search_traits() -> Result<(), Error> {
         init_tracing_once();
-        let db = TEST_DB_NODES
-            .as_ref()
-            .expect("Must set up TEST_DB_NODES correctly.");
+        let db = default_test_db_setup().expect("Must set up TEST_DB_NODES correctly.");
+        // let db = TEST_DB_NODES
+        //     .as_ref()
+        //     .expect("Must set up TEST_DB_NODES correctly.");
 
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
@@ -515,7 +456,7 @@ mod tests {
             let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
             debug!(target: "hnsw-already-present", ?has_index);
             if !has_index {
-                ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
+                ploke_db::multi_embedding::db_ext::load_db(db.as_ref(), "fixture_nodes".to_string()).await?;
             }
         }
         let debug_output = db.is_embedding_info_all(&active_embedding_set)?;
@@ -538,7 +479,6 @@ mod tests {
             search_term
         );
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
-        // Dense search should now surface the complex trait without requiring a sparse fallback.
         // NOTE: The following causes the test to fail, since it seems we don't get the snippet via
         // hnsw search for this particular item.
         // let snippet = fetch_snippet_containing(db, ordered_node_ids, search_term).await?;
@@ -564,12 +504,11 @@ mod tests {
         );
 
         let ordered_node_ids: Vec<Uuid> = results.iter().map(|(id, _score)| *id).collect();
-        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        fetch_and_assert_snippet(&db, ordered_node_ids, search_term).await?;
         Ok(())
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_unions() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -596,7 +535,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_macros() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -623,7 +561,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_type_aliases() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -650,7 +587,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_constants() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -677,7 +613,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_statics() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -704,7 +639,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -732,7 +666,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_bm25_search_complex_enum() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES
@@ -770,7 +703,6 @@ mod tests {
     }
 
     #[tokio::test]
-    // #[ignore = "temporary ignore: DB backup not accessible in sandbox (code 14)"]
     async fn test_search_function_definitions() -> Result<(), Error> {
         init_tracing_once();
         let db = TEST_DB_NODES

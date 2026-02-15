@@ -13,6 +13,7 @@ use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_rag::TokenBudget;
 use ploke_transform::transform::transform_parsed_graph;
 use serde::{Deserialize, Serialize};
 use syn_parser::{

@@ -9,7 +9,8 @@ use uuid::Uuid;
 use crate::EventBus;
 use crate::app_state::commands;
 use crate::chat_history::{
-    ContextStatus, Message, MessageKind, MessageStatus, MessageUpdate, UpdateFailedEvent,
+    ContextStatus, Message, MessageAnnotation, MessageKind, MessageStatus, MessageUpdate,
+    UpdateFailedEvent,
 };
 use crate::llm::{ChatEvt, LlmEvent};
 // use ploke_llm::manager::events::ChatEvt;
@@ -492,6 +493,19 @@ pub async fn add_msg_immediate_background(
     } else {
         tracing::error!("Failed to add background message of kind: {}", kind);
     }
+}
+
+pub async fn add_message_annotation(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    message_id: Uuid,
+    annotation: MessageAnnotation,
+) {
+    let mut chat_guard = state.chat.0.write().await;
+    chat_guard.add_annotation(message_id, annotation);
+    drop(chat_guard);
+
+    event_bus.send(MessageUpdatedEvent::new(message_id).into());
 }
 
 pub async fn update_tool_message_by_call_id(

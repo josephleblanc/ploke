@@ -20,5 +20,5 @@ expression: red
 ││                     ││                                 ││
 ││                     ││                                 ││
 │└─────────────────────┘└─────────────────────────────────┘│
-│       ? Help | View: unlimited | Filter: pending+errored │
+│ ? Help | View: unlimited | Filter: pending+errored | Diff│
 └──────────────────────────────────────────────────────────┘

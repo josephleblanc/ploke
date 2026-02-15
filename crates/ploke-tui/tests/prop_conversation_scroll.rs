@@ -8,6 +8,7 @@ use ploke_tui::tools::ToolVerbosity;
 fn message(content: String) -> Message {
     Message {
         id: Uuid::new_v4(),
+        branch_id: Uuid::nil(),
         status: MessageStatus::Completed,
         metadata: None,
         parent: None,
@@ -18,6 +19,8 @@ fn message(content: String) -> Message {
         tool_call_id: None,
         tool_payload: None,
         context_status: ContextStatus::default(),
+        last_included_turn: None,
+        include_count: 0,
     }
 }
 

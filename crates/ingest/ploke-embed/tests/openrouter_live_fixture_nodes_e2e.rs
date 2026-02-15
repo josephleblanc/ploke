@@ -16,7 +16,7 @@ use ploke_db::{multi_embedding::db_ext::EmbeddingExt as _, Database};
 use ploke_db::{multi_embedding::hnsw_ext::HnswExt as _, DbError};
 use ploke_embed::{
     cancel_token::CancellationToken,
-    config::OpenRouterConfig,
+    config::{OpenRouterConfig, TruncatePolicy},
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerCommand, IndexerTask},
     providers::openrouter::OpenRouterBackend,
     runtime::EmbeddingRuntime,
@@ -79,6 +79,7 @@ fn openrouter_cfg(model: &str, dims: u32) -> OpenRouterConfig {
         max_backoff_ms: 10_000,
         input_type: Some("code-snippet".into()),
         timeout_secs: 30,
+        truncate_policy: TruncatePolicy::Truncate,
     }
 }
 

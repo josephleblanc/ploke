@@ -104,6 +104,12 @@ pub(crate) async fn handle_event(app: &mut App, app_event: AppEvent) {
                 new_msg_id: Uuid::new_v4(),
             })
         }
+        AppEvent::ContextPlanSnapshot(snapshot) => {
+            if let Ok(mut guard) = app.context_plan_history.write() {
+                guard.push(snapshot);
+            }
+            app.needs_redraw = true;
+        }
         // NOTE: This system event handling is a bad pattern. This should probably be
         // managed by the event_bus system instead.
         AppEvent::System(system_event) => {

@@ -73,7 +73,16 @@ The ordered list of groups/messages actually sent to the model for a specific re
 * includes: included + excluded with reasons
 * includes computed budgets and estimates
 
-This is *the* artifact that makes runs reproducible.
+This is the artifact that makes runs reproducible.
+
+### Atom
+
+Grouped items that serve as an irreducible context unit
+
+  - Tool call + response (enforced by API)
+  - Conversation Turn: Needs to be a unit to have enough continuity to be
+  useful, minimum is user message + llm response chain.
+
 
 ### Branch
 
@@ -193,14 +202,6 @@ persist info on which items where promoted and why, or why not included.
   - which retrieval candidates existed but were excluded (RetrievalSetId + reasons)
   - which tools were called and what they returned (ToolTrace)
   - estimate vs actual token usage (UsageReport)
-
-### Atom
-
-Grouped items that serve as an irreducible context unit
-
-  - Tool call + response (enforced by API)
-  - Conversation Turn: Needs to be a unit to have enough continuity to be
-  useful, minimum is user message + llm response chain.
 
 ## Advanced/Experimental Concepts
 

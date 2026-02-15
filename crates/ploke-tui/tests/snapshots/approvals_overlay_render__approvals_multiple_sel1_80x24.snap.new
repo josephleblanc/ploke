@@ -1,12 +1,12 @@
 ---
 source: crates/ploke-tui/tests/approvals_overlay_render.rs
-assertion_line: 367
-expression: red1
+assertion_line: 368
+expression: red2
 ---
 ┌ Approvals ───────────────────────────────────────────────────────────────────┐
 │┌ Pending Proposals ──────────┐┌ Details ────────────────────────────────────┐│
-││▶ [E] aaaaaaaa  Pending  file││request_id:                                  ││
-││  [E] bbbbbbbb  Pending  file││<UUID>         ││
+││  [E] aaaaaaaa  Pending  file││request_id:                                  ││
+││▶ [E] bbbbbbbb  Pending  file││<UUID>         ││
 ││                             ││status: Pending  files:1                     ││
 ││                             ││Unified Diff:                                ││
 ││                             ││                                             ││

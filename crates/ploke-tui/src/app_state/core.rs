@@ -218,6 +218,7 @@ impl From<UserConfig> for RuntimeConfig {
         // Validate/chat/rag advanced knobs.
         let chat_policy = uc.chat_policy.validated();
         let rag = uc.rag.validated();
+        let context_management = uc.context_management.validated();
         let embedding_local = LocalEmbeddingTuning {
             model_batch_size: uc.embedding_local.model_batch_size.max(1),
             ..uc.embedding_local
@@ -239,8 +240,15 @@ impl From<UserConfig> for RuntimeConfig {
             token_limit: uc.token_limit,
             tool_retries: uc.tool_retries,
             llm_timeout_secs: uc.llm_timeout_secs,
-            context_management: uc.context_management,
+            context_management,
         }
+    }
+}
+
+pub fn rag_budget_from_config(rag: &RagUserConfig) -> TokenBudget {
+    TokenBudget {
+        per_part_max: rag.per_part_max_tokens,
+        ..TokenBudget::default()
     }
 }
 

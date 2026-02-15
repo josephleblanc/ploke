@@ -29,6 +29,7 @@ use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::workspace_root;
+use serde::Serialize;
 use uuid::Uuid;
 
 lazy_static! {
@@ -110,10 +111,9 @@ impl AppHarness {
         };
         // Use the path for the target fixture that was used to create the backup database in
         // TEST_DB_NODES
-        let system = SystemState::new(SystemStatus::new(Some(
-            PathBuf::from_str("tests/fixture_crates/fixture_nodes")
-                .expect("incorrect fixture format"),
-        )));
+        let mut fixture_root = workspace_root();
+        fixture_root.push("tests/fixture_crates/fixture_nodes");
+        let system = SystemState::new(SystemStatus::new(Some(fixture_root)));
 
         // Shared app state
         let state = Arc::new(AppState {
@@ -272,4 +272,51 @@ pub fn buffer_to_string(term: &Terminal<TestBackend>) -> String {
         out.push('\n');
     }
     out
+}
+
+#[derive(Serialize)]
+struct StyleCellDump {
+    fg: String,
+    bg: String,
+    modifier: String,
+}
+
+#[derive(Serialize)]
+struct StyleDump {
+    width: u16,
+    height: u16,
+    cells: Vec<Vec<StyleCellDump>>,
+}
+
+/// Read the current buffer styles of a TestBackend terminal into JSON.
+pub fn buffer_to_style_dump(term: &Terminal<TestBackend>) -> String {
+    let buf = term.backend().buffer();
+    let mut cells = Vec::new();
+    for y in 0..buf.area.height {
+        let mut row = Vec::new();
+        for x in 0..buf.area.width {
+            let cell = buf.cell((x, y)).expect("in-bounds");
+            row.push(StyleCellDump {
+                fg: format!("{:?}", cell.fg),
+                bg: format!("{:?}", cell.bg),
+                modifier: format!("{:?}", cell.modifier),
+            });
+        }
+        cells.push(row);
+    }
+    let dump = StyleDump {
+        width: buf.area.width,
+        height: buf.area.height,
+        cells,
+    };
+    serde_json::to_string_pretty(&dump).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Write text + style dumps for a TestBackend terminal buffer.
+pub fn dump_terminal_buffer(term: &Terminal<TestBackend>, base_path: &std::path::Path) -> std::io::Result<()> {
+    let text_path = base_path.with_extension("txt");
+    let style_path = base_path.with_extension("json");
+    std::fs::write(text_path, buffer_to_string(term))?;
+    std::fs::write(style_path, buffer_to_style_dump(term))?;
+    Ok(())
 }

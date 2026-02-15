@@ -1,6 +1,6 @@
 use super::*;
 use crate::app_state::core::{DiffPreview, EditProposal, EditProposalStatus, PreviewMode};
-use crate::rag::tools::apply_code_edit_tool;
+use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool};
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::rag_types::ApplyCodeEditResult;
@@ -8,7 +8,9 @@ use ploke_db::NodeType;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;
 use serde_json::json;
+use similar::TextDiff;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 // ============================================================================
 // Prerequisites:
@@ -97,7 +99,7 @@ async fn create_test_tool_params(
 // Phase 1: Input Validation & Idempotency Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "test_harness")]
 async fn test_duplicate_request_detection() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
@@ -184,7 +186,7 @@ async fn test_duplicate_request_detection() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_empty_edits_validation() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -238,7 +240,7 @@ async fn test_empty_edits_validation() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_malformed_json_handling() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -316,7 +318,7 @@ async fn test_malformed_json_handling() {
 // Phase 2: Database Resolution (Canonical Mode) Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_success() {
     let harness = AppHarness::spawn()
         .await
@@ -369,7 +371,7 @@ async fn test_canonical_resolution_success() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_not_found() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -401,7 +403,7 @@ async fn test_canonical_resolution_not_found() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_resolution_wrong_node_type() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -433,7 +435,7 @@ async fn test_canonical_resolution_wrong_node_type() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_canonical_fallback_resolver() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -471,7 +473,7 @@ async fn test_canonical_fallback_resolver() {
 // Phase 3: Preview Generation Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_unified_diff_preview_generation() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
 
@@ -516,7 +518,7 @@ async fn test_unified_diff_preview_generation() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_codeblock_preview_generation() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
 
@@ -569,7 +571,7 @@ async fn test_codeblock_preview_generation() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_preview_truncation() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
 
@@ -645,7 +647,7 @@ async fn test_preview_truncation() {
 // Phase 4: Proposal Creation & State Management Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_proposal_creation_and_storage() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -689,7 +691,7 @@ async fn test_proposal_creation_and_storage() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_auto_confirm_workflow() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
 
@@ -728,7 +730,7 @@ async fn test_auto_confirm_workflow() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tool_result_structure() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -796,7 +798,7 @@ async fn test_tool_result_structure() {
 // Phase 5: Multiple Files and Batch Processing Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_files_batch_processing() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -871,7 +873,7 @@ async fn test_multiple_files_batch_processing() {
 // Phase 6: Error Conditions Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_unsupported_node_type() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -932,7 +934,7 @@ async fn test_unsupported_node_type() {
     restore_fixture();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_invalid_canonical_path_format() {
     let harness = AppHarness::spawn().await.expect("spawn harness");
     let request_id = Uuid::new_v4();
@@ -967,7 +969,7 @@ async fn test_invalid_canonical_path_format() {
 // Integration Test: Complete Flow
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_complete_canonical_edit_flow_integration() {
     let harness = AppHarness::spawn()
         .await

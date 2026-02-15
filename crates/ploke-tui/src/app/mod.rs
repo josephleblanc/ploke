@@ -6,8 +6,8 @@ use crate::llm::router_only::openrouter::OpenRouter;
 use crate::llm::{EndpointKey, LlmEvent, ModelId, ModelKey, ModelVariant, ProviderKey};
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 use ploke_llm::manager::events::endpoint;
-pub mod commands;
 pub mod clipboard;
+pub mod commands;
 pub mod editor;
 pub mod events;
 pub mod input;
@@ -24,19 +24,19 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::app::clipboard::SystemClipboard;
 use crate::app::input::keymap::{Action, to_action};
+use crate::app::message_item::should_render_tool_buttons;
 use crate::app::overlay::OverlayAction;
 use crate::app::overlay_manager::OverlayManager;
 use crate::app::types::{Mode, RenderMsg};
 use crate::app::utils::truncate_uuid;
-use crate::app::message_item::should_render_tool_buttons;
-use crate::app::clipboard::SystemClipboard;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
 use crate::tools::ToolVerbosity;
 use crate::ui_theme::UiTheme;
-use crate::user_config::OPENROUTER_URL;
+use crate::user_config::{CtxMode, OPENROUTER_URL};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -54,6 +54,7 @@ use ploke_db::search_similar;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 // use textwrap::wrap; // moved into InputView
+use crate::app::commands::COMMAND_ENTRIES;
 use crate::app::editor::{build_editor_args, resolve_editor_command};
 use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
@@ -65,7 +66,6 @@ use view::components::embedding_browser::{
     EmbeddingBrowserItem, EmbeddingBrowserState, EmbeddingDetail,
 };
 use view::components::model_browser::{ModelBrowserItem, ModelBrowserState};
-use crate::app::commands::COMMAND_ENTRIES;
 
 fn compute_input_height(
     desired_input_height: u16,
@@ -162,6 +162,7 @@ pub struct App {
     confirmation_states: HashMap<Uuid, bool>,
     suggestion_index: usize,
     clipboard: Option<SystemClipboard>,
+    context_plan_history: Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>,
 }
 
 impl App {
@@ -202,6 +203,9 @@ impl App {
             confirmation_states: HashMap::new(),
             suggestion_index: 0,
             clipboard: None,
+            context_plan_history: Arc::new(std::sync::RwLock::new(
+                context_plan::ContextPlanHistory::default(),
+            )),
         }
     }
 
@@ -233,6 +237,35 @@ impl App {
             ToolVerbosity::Verbose => ToolVerbosity::Minimal,
         };
         self.apply_tool_verbosity(next, true);
+    }
+
+    fn cycle_context_mode(&mut self) {
+        let state = self.state.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            let next = {
+                let mut cfg = state.config.write().await;
+                let next = match cfg.context_management.mode {
+                    CtxMode::Off => CtxMode::Light,
+                    CtxMode::Light => CtxMode::Heavy,
+                    CtxMode::Heavy => CtxMode::Off,
+                };
+                cfg.context_management.mode = next;
+                next
+            };
+            let label = match next {
+                CtxMode::Off => "Off",
+                CtxMode::Light => "Light",
+                CtxMode::Heavy => "Heavy",
+            };
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: format!("Context mode set to {}", label),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+        });
     }
 
     fn send_cmd(&self, cmd: StateCommand) {
@@ -292,7 +325,24 @@ impl App {
                 // Prepare data for this frame by reading from AppState without allocating per-frame.
                 let app_state = Arc::clone(&self.state);
                 let history_guard = app_state.chat.0.read().await;
-                let path_len = history_guard.path_len();
+                let ctx_mode = {
+                    let config_guard = app_state.config.read().await;
+                    config_guard.context_management.mode
+                };
+                let renderable_path: Vec<crate::app::types::RenderableMessage> = history_guard
+                    .iter_path()
+                    .map(|msg| crate::app::types::RenderableMessage {
+                        id: msg.id,
+                        kind: msg.kind,
+                        content: msg.content.clone(),
+                        tool_payload: msg.tool_payload.clone(),
+                        annotations: history_guard
+                            .annotations_for(msg.id)
+                            .unwrap_or(&[])
+                            .to_vec(),
+                    })
+                    .collect();
+                let path_len = renderable_path.len();
                 let current_id = history_guard.current;
                 let current_token_totals: Option<ContextTokens> =
                     history_guard.current_context_tokens;
@@ -301,11 +351,12 @@ impl App {
                 terminal.draw(|frame| {
                     self.draw(
                         frame,
-                        history_guard.iter_path(),
-                        history_guard.iter_path(),
+                        renderable_path.iter(),
+                        renderable_path.iter(),
                         path_len,
                         current_id,
                         current_token_totals,
+                        ctx_mode,
                     )
                 })?;
                 self.needs_redraw = false;
@@ -501,7 +552,12 @@ impl App {
         &self,
         input: &str,
         selection_index: usize,
-    ) -> Option<(Vec<CommandSuggestion>, Option<String>, Option<String>, usize)> {
+    ) -> Option<(
+        Vec<CommandSuggestion>,
+        Option<String>,
+        Option<String>,
+        usize,
+    )> {
         let at_idx = input.rfind('@')?;
         let after_at = &input[at_idx + 1..];
         if after_at.chars().any(char::is_whitespace) {
@@ -522,7 +578,9 @@ impl App {
         let (parent, prefix) = if after_at.ends_with(std::path::MAIN_SEPARATOR) {
             (fragment_path, "")
         } else {
-            let parent = fragment_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+            let parent = fragment_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
             let prefix = fragment_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -603,13 +661,17 @@ impl App {
         &self,
         mode: Mode,
         selection_index: usize,
-    ) -> (Vec<CommandSuggestion>, Option<String>, Option<String>, usize) {
-        if matches!(mode, Mode::Insert | Mode::Command) {
-            if let Some((suggestions, ghost, accept, selected_idx)) =
+    ) -> (
+        Vec<CommandSuggestion>,
+        Option<String>,
+        Option<String>,
+        usize,
+    ) {
+        if matches!(mode, Mode::Insert | Mode::Command)
+            && let Some((suggestions, ghost, accept, selected_idx)) =
                 self.file_completion_suggestions(&self.input_buffer, selection_index)
-            {
-                return (suggestions, ghost, accept, selected_idx);
-            }
+        {
+            return (suggestions, ghost, accept, selected_idx);
         }
         if mode != Mode::Command {
             return (Vec::new(), None, None, 0);
@@ -661,7 +723,12 @@ impl App {
             accept_text.push(' ');
         }
 
-        (suggestions, Some(ghost_text), Some(accept_text), selected_idx)
+        (
+            suggestions,
+            Some(ghost_text),
+            Some(accept_text),
+            selected_idx,
+        )
     }
 
     /// Count pending edit proposals for UI banner display.
@@ -690,6 +757,7 @@ impl App {
         path_len: usize,
         current_id: Uuid,
         current_token_totals: Option<ContextTokens>,
+        ctx_mode: CtxMode,
     ) where
         I1: IntoIterator<Item = &'a T> + Clone,
         I2: IntoIterator<Item = &'a T>,
@@ -711,10 +779,10 @@ impl App {
         // Always show the currently selected model in the top-right
         let show_indicator = true;
         let frame_area = frame.area();
-        let desired_input_height =
-            self.input_view
-                .desired_height(&self.input_buffer, frame_area.width)
-                .saturating_add(command_suggestions.len() as u16);
+        let desired_input_height = self
+            .input_view
+            .desired_height(&self.input_buffer, frame_area.width)
+            .saturating_add(command_suggestions.len() as u16);
         let input_height = compute_input_height(
             desired_input_height,
             frame_area.height,
@@ -879,6 +947,16 @@ impl App {
                 .block(Block::default().borders(Borders::NONE))
                 .style(Style::new().fg(Color::Blue))
         };
+        let context_mode = {
+            let label = match ctx_mode {
+                CtxMode::Off => "Off",
+                CtxMode::Light => "Light",
+                CtxMode::Heavy => "Heavy",
+            };
+            Paragraph::new(format!("ctx mode: {}", label))
+                .block(Block::default().borders(Borders::NONE))
+                .style(Style::new().fg(Color::Blue))
+        };
 
         // -- Handle Scrollbars --
         // TODO: how to make this work?
@@ -897,6 +975,7 @@ impl App {
         // -- first nested
         frame.render_widget(status_bar, status_line_area[0]);
         frame.render_widget(node_status, status_line_area[1]);
+        frame.render_widget(context_mode, status_line_area[2]);
         frame.render_widget(context_tracker, status_line_area[3]);
 
         // -- model indicator (always visible)
@@ -966,6 +1045,28 @@ impl App {
         // Intercept overlay manager keys
         if self.overlay_manager.is_active() {
             let actions = self.overlay_manager.handle_input(key);
+            if let Some(config_overlay) = self.overlay_manager.config_state_mut()
+                && config_overlay.dirty
+            {
+                let command_style = config_overlay.selected_command_style();
+                let tool_verbosity = config_overlay.selected_tool_verbosity();
+                let state = self.state.clone();
+                let mut config_guard = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async { state.config.write().await })
+                });
+                let changed = config_overlay.apply_to_runtime_config(&mut config_guard);
+                drop(config_guard);
+                if let Some(style) = command_style {
+                    self.command_style = style;
+                }
+                if let Some(verbosity) = tool_verbosity {
+                    self.tool_verbosity = verbosity;
+                }
+                if changed {
+                    self.needs_redraw = true;
+                }
+                config_overlay.dirty = false;
+            }
             self.handle_overlay_actions(actions);
             self.needs_redraw = true;
             return;
@@ -1218,12 +1319,12 @@ impl App {
             }
             Action::BranchPrev => {
                 let mut handled = false;
-                if let Some(selected) = self.list.selected() {
-                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
-                        self.confirmation_states.insert(*msg_id, true);
-                        handled = true;
-                        self.needs_redraw = true;
-                    }
+                if let Some(selected) = self.list.selected()
+                    && let Some(msg_id) = self.conversation.interactive_tools.get(&selected)
+                {
+                    self.confirmation_states.insert(*msg_id, true);
+                    handled = true;
+                    self.needs_redraw = true;
                 }
 
                 if !handled {
@@ -1236,12 +1337,12 @@ impl App {
             }
             Action::BranchNext => {
                 let mut handled = false;
-                if let Some(selected) = self.list.selected() {
-                    if let Some(msg_id) = self.conversation.interactive_tools.get(&selected) {
-                        self.confirmation_states.insert(*msg_id, false);
-                        handled = true;
-                        self.needs_redraw = true;
-                    }
+                if let Some(selected) = self.list.selected()
+                    && let Some(msg_id) = self.conversation.interactive_tools.get(&selected)
+                {
+                    self.confirmation_states.insert(*msg_id, false);
+                    handled = true;
+                    self.needs_redraw = true;
                 }
 
                 if !handled {
@@ -1318,6 +1419,10 @@ impl App {
                 self.pending_char = None;
                 self.cycle_tool_verbosity();
             }
+            Action::CycleContextMode => {
+                self.pending_char = None;
+                self.cycle_context_mode();
+            }
             Action::InputScrollPrev => {
                 self.input_view.scroll_prev();
             }
@@ -1325,20 +1430,32 @@ impl App {
                 self.input_view.scroll_next();
             }
             Action::OpenContextSearch => todo!(),
+            Action::OpenContextPlan => {
+                self.pending_char = None;
+                self.open_context_plan_overlay();
+            }
             Action::TriggerSelection => {
                 if let Some(selected) = self.list.selected() {
                     let should_trigger = tokio::task::block_in_place(|| {
                         tokio::runtime::Handle::current().block_on(async {
                             let guard = self.state.chat.0.read().await;
                             let path = guard.get_full_path();
-                            if let Some(msg) = path.get(selected) {
-                                if let Some(payload) = msg.tool_payload() {
-                                    if should_render_tool_buttons(payload) {
-                                        if let Some(req_id) = payload.request_id {
-                                            return Some(req_id);
-                                        }
-                                    }
-                                }
+                            // NOTE: replaced this conditional with the functional approach below
+                            // for clarity.
+                            //
+                            // if let Some(msg) = path.get(selected)
+                            //     && let Some(payload) = msg.tool_payload()
+                            //     && should_render_tool_buttons(payload)
+                            //     && let Some(req_id) = payload.request_id
+                            // {
+                            //     return Some(req_id);
+                            // }
+                            let req_id = path.get(selected)
+                                .and_then(|msg| msg.tool_payload())
+                                .filter(|p| should_render_tool_buttons(p))
+                                .and_then(|payload| payload.request_id);
+                            if req_id.is_some() {
+                                return req_id;
                             }
                             None
                         })
@@ -1347,7 +1464,14 @@ impl App {
                     if let Some(request_id) = should_trigger {
                         let is_yes = self
                             .confirmation_states
-                            .get(&self.conversation.interactive_tools.get(&selected).copied().unwrap_or_default())
+                            .get(
+                                &self
+                                    .conversation
+                                    .interactive_tools
+                                    .get(&selected)
+                                    .copied()
+                                    .unwrap_or_default(),
+                            )
                             .copied()
                             .unwrap_or(true);
 
@@ -1510,13 +1634,15 @@ impl App {
             tokio::runtime::Handle::current().block_on(async {
                 let guard = self.state.chat.0.read().await;
                 let path = guard.get_full_path();
-                selected.and_then(|idx| path.get(idx).map(|msg| {
-                    if let Some(payload) = &msg.tool_payload {
-                        payload.render(verbosity)
-                    } else {
-                        msg.content.clone()
-                    }
-                }))
+                selected.and_then(|idx| {
+                    path.get(idx).map(|msg| {
+                        if let Some(payload) = &msg.tool_payload {
+                            payload.render(verbosity)
+                        } else {
+                            msg.content.clone()
+                        }
+                    })
+                })
             })
         });
 
@@ -1730,6 +1856,16 @@ impl App {
         let search_items = Self::build_context_search_items(retrieved_items);
         self.overlay_manager
             .open_context_browser(ContextSearchState::with_items(search_input, search_items));
+        self.needs_redraw = true;
+    }
+
+    fn open_context_plan_overlay(&mut self) {
+        let overlay =
+            crate::app::view::components::context_plan_overlay::ContextPlanOverlayState::new(
+                self.context_plan_history.clone(),
+                self.theme.clone(),
+            );
+        self.overlay_manager.open_context_plan(overlay);
         self.needs_redraw = true;
     }
 
@@ -2020,8 +2156,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn file_completion_uses_cwd_for_bare_at() {
+    #[tokio::test]
+    async fn file_completion_uses_cwd_for_bare_at() {
         let temp = tempdir().expect("temp dir");
         let _guard = CwdGuard::set_to(temp.path());
         let app = create_mock_app();
@@ -2037,8 +2173,8 @@ mod tests {
         assert_eq!(accept, format!("{input}{expected_ghost}"));
     }
 
-    #[test]
-    fn file_completion_resolves_temp_entries() {
+    #[tokio::test]
+    async fn file_completion_resolves_temp_entries() {
         let temp = tempdir().expect("temp dir");
         std::fs::create_dir(temp.path().join("src")).expect("create src");
         std::fs::write(temp.path().join("Cargo.toml"), "cargo").expect("write file");
@@ -2050,11 +2186,13 @@ mod tests {
         let input_dir = "/open @s";
         let (ghost_dir, accept_dir) = app.file_completion(input_dir).expect("dir completion");
         assert_eq!(ghost_dir, format!("rc{}", std::path::MAIN_SEPARATOR));
-        assert_eq!(accept_dir, format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR));
+        assert_eq!(
+            accept_dir,
+            format!("{input_dir}rc{}", std::path::MAIN_SEPARATOR)
+        );
 
         let input_file = "/open @src/m";
-        let (ghost_file, accept_file) =
-            app.file_completion(input_file).expect("file completion");
+        let (ghost_file, accept_file) = app.file_completion(input_file).expect("file completion");
         assert_eq!(ghost_file, "ain.rs");
         assert_eq!(accept_file, "/open @src/main.rs");
     }

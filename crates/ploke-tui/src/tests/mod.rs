@@ -12,4 +12,5 @@
 
 pub mod ui_approvals_simple;
 pub mod ui_approvals_truncation;
+#[cfg(feature = "long_test")]
 pub mod ui_performance_comprehensive;

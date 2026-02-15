@@ -38,6 +38,7 @@ pub struct ToolError {
     pub received: Option<String>,
     pub snippet: Option<String>,
     pub retry_hint: Option<String>,
+    pub retry_context: Option<serde_json::Value>,
     #[serde(skip)]
     pub audience: Audience,
     #[serde(skip)]
@@ -54,6 +55,7 @@ impl ToolError {
             received: None,
             snippet: None,
             retry_hint: None,
+            retry_context: None,
             audience: Audience::System,
             message: message.into(),
         }
@@ -81,6 +83,11 @@ impl ToolError {
 
     pub fn retry_hint(mut self, hint: impl Into<String>) -> Self {
         self.retry_hint = Some(hint.into());
+        self
+    }
+
+    pub fn retry_context(mut self, context: serde_json::Value) -> Self {
+        self.retry_context = Some(context);
         self
     }
 
@@ -135,6 +142,7 @@ impl ToolError {
             "message": self.message,
             "snippet": self.snippet,
             "retry_hint": self.retry_hint,
+            "retry_context": self.retry_context,
         })
     }
 

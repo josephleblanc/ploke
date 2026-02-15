@@ -2,7 +2,12 @@ use std::{borrow::Cow, ops::Deref as _, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{rag::tools::apply_ns_code_edit_tool, tools::tool_ui_error, tools::ToolResult};
+use crate::{
+    rag::tools::apply_ns_code_edit_tool,
+    tools::ToolResult,
+    tools::validators::{validate_file_path_basic, validate_unified_diff},
+};
+use serde_json::json;
 
 /// Type for non-semantic file patching
 pub struct NsPatch;
@@ -104,10 +109,6 @@ pub struct ApplyNsPatchResult {
     pub auto_confirmed: bool,
 }
 
-// TODO:
-//  - [ ] add tests
-//      - [ ]  verify that NS_PATCH_PARAMETERS serializes into Value correctly.
-
 use super::{ToolDescr, ToolError, ToolErrorCode, ToolInvocationError, ToolName};
 impl super::Tool for NsPatch {
     type Output = ApplyNsPatchResult;
@@ -147,6 +148,16 @@ impl super::Tool for NsPatch {
         Self
     }
 
+    fn deserialize_params<'a>(json: &'a str) -> Result<Self::Params<'a>, ToolInvocationError> {
+        let params: NsPatchParams<'a> =
+            serde_json::from_str(json).map_err(|e| ToolInvocationError::Deserialize {
+                source: e,
+                raw: Some(json.to_string()),
+            })?;
+        validate_params(&params)?;
+        Ok(params)
+    }
+
     // TODO:refactor
     // consider adding an enum to the `Edit` type in ploke/crates/ploke-tui/src/rag/utils.rs
     // instead of using NsPatchOwned, depending on how we want to handle the edit
@@ -171,9 +182,6 @@ impl super::Tool for NsPatch {
         params: Self::Params<'de>,
         ctx: super::Ctx,
     ) -> Result<ToolResult, ploke_error::Error> {
-        if params.patches.is_empty() {
-            return Err(tool_ui_error("non_semantic_patch requires at least one patch"));
-        }
         use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 
         let typed_req = ApplyCodeEditRequest {
@@ -181,7 +189,6 @@ impl super::Tool for NsPatch {
             edits: params
                 .patches
                 .iter()
-                .cloned()
                 .map(|p| Edit::Patch {
                     file: p.file.clone().into_owned(),
                     diff: p.diff.clone().into_owned(),
@@ -204,6 +211,79 @@ impl super::Tool for NsPatch {
         apply_ns_code_edit_tool(params_env).await?;
         crate::tools::code_edit::print_code_edit_results(&ctx, request_id, ToolName::NsPatch).await
     }
+}
+
+fn validate_params(params: &NsPatchParams<'_>) -> Result<(), ToolInvocationError> {
+    if params.patches.is_empty() {
+        return Err(ToolInvocationError::Validation(
+            ToolError::new(
+                ToolName::NsPatch,
+                ToolErrorCode::MissingField,
+                "patches must contain at least one entry",
+            )
+            .field("patches")
+            .expected("non-empty array")
+            .received("empty array")
+            .retry_hint("Provide at least one patch with file, diff, and reasoning."),
+        ));
+    }
+
+    if params.patches.len() > 1 {
+        let count = params.patches.len();
+        return Err(ToolInvocationError::Validation(
+            ToolError::new(
+                ToolName::NsPatch,
+                ToolErrorCode::InvalidFormat,
+                "ns_patch currently supports a single patch per call",
+            )
+            .field("patches")
+            .expected("array length of 1")
+            .received(count.to_string())
+            .retry_hint("Send one patch per tool call.")
+            .retry_context(json!({ "count": count })),
+        ));
+    }
+
+    for (idx, patch) in params.patches.iter().enumerate() {
+        validate_file_path_basic(ToolName::NsPatch, "file", patch.file.as_ref(), false).map_err(
+            |err| {
+                ToolInvocationError::Validation(err.retry_context(json!({
+                    "patch_index": idx,
+                    "field": "file",
+                })))
+            },
+        )?;
+
+        validate_unified_diff(ToolName::NsPatch, "diff", patch.diff.as_ref()).map_err(|err| {
+            ToolInvocationError::Validation(
+                err.retry_hint("Provide a unified diff with ---/+++ headers and @@ hunks.")
+                    .retry_context(json!({
+                        "patch_index": idx,
+                        "field": "diff",
+                    })),
+            )
+        })?;
+
+        if patch.reasoning.trim().is_empty() {
+            return Err(ToolInvocationError::Validation(
+                ToolError::new(
+                    ToolName::NsPatch,
+                    ToolErrorCode::InvalidFormat,
+                    "reasoning must be a non-empty sentence",
+                )
+                .field("reasoning")
+                .expected("one-sentence description")
+                .received("empty string")
+                .retry_hint("Provide a short sentence describing why the change is needed.")
+                .retry_context(json!({
+                    "patch_index": idx,
+                    "field": "reasoning",
+                })),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -262,5 +342,30 @@ mod tests {
         let owned = NsPatch::into_owned(&params);
         assert_eq!(owned.patches.len(), 1);
         assert_eq!(owned.patches[0].reasoning, "update formatting");
+    }
+
+    #[test]
+    fn deserialize_rejects_empty_patches() {
+        let err = NsPatch::deserialize_params(r#"{"patches":[]}"#).expect_err("expected error");
+        match err {
+            ToolInvocationError::Validation(te) => {
+                assert_eq!(te.code, ToolErrorCode::MissingField);
+                assert_eq!(te.field, Some("patches"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_diff() {
+        let input = r#"{"patches":[{"file":"src/lib.rs","diff":"not a diff","reasoning":"fix"}]}"#;
+        let err = NsPatch::deserialize_params(input).expect_err("expected error");
+        match err {
+            ToolInvocationError::Validation(te) => {
+                assert_eq!(te.code, ToolErrorCode::MalformedDiff);
+                assert_eq!(te.field, Some("diff"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

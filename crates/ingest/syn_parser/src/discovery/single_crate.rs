@@ -18,16 +18,18 @@ use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::fmt; // Import fmt for Display trait
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc; // Import Arc
-use thiserror::Error;
+use std::sync::Arc;
 use toml;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::error::SynParserError;
+use crate::discovery::DiscoveryError;
+use crate::discovery::workspace::WorkspaceVersionLink;
+use crate::discovery::workspace::resolve_workspace_version;
+
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -47,177 +49,6 @@ use crate::error::SynParserError;
 //  * Explore ideas on this at leisure, in case there is easy groundwork to lay.
 // * Currently uses same namespace for all crates with no project.
 //  * Fine for now. Evaluate potential for pros/cons of this approach another time.
-
-/// Errors that can occur during the discovery phase.
-#[derive(Error, Debug, Clone)] // Add Clone derive
-pub enum DiscoveryError {
-    /// An I/O error occurred while accessing a path.
-    #[error("I/O error accessing path {path}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: Arc<std::io::Error>, // Wrap in Arc
-    },
-    /// Failed to parse a `Cargo.toml` file.
-    #[error("Failed to parse Cargo.toml at {path}: {source}")]
-    TomlParse {
-        path: PathBuf,
-        #[source]
-        source: Arc<toml::de::Error>, // Wrap in Arc
-    },
-    /// The `package.name` field was missing from a `Cargo.toml` file.
-    #[error("Missing 'package.name' in Cargo.toml at {path}")]
-    MissingPackageName { path: PathBuf }, // This variant is already Clone
-    /// The `package.version` field was missing from a `Cargo.toml` file.
-    #[error("Missing 'package.version' in Cargo.toml at {path}")]
-    MissingPackageVersion { path: PathBuf },
-    /// The target crate path was not found.
-    #[error("Target crate path not found: {path}")]
-    CratePathNotFound { path: PathBuf },
-    /// An error occurred while walking a directory.
-    #[error("Walkdir error in {path}: {source}")]
-    Walkdir {
-        path: PathBuf,
-        #[source]
-        source: Arc<walkdir::Error>, // Wrap in Arc
-    },
-    /// The source directory was not found for a crate.
-    #[error("Source directory not found for crate at: {path}")]
-    SrcNotFound { path: PathBuf }, // Critical error: Cannot proceed without source files.
-    /// Multiple non-fatal errors occurred during discovery.
-    #[error("Multiple non-fatal errors occurred during discovery")]
-    NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
-    /// Failed to read a workspace manifest needed to resolve package version inheritance.
-    #[error(
-        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
-    )]
-    WorkspaceManifestRead {
-        crate_path: PathBuf,
-        manifest_path: PathBuf,
-        #[source]
-        source: Arc<std::io::Error>,
-    },
-    /// Failed to parse a workspace manifest needed to resolve package version inheritance.
-    #[error(
-        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
-    )]
-    WorkspaceManifestParse {
-        crate_path: PathBuf,
-        manifest_path: PathBuf,
-        #[source]
-        source: Arc<toml::de::Error>,
-    },
-    /// Could not find a workspace manifest when attempting to resolve `package.version.workspace = true`.
-    #[error(
-        "Unable to locate workspace Cargo.toml when resolving crate at {crate_path}; starting hint was {hint_path}"
-    )]
-    WorkspaceManifestNotFound {
-        crate_path: PathBuf,
-        hint_path: PathBuf,
-    },
-    /// Workspace manifest exists, but `workspace.package.version` is missing.
-    #[error(
-        "workspace.package.version missing in workspace Cargo.toml at {manifest_path} (required by crate at {crate_path})"
-    )]
-    WorkspacePackageVersionMissing {
-        crate_path: PathBuf,
-        manifest_path: PathBuf,
-    },
-    /// `package.version.workspace` was set to `false`, which is unsupported.
-    #[error(
-        "`package.version.workspace` must be true when inheriting version for crate at {crate_path} (manifest {manifest_path})"
-    )]
-    WorkspaceVersionFlagDisabled {
-        crate_path: PathBuf,
-        manifest_path: PathBuf,
-    },
-}
-
-impl TryFrom<DiscoveryError> for SynParserError {
-    type Error = SynParserError;
-
-    fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
-        use DiscoveryError::*;
-        Ok(match value {
-            MissingPackageName { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            MissingPackageVersion { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            CratePathNotFound { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            SrcNotFound { path } => SynParserError::SimpleDiscovery {
-                path: path.display().to_string(),
-            },
-            Io { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "Io".to_string(),
-            },
-            TomlParse { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "Toml".to_string(),
-            },
-            Walkdir { path, .. } => SynParserError::ComplexDiscovery {
-                name: "".to_string(),
-                path: path.display().to_string(),
-                source_string: "walkdir".to_string(),
-            },
-            WorkspaceManifestRead {
-                crate_path,
-                manifest_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspaceManifestRead".to_string(),
-            },
-            WorkspaceManifestParse {
-                crate_path,
-                manifest_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspaceManifestParse".to_string(),
-            },
-            WorkspaceManifestNotFound {
-                crate_path,
-                hint_path,
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: hint_path.display().to_string(),
-                source_string: "WorkspaceManifestNotFound".to_string(),
-            },
-            WorkspacePackageVersionMissing {
-                crate_path,
-                manifest_path,
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspacePackageVersionMissing".to_string(),
-            },
-            WorkspaceVersionFlagDisabled {
-                crate_path,
-                manifest_path,
-            } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
-                path: manifest_path.display().to_string(),
-                source_string: "WorkspaceVersionFlagDisabled".to_string(),
-            },
-            NonFatalErrors(errors) => {
-                let nested = errors
-                    .into_iter()
-                    .map(SynParserError::try_from)
-                    .collect::<Result<Vec<_>, _>>()?;
-                SynParserError::MultipleErrors(nested)
-            }
-        })
-    }
-}
 
 // Helper structs for deserializing Cargo.toml
 
@@ -245,14 +76,6 @@ enum PackageVersion {
     Workspace(WorkspaceVersionLink),
 }
 
-/// Indicates that a version should be inherited from the workspace metadata. Cargo effectively
-/// treats `workspace = true` as the only supported value, so we surface explicit errors for other
-/// values to keep the type system honest.
-#[derive(Deserialize, Debug, Clone)]
-struct WorkspaceVersionLink {
-    workspace: bool,
-}
-
 impl fmt::Display for PackageVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -272,171 +95,23 @@ impl PackageVersion {
     /// # Errors
     /// * [`DiscoveryError::WorkspaceVersionFlagDisabled`] if `workspace = false`.
     /// * Any error emitted by [`resolve_workspace_version`] when escalation to a workspace lookup fails.
-    fn resolve(&self, crate_root: &Path, manifest_path: &Path) -> Result<String, DiscoveryError> {
+    fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
         match self {
             PackageVersion::Explicit(version) => Ok(version.clone()),
             PackageVersion::Workspace(link) => {
+                let workspace_path = resolve_workspace_version(crate_root)?;
                 if !link.workspace {
                     return Err(DiscoveryError::WorkspaceVersionFlagDisabled {
                         crate_path: crate_root.to_path_buf(),
-                        manifest_path: manifest_path.to_path_buf(),
+                        manifest_path: PathBuf::from(workspace_path),
                     });
                 }
-                resolve_workspace_version(crate_root, manifest_path)
+                resolve_workspace_version(crate_root)
             }
         }
     }
 }
 
-/// Partial view of a manifest that may or may not declare workspace metadata. `workspace = None`
-/// signals that the inspected manifest isn't a workspace boundary.
-#[derive(Deserialize, Debug, Clone)]
-pub struct WorkspaceManifestMetadata {
-    workspace: Option<WorkspaceMetadataSection>,
-}
-
-/// Captures the `[workspace]` table when parsing ancestor manifests.
-#[derive(Deserialize, Debug, Clone)]
-pub struct WorkspaceMetadataSection {
-    package: Option<WorkspacePackageMetadata>,
-}
-
-/// Captures the `[workspace.package]` metadata that may hold the shared version.
-#[derive(Deserialize, Debug, Clone)]
-pub struct WorkspacePackageMetadata {
-    version: Option<String>,
-}
-
-/// Resolve a workspace-inherited version by loading the nearest ancestor workspace manifest.
-///
-/// # Success
-/// Returns the `workspace.package.version` string discovered at or above `crate_root`.
-///
-/// # Errors
-/// * [`DiscoveryError::WorkspacePackageVersionMissing`] when the workspace manifest lacks a version.
-/// * Any error bubbled up from [`locate_workspace_manifest`].
-///
-/// # Examples
-/// Create a miniature workspace layout in a temporary directory to prove that inheritance works:
-/// ```
-/// use syn_parser::discovery::resolve_workspace_version;
-/// use tempfile::tempdir;
-/// use std::fs;
-///
-/// let tmp = tempdir().unwrap();
-/// let ws_root = tmp.path();
-/// fs::create_dir_all(ws_root.join("member/src")).unwrap();
-/// fs::write(
-///     ws_root.join("Cargo.toml"),
-///     r#"[workspace]
-/// members = ["member"]
-///
-/// [workspace.package]
-/// version = "7.8.9"
-/// "#,
-/// ).unwrap();
-/// fs::write(
-///     ws_root.join("member/Cargo.toml"),
-///     r#"[package]
-/// name = "member"
-/// version.workspace = true
-/// edition = "2021"
-/// "#,
-/// ).unwrap();
-///
-/// let member_root = ws_root.join("member");
-/// let version = resolve_workspace_version(&member_root, &member_root.join("Cargo.toml")).unwrap();
-/// assert_eq!(version, "7.8.9");
-/// ```
-pub fn resolve_workspace_version(
-    crate_root: &Path,
-    manifest_path: &Path,
-) -> Result<String, DiscoveryError> {
-    let (workspace_manifest_path, workspace_metadata) =
-        locate_workspace_manifest(crate_root, manifest_path)?;
-
-    workspace_metadata
-        .workspace
-        .as_ref()
-        .and_then(|section| section.package.as_ref())
-        .and_then(|package| package.version.clone())
-        .ok_or_else(|| DiscoveryError::WorkspacePackageVersionMissing {
-            crate_path: crate_root.to_path_buf(),
-            manifest_path: workspace_manifest_path.clone(),
-        })
-}
-
-/// Search upwards from the crate root until a `[workspace]` manifest is found.
-///
-/// # Success
-/// Returns the manifest path and parsed metadata for the nearest ancestor that declares a
-/// `[workspace]` table, including the crate's own manifest.
-///
-/// # Errors
-/// * [`DiscoveryError::WorkspaceManifestRead`] on IO failures.
-/// * [`DiscoveryError::WorkspaceManifestParse`] on TOML parse failures.
-/// * [`DiscoveryError::WorkspaceManifestNotFound`] if no workspace manifests exist up to filesystem root.
-///
-/// # Examples
-/// Demonstrate the missing-workspace error using a throwaway project tree:
-/// ```
-/// use syn_parser::discovery::{locate_workspace_manifest, DiscoveryError};
-/// use tempfile::tempdir;
-/// use std::fs;
-///
-/// let tmp = tempdir().unwrap();
-/// let crate_root = tmp.path().join("solo");
-/// fs::create_dir_all(crate_root.join("src")).unwrap();
-/// fs::write(
-///     crate_root.join("Cargo.toml"),
-///     r#"[package]
-/// name = "solo"
-/// version.workspace = true
-/// edition = "2021"
-/// "#,
-/// ).unwrap();
-///
-/// let err = locate_workspace_manifest(&crate_root, &crate_root.join("Cargo.toml")).unwrap_err();
-/// assert!(matches!(err, DiscoveryError::WorkspaceManifestNotFound { .. }));
-/// ```
-pub fn locate_workspace_manifest(
-    crate_root: &Path,
-    manifest_path: &Path,
-) -> Result<(PathBuf, WorkspaceManifestMetadata), DiscoveryError> {
-    let mut current_dir = Some(crate_root);
-    let crate_path = crate_root.to_path_buf();
-    let hint_path = manifest_path.to_path_buf();
-
-    while let Some(dir) = current_dir {
-        let candidate_manifest = dir.join("Cargo.toml");
-        if candidate_manifest.is_file() {
-            let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
-                DiscoveryError::WorkspaceManifestRead {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                }
-            })?;
-
-            let metadata: WorkspaceManifestMetadata =
-                toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                })?;
-
-            if metadata.workspace.is_some() {
-                return Ok((candidate_manifest, metadata));
-            }
-        }
-        current_dir = dir.parent();
-    }
-
-    Err(DiscoveryError::WorkspaceManifestNotFound {
-        crate_path,
-        hint_path,
-    })
-}
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
 #[derive(Deserialize, Debug, Clone, Default, Serialize)]
@@ -890,8 +565,6 @@ pub trait DependencyMap {
     }
 }
 
-// --- Optional Trait Implementations ---
-
 // Allow iterating directly over the Dependencies struct
 impl<'a> IntoIterator for &'a Dependencies {
     type Item = (&'a String, &'a DependencySpec);
@@ -960,7 +633,7 @@ pub struct CrateContext {
     pub name: String,
     /// The resolved version string for the crate (e.g., "0.1.0").
     pub version: String,
-    /// The UUID namespace derived for this specific crate version using
+    /// The UUID namespace derived for this specific crate using
     /// `Uuid::new_v5(&PROJECT_NAMESPACE_UUID, ...)`.
     pub namespace: Uuid,
     /// The absolute path to the crate's root directory (containing Cargo.toml).
@@ -1185,7 +858,7 @@ impl DiscoveryOutput {
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    _project_root: &Path,      // Keep for potential future use
+    workspace_root: &Path,      // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
@@ -1236,8 +909,8 @@ pub fn run_discovery_phase(
         // Although PackageInfo deserialization requires name/version, we handle potential
         // future scenarios or direct struct manipulation by checking here.
         // For now, serde handles this, but let's keep the structure for robustness.
-        let crate_name = package.name.clone(); // Assume present due to serde
-        let crate_version = package.version.resolve(crate_root_path, &cargo_toml_path)?;
+        let crate_name = package.name.clone();
+        let crate_version = package.version.resolve(crate_root_path)?;
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
@@ -1327,169 +1000,19 @@ pub fn run_discovery_phase(
     })
 }
 
-/// Derives a deterministic UUID v5 namespace for a specific crate version.
+/// Derives a deterministic UUID v5 namespace for a specific crate.
 ///
 /// This function is intended to run single-threaded as part of the discovery setup.
 ///
 /// # Arguments
 /// * `name` - The name of the crate.
-/// * `version` - The version of the crate.
 ///
 /// # Returns
-/// A `Uuid` representing the namespace for this crate version, derived from
+/// A `Uuid` representing the namespace for this crate, derived from
 /// the `PROJECT_NAMESPACE_UUID`.
-// NOTE: Known Design Limitation
-// * Currently uses full version, e.g. "0.5.142", requiring full re-map for smaller changes.
-//  * Consider using semver as default, and adding a config (not implemented) for user-specific
-//  choices on frequency of remap (breaking, major, minor, never, etc) due to versioning changes.
-//  * Fine for now.
-pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
-    // Combine name and version to form the unique identifier string within the project namespace.
-    // Using "@" is a common convention.
-    let name_version = format!("{}@{}", name, version);
-    Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name_version.as_bytes())
-}
-
-/// Conversion from DiscoveryError to ploke_error::Error
-///
-/// This conversion maps discovery-phase errors to appropriate ploke_error variants
-/// based on their severity and impact on the overall parsing process:
-///
-/// - **FatalError::FileOperation**: Used for I/O errors and walkdir errors during
-///   file discovery, as these indicate filesystem access issues.
-/// - **FatalError::PathResolution**: Used for TOML parse errors and missing
-///   critical files (Cargo.toml, src directory). These prevent any meaningful parsing.
-/// - **WarningError**: Used for non-fatal discovery issues that don't prevent
-///   parsing but may affect completeness.
-///
-/// This mapping maintains the dependency direction (syn_parser depends on ploke_error)
-/// while providing clear error categorization for upstream error handling.
-impl From<DiscoveryError> for ploke_error::Error {
-    fn from(err: DiscoveryError) -> Self {
-        match err {
-            DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
-                operation: "read",
-                path,
-                source,
-            }
-            .into(),
-            DiscoveryError::TomlParse { path, source } => ploke_error::FatalError::PathResolution {
-                path: format!("Failed to parse Cargo.toml at {}", path.display()),
-                source: Some(source),
-            }
-            .into(),
-            DiscoveryError::MissingPackageName { path } => {
-                ploke_error::FatalError::PathResolution {
-                    path: format!("Missing package.name in Cargo.toml at {}", path.display()),
-                    source: None,
-                }
-                .into()
-            }
-            DiscoveryError::MissingPackageVersion { path } => {
-                ploke_error::FatalError::PathResolution {
-                    path: format!(
-                        "Missing package.version in Cargo.toml at {}",
-                        path.display()
-                    ),
-                    source: None,
-                }
-                .into()
-            }
-            DiscoveryError::CratePathNotFound { path } => ploke_error::FatalError::PathResolution {
-                path: format!("Crate path not found: {}", path.display()),
-                source: None,
-            }
-            .into(),
-            DiscoveryError::Walkdir { path, source } => {
-                // Convert walkdir::Error to std::io::Error using string representation
-                let io_error = std::io::Error::other(source.to_string());
-                ploke_error::FatalError::FileOperation {
-                    operation: "walk",
-                    path,
-                    source: Arc::new(io_error),
-                }
-                .into()
-            }
-            DiscoveryError::SrcNotFound { path } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Source directory not found for crate at: {}",
-                    path.display()
-                ),
-                source: None,
-            }
-            .into(),
-            DiscoveryError::NonFatalErrors(errors) => {
-                // Convert the boxed vector to a warning about multiple issues
-                ploke_error::WarningError::UnresolvedRef {
-                    name: "Discovery phase".to_string(),
-                    location: Some(format!("{} non-fatal errors occurred", errors.len())),
-                }
-                .into()
-            }
-            DiscoveryError::WorkspaceManifestRead {
-                crate_path,
-                manifest_path,
-                source,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Failed to read workspace manifest {} for crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: Some(source),
-            }
-            .into(),
-            DiscoveryError::WorkspaceManifestParse {
-                crate_path,
-                manifest_path,
-                source,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Failed to parse workspace manifest {} for crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: Some(source),
-            }
-            .into(),
-            DiscoveryError::WorkspaceManifestNotFound {
-                crate_path,
-                hint_path,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Workspace manifest not found for crate {} (searched from {})",
-                    crate_path.display(),
-                    hint_path.display()
-                ),
-                source: None,
-            }
-            .into(),
-            DiscoveryError::WorkspacePackageVersionMissing {
-                crate_path,
-                manifest_path,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "workspace.package.version missing in {} required by crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: None,
-            }
-            .into(),
-            DiscoveryError::WorkspaceVersionFlagDisabled {
-                crate_path,
-                manifest_path,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "`package.version.workspace` must be true in {} for crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: None,
-            }
-            .into(),
-        }
-    }
+pub fn derive_crate_namespace(name: &str, _version: &str) -> Uuid {
+    // Combine crate name within the project namespace for stable UUIDs across version changes.
+    Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name.as_bytes())
 }
 
 #[cfg(test)]
@@ -1513,9 +1036,9 @@ mod tests {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.1");
         let ns3 = derive_crate_namespace("other-crate", "1.0.0");
-        assert_ne!(
+        assert_eq!(
             ns1, ns2,
-            "Different versions should produce different namespaces"
+            "Different versions should produce the same namespace"
         );
         assert_ne!(
             ns1, ns3,

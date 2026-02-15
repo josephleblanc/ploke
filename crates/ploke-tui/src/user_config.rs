@@ -97,6 +97,9 @@ pub struct ToolingConfig {
     pub cargo_check_timeout_secs: u64,
     #[serde(default = "default_cargo_test_timeout_secs")]
     pub cargo_test_timeout_secs: u64,
+    /// Allowed file extensions for create_file (e.g. ["rs", "md"]). Use "*" or "any" to allow all.
+    #[serde(default = "default_create_file_extensions")]
+    pub create_file_extensions: Vec<String>,
 }
 
 impl Default for ToolingConfig {
@@ -104,6 +107,7 @@ impl Default for ToolingConfig {
         Self {
             cargo_check_timeout_secs: default_cargo_check_timeout_secs(),
             cargo_test_timeout_secs: default_cargo_test_timeout_secs(),
+            create_file_extensions: default_create_file_extensions(),
         }
     }
 }
@@ -116,10 +120,50 @@ fn default_cargo_test_timeout_secs() -> u64 {
     600
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+fn default_create_file_extensions() -> Vec<String> {
+    vec![
+        "rs".to_string(),
+        "md".to_string(),
+        "txt".to_string(),
+        "toml".to_string(),
+        "yaml".to_string(),
+        "yml".to_string(),
+        "json".to_string(),
+        "ini".to_string(),
+        "cfg".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CtxPrefs {
+    #[serde(default)]
     pub strategy: CtxStrategy,
-    // more here...
+    #[serde(default = "default_ctx_mode")]
+    pub mode: CtxMode,
+    #[serde(default = "default_ctx_mode_config")]
+    pub modes: CtxModeConfig,
+    #[serde(default = "default_max_leased_tokens")]
+    pub max_leased_tokens: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CtxMode {
+    Off,
+    Light,
+    Heavy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CtxModeProfile {
+    pub top_k: usize,
+    pub per_part_max_tokens: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CtxModeConfig {
+    pub light: CtxModeProfile,
+    pub heavy: CtxModeProfile,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,6 +181,63 @@ pub const DEFAULT_CONTEXT_TURNS_TO_LIVE: u16 = 15;
 impl Default for CtxStrategy {
     fn default() -> Self {
         Self::Automatic(DEFAULT_CONTEXT_TURNS_TO_LIVE)
+    }
+}
+
+impl Default for CtxPrefs {
+    fn default() -> Self {
+        Self {
+            strategy: CtxStrategy::default(),
+            mode: default_ctx_mode(),
+            modes: default_ctx_mode_config(),
+            max_leased_tokens: default_max_leased_tokens(),
+        }
+    }
+}
+
+impl CtxPrefs {
+    pub fn validated(self) -> Self {
+        let max_leased_tokens = self.max_leased_tokens.clamp(128, 200_000);
+        Self {
+            strategy: self.strategy,
+            mode: self.mode,
+            modes: self.modes.validated(),
+            max_leased_tokens,
+        }
+    }
+
+    pub fn mode_profile(&self) -> Option<&CtxModeProfile> {
+        match self.mode {
+            CtxMode::Off => None,
+            CtxMode::Light => Some(&self.modes.light),
+            CtxMode::Heavy => Some(&self.modes.heavy),
+        }
+    }
+}
+
+impl Default for CtxMode {
+    fn default() -> Self {
+        CtxMode::Light
+    }
+}
+
+impl CtxModeProfile {
+    fn validated(self) -> Self {
+        let top_k = self.top_k.clamp(1, 200);
+        let per_part_max_tokens = self.per_part_max_tokens.clamp(32, 4096);
+        Self {
+            top_k,
+            per_part_max_tokens,
+        }
+    }
+}
+
+impl CtxModeConfig {
+    fn validated(self) -> Self {
+        Self {
+            light: self.light.validated(),
+            heavy: self.heavy.validated(),
+        }
     }
 }
 
@@ -380,6 +481,8 @@ impl ChatTimeoutStrategy {
 pub struct RagUserConfig {
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    #[serde(default = "default_rag_per_part_max_tokens")]
+    pub per_part_max_tokens: usize,
     #[serde(default)]
     pub strategy: RetrievalStrategyUser,
     #[serde(default = "default_bm25_timeout_ms")]
@@ -398,6 +501,7 @@ impl Default for RagUserConfig {
     fn default() -> Self {
         Self {
             top_k: default_top_k(),
+            per_part_max_tokens: default_rag_per_part_max_tokens(),
             strategy: RetrievalStrategyUser::default(),
             bm25_timeout_ms: default_bm25_timeout_ms(),
             bm25_retry_backoff_ms: default_bm25_retry_backoff_ms(),
@@ -411,6 +515,7 @@ impl Default for RagUserConfig {
 impl RagUserConfig {
     pub fn validated(self) -> Self {
         let top_k = self.top_k.clamp(1, 200);
+        let per_part_max_tokens = self.per_part_max_tokens.clamp(32, 4096);
         let bm25_timeout_ms = self.bm25_timeout_ms.clamp(10, 5_000);
         let bm25_retry_backoff_ms = if self.bm25_retry_backoff_ms.is_empty() {
             default_bm25_retry_backoff_ms()
@@ -429,6 +534,7 @@ impl RagUserConfig {
         });
         Self {
             top_k,
+            per_part_max_tokens,
             strategy: self.strategy,
             bm25_timeout_ms,
             bm25_retry_backoff_ms,
@@ -479,6 +585,22 @@ fn default_tool_call_timeout_secs() -> u64 {
     30
 }
 
+fn default_ctx_mode() -> CtxMode {
+    CtxMode::Light
+}
+
+fn default_ctx_mode_config() -> CtxModeConfig {
+    let light = CtxModeProfile {
+        top_k: default_top_k(),
+        per_part_max_tokens: default_rag_per_part_max_tokens(),
+    };
+    let heavy = CtxModeProfile {
+        top_k: light.top_k.saturating_mul(3),
+        per_part_max_tokens: light.per_part_max_tokens.saturating_mul(3),
+    };
+    CtxModeConfig { light, heavy }
+}
+
 fn default_tool_call_chain_limit() -> usize {
     100
 }
@@ -507,6 +629,10 @@ fn default_top_k() -> usize {
     15
 }
 
+fn default_rag_per_part_max_tokens() -> usize {
+    256
+}
+
 fn default_bm25_timeout_ms() -> u64 {
     250
 }
@@ -521,6 +647,10 @@ fn default_token_limit() -> u32 {
 
 fn default_tool_retries() -> u32 {
     2
+}
+
+fn default_max_leased_tokens() -> usize {
+    2_048
 }
 
 fn default_llm_timeout_secs() -> u64 {
@@ -551,16 +681,33 @@ mod tests {
 
             [rag]
             top_k = 20
+            per_part_max_tokens = 160
             bm25_timeout_ms = 300
             bm25_retry_backoff_ms = [50, 100]
             strict_bm25_by_default = true
             strategy = { Hybrid = { rrf = { k = 40.0, weight_bm25 = 1.0, weight_dense = 2.0 }, mmr = { lambda = 0.7, sim_metric = { Cosine = {} }, candidate_pool = 30 } } }
+
+            [context_management]
+            mode = "light"
+            max_leased_tokens = 2400
+
+            [context_management.modes.light]
+            top_k = 20
+            per_part_max_tokens = 160
+
+            [context_management.modes.heavy]
+            top_k = 60
+            per_part_max_tokens = 480
         "#;
 
         let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
         assert_eq!(cfg.tool_retries, 3);
         assert_eq!(cfg.chat_policy.tool_call_chain_limit, 50);
         assert_eq!(cfg.rag.top_k, 20);
+        assert_eq!(cfg.rag.per_part_max_tokens, 160);
+        assert_eq!(cfg.context_management.mode, CtxMode::Light);
+        assert_eq!(cfg.context_management.modes.light.top_k, 20);
+        assert_eq!(cfg.context_management.max_leased_tokens, 2400);
 
         let serialized = toml::to_string(&cfg).expect("serialize");
         assert!(serialized.contains("tool_retries"));

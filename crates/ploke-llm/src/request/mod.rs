@@ -72,8 +72,11 @@ pub struct ModelPricing {
         skip_serializing_if = "Option::is_none"
     )]
     pub internal_reasoning: Option<f64>,
-    // Price per token in USD for system(?) prompt
+    // Fixed cost per API request (in USD?)
     // Most have this, 322/323 have it, so all but one
+    // NOTE: As of 2026-02-15 this field is less common, we need to update our survey of how many
+    // listed models use this field. We may have a way of counting these in a helper that parses
+    // the json but I'd need to find it.
     #[serde(
         default,
         deserialize_with = "string_or_f64_opt",

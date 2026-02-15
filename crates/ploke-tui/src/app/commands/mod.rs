@@ -23,10 +23,17 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     index cancel - Cancel indexing
     check api - Check API key configuration
     copy - Copy selected conversation message to clipboard
+    save history - Save conversation history/state
+    load crate <name> - Load a saved crate database by crate name
+    save db | sd - Save active crate database snapshot
+    query load | ql - Load default query from default.dl
+    query load <query_name> <file_name> - Load a named query from a file
+    batch [prompt_file] [out_file] [max_hits] [threshold] - Run batch prompt search
 
     model list - List available models
     model info - Show active model/provider settings
     model use <name> - Switch to a configured model by alias or id
+    model <name> - Legacy shorthand for 'model use <name>'
     model refresh [--local] - Refresh model registry (OpenRouter) and API keys; use --local to skip network
     model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
     model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
@@ -51,7 +58,12 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     edit auto <on|off> - Toggle auto-approval of staged edits
     edit approve <request_id> - Apply staged code edits with this request ID
     edit deny <request_id> - Deny and discard staged code edits
+    create approve <request_id> - Apply staged file creations with this request ID
+    create deny <request_id> - Deny and discard staged file creations
     tool verbosity <minimal|normal|verbose|toggle> - Set or cycle tool output verbosity
+    tool verbosity - Show current tool verbosity
+    search <query> - Search indexed code context and open context browser
+    context plan | contextplan - Open context plan overlay
 
     help - Show this help
     help <topic> - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'

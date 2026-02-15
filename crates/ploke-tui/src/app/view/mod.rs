@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::app::types::RenderableMessage;
 pub mod components;
 pub mod rendering;
+pub mod widgets;
 use super::{App, AppEvent};
 
 /// Placeholder view model for future snapshot-based rendering tests.

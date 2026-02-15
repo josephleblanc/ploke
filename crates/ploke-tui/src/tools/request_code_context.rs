@@ -136,6 +136,7 @@ impl super::Tool for RequestCodeContextGat {
         let top_k = calc_top_k_for_budget(token_budget).min(cfg.rag.top_k);
         let budget = TokenBudget {
             max_total: token_budget as usize,
+            per_part_max: cfg.rag.per_part_max_tokens,
             ..Default::default()
         };
         let strategy = cfg.rag.strategy.to_runtime();
