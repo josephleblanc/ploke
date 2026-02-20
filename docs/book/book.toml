@@ -1,0 +1,13 @@
+[book]
+authors = ["ploke contributors"]
+language = "en"
+multilingual = false
+src = "src"
+title = "ploke documentation"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/josephleblanc/ploke"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/josephleblanc/ploke/edit/main/docs/book/{path}"
