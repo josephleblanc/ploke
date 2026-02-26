@@ -13,6 +13,8 @@ pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
     NotApplicable(SyntacticRelation),
 }
+
+// ANCHOR: syntactic_relation
 /// Represents a type-safe structural or semantic relation between two nodes in the code graph.
 /// Each variant enforces the correct NodeId types for its source and target where possible.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,6 +144,7 @@ pub enum SyntacticRelation {
         target: AssociatedItemNodeId,
     },
 }
+// ANCHOR_END: syntactic_relation
 
 // pub fn find_ancestor(child: PrimaryNodeId, rels: &[ SyntacticRelation ]) -> ModuleNodeId {
 //     rels.iter().find_map(|r| r.contains_target(child).or_else())

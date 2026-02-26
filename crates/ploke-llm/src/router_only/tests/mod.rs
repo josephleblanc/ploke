@@ -367,8 +367,6 @@ async fn test_default_post_completions() -> Result<()> {
     eprintln!("is_success: {}", is_success);
     eprintln!("status: {}", response.status());
 
-    // let response_text = response.json().await?;
-
     // let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
     let response_value: serde_json::Value = response.json().await?;
     eprintln!("{}", response_value);
