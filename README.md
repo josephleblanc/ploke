@@ -82,6 +82,23 @@ at a Rust crate's directory.
 <!-- TODO: Link to Usage + Selecting a Model sections -->
 For more details, see Usage and Selecting a Model below.
 
+### Documentation (mdBook)
+
+Project documentation is moving to an in-tree mdBook at `docs/book/`.
+
+```bash
+# one-time install
+cargo install mdbook
+
+# live preview while editing docs
+mdbook serve docs/book --open
+
+# static build
+mdbook build docs/book
+```
+
+The rendered output (`docs/book/book/`) is generated and not committed.
+
 <!-- For example, to run Ploke on a new rust project: -->
 <!---->
 <!-- ```bash -->

@@ -12,6 +12,7 @@ target/
 # mdbook
 syn_parser/book/
 book/*.js
+docs/book/book/
 
 ## AI stuff
 .aider*
