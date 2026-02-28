@@ -421,7 +421,11 @@ impl TestModelItem {
                     &p.provider_slug,
                 )
                 .expect("provider slug");
-                let pname = slug.to_provider_name();
+                let pname = slug.to_provider_name().unwrap_or_else(|| {
+                    crate::llm::router_only::openrouter::providers::ProviderName::new(
+                        &p.provider_slug,
+                    )
+                });
                 let provider_key =
                     crate::llm::ProviderKey::new(&slug.to_string()).expect("provider key");
                 ModelProviderRow {

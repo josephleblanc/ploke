@@ -62,9 +62,8 @@ pub trait HasModels: Router {
                 .error_for_status()?;
 
             let body = resp.bytes().await?;
-            let parsed = serde_json::from_slice::<Self::Response>(&body).map_err(|err| {
-                log_models_decode_error(&body, &err);
-                err
+            let parsed = serde_json::from_slice::<Self::Response>(&body).inspect_err(|err| {
+                log_models_decode_error(&body, err);
             })?;
 
             Ok(parsed)
@@ -98,7 +97,7 @@ fn redact_body_snippet(body: &[u8]) -> String {
             let tail = &text[abs_pos..];
             let end_rel = tail
                 .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
-                .unwrap_or_else(|| tail.len());
+                .unwrap_or(tail.len());
             text.replace_range(abs_pos..abs_pos + end_rel, "[redacted]");
             start = abs_pos + "[redacted]".len();
         }

@@ -2031,7 +2031,7 @@ impl App {
 
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: commands::HELP_COMMANDS.to_string(),
+            msg: commands::help_commands_markdown(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });

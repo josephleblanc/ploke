@@ -24,49 +24,49 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     check api - Check API key configuration
     copy - Copy selected conversation message to clipboard
     save history - Save conversation history/state
-    load crate <name> - Load a saved crate database by crate name
+    load crate &lt;name&gt; - Load a saved crate database by crate name
     save db | sd - Save active crate database snapshot
     query load | ql - Load default query from default.dl
-    query load <query_name> <file_name> - Load a named query from a file
+    query load &lt;query_name&gt; &lt;file_name&gt; - Load a named query from a file
     batch [prompt_file] [out_file] [max_hits] [threshold] - Run batch prompt search
 
     model list - List available models
     model info - Show active model/provider settings
-    model use <name> - Switch to a configured model by alias or id
-    model <name> - Legacy shorthand for 'model use <name>'
+    model use &lt;name&gt; - Switch to a configured model by alias or id
+    model &lt;name&gt; - Legacy shorthand for 'model use &lt;name&gt;'
     model refresh [--local] - Refresh model registry (OpenRouter) and API keys; use --local to skip network
     model load [path] - Load configuration from path (default: ~/.config/ploke/config.toml)
     model save [path] [--with-keys] - Save configuration; omit --with-keys to redact secrets
-    model search <keyword> - Search OpenRouter models and open interactive browser
-    embedding search <keyword> - Search OpenRouter embedding models and open interactive browser
-    model providers <model_id> - List provider endpoints for a model and show tool support and slugs
-    provider strictness <openrouter-only|allow-custom|allow-any> - Restrict selectable providers
-    provider tools-only <on|off> - Enforce using only models/providers that support tool calls
-    provider select <model_id> <provider_slug> - Pin a model to a specific provider endpoint
-    provider pin <model_id> <provider_slug> - Alias for 'provider select'
+    model search &lt;keyword&gt; - Search OpenRouter models and open interactive browser
+    embedding search &lt;keyword&gt; - Search OpenRouter embedding models and open interactive browser
+    model providers &lt;model_id&gt; - List provider endpoints for a model and show tool support and slugs
+    provider strictness &lt;openrouter-only|allow-custom|allow-any&gt; - Restrict selectable providers
+    provider tools-only &lt;on|off&gt; - Enforce using only models/providers that support tool calls
+    provider select &lt;model_id&gt; &lt;provider_slug&gt; - Pin a model to a specific provider endpoint
+    provider pin &lt;model_id&gt; &lt;provider_slug&gt; - Alias for 'provider select'
 
     bm25 rebuild - Rebuild sparse BM25 index
     bm25 status - Show sparse BM25 index status
-    bm25 save <path> - Save sparse index sidecar to file
-    bm25 load <path> - Load sparse index sidecar from file
-    bm25 search <query> [top_k] - Search with BM25
-    hybrid <query> [top_k] - Hybrid (BM25 + dense) search
+    bm25 save &lt;path&gt; - Save sparse index sidecar to file
+    bm25 load &lt;path&gt; - Load sparse index sidecar from file
+    bm25 search &lt;query&gt; [top_k] - Search with BM25
+    hybrid &lt;query&gt; [top_k] - Hybrid (BM25 + dense) search
 
     preview [on|off|toggle] - Toggle context preview panel
-    edit preview mode <code|diff> - Set edit preview mode for proposals
-    edit preview lines <N> - Set max preview lines per section
-    edit auto <on|off> - Toggle auto-approval of staged edits
-    edit approve <request_id> - Apply staged code edits with this request ID
-    edit deny <request_id> - Deny and discard staged code edits
-    create approve <request_id> - Apply staged file creations with this request ID
-    create deny <request_id> - Deny and discard staged file creations
-    tool verbosity <minimal|normal|verbose|toggle> - Set or cycle tool output verbosity
+    edit preview mode &lt;code|diff&gt; - Set edit preview mode for proposals
+    edit preview lines &lt;N&gt; - Set max preview lines per section
+    edit auto &lt;on|off&gt; - Toggle auto-approval of staged edits
+    edit approve &lt;request_id&gt; - Apply staged code edits with this request ID
+    edit deny &lt;request_id&gt; - Deny and discard staged code edits
+    create approve &lt;request_id&gt; - Apply staged file creations with this request ID
+    create deny &lt;request_id&gt; - Deny and discard staged file creations
+    tool verbosity &lt;minimal|normal|verbose|toggle&gt; - Set or cycle tool output verbosity
     tool verbosity - Show current tool verbosity
-    search <query> - Search indexed code context and open context browser
+    search &lt;query&gt; - Search indexed code context and open context browser
     context plan | contextplan - Open context plan overlay
 
     help - Show this help
-    help <topic> - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
+    help &lt;topic&gt; - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
 
     Keyboard shortcuts (Normal mode):
     q - Quit
@@ -90,13 +90,13 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     Ctrl+n - Scroll down one line
     Ctrl+p - Scroll up one line
 
-    Model Browser (opened via 'model search <keyword>'):
+    Model Browser (opened via 'model search &lt;keyword&gt;'):
       ↑/↓ or j/k - Navigate
       Enter/Space - Expand/collapse details
       s - Select and set active model
       q/Esc - Close
 
-    Embedding Browser (opened via 'embedding search <keyword>'):
+    Embedding Browser (opened via 'embedding search &lt;keyword&gt;'):
       ↑/↓ or j/k - Navigate
       Enter/Space - Expand/collapse details
       s - Select embedding model (records selection in UI log)
@@ -106,6 +106,14 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
       ↑/↓ - Navigate your previous user messages in this conversation
     PageUp/PageDown - Jump to oldest/newest user message in history
 "#;
+
+pub fn help_commands_markdown() -> String {
+    HELP_COMMANDS
+        .lines()
+        .map(|line| line.strip_prefix("    ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct CommandEntry {
