@@ -174,6 +174,7 @@ impl App {
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
         active_model_id: String,
         tool_verbosity: ToolVerbosity,
+        cancel_tx: watch::Sender<CancelChatToken>
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()

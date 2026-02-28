@@ -25,7 +25,7 @@ parallelization cuts down on embedding time as expected, which should more or
 less be just time before/after embedding divided by number of parallel channels
 used.
 
-3. `/help` message somewhat broken
+3. [x] `/help` message somewhat broken
 
 When I use the `/help` command running ploke-tui, I'm seeing some weird
 coloration on the first couple paragraphs, likely due to either the content of
@@ -33,6 +33,9 @@ the `/help` message or possibly our markdown renderer.
 
 Also, I'm not sure we really have a good way of testing the color of the
 messages here. Might be good to take a look.
+
+- Fixed: The issue with coloring was due to the way `<` and `>` symbols were
+being incorrectly rendered by our markdown syntax coloring.
 
 4. Need token cancellation support
 

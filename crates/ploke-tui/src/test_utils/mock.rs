@@ -14,12 +14,13 @@ use crate::app::App;
 use crate::app_state::{AppState, ChatState, ConfigState, SystemState};
 use crate::chat_history::ChatHistory;
 use crate::event_bus::EventBus;
+use crate::llm::manager::CancelChatToken;
 use crate::tools::ToolVerbosity;
 use crate::user_config::CommandStyle;
 use ploke_embed::indexer::IndexerTask;
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagService, TokenBudget};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 pub fn create_mock_app_state() -> AppState {
     let db = create_mock_db(0);
@@ -52,6 +53,7 @@ pub fn create_mock_app_state() -> AppState {
 pub fn create_mock_app() -> App {
     let state = Arc::new(create_mock_app_state());
     let (cmd_tx, _cmd_rx) = mpsc::channel(1024);
+    let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
     let event_bus = EventBus::new(crate::EventBusCaps::default());
     let active_model_id = "mock-model".to_string();
 
@@ -62,6 +64,7 @@ pub fn create_mock_app() -> App {
         &event_bus,
         active_model_id,
         ToolVerbosity::Normal,
+        cancel_tx,
     )
 }
 
