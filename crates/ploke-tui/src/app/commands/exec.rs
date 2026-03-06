@@ -41,6 +41,7 @@ const TEST_QUERY_RESULTS: &str = "results.json";
 /// not yet migrated to structured parsing.
 pub fn execute(app: &mut App, command: Command) {
     match command {
+        Command::Quit => app.quit(),
         Command::Help => show_command_help(app),
         Command::HelpTopic(topic) => show_topic_help(app, &topic),
         Command::CopySelection => app.copy_selected_message(),

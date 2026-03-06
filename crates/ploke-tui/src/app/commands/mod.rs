@@ -64,6 +64,7 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     tool verbosity - Show current tool verbosity
     search &lt;query&gt; - Search indexed code context and open context browser
     context plan | contextplan - Open context plan overlay
+    quit - Quit the application (same behavior as 'q' in Normal mode)
 
     help - Show this help
     help &lt;topic&gt; - Topic-specific help, e.g. 'help model', 'help edit', 'help bm25', 'help provider', 'help index'
@@ -292,6 +293,11 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
         command: "tool verbosity",
         completion: "tool verbosity <minimal|normal|verbose|toggle>",
         description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "quit",
+        completion: "quit",
+        description: "Quit the application",
     },
     CommandEntry {
         command: "help",
