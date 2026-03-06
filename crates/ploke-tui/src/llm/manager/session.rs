@@ -541,6 +541,52 @@ pub struct ChatSession<R: Router> {
     pub cancel_rx: watch::Receiver<CancelChatToken>,
 }
 
+async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>) {
+    loop {
+        if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
+            return;
+        }
+        if cancel_rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn abort_for_user_cancel(
+    report: &mut ChatSessionReport,
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    assistant_message_id: Uuid,
+    initial_message_updated: &mut bool,
+    attempts: u32,
+    chain_index: usize,
+    model_key: &Option<ploke_llm::ModelKey>,
+    commit_phase: CommitPhase,
+) -> ChatSessionReport {
+    let err = LlmError::ChatStep("Cancelled by user.".to_string());
+    let context = base_error_context(
+        attempts,
+        chain_index,
+        "user_cancel",
+        model_key,
+        assistant_message_id,
+    );
+    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+    emit_loop_error(
+        state_cmd_tx,
+        assistant_message_id,
+        initial_message_updated,
+        &loop_error,
+    )
+    .await;
+    report.record_error(loop_error.clone());
+    report.outcome = SessionOutcome::Aborted {
+        error_id: loop_error.error_id,
+    };
+    report.commit_phase = commit_phase;
+    report.attempts = attempts;
+    report.clone()
+}
+
 /// Chat loop structure:
 /// - issue a chat step
 /// - handle tool calls (if any), update UI, append tool results
@@ -559,7 +605,7 @@ pub async fn run_chat_session<R: Router>(
         state_cmd_tx,
         included_message_ids,
         chat_policy,
-        cancel_rx
+        mut cancel_rx,
     } = session;
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
@@ -584,6 +630,19 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
         attempts = attempts.saturating_add(1);
+        if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
+            return abort_for_user_cancel(
+                &mut report,
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                attempts,
+                chain_index,
+                &model_key,
+                commit_phase,
+            )
+            .await;
+        }
 
         if tokens_logging_enabled() {
             let request_payload = format_tokens_payload(&req);
@@ -602,7 +661,21 @@ pub async fn run_chat_session<R: Router>(
         let ChatStepData {
             outcome,
             full_response,
-        } = match ploke_llm::chat_step(&client, &req, &cfg).await {
+        } = match tokio::select! {
+            res = ploke_llm::chat_step(&client, &req, &cfg) => res,
+            _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                return abort_for_user_cancel(
+                    &mut report,
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    attempts,
+                    chain_index,
+                    &model_key,
+                    commit_phase,
+                ).await;
+            }
+        } {
             Ok(step) => step,
             Err(err) => {
                 if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
@@ -715,8 +788,22 @@ pub async fn run_chat_session<R: Router>(
                     step_request_id,
                     calls,
                     policy.tool_call_timeout,
-                )
-                .await;
+                );
+                let results = tokio::select! {
+                    result = results => result,
+                    _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                        return abort_for_user_cancel(
+                            &mut report,
+                            &state_cmd_tx,
+                            assistant_message_id,
+                            &mut initial_message_updated,
+                            attempts,
+                            chain_index,
+                            &model_key,
+                            commit_phase,
+                        ).await;
+                    }
+                };
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
