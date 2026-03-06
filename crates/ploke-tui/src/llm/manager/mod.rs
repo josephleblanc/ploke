@@ -11,7 +11,7 @@ mod session;
 pub(crate) mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
-pub(crate) use crate::llm::manager::session::CancelChatToken;
+pub use crate::llm::manager::session::CancelChatToken;
 
 use crate::{
     SystemEvent,

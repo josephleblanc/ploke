@@ -1334,7 +1334,10 @@ mod test {
     use syn_parser::parser::nodes::ToCozoUuid;
     use tracing::{debug, trace};
 
-    use crate::{llm::manager::llm_manager, tracing_setup::init_tracing};
+    use crate::{
+        llm::manager::{CancelChatToken, llm_manager},
+        tracing_setup::init_tracing,
+    };
 
     use super::*;
     use ploke_embed::{
@@ -1342,7 +1345,10 @@ mod test {
         local::LocalEmbedder,
     };
     use rand::Rng;
-    use tokio::time::{Duration, sleep};
+    use tokio::{
+        sync::watch,
+        time::{Duration, sleep},
+    };
 
     use super::error::{ErrorExt, ErrorSeverity, ResultExt};
     use color_eyre::Result;
@@ -1633,12 +1639,14 @@ mod test {
 
         // Spawn subsystems with backpressure-aware command sender
         let command_style = config.command_style;
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         tokio::spawn(llm_manager(
             event_bus.subscribe(EventPriority::Realtime),
             event_bus.subscribe(EventPriority::Background),
             state.clone(),
             cmd_tx.clone(), // Clone for each subsystem
             event_bus.clone(),
+            cancel_rx,
         ));
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 

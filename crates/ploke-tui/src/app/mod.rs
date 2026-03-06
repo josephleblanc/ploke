@@ -2134,7 +2134,10 @@ mod tests {
     use super::compute_input_height;
     use crate::test_utils::mock::create_mock_app;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn input_height_clamps_to_screen_and_layout() {
@@ -2174,6 +2177,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_completion_uses_cwd_for_bare_at() {
+        let _cwd_lock = CWD_LOCK.lock().expect("cwd lock");
         let temp = tempdir().expect("temp dir");
         let _guard = CwdGuard::set_to(temp.path());
         let app = create_mock_app();
@@ -2191,6 +2195,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_completion_resolves_temp_entries() {
+        let _cwd_lock = CWD_LOCK.lock().expect("cwd lock");
         let temp = tempdir().expect("temp dir");
         std::fs::create_dir(temp.path().join("src")).expect("create src");
         std::fs::write(temp.path().join("Cargo.toml"), "cargo").expect("write file");

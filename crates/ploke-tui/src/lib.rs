@@ -30,6 +30,7 @@ mod tests;
 pub mod tools;
 
 pub mod llm;
+pub use llm::manager::CancelChatToken;
 
 pub mod user_config;
 
@@ -85,7 +86,7 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
-use crate::llm::{ChatEvt, LlmEvent, manager::CancelChatToken};
+use crate::llm::{ChatEvt, LlmEvent};
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
