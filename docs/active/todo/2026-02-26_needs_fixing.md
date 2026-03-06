@@ -37,13 +37,17 @@ messages here. Might be good to take a look.
 - Fixed: The issue with coloring was due to the way `<` and `>` symbols were
 being incorrectly rendered by our markdown syntax coloring.
 
-4. Need token cancellation support
+4. [x] Need token cancellation support
 
 I think we might have some framework for token cancellation in terms of
 generating new requests from the chat in ploke-tui, maybe not. Actually, we
 should at least add a way for a key like `Esc` or `Ctrl-c` to cause the token
 generation or agent tool-calling loop to short-circuit. Right now we don't
 really have a way for the user to stop the agent loop, which feels bad.
+
+- Partially Fixed: Implemented a cancel token which works on `Esc`, but the
+implementation is somewhat clunky since the key `Esc` is shared with going from
+"Insert" to "Normal" modes
 
 5. Pending code edits are weird
 
