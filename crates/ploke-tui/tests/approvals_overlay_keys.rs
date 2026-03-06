@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ploke_core::ArcStr;
 use ploke_embed::runtime::EmbeddingRuntime;
+use ploke_tui::CancelChatToken;
 use ploke_tui::EventBus;
 use ploke_tui::app::App;
 use ploke_tui::app::types::Mode;
@@ -21,7 +22,7 @@ use ploke_tui::app_state::core::{
     SystemState,
 };
 use ploke_tui::event_bus::EventBusCaps;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
 use tokio::time::{Duration, timeout};
 
 async fn make_app_with_proposals() -> (
@@ -77,6 +78,7 @@ async fn make_app_with_proposals() -> (
     // Event bus and command channel
     let event_bus = EventBus::new(EventBusCaps::default());
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
+    let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
 
     let mut app = App::new(
         cfg.command_style,
@@ -85,6 +87,7 @@ async fn make_app_with_proposals() -> (
         &event_bus,
         "openai/gpt-4o".to_string(),
         cfg.tool_verbosity,
+        cancel_tx,
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;
@@ -153,6 +156,7 @@ async fn make_app_with_proposals_and_editor(
     // Event bus and command channel
     let event_bus = EventBus::new(EventBusCaps::default());
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
+    let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
 
     let mut app = App::new(
         cfg.command_style,
@@ -161,6 +165,7 @@ async fn make_app_with_proposals_and_editor(
         &event_bus,
         "openai/gpt-4o".to_string(),
         cfg.tool_verbosity,
+        cancel_tx,
     );
     // Open overlay and set mode (mode is irrelevant for overlay keys)
     app.mode = Mode::Insert;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
@@ -15,6 +15,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
 use ploke_tui as tui;
+use tui::CancelChatToken;
 use tui::app::App;
 use tui::app::RunOptions;
 use tui::app_state::{
@@ -144,6 +145,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
             ));
         }
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+        let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         let cmd_tx_forward = cmd_tx_state.clone();
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx_app.recv().await {
@@ -161,6 +163,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
             &event_bus,
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
+            cancel_tx.clone(),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
@@ -281,6 +284,7 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             ));
         }
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+        let (cancel_tx, _cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         let cmd_tx_forward = cmd_tx_state.clone();
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx_app.recv().await {
@@ -298,6 +302,7 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             &event_bus,
             "openai/gpt-4o".to_string(),
             ToolVerbosity::Normal,
+            cancel_tx.clone(),
         );
         let (input_tx, input_rx) = mpsc::channel::<crossterm::event::Event>(32);
         let input_stream = ReceiverStream::new(input_rx).map(Ok);
