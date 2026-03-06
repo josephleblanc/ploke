@@ -66,7 +66,7 @@ use ploke_embed::{
 };
 use ploke_rag::RagConfig;
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing::instrument;
 use ui::UiEvent;
 use user_config::{OPENROUTER_URL, UserConfig};
@@ -85,7 +85,7 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
-use crate::llm::{ChatEvt, LlmEvent};
+use crate::llm::{ChatEvt, LlmEvent, manager::CancelChatToken};
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
@@ -265,12 +265,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
+    let ( cancel_tx, cancel_rx ) = watch::channel(CancelChatToken::KeepOpen);
     tokio::spawn(llm::manager::llm_manager(
         event_bus.subscribe(EventPriority::Realtime),
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
         event_bus.clone(),
+        cancel_rx
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
     tokio::spawn(observability::run_observability(
@@ -286,6 +288,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         &event_bus,
         default_model(),
         tool_verbosity,
+        cancel_tx
     );
     let result = app.run(terminal).await;
     ratatui::restore();

@@ -11,6 +11,7 @@ mod session;
 pub(crate) mod events;
 pub(crate) use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
+pub(crate) use crate::llm::manager::session::CancelChatToken;
 
 use crate::{
     SystemEvent,
@@ -32,7 +33,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fs, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -116,6 +117,7 @@ pub async fn llm_manager(
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     event_bus: Arc<EventBus>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
     // providers: crate::user_config::ModelRegistry,
 ) {
     let client = Client::new();
@@ -123,6 +125,12 @@ pub async fn llm_manager(
     let mut ready_contexts: HashMap<EvtKey, ChatEvt> = HashMap::default();
     let mut rt_closed = false;
     let mut bg_closed = false;
+    let llm_request_args = LlmRequestArgs {
+        state,
+        cmd_tx,
+        client,
+        event_bus,
+    };
 
     // Enters loop every time there is a new event.
     //  - Currently only receives:
@@ -134,12 +142,10 @@ pub async fn llm_manager(
                 match evt {
                     Ok(event) => handle_event(
                         event,
-                        &client,
-                        &state,
-                        &cmd_tx,
-                        &event_bus,
+                        llm_request_args.clone(),
                         &mut pending_requests,
                         &mut ready_contexts,
+                        cancel_rx.clone()
                     ),
                     Err(broadcast::error::RecvError::Closed) => {
                         rt_closed = true;
@@ -153,12 +159,10 @@ pub async fn llm_manager(
                 match evt {
                     Ok(event) => handle_event(
                         event,
-                        &client,
-                        &state,
-                        &cmd_tx,
-                        &event_bus,
+                        llm_request_args.clone(),
                         &mut pending_requests,
                         &mut ready_contexts,
+                        cancel_rx.clone()
                     ),
                     Err(broadcast::error::RecvError::Closed) => {
                         bg_closed = true;
@@ -176,14 +180,20 @@ pub async fn llm_manager(
     }
 }
 
+#[derive(Clone)]
+pub struct LlmRequestArgs {
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+    client: Client,
+    event_bus: Arc<EventBus>,
+}
+
 fn handle_event(
     event: AppEvent,
-    client: &Client,
-    state: &Arc<AppState>,
-    cmd_tx: &mpsc::Sender<StateCommand>,
-    event_bus: &Arc<EventBus>,
+    args: LlmRequestArgs,
     pending_requests: &mut HashMap<EvtKey, ChatEvt>,
     ready_contexts: &mut HashMap<EvtKey, ChatEvt>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
 ) {
     tracing::info!(?event);
     match event {
@@ -207,18 +217,10 @@ fn handle_event(
                 ready_contexts.insert(event_key, context);
             } else {
                 // match found, process request
-                let client_clone = client.clone();
                 let req = pending_requests
                     .remove(&event_key)
                     .expect("Event key-val must exist");
-                tokio::spawn(process_llm_request(
-                    req,
-                    Arc::clone(state),
-                    cmd_tx.clone(),
-                    client_clone,
-                    event_bus.clone(),
-                    context,
-                ));
+                tokio::spawn(process_llm_request(req, context, args, cancel_rx));
             }
         }
         AppEvent::System(SystemEvent::ToolCallRequested {
@@ -233,8 +235,8 @@ fn handle_event(
                 tool = ?tool_call.function.name,
                 "Dispatching ToolEvent::Requested in LLM manager"
             );
-            let state = Arc::clone(state);
-            let event_bus = Arc::clone(event_bus);
+            let state = Arc::clone(&args.state);
+            let event_bus = Arc::clone(&args.event_bus);
 
             let ctx = crate::tools::Ctx {
                 state,
@@ -251,10 +253,11 @@ fn handle_event(
             router,
         })) => {
             use ploke_llm::handle_endpoint_request_async;
-            let event_bus_clone = event_bus.clone();
-            let client_clone = client.clone();
+            let event_bus_clone = args.event_bus.clone();
+            let client_clone = args.client.clone();
             tokio::task::spawn(async move {
-                let response = handle_endpoint_request_async(client_clone, model_key, variant).await;
+                let response =
+                    handle_endpoint_request_async(client_clone, model_key, variant).await;
                 event_bus_clone.send(AppEvent::Llm(LlmEvent::Endpoint(response)));
             });
         }
@@ -263,9 +266,8 @@ fn handle_event(
             // TODO: Add `router` field to ModelEndpointRequest, then process the model_id into
             // the typed version for that specific router before making the request.
             // + make model_id typed as ModelKey
-            let state = Arc::clone(state);
-            let event_bus = Arc::clone(event_bus);
-            let client = client.clone();
+            let event_bus = Arc::clone(&args.event_bus);
+            let client = args.client.clone();
 
             tokio::task::spawn(async move {
                 use models::Event;
@@ -295,11 +297,9 @@ fn handle_event(
 /// The worker function that processes a single LLM request.
 pub async fn process_llm_request(
     request: ChatEvt,
-    state: Arc<AppState>,
-    cmd_tx: mpsc::Sender<StateCommand>,
-    client: Client,
-    event_bus: Arc<EventBus>,
     context: ChatEvt,
+    llm_request_args: LlmRequestArgs,
+    cancel_rx: watch::Receiver<CancelChatToken>,
 ) {
     // - parent_id here is the message the user sent that prompted the call to the API for the LLM's
     // response.
@@ -342,7 +342,7 @@ pub async fn process_llm_request(
     };
 
     if let Some(focus_hint) = {
-        let sys = state.system.read().await;
+        let sys = llm_request_args.state.system.read().await;
         sys.focused_crate().map(|info| {
             format!(
                 "Focused crate: {} at {}. Workspace-wide graph is not loaded; tools operate on the focused crate. Cargo runs against the focused manifest unless a workspace package is specified.",
@@ -357,7 +357,7 @@ pub async fn process_llm_request(
     }
 
     let active_model = {
-        let cfg = state.config.read().await;
+        let cfg = llm_request_args.state.config.read().await;
         cfg.active_model.clone()
     };
 
@@ -377,7 +377,7 @@ pub async fn process_llm_request(
     }
 
     // Track current context token count for observability.
-    let _ = cmd_tx
+    let _ = llm_request_args.cmd_tx
         .send(StateCommand::UpdateContextTokens {
             tokens: ContextTokens::new(context_tokens, TokenKind::Estimated),
         })
@@ -392,7 +392,7 @@ pub async fn process_llm_request(
         responder: responder_tx,
         new_assistant_msg_id: request_message_id,
     };
-    cmd_tx.send(create_cmd).await.expect(
+    llm_request_args.cmd_tx.send(create_cmd).await.expect(
         "Invalid state: sending over closed channel from process_llm_request via StateCommand",
     );
 
@@ -408,18 +408,20 @@ pub async fn process_llm_request(
         }
     };
 
-    // Prepare and execute the API call; UI updates happen inside the chat loop.
-    let report = prepare_and_run_llm_call(
-        &state,
-        &client,
+    let LlmRequestArgs { state, cmd_tx, client, event_bus } = llm_request_args;
+    let llm_call_args = LlmCallArgs {
+        state,
+        client,
         messages,
         included_message_ids,
-        event_bus.clone(),
+        event_bus,
         assistant_message_id,
         parent_id,
-        cmd_tx.clone(),
-    )
-    .await;
+        cmd_tx,
+        cancel_rx,
+    };
+    // Prepare and execute the API call; UI updates happen inside the chat loop.
+    let report = prepare_and_run_llm_call(llm_call_args).await;
 
     let summary = report.summary();
     tracing::info!(
@@ -440,17 +442,31 @@ pub async fn process_llm_request(
     }
 }
 
-#[instrument(skip_all)]
-async fn prepare_and_run_llm_call(
-    state: &Arc<AppState>,
-    client: &Client,
+pub struct LlmCallArgs {
+    state: Arc<AppState>,
+    client: Client,
     messages: Vec<RequestMessage>,
     included_message_ids: Vec<Uuid>,
     event_bus: Arc<EventBus>,
     assistant_message_id: Uuid,
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
-) -> ChatSessionReport {
+    cancel_rx: watch::Receiver<CancelChatToken>,
+}
+
+#[instrument(skip_all)]
+async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
+    let LlmCallArgs {
+        state,
+        client,
+        messages,
+        included_message_ids,
+        event_bus,
+        assistant_message_id,
+        parent_id,
+        cmd_tx,
+        cancel_rx,
+    } = args;
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
     let tool_defs: Vec<ToolDefinition> = vec![
@@ -517,19 +533,18 @@ async fn prepare_and_run_llm_call(
     let finish_policy = finish_policy_from_chat(&chat_policy);
     let http_timeout = Duration::from_secs(llm_timeout_secs);
 
-    run_chat_session(
+    let chat_session = session::ChatSession {
         client,
         req,
         parent_id,
         assistant_message_id,
         event_bus,
-        cmd_tx.clone(),
+        state_cmd_tx: cmd_tx.clone(),
         included_message_ids,
-        policy,
-        finish_policy,
-        http_timeout,
-    )
-    .await
+        chat_policy,
+        cancel_rx,
+    };
+    run_chat_session(chat_session, llm_timeout_secs).await
 
     // Persist model output or error for later inspection
     // if let Some(fut) = log_fut {

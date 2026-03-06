@@ -2,7 +2,7 @@
 
 use lazy_static::lazy_static;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc, watch};
 
 use crate::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
@@ -11,7 +11,7 @@ use crate::{
     chat_history::ChatHistory,
     default_model,
     file_man::FileManager,
-    llm::manager::llm_manager,
+    llm::manager::{CancelChatToken, llm_manager},
     observability, run_event_bus,
     user_config::{OPENROUTER_URL, UserConfig, openrouter_url},
 };
@@ -144,12 +144,14 @@ lazy_static! {
         // Build the App
         // Spawn subsystems with backpressure-aware command sender
         let command_style = config.command_style;
+        let (cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         tokio::spawn(llm_manager(
             event_bus.subscribe(EventPriority::Realtime),
             event_bus.subscribe(EventPriority::Background),
             state.clone(),
             cmd_tx.clone(), // Clone for each subsystem
             event_bus.clone(),
+            cancel_rx,
         ));
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
         tokio::spawn(observability::run_observability(
@@ -163,6 +165,7 @@ lazy_static! {
             &event_bus,
             default_model(),
             tool_verbosity,
+            cancel_tx,
         );
 
         Arc::new(Mutex::new(app))

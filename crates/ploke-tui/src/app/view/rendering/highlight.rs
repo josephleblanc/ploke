@@ -12,6 +12,7 @@ use once_cell::sync::Lazy;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::borrow::Cow;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::highlighting::{FontStyle, Style as SyntectStyle, Theme};
@@ -377,10 +378,11 @@ pub fn highlight_message_lines(content: &str, base_style: Style, width: u16) -> 
             }
             (_, Event::Text(t)) => {
                 let style = inline_style(base_style, italic_depth, bold_depth);
+                let decoded = decode_html_entities_minimal(t);
                 if let Some(table) = table_state.as_mut() {
-                    push_table_text(table, &t, style);
+                    push_table_text(table, &decoded, style);
                 } else {
-                    push_text(&t, style, &mut current_line, &mut lines, diff_enabled);
+                    push_text(&decoded, style, &mut current_line, &mut lines, diff_enabled);
                 }
             }
             (_, Event::Code(t)) => {
@@ -573,7 +575,7 @@ fn diff_style(line: &str) -> Option<Style> {
         Some(Style::new().fg(DIFF_REMOVAL))
     } else if line.starts_with("@@") {
         Some(Style::new().fg(DIFF_INFO).add_modifier(Modifier::BOLD))
-    } else if line.starts_with("diff --") || line.starts_with("index ") {
+    } else if line.starts_with("diff --") || is_git_diff_index_line(line) {
         Some(Style::new().fg(DIFF_META))
     } else if line.starts_with("---") || line.starts_with("+++") {
         Some(Style::new().fg(Color::LightBlue))
@@ -636,7 +638,7 @@ fn detect_diff_markers(content: &str) -> bool {
     }
     for line in plain.lines() {
         if line.starts_with("diff --")
-            || line.starts_with("index ")
+            || is_git_diff_index_line(line)
             || line.starts_with("---")
             || line.starts_with("+++")
             || line.starts_with("@@")
@@ -645,6 +647,10 @@ fn detect_diff_markers(content: &str) -> bool {
         }
     }
     plain.lines().any(|l| l.starts_with("@@"))
+}
+
+fn is_git_diff_index_line(line: &str) -> bool {
+    line.starts_with("index ") && line.contains("..")
 }
 
 fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
@@ -784,6 +790,17 @@ fn html_is_line_break(text: &str) -> bool {
     }
     let lower = trimmed.to_ascii_lowercase();
     matches!(lower.as_str(), "<br>" | "<br/>" | "<br />")
+}
+
+fn decode_html_entities_minimal(text: &str) -> Cow<'_, str> {
+    if !text.contains('&') {
+        return Cow::Borrowed(text);
+    }
+    let decoded = text
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    Cow::Owned(decoded)
 }
 
 fn wrap_single_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
@@ -1279,5 +1296,29 @@ Trailing text.";
             bold_ok && code_ok,
             "inline styles should apply inside table cells"
         );
+    }
+
+    #[test]
+    fn help_commands_render_angle_brackets_without_style_drift() {
+        let base = Style::new().fg(Color::Magenta);
+        let help = crate::app::commands::help_commands_markdown();
+        let lines = highlight_message_lines(&help, base, 240);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("load crate <name>"));
+        assert!(rendered.contains("provider strictness <openrouter-only|allow-custom|allow-any>"));
+        assert!(
+            !rendered.contains("&lt;") && !rendered.contains("&gt;"),
+            "angle-bracket placeholders should render as literal brackets"
+        );
+
+        for span in lines.iter().flatten() {
+            if !span.content.trim().is_empty() {
+                assert_eq!(
+                    span.style, base,
+                    "help text should keep a uniform SysInfo style"
+                );
+            }
+        }
     }
 }

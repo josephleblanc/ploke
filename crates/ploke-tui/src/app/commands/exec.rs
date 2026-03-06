@@ -12,7 +12,6 @@
 //! - Model switching delegated to `StateCommand::SwitchModel` which should broadcast
 //!   `SystemEvent::ModelSwitched` for UI updates.
 
-use super::HELP_COMMANDS;
 use super::parser::Command;
 use crate::app::App;
 use crate::llm::request::endpoint::EndpointsResponse;
@@ -42,6 +41,7 @@ const TEST_QUERY_RESULTS: &str = "results.json";
 /// not yet migrated to structured parsing.
 pub fn execute(app: &mut App, command: Command) {
     match command {
+        Command::Quit => app.quit(),
         Command::Help => show_command_help(app),
         Command::HelpTopic(topic) => show_topic_help(app, &topic),
         Command::CopySelection => app.copy_selected_message(),
@@ -388,7 +388,7 @@ fn show_model_info_async(app: &App) {
 
 fn show_command_help(app: &App) {
     app.send_cmd(StateCommand::AddMessageImmediate {
-        msg: HELP_COMMANDS.to_string(),
+        msg: super::help_commands_markdown(),
         kind: MessageKind::SysInfo,
         new_msg_id: Uuid::new_v4(),
     });
@@ -401,48 +401,48 @@ fn show_topic_help(app: &App, topic_prefix: &str) {
         r#"Model commands:
   model list                         - List available models
   model info                         - Show active model/provider settings
-  model use <name>                   - Switch to a configured model by alias or id
+  model use &lt;name&gt;                 - Switch to a configured model by alias or id
   model refresh [--local]            - Refresh model registry (OpenRouter) and API keys; use --local to skip network
   model load [path]                  - Load configuration from path (default: ~/.config/ploke/config.toml)
   model save [path] [--with-keys]    - Save configuration; omit --with-keys to redact secrets
-  model search <keyword>             - Search OpenRouter models; interactive browser opens:
+  model search &lt;keyword&gt;           - Search OpenRouter models; interactive browser opens:
                                        ↑/↓ or j/k to navigate, Enter/Space to expand, s to select, q/Esc to close
 "#
         .to_string()
     } else if t.starts_with("edit") {
         r#"Edit commands:
-  edit preview mode <code|diff>      - Set edit preview mode for proposals
-  edit preview lines <N>             - Set max preview lines per section
-  edit auto <on|off>                 - Toggle auto-approval of staged edits
-  edit approve <request_id>          - Apply staged code edits with this request ID
-  edit deny <request_id>             - Deny and discard staged code edits
+  edit preview mode &lt;code|diff&gt;    - Set edit preview mode for proposals
+  edit preview lines &lt;N&gt;           - Set max preview lines per section
+  edit auto &lt;on|off&gt;               - Toggle auto-approval of staged edits
+  edit approve &lt;request_id&gt;        - Apply staged code edits with this request ID
+  edit deny &lt;request_id&gt;           - Deny and discard staged code edits
 "#
         .to_string()
     } else if t.starts_with("create") {
         r#"Create commands:
-  create approve <request_id>        - Apply staged file creations with this request ID
-  create deny <request_id>           - Deny and discard staged file creations
+  create approve &lt;request_id&gt;      - Apply staged file creations with this request ID
+  create deny &lt;request_id&gt;         - Deny and discard staged file creations
 "#
         .to_string()
     } else if t.starts_with("bm25") {
         r#"BM25 commands:
   bm25 rebuild                       - Rebuild sparse BM25 index
   bm25 status                        - Show sparse BM25 index status
-  bm25 save <path>                   - Save sparse index sidecar to file
-  bm25 load <path>                   - Load sparse index sidecar from file
-  bm25 search <query> [top_k]        - Search with BM25
-  hybrid <query> [top_k]             - Hybrid (BM25 + dense) search
+  bm25 save &lt;path&gt;                 - Save sparse index sidecar to file
+  bm25 load &lt;path&gt;                 - Load sparse index sidecar from file
+  bm25 search &lt;query&gt; [top_k]      - Search with BM25
+  hybrid &lt;query&gt; [top_k]           - Hybrid (BM25 + dense) search
 "#
         .to_string()
     } else if t.starts_with("provider") {
         r#"Provider commands:
-  provider strictness <openrouter-only|allow-custom|allow-any>
+  provider strictness &lt;openrouter-only|allow-custom|allow-any&gt;
                                      - Restrict selectable providers
-  provider tools-only <on|off>       - Enforce using only models/providers that support tool calls
-  model providers <model_id>         - List provider endpoints for a model and show tool support and slugs
-  provider select <model_id> <provider_slug>
+  provider tools-only &lt;on|off&gt;     - Enforce using only models/providers that support tool calls
+  model providers &lt;model_id&gt;       - List provider endpoints for a model and show tool support and slugs
+  provider select &lt;model_id&gt; &lt;provider_slug&gt;
                                      - Pin a model to a specific provider endpoint
-  provider pin <model_id> <provider_slug>
+  provider pin &lt;model_id&gt; &lt;provider_slug&gt;
                                      - Alias for 'provider select'
 "#
         .to_string()

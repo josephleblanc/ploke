@@ -10,7 +10,7 @@ use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::instrument;
@@ -523,32 +523,94 @@ impl FinishPolicy {
     }
 }
 
-#[tracing::instrument(
-    target = "chat-loop",
-    skip(client, req, event_bus, state_cmd_tx, policy),
-    fields(
-        model_key = ?req.model_key,
-        assistant_message_id = %assistant_message_id,
-        parent_id = %parent_id
+#[derive(Clone, Copy, Debug)]
+pub enum CancelChatToken {
+    KeepOpen,
+    Close
+}
+
+pub struct ChatSession<R: Router> {
+    pub client: Client,
+    pub req: ChatCompRequest<R>,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub event_bus: Arc<EventBus>,
+    pub state_cmd_tx: mpsc::Sender<StateCommand>,
+    pub included_message_ids: Vec<Uuid>,
+    pub chat_policy: ChatPolicy,
+    pub cancel_rx: watch::Receiver<CancelChatToken>,
+}
+
+async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>) {
+    loop {
+        if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
+            return;
+        }
+        if cancel_rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn abort_for_user_cancel(
+    report: &mut ChatSessionReport,
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    assistant_message_id: Uuid,
+    initial_message_updated: &mut bool,
+    attempts: u32,
+    chain_index: usize,
+    model_key: &Option<ploke_llm::ModelKey>,
+    commit_phase: CommitPhase,
+) -> ChatSessionReport {
+    let err = LlmError::ChatStep("Cancelled by user.".to_string());
+    let context = base_error_context(
+        attempts,
+        chain_index,
+        "user_cancel",
+        model_key,
+        assistant_message_id,
+    );
+    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+    emit_loop_error(
+        state_cmd_tx,
+        assistant_message_id,
+        initial_message_updated,
+        &loop_error,
     )
-)]
+    .await;
+    report.record_error(loop_error.clone());
+    report.outcome = SessionOutcome::Aborted {
+        error_id: loop_error.error_id,
+    };
+    report.commit_phase = commit_phase;
+    report.attempts = attempts;
+    report.clone()
+}
+
 /// Chat loop structure:
 /// - issue a chat step
 /// - handle tool calls (if any), update UI, append tool results
 /// - handle finish reasons to decide return vs retry
 // Optionally: set tool_choice=Auto if tools exist, etc.
 pub async fn run_chat_session<R: Router>(
-    client: &Client,
-    mut req: ChatCompRequest<R>,
-    parent_id: Uuid,
-    assistant_message_id: Uuid,
-    event_bus: Arc<EventBus>,
-    state_cmd_tx: mpsc::Sender<StateCommand>,
-    included_message_ids: Vec<Uuid>,
-    policy: TuiToolPolicy,
-    finish_policy: FinishPolicy,
-    http_timeout: Duration,
+    session: ChatSession<R>, 
+    llm_timeout_secs: u64
 ) -> ChatSessionReport {
+    let ChatSession {
+        client,
+        mut req,
+        parent_id,
+        assistant_message_id,
+        event_bus,
+        state_cmd_tx,
+        included_message_ids,
+        chat_policy,
+        mut cancel_rx,
+    } = session;
+    let policy = tool_policy_from_chat(&chat_policy);
+    let finish_policy = finish_policy_from_chat(&chat_policy);
+    let http_timeout = Duration::from_secs(llm_timeout_secs);
+
     // TODO:ploke-llm 2025-12-14
     // placeholder default config for now, fix up later
     let mut cfg = ChatHttpConfig::default();
@@ -568,6 +630,19 @@ pub async fn run_chat_session<R: Router>(
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
         attempts = attempts.saturating_add(1);
+        if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
+            return abort_for_user_cancel(
+                &mut report,
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                attempts,
+                chain_index,
+                &model_key,
+                commit_phase,
+            )
+            .await;
+        }
 
         if tokens_logging_enabled() {
             let request_payload = format_tokens_payload(&req);
@@ -586,7 +661,21 @@ pub async fn run_chat_session<R: Router>(
         let ChatStepData {
             outcome,
             full_response,
-        } = match ploke_llm::chat_step(client, &req, &cfg).await {
+        } = match tokio::select! {
+            res = ploke_llm::chat_step(&client, &req, &cfg) => res,
+            _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                return abort_for_user_cancel(
+                    &mut report,
+                    &state_cmd_tx,
+                    assistant_message_id,
+                    &mut initial_message_updated,
+                    attempts,
+                    chain_index,
+                    &model_key,
+                    commit_phase,
+                ).await;
+            }
+        } {
             Ok(step) => step,
             Err(err) => {
                 if let Some(unknown_tool) = extract_unknown_tool_name(&err) {
@@ -699,8 +788,22 @@ pub async fn run_chat_session<R: Router>(
                     step_request_id,
                     calls,
                     policy.tool_call_timeout,
-                )
-                .await;
+                );
+                let results = tokio::select! {
+                    result = results => result,
+                    _ = wait_for_cancel_signal(&mut cancel_rx) => {
+                        return abort_for_user_cancel(
+                            &mut report,
+                            &state_cmd_tx,
+                            assistant_message_id,
+                            &mut initial_message_updated,
+                            attempts,
+                            chain_index,
+                            &model_key,
+                            commit_phase,
+                        ).await;
+                    }
+                };
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
@@ -724,13 +827,13 @@ pub async fn run_chat_session<R: Router>(
                             commit_phase = CommitPhase::ToolResultsCommitted;
                         }
                         Err(tool_error) => {
-                            let content = if let Some(wire) = ToolErrorWire::parse(&tool_error.error)
-                            {
-                                serde_json::to_string(&wire.llm)
-                                    .unwrap_or_else(|_| tool_error.error.clone())
-                            } else {
-                                json!({ "ok": false, "error": tool_error.error }).to_string()
-                            };
+                            let content =
+                                if let Some(wire) = ToolErrorWire::parse(&tool_error.error) {
+                                    serde_json::to_string(&wire.llm)
+                                        .unwrap_or_else(|_| tool_error.error.clone())
+                                } else {
+                                    json!({ "ok": false, "error": tool_error.error }).to_string()
+                                };
                             req.core
                                 .messages
                                 .push(RequestMessage::new_tool(content.clone(), call_id.clone()));
@@ -945,11 +1048,11 @@ pub async fn run_chat_session<R: Router>(
                             );
                         }
                         Err(err) => {
-                        tracing::warn!(
-                            target: "chat-loop",
-                            error = %err,
-                            "Failed to decrement chat TTL after successful completion"
-                        );
+                            tracing::warn!(
+                                target: "chat-loop",
+                                error = %err,
+                                "Failed to decrement chat TTL after successful completion"
+                            );
                         }
                     }
                     return report;
@@ -1249,13 +1352,10 @@ pub async fn execute_tools_via_event_bus(
                 Err(_) => (
                     call_id,
                     Err({
-                        let message = format!(
-                            "Timed out waiting for tool result after {timeout_secs}s"
-                        );
+                        let message =
+                            format!("Timed out waiting for tool result after {timeout_secs}s");
                         let tool_error = ToolError::new(tool_name, ToolErrorCode::Timeout, message)
-                            .retry_hint(
-                                "Increase tool_call_timeout_secs or use a smaller command",
-                            );
+                            .retry_hint("Increase tool_call_timeout_secs or use a smaller command");
                         let ui_payload =
                             Some(ToolUiPayload::from_error(call_id_for_error, &tool_error));
                         ToolCallUiError {

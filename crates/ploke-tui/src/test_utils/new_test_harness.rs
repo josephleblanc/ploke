@@ -4,7 +4,7 @@
 
 use crate::app_state::SystemStatus;
 use crate::app_state::events::SystemEvent;
-use crate::llm::manager::llm_manager;
+use crate::llm::manager::{CancelChatToken, llm_manager};
 use crate::test_harness::openrouter_env;
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 
 use ratatui::{Terminal, backend::TestBackend};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -134,6 +134,7 @@ impl AppHarness {
 
         // Command channel + state manager
         let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+        let (cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
         let (rag_event_tx, _rag_event_rx) = mpsc::channel(10);
         {
             let state_c = state.clone();
@@ -153,7 +154,7 @@ impl AppHarness {
             let state_c = state.clone();
             let eb_c = event_bus.clone();
             let cmd_c = cmd_tx.clone();
-            tokio::spawn(llm_manager(eb_rt, eb_bg, state_c, cmd_c, eb_c));
+            tokio::spawn(llm_manager(eb_rt, eb_bg, state_c, cmd_c, eb_c, cancel_rx));
         }
 
         // App + headless terminal + synthetic input stream
@@ -171,6 +172,7 @@ impl AppHarness {
             &event_bus,
             default_model(),
             tool_verbosity,
+            cancel_tx,
         );
         let app_task = tokio::spawn(async move {
             let _ = app

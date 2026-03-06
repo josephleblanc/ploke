@@ -34,6 +34,7 @@ use crate::app::utils::truncate_uuid;
 use crate::app::view::components::conversation::ConversationView;
 use crate::app::view::components::input_box::{CommandSuggestion, InputView};
 use crate::emit_app_event;
+use crate::llm::manager::CancelChatToken;
 use crate::tools::ToolVerbosity;
 use crate::ui_theme::UiTheme;
 use crate::user_config::{CtxMode, OPENROUTER_URL};
@@ -163,6 +164,7 @@ pub struct App {
     suggestion_index: usize,
     clipboard: Option<SystemClipboard>,
     context_plan_history: Arc<std::sync::RwLock<context_plan::ContextPlanHistory>>,
+    cancel_tx: watch::Sender<CancelChatToken>,
 }
 
 impl App {
@@ -174,6 +176,7 @@ impl App {
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
         active_model_id: String,
         tool_verbosity: ToolVerbosity,
+        cancel_tx: watch::Sender<CancelChatToken>
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -206,6 +209,7 @@ impl App {
             context_plan_history: Arc::new(std::sync::RwLock::new(
                 context_plan::ContextPlanHistory::default(),
             )),
+            cancel_tx,
         }
     }
 
@@ -272,6 +276,12 @@ impl App {
         // Use try_send to prevent the UI from blocking
         if let Err(e) = self.cmd_tx.try_send(cmd) {
             tracing::warn!("Failed to send command: {}", e);
+        }
+    }
+
+    fn send_cancel_token(&self, token: CancelChatToken) {
+        if let Err(e) = self.cancel_tx.send(token) {
+            tracing::warn!("Failed to send cancel token: {}", e);
         }
     }
 
@@ -1042,6 +1052,10 @@ impl App {
     ///
     /// Phase 1 refactor: convert KeyEvent -> Action in input::keymap, then handle here.
     fn on_key_event(&mut self, key: KeyEvent) {
+        if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc) {
+            self.send_cancel_token(CancelChatToken::Close);
+        }
+
         // Intercept overlay manager keys
         if self.overlay_manager.is_active() {
             let actions = self.overlay_manager.handle_input(key);
@@ -1237,6 +1251,7 @@ impl App {
             Action::Submit => {
                 // Enter in Insert mode: send the user's message via StateCommands.
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
+                    self.send_cancel_token(CancelChatToken::KeepOpen);
                     let (completion_tx, completion_rx) = oneshot::channel();
                     let (scan_tx, scan_rx) = oneshot::channel();
                     let new_user_msg_id = Uuid::new_v4();
@@ -1269,6 +1284,7 @@ impl App {
                 }
             }
             Action::ExecuteCommand => {
+                self.send_cancel_token(CancelChatToken::KeepOpen);
                 self.execute_command();
                 // Ensure snap-to-bottom so long outputs (e.g., /help) are fully visible.
                 self.conversation.request_bottom();
@@ -2031,7 +2047,7 @@ impl App {
 
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
-            msg: commands::HELP_COMMANDS.to_string(),
+            msg: commands::help_commands_markdown(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });
