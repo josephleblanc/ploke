@@ -320,8 +320,11 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
         .expect("draw");
         let text = buffer_to_lines(&term).join("\n");
         assert!(text.contains("Before/After:"));
-        assert!(text.contains("- fn a() {}"));
-        assert!(text.contains("+ fn a() {}"));
+        // Default view mode is Minimal; unchanged lines are omitted.
+        assert!(text.contains("- fn b() {}"));
+        assert!(text.contains("+ fn c() {}"));
+        assert!(!text.contains("- fn a() {}"));
+        assert!(!text.contains("+ fn a() {}"));
         let red = redact(&text);
         insta::assert_snapshot!("approvals_codeblocks_90x28", red);
     });

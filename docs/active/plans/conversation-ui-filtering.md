@@ -182,6 +182,14 @@ pub enum VerbosityLevel {
 }
 ```
 
+Implementation details (completed in this step):
+- Added `VerbosityLevel`, `MessageVerbosity`, `MessageVerbosityProfile`, and `MessageVerbosityProfiles` in `crates/ploke-tui/src/user_config.rs`.
+- Added persisted fields on `UserConfig`: `message_verbosity_profiles` and `message_verbosity_default_profile`.
+- Added runtime fields on `RuntimeConfig` with full `From<UserConfig>` and `to_user_config()` mapping in `crates/ploke-tui/src/app_state/core.rs`.
+- Added built-in defaults for `minimal`, `normal`, and `verbose` profile payloads (hardcoded constructors in `user_config.rs`).
+- Added code comments documenting the render-only invariant so this state does not affect prompt assembly or context pinning workflows.
+- No render/filter behavior was changed yet; this step only establishes state and persistence scaffolding.
+
 2. Expand loaded user config
 
 Add "Cusom" message verbosity to loaded user config, and a "default_verbosity" which is either loaded from config and otherwise defaults to Minimal.
@@ -197,3 +205,6 @@ Additionally, must include profile defaults for Minimal, Normal, Verbose, and Cu
 Add a command `/verbosity profile <minimal|normal|verbose|custom>`
 
 Custom verbosity level defined in user config or through UI config overlay
+
+TODO (tests):
+- Add a second approvals overlay test that explicitly switches diff view to non-minimal (`Expanded` or `Full`) and asserts unchanged-line rendering for normal behavior.
