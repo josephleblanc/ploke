@@ -180,8 +180,8 @@ pub struct RuntimeConfig {
     /// Conversation presentation profiles used by the UI only.
     /// This must not affect prompt assembly, message loop behavior, or pinning state.
     pub message_verbosity_profiles: MessageVerbosityProfiles,
-    /// Active built-in message verbosity profile for UI rendering.
-    pub message_verbosity_default_profile: MessageVerbosityProfile,
+    /// Active message verbosity profile for UI rendering.
+    pub default_verbosity: MessageVerbosityProfile,
     pub embedding: EmbeddingConfig,
     pub embedding_local: LocalEmbeddingTuning,
     pub ploke_editor: Option<String>,
@@ -237,7 +237,7 @@ impl From<UserConfig> for RuntimeConfig {
             command_style: uc.command_style,
             tool_verbosity: uc.tool_verbosity,
             message_verbosity_profiles: uc.message_verbosity_profiles,
-            message_verbosity_default_profile: uc.message_verbosity_default_profile,
+            default_verbosity: uc.default_verbosity,
             embedding: uc.embedding,
             embedding_local,
             ploke_editor: uc.ploke_editor,
@@ -272,7 +272,7 @@ impl RuntimeConfig {
             command_style: self.command_style,
             tool_verbosity: self.tool_verbosity,
             message_verbosity_profiles: self.message_verbosity_profiles.clone(),
-            message_verbosity_default_profile: self.message_verbosity_default_profile,
+            default_verbosity: self.default_verbosity,
             embedding: self.embedding.clone(),
             embedding_local: self.embedding_local,
             editing,

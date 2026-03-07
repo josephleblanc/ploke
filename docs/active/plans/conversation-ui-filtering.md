@@ -192,7 +192,14 @@ Implementation details (completed in this step):
 
 2. Expand loaded user config
 
-Add "Cusom" message verbosity to loaded user config, and a "default_verbosity" which is either loaded from config and otherwise defaults to Minimal.
+Add "Custom" message verbosity to loaded user config, and a "default_verbosity" which is either loaded from config and otherwise defaults to Minimal.
+
+Implementation details (completed in this step):
+- Added `MessageVerbosityProfile::Custom` in `crates/ploke-tui/src/user_config.rs`.
+- Extended `MessageVerbosityProfiles` with a persisted `custom` profile vector and default constructor.
+- Added persisted `UserConfig.default_verbosity` with default fallback to `Minimal`.
+- Added a serde alias so older configs using `message_verbosity_default_profile` still deserialize into `default_verbosity`.
+- Updated `RuntimeConfig` mapping (`From<UserConfig>` and `to_user_config()`) to use `default_verbosity`.
 
 3. Expand interactive UI Config Overlay
 

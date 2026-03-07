@@ -76,10 +76,11 @@ pub enum MessageVerbosity {
 #[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageVerbosityProfile {
-    Minimal,
     #[default]
+    Minimal,
     Normal,
     Verbose,
+    Custom,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -90,6 +91,8 @@ pub struct MessageVerbosityProfiles {
     pub normal: Vec<MessageVerbosity>,
     #[serde(default = "default_message_verbosity_verbose")]
     pub verbose: Vec<MessageVerbosity>,
+    #[serde(default = "default_message_verbosity_custom")]
+    pub custom: Vec<MessageVerbosity>,
 }
 
 impl Default for MessageVerbosityProfiles {
@@ -98,6 +101,7 @@ impl Default for MessageVerbosityProfiles {
             minimal: default_message_verbosity_minimal(),
             normal: default_message_verbosity_normal(),
             verbose: default_message_verbosity_verbose(),
+            custom: default_message_verbosity_custom(),
         }
     }
 }
@@ -115,9 +119,13 @@ pub struct UserConfig {
     /// This is never used to alter model-facing prompt construction.
     #[serde(default)]
     pub message_verbosity_profiles: MessageVerbosityProfiles,
-    /// Selected built-in conversation verbosity profile for UI rendering only.
-    #[serde(default)]
-    pub message_verbosity_default_profile: MessageVerbosityProfile,
+    /// Selected conversation verbosity profile for UI rendering only.
+    /// Backwards-compatible alias keeps older configs loading.
+    #[serde(
+        default = "default_message_verbosity_profile",
+        alias = "message_verbosity_default_profile"
+    )]
+    pub default_verbosity: MessageVerbosityProfile,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
     /// Local embedding execution parameters (device/batch tuning).
@@ -725,6 +733,14 @@ fn default_message_verbosity_verbose() -> Vec<MessageVerbosity> {
             display_init: true,
         },
     ]
+}
+
+fn default_message_verbosity_custom() -> Vec<MessageVerbosity> {
+    default_message_verbosity_normal()
+}
+
+fn default_message_verbosity_profile() -> MessageVerbosityProfile {
+    MessageVerbosityProfile::Minimal
 }
 
 fn default_ctx_mode() -> CtxMode {
