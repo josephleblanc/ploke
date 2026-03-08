@@ -28,11 +28,11 @@ use proptest::prelude::*;
 use std::time::Duration;
 use uuid::Uuid;
 
+use ploke_llm::response::{FinishReason, TokenUsage};
+use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 use ploke_tui::chat_history::{
     ContextStatus, Message, MessageKind, MessageStatus, MessageUpdate, UpdateError,
 };
-use ploke_llm::response::{FinishReason, TokenUsage};
-use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
 fn any_string(max: usize) -> impl Strategy<Value = String> {
     proptest::collection::vec(any::<char>(), 0..max).prop_map(|chars| chars.into_iter().collect())
@@ -91,10 +91,7 @@ fn status_strategy() -> impl Strategy<Value = MessageStatus> {
     ]
 }
 
-fn expected_transition(
-    current: &MessageStatus,
-    next: &MessageStatus,
-) -> Result<(), UpdateError> {
+fn expected_transition(current: &MessageStatus, next: &MessageStatus) -> Result<(), UpdateError> {
     if matches!(current, MessageStatus::Completed) {
         return Err(UpdateError::ImmutableMessage);
     }
@@ -103,9 +100,9 @@ fn expected_transition(
         (MessageStatus::Generating, MessageStatus::Completed) => Ok(()),
         (MessageStatus::Generating, MessageStatus::Error { .. }) => Ok(()),
         (MessageStatus::Pending, MessageStatus::Error { .. }) => Ok(()),
-        (_, MessageStatus::Completed) if !matches!(current, MessageStatus::Generating) => {
-            Err(UpdateError::InvalidStatusTransition(current.clone(), next.clone()))
-        }
+        (_, MessageStatus::Completed) if !matches!(current, MessageStatus::Generating) => Err(
+            UpdateError::InvalidStatusTransition(current.clone(), next.clone()),
+        ),
         (MessageStatus::Error { .. }, MessageStatus::Pending) => Err(UpdateError::Placeholder),
         (from, to) if from != to => Err(UpdateError::InvalidStatusTransition(
             from.clone(),

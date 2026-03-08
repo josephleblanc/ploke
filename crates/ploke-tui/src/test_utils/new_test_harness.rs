@@ -315,7 +315,10 @@ pub fn buffer_to_style_dump(term: &Terminal<TestBackend>) -> String {
 }
 
 /// Write text + style dumps for a TestBackend terminal buffer.
-pub fn dump_terminal_buffer(term: &Terminal<TestBackend>, base_path: &std::path::Path) -> std::io::Result<()> {
+pub fn dump_terminal_buffer(
+    term: &Terminal<TestBackend>,
+    base_path: &std::path::Path,
+) -> std::io::Result<()> {
     let text_path = base_path.with_extension("txt");
     let style_path = base_path.with_extension("json");
     std::fs::write(text_path, buffer_to_string(term))?;

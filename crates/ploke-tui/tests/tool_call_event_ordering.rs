@@ -1,9 +1,9 @@
-use ploke_tui::app_state::events::SystemEvent;
-use ploke_tui::test_utils::new_test_harness::AppHarness;
-use ploke_tui::{AppEvent, EventPriority};
 use ploke_core::ArcStr;
 use ploke_core::tool_types::{FunctionMarker, ToolName};
 use ploke_llm::response::{FunctionCall, ToolCall};
+use ploke_tui::app_state::events::SystemEvent;
+use ploke_tui::test_utils::new_test_harness::AppHarness;
+use ploke_tui::{AppEvent, EventPriority};
 use std::sync::Once;
 use tokio::sync::oneshot;
 use tokio::time::{Duration, Instant};
@@ -57,9 +57,23 @@ async fn tool_call_events_preserve_order_in_headless_app() {
 
         loop {
             if let Ok(ev) = rt_rx.try_recv() {
-                handle_tool_event(&ev, &call_id_observer, request_id, &mut seen_requested, &mut seen_completed, &mut violation);
+                handle_tool_event(
+                    &ev,
+                    &call_id_observer,
+                    request_id,
+                    &mut seen_requested,
+                    &mut seen_completed,
+                    &mut violation,
+                );
             } else if let Ok(ev) = bg_rx.try_recv() {
-                handle_tool_event(&ev, &call_id_observer, request_id, &mut seen_requested, &mut seen_completed, &mut violation);
+                handle_tool_event(
+                    &ev,
+                    &call_id_observer,
+                    request_id,
+                    &mut seen_requested,
+                    &mut seen_completed,
+                    &mut violation,
+                );
             } else if Instant::now() >= deadline {
                 break;
             } else {
@@ -83,22 +97,25 @@ async fn tool_call_events_preserve_order_in_headless_app() {
         let _ = result_tx.send((seen_requested, seen_completed, violation));
     });
 
-    harness.event_bus.send(AppEvent::System(SystemEvent::ToolCallRequested {
-        tool_call,
-        request_id,
-        parent_id,
-    }));
-    harness.event_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
-        request_id,
-        parent_id,
-        call_id: call_id.clone(),
-        content: "{\"ok\":true}".to_string(),
-        ui_payload: None,
-    }));
+    harness
+        .event_bus
+        .send(AppEvent::System(SystemEvent::ToolCallRequested {
+            tool_call,
+            request_id,
+            parent_id,
+        }));
+    harness
+        .event_bus
+        .send(AppEvent::System(SystemEvent::ToolCallCompleted {
+            request_id,
+            parent_id,
+            call_id: call_id.clone(),
+            content: "{\"ok\":true}".to_string(),
+            ui_payload: None,
+        }));
 
-    let (seen_requested, seen_completed, violation) = result_rx
-        .await
-        .expect("ordering observer dropped");
+    let (seen_requested, seen_completed, violation) =
+        result_rx.await.expect("ordering observer dropped");
     assert!(seen_requested, "ToolCallRequested was not observed");
     assert!(seen_completed, "ToolCallCompleted was not observed");
     assert!(

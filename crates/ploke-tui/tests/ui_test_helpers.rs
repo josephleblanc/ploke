@@ -1,7 +1,7 @@
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::Terminal;
 use tracing::warn;
 
 pub fn render_to_buffer<F>(area: Rect, draw: F) -> Buffer

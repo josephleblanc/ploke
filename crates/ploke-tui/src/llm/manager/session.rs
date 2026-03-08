@@ -10,9 +10,9 @@ use ploke_llm::response::ToolCall;
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde_json::json;
-use tokio::sync::{broadcast, watch};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::{broadcast, watch};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -526,7 +526,7 @@ impl FinishPolicy {
 #[derive(Clone, Copy, Debug)]
 pub enum CancelChatToken {
     KeepOpen,
-    Close
+    Close,
 }
 
 pub struct ChatSession<R: Router> {
@@ -593,8 +593,8 @@ async fn abort_for_user_cancel(
 /// - handle finish reasons to decide return vs retry
 // Optionally: set tool_choice=Auto if tools exist, etc.
 pub async fn run_chat_session<R: Router>(
-    session: ChatSession<R>, 
-    llm_timeout_secs: u64
+    session: ChatSession<R>,
+    llm_timeout_secs: u64,
 ) -> ChatSessionReport {
     let ChatSession {
         client,

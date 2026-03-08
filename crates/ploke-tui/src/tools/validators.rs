@@ -54,17 +54,15 @@ pub fn validate_file_path_basic(
 ) -> Result<(), ToolError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err(ToolError::new(
-            tool,
-            ToolErrorCode::InvalidFormat,
-            "file path is empty",
-        )
-        .field(field)
-        .retry_hint("Provide a non-empty file path (e.g., \"src/lib.rs\").")
-        .retry_context(json!({
-            "input_path": path,
-            "reason": "empty",
-        })));
+        return Err(
+            ToolError::new(tool, ToolErrorCode::InvalidFormat, "file path is empty")
+                .field(field)
+                .retry_hint("Provide a non-empty file path (e.g., \"src/lib.rs\").")
+                .retry_context(json!({
+                    "input_path": path,
+                    "reason": "empty",
+                })),
+        );
     }
 
     if !allow_unicode && !path.is_ascii() {
@@ -151,11 +149,7 @@ pub fn validate_file_extension_allowlist(
                 "allowlist": allowed,
             })));
         }
-        normalized_allowed.push(
-            trimmed
-                .trim_start_matches('.')
-                .to_ascii_lowercase(),
-        );
+        normalized_allowed.push(trimmed.trim_start_matches('.').to_ascii_lowercase());
     }
 
     let allow_all = normalized_allowed
@@ -217,8 +211,9 @@ mod tests {
 
     #[test]
     fn file_path_with_invalid_chars_is_invalid() {
-        let err = validate_file_path_basic(ToolName::CreateFile, "file_path", "src/<bad>.rs", false)
-            .expect_err("expected invalid char error");
+        let err =
+            validate_file_path_basic(ToolName::CreateFile, "file_path", "src/<bad>.rs", false)
+                .expect_err("expected invalid char error");
         let ctx = err.retry_context.expect("retry context");
         let invalid = ctx.get("invalid_chars").and_then(|v| v.as_array());
         assert!(invalid.is_some());
@@ -232,9 +227,12 @@ mod tests {
             "src/ma\u{00df}.rs",
             false,
         )
-            .expect_err("expected unicode error");
+        .expect_err("expected unicode error");
         let ctx = err.retry_context.expect("retry context");
-        assert_eq!(ctx.get("reason").and_then(|v| v.as_str()), Some("non_ascii"));
+        assert_eq!(
+            ctx.get("reason").and_then(|v| v.as_str()),
+            Some("non_ascii")
+        );
     }
 
     #[test]

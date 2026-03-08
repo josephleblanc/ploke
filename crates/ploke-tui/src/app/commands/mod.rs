@@ -62,6 +62,8 @@ pub const HELP_COMMANDS: &str = r#"Available commands:
     create deny &lt;request_id&gt; - Deny and discard staged file creations
     tool verbosity &lt;minimal|normal|verbose|toggle&gt; - Set or cycle tool output verbosity
     tool verbosity - Show current tool verbosity
+    verbosity profile &lt;minimal|normal|verbose|custom&gt; - Set conversation message verbosity profile
+    verbosity profile - Show current conversation message verbosity profile
     search &lt;query&gt; - Search indexed code context and open context browser
     context plan | contextplan - Open context plan overlay
     quit - Quit the application (same behavior as 'q' in Normal mode)
@@ -292,6 +294,11 @@ pub const COMMAND_ENTRIES: &[CommandEntry] = &[
     CommandEntry {
         command: "tool verbosity",
         completion: "tool verbosity <minimal|normal|verbose|toggle>",
+        description: "TODO: add description",
+    },
+    CommandEntry {
+        command: "verbosity profile",
+        completion: "verbosity profile <minimal|normal|verbose|custom>",
         description: "TODO: add description",
     },
     CommandEntry {

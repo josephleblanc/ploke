@@ -9,9 +9,9 @@ mod session;
 // For now moving entirely to `ploke-llm`, but keeping commented here in case we want to bring back
 // some of the `ChatEvt` functionality - now renamed to `ChatEvt` in `ploke-llm`
 pub(crate) mod events;
+pub use crate::llm::manager::session::CancelChatToken;
 pub(crate) use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
-pub use crate::llm::manager::session::CancelChatToken;
 
 use crate::{
     SystemEvent,
@@ -377,7 +377,8 @@ pub async fn process_llm_request(
     }
 
     // Track current context token count for observability.
-    let _ = llm_request_args.cmd_tx
+    let _ = llm_request_args
+        .cmd_tx
         .send(StateCommand::UpdateContextTokens {
             tokens: ContextTokens::new(context_tokens, TokenKind::Estimated),
         })
@@ -408,7 +409,12 @@ pub async fn process_llm_request(
         }
     };
 
-    let LlmRequestArgs { state, cmd_tx, client, event_bus } = llm_request_args;
+    let LlmRequestArgs {
+        state,
+        cmd_tx,
+        client,
+        event_bus,
+    } = llm_request_args;
     let llm_call_args = LlmCallArgs {
         state,
         client,

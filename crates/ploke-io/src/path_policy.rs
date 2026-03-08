@@ -221,12 +221,10 @@ fn normalize_against_roots_allow_missing(
             return None;
         }
         if matches!(policy, SymlinkPolicy::DenyCrossRoot) {
-            return Some(validate_existing_prefixes_within_root(
-                &lex_path,
-                &lex_root,
-                operation,
-            )
-            .map(|_| lex_root));
+            return Some(
+                validate_existing_prefixes_within_root(&lex_path, &lex_root, operation)
+                    .map(|_| lex_root),
+            );
         }
         Some(Ok(lex_root))
     });

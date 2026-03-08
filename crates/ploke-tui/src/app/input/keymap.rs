@@ -27,8 +27,8 @@ pub enum Action {
     // Text entry / command handling
     InsertChar(char),
     Backspace,
-    Submit,         // Enter in Insert mode
-    ExecuteCommand, // Enter in Command mode
+    Submit,           // Enter in Insert mode
+    ExecuteCommand,   // Enter in Command mode
     AcceptCompletion, // Tab to accept ghost completion
     SuggestionPrev,
     SuggestionNext,

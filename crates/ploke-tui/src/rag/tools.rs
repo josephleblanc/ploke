@@ -113,7 +113,12 @@ fn filter_unified_diff_with_context(text: &str, context_lines: usize) -> String 
     out
 }
 
-fn diff_chunk_with_context(path: &PathBuf, before: &str, after: &str, context_lines: usize) -> String {
+fn diff_chunk_with_context(
+    path: &PathBuf,
+    before: &str,
+    after: &str,
+    context_lines: usize,
+) -> String {
     let diff = TextDiff::from_lines(before, after);
     let mut out = String::new();
     out.push_str(&format!("--- {}\n", path.display()));
@@ -542,10 +547,7 @@ pub async fn apply_code_edit_tool(tool_call_params: ToolCallParams) {
     };
 
     let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-        let filtered = filter_unified_diff_with_context(
-            &unified_diff,
-            CHAT_PREVIEW_CONTEXT_LINES,
-        );
+        let filtered = filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
         truncate_lines(&filtered, editing_cfg.max_preview_lines)
     } else {
         truncate_lines(
@@ -611,13 +613,7 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
             ""
         },
     );
-    chat::add_msg_immediate_sysinfo_unpinned(
-        &state,
-        &event_bus,
-        Uuid::new_v4(),
-        summary,
-    )
-    .await;
+    chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
 
     // Emit a typed ToolCallCompleted so the LLM loop can proceed deterministically.
     let result = ApplyCodeEditResult {
@@ -807,15 +803,13 @@ pub async fn apply_ns_code_edit_tool(
             ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(msg))
         })?;
 
-        let unified_diff = patch
-            .hunks
-            .clone()
-            .into_iter()
-            .map(|h| h.to_string())
-            .fold(String::new(), |mut acc, s| {
+        let unified_diff = patch.hunks.clone().into_iter().map(|h| h.to_string()).fold(
+            String::new(),
+            |mut acc, s| {
                 acc.push_str(&s);
                 acc
-            });
+            },
+        );
 
         let apply_patch_result =
             mpatch::apply_patch_to_content(&patch, Some(&content), &apply_options);
@@ -857,10 +851,8 @@ pub async fn apply_ns_code_edit_tool(
         };
         let max_lines = editing_cfg.max_preview_lines;
         let chat_preview_snippet = if matches!(editing_cfg.preview_mode, PreviewMode::Diff) {
-            let filtered = filter_unified_diff_with_context(
-                &unified_diff,
-                CHAT_PREVIEW_CONTEXT_LINES,
-            );
+            let filtered =
+                filter_unified_diff_with_context(&unified_diff, CHAT_PREVIEW_CONTEXT_LINES);
             truncate_lines(&filtered, max_lines)
         } else {
             let chunk = diff_chunk_with_context(
@@ -922,13 +914,7 @@ Deny:     edit deny {request_id}{auto_confirm}"#,
                 ""
             },
         );
-        chat::add_msg_immediate_sysinfo_unpinned(
-            &state,
-            &event_bus,
-            Uuid::new_v4(),
-            summary,
-        )
-        .await;
+        chat::add_msg_immediate_sysinfo_unpinned(&state, &event_bus, Uuid::new_v4(), summary).await;
     }
     Ok(())
 }

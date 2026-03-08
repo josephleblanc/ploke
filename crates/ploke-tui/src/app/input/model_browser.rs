@@ -3,10 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::overlay::{OverlayAction, OverlayKind};
 use crate::app::view::components::model_browser::ModelBrowserState;
 
-pub fn handle_model_browser_input(
-    mb: &mut ModelBrowserState,
-    key: KeyEvent,
-) -> Vec<OverlayAction> {
+pub fn handle_model_browser_input(mb: &mut ModelBrowserState, key: KeyEvent) -> Vec<OverlayAction> {
     let mut actions = Vec::new();
 
     use KeyCode::*;

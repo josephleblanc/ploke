@@ -456,7 +456,11 @@ mod tests {
             let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
             debug!(target: "hnsw-already-present", ?has_index);
             if !has_index {
-                ploke_db::multi_embedding::db_ext::load_db(db.as_ref(), "fixture_nodes".to_string()).await?;
+                ploke_db::multi_embedding::db_ext::load_db(
+                    db.as_ref(),
+                    "fixture_nodes".to_string(),
+                )
+                .await?;
             }
         }
         let debug_output = db.is_embedding_info_all(&active_embedding_set)?;

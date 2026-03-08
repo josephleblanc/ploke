@@ -816,12 +816,7 @@ impl IndexerTask {
             Ok(embeddings) => embeddings,
             Err(err) => {
                 record_embed_span_metadata(&embed_span, active_set.as_ref(), runtime_dims);
-                log_embedding_failure_context(
-                    &err,
-                    &valid_data,
-                    &valid_nodes,
-                    &valid_snippets,
-                );
+                log_embedding_failure_context(&err, &valid_data, &valid_nodes, &valid_snippets);
                 return Err(err);
             }
         };
@@ -892,7 +887,10 @@ fn log_embedding_failure_context(
         "Embedding batch failed; logging snippet context"
     );
 
-    let entry_count = valid_data.len().min(valid_snippets.len()).min(valid_nodes.len());
+    let entry_count = valid_data
+        .len()
+        .min(valid_snippets.len())
+        .min(valid_nodes.len());
     if valid_data.len() != valid_snippets.len() || valid_data.len() != valid_nodes.len() {
         tracing::error!(
             target: "embed-pipeline",

@@ -18,7 +18,9 @@ use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
-use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
+use crate::user_config::{
+    ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
+};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::ArcStr;
@@ -256,6 +258,25 @@ pub fn execute(app: &mut App, command: Command) {
         Command::ToolVerbosityShow => {
             app.send_cmd(StateCommand::AddMessageImmediate {
                 msg: format!("Tool verbosity is set to {}", app.tool_verbosity.as_str()),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+        }
+        Command::VerbosityProfileSet(profile) => {
+            app.apply_message_verbosity_profile(profile, true);
+        }
+        Command::VerbosityProfileShow => {
+            let profile = app
+                .state
+                .config
+                .try_read()
+                .map(|cfg| cfg.default_verbosity)
+                .unwrap_or_default();
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: format!(
+                    "Conversation verbosity profile is set to {}",
+                    profile.as_str()
+                ),
                 kind: MessageKind::SysInfo,
                 new_msg_id: Uuid::new_v4(),
             });

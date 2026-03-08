@@ -13,7 +13,7 @@
 use crate::app::App;
 use crate::app_state::core::PreviewMode;
 use crate::tools::ToolVerbosity;
-use crate::user_config::{CommandStyle, ModelRegistryStrictness};
+use crate::user_config::{CommandStyle, MessageVerbosityProfile, ModelRegistryStrictness};
 use uuid::Uuid;
 
 /// Parsed command variants handled by the executor.
@@ -57,6 +57,8 @@ pub enum Command {
     ToolVerbositySet(ToolVerbosity),
     ToolVerbosityToggle,
     ToolVerbosityShow,
+    VerbosityProfileSet(MessageVerbosityProfile),
+    VerbosityProfileShow,
     CopySelection,
     Raw(String),
     SearchContext(String),
@@ -242,6 +244,20 @@ pub fn parse(app: &App, input: &str, style: CommandStyle) -> Command {
                 "normal" => Command::ToolVerbositySet(ToolVerbosity::Normal),
                 "verbose" => Command::ToolVerbositySet(ToolVerbosity::Verbose),
                 "toggle" => Command::ToolVerbosityToggle,
+                _ => Command::Raw(trimmed.to_string()),
+            }
+        }
+        "verbosity profile" => Command::VerbosityProfileShow,
+        s if s.starts_with("verbosity profile ") => {
+            let t = s
+                .trim_start_matches("verbosity profile ")
+                .trim()
+                .to_lowercase();
+            match t.as_str() {
+                "minimal" => Command::VerbosityProfileSet(MessageVerbosityProfile::Minimal),
+                "normal" => Command::VerbosityProfileSet(MessageVerbosityProfile::Normal),
+                "verbose" => Command::VerbosityProfileSet(MessageVerbosityProfile::Verbose),
+                "custom" => Command::VerbosityProfileSet(MessageVerbosityProfile::Custom),
                 _ => Command::Raw(trimmed.to_string()),
             }
         }

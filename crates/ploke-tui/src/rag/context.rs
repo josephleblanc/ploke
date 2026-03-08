@@ -118,9 +118,10 @@ pub async fn process_with_rag(
                         &excluded_plan_messages,
                         Some(&rag_ctx),
                     );
-                    event_bus.send(AppEvent::ContextPlanSnapshot(
-                        ContextPlanSnapshot::new(context_plan.clone(), Some(rag_ctx.clone())),
-                    ));
+                    event_bus.send(AppEvent::ContextPlanSnapshot(ContextPlanSnapshot::new(
+                        context_plan.clone(),
+                        Some(rag_ctx.clone()),
+                    )));
                     tracing::debug!(
                         plan_id = %context_plan.plan_id,
                         parent_id = %context_plan.parent_id,
@@ -200,9 +201,10 @@ pub async fn process_with_rag(
         &fallback_excluded_messages,
         None,
     );
-    event_bus.send(AppEvent::ContextPlanSnapshot(
-        ContextPlanSnapshot::new(context_plan.clone(), None),
-    ));
+    event_bus.send(AppEvent::ContextPlanSnapshot(ContextPlanSnapshot::new(
+        context_plan.clone(),
+        None,
+    )));
     tracing::debug!(
         plan_id = %context_plan.plan_id,
         parent_id = %context_plan.parent_id,
@@ -330,10 +332,7 @@ fn build_context_plan(
             });
         }
     }
-    let message_tokens: usize = plan_messages
-        .iter()
-        .map(|m| m.estimated_tokens)
-        .sum();
+    let message_tokens: usize = plan_messages.iter().map(|m| m.estimated_tokens).sum();
 
     ContextPlan {
         plan_id,
@@ -430,14 +429,8 @@ mod tests {
         assert!(rendered.contains("kind: Doc"));
         assert!(rendered.contains("score: 0.420"));
         assert!(rendered.contains("line 0"));
-        assert!(rendered.contains(&format!(
-            "line {}",
-            DEFAULT_CONTEXT_PART_MAX_LINES - 1
-        )));
-        assert!(!rendered.contains(&format!(
-            "line {}",
-            DEFAULT_CONTEXT_PART_MAX_LINES
-        )));
+        assert!(rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES - 1)));
+        assert!(!rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES)));
         assert!(rendered.contains("... [truncated]"));
     }
 
@@ -449,11 +442,7 @@ mod tests {
         match message_id {
             None => "tool_call".to_string(),
             Some(id) if id == root_id => "root_system".to_string(),
-            Some(id) => labels
-                .get(&id)
-                .copied()
-                .unwrap_or("unknown")
-                .to_string(),
+            Some(id) => labels.get(&id).copied().unwrap_or("unknown").to_string(),
         }
     }
 
@@ -631,8 +620,10 @@ mod tests {
             (assistant_id, "assistant"),
             (tool_id, "tool"),
         ]);
-        let part_labels =
-            HashMap::from([(Uuid::from_u128(100), "part_a"), (Uuid::from_u128(101), "part_b")]);
+        let part_labels = HashMap::from([
+            (Uuid::from_u128(100), "part_a"),
+            (Uuid::from_u128(101), "part_b"),
+        ]);
 
         let snapshot = snapshot_context_plan(&plan, root_id, &message_labels, &part_labels);
         let expected = "\

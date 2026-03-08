@@ -1,12 +1,8 @@
-use std::{
-    env,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{env, path::PathBuf, sync::Arc};
 
 use ploke_db::Database;
+use ploke_io::path_policy::{PathPolicy, normalize_target_path};
 use ploke_transform::transform::transform_parsed_graph;
-use ploke_io::path_policy::{normalize_target_path, PathPolicy};
 use syn_parser::{
     ModuleTree, ParsedCodeGraph, ParserOutput, discovery::run_discovery_phase,
     error::SynParserError, parser::analyze_files_parallel, try_run_phases_and_merge,
@@ -72,12 +68,12 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
     //     })?;
 
     let mut parser_output = try_run_phases_and_merge(&target)?;
-    let merged = parser_output.extract_merged_graph().ok_or_else(|| {
-        SynParserError::InternalState("Missing parsed code graph".to_string())
-    })?;
-    let tree = parser_output.extract_module_tree().ok_or_else(|| {
-        SynParserError::InternalState("Missing module tree".to_string())
-    })?;
+    let merged = parser_output
+        .extract_merged_graph()
+        .ok_or_else(|| SynParserError::InternalState("Missing parsed code graph".to_string()))?;
+    let tree = parser_output
+        .extract_module_tree()
+        .ok_or_else(|| SynParserError::InternalState("Missing module tree".to_string()))?;
     transform_parsed_graph(&db, merged, &tree).map_err(|err| {
         SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
     })?;
@@ -116,9 +112,7 @@ pub fn run_parse_no_transform(
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);
 
-    let graphs: Vec<_> = results
-        .into_iter()
-        .collect::<Result<_, _>>()?;
+    let graphs: Vec<_> = results.into_iter().collect::<Result<_, _>>()?;
 
     let mut merged = ParsedCodeGraph::merge_new(graphs)?;
     let tree = merged.build_tree_and_prune().map_err(|err| {

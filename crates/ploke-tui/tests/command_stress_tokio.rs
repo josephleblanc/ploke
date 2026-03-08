@@ -62,10 +62,7 @@ async fn pick_known_id(ids: &Mutex<Vec<Uuid>>, rng: &mut StdRng) -> Uuid {
     }
 }
 
-async fn build_command(
-    rng: &mut StdRng,
-    ids: &Mutex<Vec<Uuid>>,
-) -> StateCommand {
+async fn build_command(rng: &mut StdRng, ids: &Mutex<Vec<Uuid>>) -> StateCommand {
     match rng.random_range(0..8) {
         0 => {
             let id = random_uuid(rng);
@@ -143,12 +140,7 @@ async fn stress_commands_tokio() {
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
     let (rag_tx, _rag_rx) = mpsc::channel::<RagEvent>(32);
 
-    tokio::spawn(state_manager(
-        state.clone(),
-        cmd_rx,
-        event_bus,
-        rag_tx,
-    ));
+    tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus, rag_tx));
 
     let ids = Arc::new(Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(WORKERS + 1));

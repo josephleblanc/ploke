@@ -26,10 +26,9 @@ use toml;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::discovery::DiscoveryError;
-use crate::discovery::workspace::WorkspaceVersionLink;
 use crate::discovery::workspace::resolve_workspace_version;
-
+use crate::discovery::workspace::WorkspaceVersionLink;
+use crate::discovery::DiscoveryError;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -111,7 +110,6 @@ impl PackageVersion {
         }
     }
 }
-
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
 #[derive(Deserialize, Debug, Clone, Default, Serialize)]
@@ -858,7 +856,7 @@ impl DiscoveryOutput {
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    workspace_root: &Path,      // Keep for potential future use
+    workspace_root: &Path,     // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();

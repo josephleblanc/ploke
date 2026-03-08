@@ -6,9 +6,7 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use ploke_tui as tui;
-use tui::app_state::{
-    AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState,
-};
+use tui::app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState};
 use tui::chat_history::{ChatHistory, MessageKind};
 use tui::event_bus::{EventBus, EventBusCaps};
 
@@ -61,7 +59,9 @@ async fn index_start_does_not_block_state_manager() {
     {
         let state = Arc::clone(&state);
         let event_bus = Arc::clone(&event_bus);
-        tokio::spawn(tui::app_state::state_manager(state, cmd_rx, event_bus, ctx_tx));
+        tokio::spawn(tui::app_state::state_manager(
+            state, cmd_rx, event_bus, ctx_tx,
+        ));
     }
 
     cmd_tx

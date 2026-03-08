@@ -83,6 +83,17 @@ pub enum MessageVerbosityProfile {
     Custom,
 }
 
+impl MessageVerbosityProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Normal => "normal",
+            Self::Verbose => "verbose",
+            Self::Custom => "custom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MessageVerbosityProfiles {
     #[serde(default = "default_message_verbosity_minimal")]

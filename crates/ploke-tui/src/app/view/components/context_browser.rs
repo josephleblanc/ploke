@@ -689,8 +689,8 @@ pub fn render_context_search<'a>(
         ContextBrowserMode::Insert => "INSERT",
         ContextBrowserMode::Normal => "NORMAL",
     };
-    let cursor_col = matches!(cb.mode, ContextBrowserMode::Insert)
-        .then(|| cb.input.display_cursor_col());
+    let cursor_col =
+        matches!(cb.mode, ContextBrowserMode::Insert).then(|| cb.input.display_cursor_col());
     overlay_widgets::render_search_bar(
         frame,
         input_area,
@@ -714,10 +714,7 @@ pub fn render_context_search<'a>(
         } else {
             "No results found"
         };
-        lines.push(overlay_widgets::empty_state_line(
-            empty_msg,
-            overlay_style,
-        ));
+        lines.push(overlay_widgets::empty_state_line(empty_msg, overlay_style));
     }
 
     // Selected row highlighting

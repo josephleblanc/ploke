@@ -243,6 +243,33 @@ impl App {
         self.apply_tool_verbosity(next, true);
     }
 
+    fn apply_message_verbosity_profile(
+        &mut self,
+        profile: MessageVerbosityProfile,
+        announce: bool,
+    ) {
+        let state = self.state.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            {
+                let mut cfg = state.config.write().await;
+                cfg.default_verbosity = profile;
+            }
+            if announce {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!(
+                            "Conversation verbosity profile set to {}",
+                            profile.as_str()
+                        ),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
+        });
+    }
+
     fn cycle_context_mode(&mut self) {
         let state = self.state.clone();
         let cmd_tx = self.cmd_tx.clone();

@@ -645,7 +645,8 @@ impl ChatHistory {
                     let Some(tool_call) = tool_call_from_message(m) else {
                         continue;
                     };
-                    let assistant_req = ReqMsg::new_assistant_with_tool_calls(None, vec![tool_call]);
+                    let assistant_req =
+                        ReqMsg::new_assistant_with_tool_calls(None, vec![tool_call]);
                     let tool_req = ReqMsg::new_tool(m.content.clone(), tool_call_id);
                     let assistant_tokens = tokenizer.count(&assistant_req.content);
                     let tool_tokens = tokenizer.count(&tool_req.content);
@@ -1559,7 +1560,8 @@ impl ChatHistory {
                     } => {}
                     ContextStatus::Pinned {
                         retention: RetentionClass::Leased,
-                        turns_to_live: ttl, ..
+                        turns_to_live: ttl,
+                        ..
                     } => {
                         if let TurnsToLive::Limited(n) = ttl {
                             *n = n.saturating_sub(1);
@@ -2190,9 +2192,11 @@ mod tests {
         assert!(included_ids.contains(&u3));
         assert!(!included_ids.contains(&u2));
 
-        assert!(excluded.iter().any(|e| {
-            e.message_id == u2 && e.reason == ContextExclusionReason::Budget
-        }));
+        assert!(
+            excluded
+                .iter()
+                .any(|e| { e.message_id == u2 && e.reason == ContextExclusionReason::Budget })
+        );
     }
 
     #[test]
@@ -2219,14 +2223,17 @@ mod tests {
         assert!(!included_ids.contains(&u1));
         assert!(!included_ids.contains(&u2));
 
-        assert!(excluded.iter().any(|e| {
-            e.message_id == u1 && e.reason == ContextExclusionReason::Budget
-        }));
-        assert!(excluded.iter().any(|e| {
-            e.message_id == u2 && e.reason == ContextExclusionReason::Budget
-        }));
+        assert!(
+            excluded
+                .iter()
+                .any(|e| { e.message_id == u1 && e.reason == ContextExclusionReason::Budget })
+        );
+        assert!(
+            excluded
+                .iter()
+                .any(|e| { e.message_id == u2 && e.reason == ContextExclusionReason::Budget })
+        );
     }
-
 
     #[test]
     fn record_usage_delta_accumulates() {
