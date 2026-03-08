@@ -78,7 +78,43 @@ impl ConfigOverlayState {
                 },
             ),
         ];
+        let len_values = ["None", "120", "220", "512", "1024", "2048", "4096", "8192"];
         let message_verbosity_items = vec![
+            enum_item(
+                "Minimal User Max Len",
+                "Maximum rendered length for user messages in Minimal profile.",
+                &len_values,
+                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.minimal)),
+            ),
+            bool_item(
+                "Minimal User Syntax Highlight",
+                "Whether Minimal profile enables user syntax highlighting.",
+                user_syntax_for_profile(&cfg.message_verbosity_profiles.minimal),
+            ),
+            enum_item(
+                "Minimal Assistant Max Len",
+                "Maximum rendered length for assistant messages in Minimal profile.",
+                &len_values,
+                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.minimal)),
+            ),
+            bool_item(
+                "Minimal Assistant Syntax Highlight",
+                "Whether Minimal profile enables assistant syntax highlighting.",
+                assistant_syntax_for_profile(&cfg.message_verbosity_profiles.minimal),
+            ),
+            bool_item(
+                "Minimal Assistant Truncate Prev",
+                "Whether Minimal profile truncates earlier assistant messages.",
+                assistant_truncate_prev_for_profile(&cfg.message_verbosity_profiles.minimal),
+            ),
+            enum_item(
+                "Minimal Assistant Truncated Len",
+                "Rendered length for earlier assistant messages in Minimal profile.",
+                &len_values,
+                max_len_to_idx(assistant_truncated_len_for_profile(
+                    &cfg.message_verbosity_profiles.minimal,
+                )),
+            ),
             enum_item(
                 "Minimal SysInfo Level",
                 "Severity threshold shown for SysInfo in Minimal profile.",
@@ -99,6 +135,41 @@ impl ConfigOverlayState {
                 "Minimal Show Init System",
                 "Whether Minimal profile renders the initial base system message.",
                 display_init_for_profile(&cfg.message_verbosity_profiles.minimal),
+            ),
+            enum_item(
+                "Normal User Max Len",
+                "Maximum rendered length for user messages in Normal profile.",
+                &len_values,
+                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.normal)),
+            ),
+            bool_item(
+                "Normal User Syntax Highlight",
+                "Whether Normal profile enables user syntax highlighting.",
+                user_syntax_for_profile(&cfg.message_verbosity_profiles.normal),
+            ),
+            enum_item(
+                "Normal Assistant Max Len",
+                "Maximum rendered length for assistant messages in Normal profile.",
+                &len_values,
+                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.normal)),
+            ),
+            bool_item(
+                "Normal Assistant Syntax Highlight",
+                "Whether Normal profile enables assistant syntax highlighting.",
+                assistant_syntax_for_profile(&cfg.message_verbosity_profiles.normal),
+            ),
+            bool_item(
+                "Normal Assistant Truncate Prev",
+                "Whether Normal profile truncates earlier assistant messages.",
+                assistant_truncate_prev_for_profile(&cfg.message_verbosity_profiles.normal),
+            ),
+            enum_item(
+                "Normal Assistant Truncated Len",
+                "Rendered length for earlier assistant messages in Normal profile.",
+                &len_values,
+                max_len_to_idx(assistant_truncated_len_for_profile(
+                    &cfg.message_verbosity_profiles.normal,
+                )),
             ),
             enum_item(
                 "Normal SysInfo Level",
@@ -122,6 +193,41 @@ impl ConfigOverlayState {
                 display_init_for_profile(&cfg.message_verbosity_profiles.normal),
             ),
             enum_item(
+                "Verbose User Max Len",
+                "Maximum rendered length for user messages in Verbose profile.",
+                &len_values,
+                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.verbose)),
+            ),
+            bool_item(
+                "Verbose User Syntax Highlight",
+                "Whether Verbose profile enables user syntax highlighting.",
+                user_syntax_for_profile(&cfg.message_verbosity_profiles.verbose),
+            ),
+            enum_item(
+                "Verbose Assistant Max Len",
+                "Maximum rendered length for assistant messages in Verbose profile.",
+                &len_values,
+                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.verbose)),
+            ),
+            bool_item(
+                "Verbose Assistant Syntax Highlight",
+                "Whether Verbose profile enables assistant syntax highlighting.",
+                assistant_syntax_for_profile(&cfg.message_verbosity_profiles.verbose),
+            ),
+            bool_item(
+                "Verbose Assistant Truncate Prev",
+                "Whether Verbose profile truncates earlier assistant messages.",
+                assistant_truncate_prev_for_profile(&cfg.message_verbosity_profiles.verbose),
+            ),
+            enum_item(
+                "Verbose Assistant Truncated Len",
+                "Rendered length for earlier assistant messages in Verbose profile.",
+                &len_values,
+                max_len_to_idx(assistant_truncated_len_for_profile(
+                    &cfg.message_verbosity_profiles.verbose,
+                )),
+            ),
+            enum_item(
                 "Verbose SysInfo Level",
                 "Severity threshold shown for SysInfo in Verbose profile.",
                 &["Info", "Debug", "Warn", "Error"],
@@ -141,6 +247,41 @@ impl ConfigOverlayState {
                 "Verbose Show Init System",
                 "Whether Verbose profile renders the initial base system message.",
                 display_init_for_profile(&cfg.message_verbosity_profiles.verbose),
+            ),
+            enum_item(
+                "Custom User Max Len",
+                "Maximum rendered length for user messages in Custom profile.",
+                &len_values,
+                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.custom)),
+            ),
+            bool_item(
+                "Custom User Syntax Highlight",
+                "Whether Custom profile enables user syntax highlighting.",
+                user_syntax_for_profile(&cfg.message_verbosity_profiles.custom),
+            ),
+            enum_item(
+                "Custom Assistant Max Len",
+                "Maximum rendered length for assistant messages in Custom profile.",
+                &len_values,
+                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.custom)),
+            ),
+            bool_item(
+                "Custom Assistant Syntax Highlight",
+                "Whether Custom profile enables assistant syntax highlighting.",
+                assistant_syntax_for_profile(&cfg.message_verbosity_profiles.custom),
+            ),
+            bool_item(
+                "Custom Assistant Truncate Prev",
+                "Whether Custom profile truncates earlier assistant messages.",
+                assistant_truncate_prev_for_profile(&cfg.message_verbosity_profiles.custom),
+            ),
+            enum_item(
+                "Custom Assistant Truncated Len",
+                "Rendered length for earlier assistant messages in Custom profile.",
+                &len_values,
+                max_len_to_idx(assistant_truncated_len_for_profile(
+                    &cfg.message_verbosity_profiles.custom,
+                )),
             ),
             enum_item(
                 "Custom SysInfo Level",
@@ -684,7 +825,7 @@ pub fn render_config_overlay(frame: &mut Frame<'_>, cfg: &ConfigOverlayState) {
 
     frame.render_widget(ratatui::widgets::Clear, rect);
 
-    let footer_height = if cfg.help_visible { 6 } else { 4 };
+    let footer_height = if cfg.help_visible { 7 } else { 4 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(footer_height)])
@@ -834,6 +975,91 @@ fn parse_verbosity_level(value: &str) -> Option<VerbosityLevel> {
     }
 }
 
+fn max_len_to_idx(max_len: Option<u32>) -> usize {
+    match max_len {
+        None => 0,
+        Some(120) => 1,
+        Some(220) => 2,
+        Some(512) => 3,
+        Some(1024) => 4,
+        Some(2048) => 5,
+        Some(4096) => 6,
+        Some(8192) => 7,
+        Some(_) => 0,
+    }
+}
+
+fn parse_optional_u32(value: &str) -> Option<Option<u32>> {
+    if value == "None" {
+        return Some(None);
+    }
+    value.parse::<u32>().ok().map(Some)
+}
+
+fn user_max_len_for_profile(profile: &[MessageVerbosity]) -> Option<u32> {
+    for setting in profile {
+        if let MessageVerbosity::User { max_len, .. } = setting {
+            return *max_len;
+        }
+    }
+    None
+}
+
+fn user_syntax_for_profile(profile: &[MessageVerbosity]) -> bool {
+    for setting in profile {
+        if let MessageVerbosity::User {
+            syntax_highlighting, ..
+        } = setting
+        {
+            return *syntax_highlighting;
+        }
+    }
+    false
+}
+
+fn assistant_max_len_for_profile(profile: &[MessageVerbosity]) -> Option<u32> {
+    for setting in profile {
+        if let MessageVerbosity::Assistant { max_len, .. } = setting {
+            return *max_len;
+        }
+    }
+    None
+}
+
+fn assistant_syntax_for_profile(profile: &[MessageVerbosity]) -> bool {
+    for setting in profile {
+        if let MessageVerbosity::Assistant {
+            syntax_highlighting, ..
+        } = setting
+        {
+            return *syntax_highlighting;
+        }
+    }
+    false
+}
+
+fn assistant_truncate_prev_for_profile(profile: &[MessageVerbosity]) -> bool {
+    for setting in profile {
+        if let MessageVerbosity::Assistant {
+            truncate_prev_messages,
+            ..
+        } = setting
+        {
+            return *truncate_prev_messages;
+        }
+    }
+    false
+}
+
+fn assistant_truncated_len_for_profile(profile: &[MessageVerbosity]) -> Option<u32> {
+    for setting in profile {
+        if let MessageVerbosity::Assistant { truncated_len, .. } = setting {
+            return *truncated_len;
+        }
+    }
+    None
+}
+
 fn sysinfo_level_for_profile(profile: &[MessageVerbosity]) -> VerbosityLevel {
     for setting in profile {
         if let MessageVerbosity::SysInfo { verbosity, .. } = setting {
@@ -866,6 +1092,17 @@ fn apply_message_verbosity_profile_settings(
     cfg: &mut RuntimeConfig,
 ) -> bool {
     let mut changed = false;
+    changed |= apply_profile_user_assistant_settings(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Minimal,
+        "Minimal User Max Len",
+        "Minimal User Syntax Highlight",
+        "Minimal Assistant Max Len",
+        "Minimal Assistant Syntax Highlight",
+        "Minimal Assistant Truncate Prev",
+        "Minimal Assistant Truncated Len",
+    );
     changed |= apply_profile_level(
         overlay,
         cfg,
@@ -878,6 +1115,17 @@ fn apply_message_verbosity_profile_settings(
         cfg,
         MessageVerbosityProfile::Minimal,
         "Minimal Show Init System",
+    );
+    changed |= apply_profile_user_assistant_settings(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Normal,
+        "Normal User Max Len",
+        "Normal User Syntax Highlight",
+        "Normal Assistant Max Len",
+        "Normal Assistant Syntax Highlight",
+        "Normal Assistant Truncate Prev",
+        "Normal Assistant Truncated Len",
     );
     changed |= apply_profile_level(
         overlay,
@@ -892,6 +1140,17 @@ fn apply_message_verbosity_profile_settings(
         MessageVerbosityProfile::Normal,
         "Normal Show Init System",
     );
+    changed |= apply_profile_user_assistant_settings(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Verbose,
+        "Verbose User Max Len",
+        "Verbose User Syntax Highlight",
+        "Verbose Assistant Max Len",
+        "Verbose Assistant Syntax Highlight",
+        "Verbose Assistant Truncate Prev",
+        "Verbose Assistant Truncated Len",
+    );
     changed |= apply_profile_level(
         overlay,
         cfg,
@@ -904,6 +1163,17 @@ fn apply_message_verbosity_profile_settings(
         cfg,
         MessageVerbosityProfile::Verbose,
         "Verbose Show Init System",
+    );
+    changed |= apply_profile_user_assistant_settings(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Custom,
+        "Custom User Max Len",
+        "Custom User Syntax Highlight",
+        "Custom Assistant Max Len",
+        "Custom Assistant Syntax Highlight",
+        "Custom Assistant Truncate Prev",
+        "Custom Assistant Truncated Len",
     );
     changed |= apply_profile_level(
         overlay,
@@ -918,6 +1188,51 @@ fn apply_message_verbosity_profile_settings(
         MessageVerbosityProfile::Custom,
         "Custom Show Init System",
     );
+    changed
+}
+
+fn apply_profile_user_assistant_settings(
+    overlay: &ConfigOverlayState,
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    user_max_len_label: &str,
+    user_syntax_label: &str,
+    assistant_max_len_label: &str,
+    assistant_syntax_label: &str,
+    assistant_truncate_prev_label: &str,
+    assistant_truncated_len_label: &str,
+) -> bool {
+    let mut changed = false;
+    if let Some(value) = overlay.selected_value("Message Verbosity", user_max_len_label)
+        && let Some(next) = parse_optional_u32(value)
+    {
+        changed |= set_profile_user_max_len(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", user_syntax_label)
+        && let Some(next) = parse_bool(value)
+    {
+        changed |= set_profile_user_syntax(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", assistant_max_len_label)
+        && let Some(next) = parse_optional_u32(value)
+    {
+        changed |= set_profile_assistant_max_len(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", assistant_syntax_label)
+        && let Some(next) = parse_bool(value)
+    {
+        changed |= set_profile_assistant_syntax(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", assistant_truncate_prev_label)
+        && let Some(next) = parse_bool(value)
+    {
+        changed |= set_profile_assistant_truncate_prev(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", assistant_truncated_len_label)
+        && let Some(next) = parse_optional_u32(value)
+    {
+        changed |= set_profile_assistant_truncated_len(cfg, profile, next);
+    }
     changed
 }
 
@@ -986,6 +1301,168 @@ fn set_profile_sysinfo_level(
     settings.push(MessageVerbosity::SysInfo {
         max_len: None,
         verbosity: level,
+    });
+    true
+}
+
+fn set_profile_user_max_len(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    max_len: Option<u32>,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::User {
+            max_len: current, ..
+        } = entry
+        {
+            if *current != max_len {
+                *current = max_len;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::User {
+        max_len,
+        syntax_highlighting: false,
+    });
+    true
+}
+
+fn set_profile_user_syntax(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    syntax_highlighting: bool,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::User {
+            syntax_highlighting: current,
+            ..
+        } = entry
+        {
+            if *current != syntax_highlighting {
+                *current = syntax_highlighting;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::User {
+        max_len: None,
+        syntax_highlighting,
+    });
+    true
+}
+
+fn set_profile_assistant_max_len(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    max_len: Option<u32>,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::Assistant {
+            max_len: current, ..
+        } = entry
+        {
+            if *current != max_len {
+                *current = max_len;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::Assistant {
+        max_len,
+        syntax_highlighting: false,
+        truncate_prev_messages: false,
+        truncated_len: None,
+    });
+    true
+}
+
+fn set_profile_assistant_syntax(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    syntax_highlighting: bool,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::Assistant {
+            syntax_highlighting: current,
+            ..
+        } = entry
+        {
+            if *current != syntax_highlighting {
+                *current = syntax_highlighting;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::Assistant {
+        max_len: None,
+        syntax_highlighting,
+        truncate_prev_messages: false,
+        truncated_len: None,
+    });
+    true
+}
+
+fn set_profile_assistant_truncate_prev(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    truncate_prev_messages: bool,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::Assistant {
+            truncate_prev_messages: current,
+            ..
+        } = entry
+        {
+            if *current != truncate_prev_messages {
+                *current = truncate_prev_messages;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::Assistant {
+        max_len: None,
+        syntax_highlighting: false,
+        truncate_prev_messages,
+        truncated_len: None,
+    });
+    true
+}
+
+fn set_profile_assistant_truncated_len(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    truncated_len: Option<u32>,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::Assistant {
+            truncated_len: current,
+            ..
+        } = entry
+        {
+            if *current != truncated_len {
+                *current = truncated_len;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::Assistant {
+        max_len: None,
+        syntax_highlighting: false,
+        truncate_prev_messages: false,
+        truncated_len,
     });
     true
 }

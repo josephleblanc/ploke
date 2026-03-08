@@ -210,10 +210,15 @@ Additionally, must include profile defaults for Minimal, Normal, Verbose, and Cu
 Implementation details (completed in this step):
 - Added a new `UI` overlay option: `Default Message Verbosity` with `Minimal|Normal|Verbose|Custom`.
 - Added a new `Message Verbosity` category in the config overlay with per-profile controls for:
+  - `User` max length + syntax-highlighting
+  - `Assistant` max length + syntax-highlighting + previous-message truncation controls
   - `SysInfo` verbosity level (`Info|Debug|Warn|Error`)
   - `System` verbosity level (`Info|Debug|Warn|Error`)
   - `System` initial-message visibility (`Show Init System`)
 - Wired overlay apply logic to persist these settings into `RuntimeConfig.message_verbosity_profiles` and `RuntimeConfig.default_verbosity`.
+- Wired conversation rendering (`ConversationView` / `message_item`) to resolve the active profile from `RuntimeConfig.default_verbosity` and apply render-time message filtering/truncation.
+- Implemented render-time threshold filtering for `SysInfo` and `System` messages using configured `VerbosityLevel` and content-based classification heuristics.
+- Enforced `System.display_init` in render path for initial `BASE_SYSTEM_PROMPT` visibility.
 - Added focused integration tests for:
   - Presence of the new overlay controls
   - Applying `Custom` profile selections back into runtime config.

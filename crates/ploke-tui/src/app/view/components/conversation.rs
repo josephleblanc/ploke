@@ -4,9 +4,12 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::app::AppEvent;
-use crate::app::message_item::{measure_messages, render_messages, should_render_tool_buttons};
+use crate::app::message_item::{
+    measure_messages, render_messages, should_render_message, should_render_tool_buttons,
+};
 use crate::app::types::RenderMsg;
 use crate::app::view::EventSubscriber;
+use crate::user_config::MessageVerbosity;
 
 /// Encapsulates conversation view state: scroll, auto-follow, and item heights.
 #[derive(Debug, Default, Clone)]
@@ -30,20 +33,30 @@ impl ConversationView {
         viewport_height: u16,
         selected_index_opt: Option<usize>,
         tool_verbosity: crate::tools::ToolVerbosity,
+        message_verbosity_profile: &[MessageVerbosity],
     ) where
         I: IntoIterator<Item = &'a T> + Clone,
     {
         self.last_viewport_height = viewport_height;
 
         // 1) Measure
-        let (total_height, heights) =
-            measure_messages(path.clone(), conversation_width, tool_verbosity, selected_index_opt);
+        let (total_height, heights) = measure_messages(
+            path.clone(),
+            conversation_width,
+            tool_verbosity,
+            message_verbosity_profile,
+            path_len,
+            selected_index_opt,
+        );
         self.content_height = total_height;
         self.item_heights = heights;
-        
+
         // Populate interactive tools map
         self.interactive_tools.clear();
         for (i, msg) in path.into_iter().enumerate() {
+            if !should_render_message(msg, message_verbosity_profile) {
+                continue;
+            }
             if let Some(payload) = msg.tool_payload() {
                 if should_render_tool_buttons(payload) {
                     self.interactive_tools.insert(i, msg.id());
@@ -114,6 +127,7 @@ impl ConversationView {
         conversation_area: Rect,
         selected_index_opt: Option<usize>,
         tool_verbosity: crate::tools::ToolVerbosity,
+        message_verbosity_profile: &[MessageVerbosity],
         confirmation_states: &HashMap<Uuid, bool>,
     ) where
         I: IntoIterator<Item = &'a T>,
@@ -127,6 +141,7 @@ impl ConversationView {
             &self.item_heights,
             selected_index_opt,
             tool_verbosity,
+            message_verbosity_profile,
             confirmation_states,
         );
     }

@@ -50,6 +50,18 @@ fn config_overlay_exposes_message_verbosity_controls() {
         message
             .items
             .iter()
+            .any(|item| item.label == "Minimal User Max Len")
+    );
+    assert!(
+        message
+            .items
+            .iter()
+            .any(|item| item.label == "Custom Assistant Truncate Prev")
+    );
+    assert!(
+        message
+            .items
+            .iter()
             .any(|item| item.label == "Minimal SysInfo Level")
     );
     assert!(
@@ -70,6 +82,36 @@ fn config_overlay_applies_message_verbosity_to_runtime_config() {
         "UI",
         "Default Message Verbosity",
         "Custom",
+    );
+    set_selected_value(
+        &mut overlay,
+        "Message Verbosity",
+        "Custom User Max Len",
+        "512",
+    );
+    set_selected_value(
+        &mut overlay,
+        "Message Verbosity",
+        "Custom User Syntax Highlight",
+        "false",
+    );
+    set_selected_value(
+        &mut overlay,
+        "Message Verbosity",
+        "Custom Assistant Max Len",
+        "1024",
+    );
+    set_selected_value(
+        &mut overlay,
+        "Message Verbosity",
+        "Custom Assistant Truncate Prev",
+        "true",
+    );
+    set_selected_value(
+        &mut overlay,
+        "Message Verbosity",
+        "Custom Assistant Truncated Len",
+        "220",
     );
     set_selected_value(
         &mut overlay,
@@ -99,6 +141,22 @@ fn config_overlay_applies_message_verbosity_to_runtime_config() {
         ploke_tui::user_config::MessageVerbosity::SysInfo { verbosity, .. } => Some(*verbosity),
         _ => None,
     });
+    let user = custom.iter().find_map(|entry| match entry {
+        ploke_tui::user_config::MessageVerbosity::User {
+            max_len,
+            syntax_highlighting,
+        } => Some((*max_len, *syntax_highlighting)),
+        _ => None,
+    });
+    let assistant = custom.iter().find_map(|entry| match entry {
+        ploke_tui::user_config::MessageVerbosity::Assistant {
+            max_len,
+            truncate_prev_messages,
+            truncated_len,
+            ..
+        } => Some((*max_len, *truncate_prev_messages, *truncated_len)),
+        _ => None,
+    });
     let system = custom.iter().find_map(|entry| match entry {
         ploke_tui::user_config::MessageVerbosity::System {
             verbosity,
@@ -109,5 +167,7 @@ fn config_overlay_applies_message_verbosity_to_runtime_config() {
     });
 
     assert_eq!(sysinfo, Some(VerbosityLevel::Error));
+    assert_eq!(user, Some((Some(512), false)));
+    assert_eq!(assistant, Some((Some(1024), true, Some(220))));
     assert_eq!(system, Some((VerbosityLevel::Debug, true)));
 }

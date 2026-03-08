@@ -40,23 +40,23 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ploke_tui::EventBusCaps;
+use ploke_tui::app::commands::parser;
+use ploke_tui::app::commands::parser::Command;
+use ploke_tui::app::view::components::conversation::ConversationView;
+use ploke_tui::app::view::components::input_box::InputView;
 use ploke_tui::app_state::commands::{ListNavigation, StateCommand};
 use ploke_tui::app_state::core::PreviewMode;
 use ploke_tui::app_state::state_manager;
-use ploke_tui::chat_history::{MessageKind, MessageStatus, MessageUpdate};
-use ploke_tui::app::commands::parser;
-use ploke_tui::app::commands::parser::Command;
-use ploke_tui::test_utils::mock;
-use ploke_tui::app::view::components::conversation::ConversationView;
-use ploke_tui::app::view::components::input_box::InputView;
 use ploke_tui::chat_history::{ContextStatus, Message};
+use ploke_tui::chat_history::{MessageKind, MessageStatus, MessageUpdate};
+use ploke_tui::test_utils::mock;
 use ploke_tui::ui_theme::UiTheme;
-use ploke_tui::user_config::CommandStyle;
+use ploke_tui::user_config::{CommandStyle, MessageVerbosity};
 use ploke_tui::{EventBus, RagEvent};
 use proptest::prelude::*;
 use proptest::test_runner::{TestCaseError, TestRunner};
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, sleep};
@@ -70,14 +70,34 @@ const LONG_MAX_COMMANDS: usize = 120;
 
 #[derive(Clone, Debug)]
 enum TestCommand {
-    AddImmediate { id: [u8; 16], content: String },
-    AddUser { id: [u8; 16], content: String },
-    Update { id: [u8; 16], content: String, status: Option<MessageStatus> },
-    Delete { id: [u8; 16] },
-    Navigate { dir: ListNavigation },
-    SetPreview { mode: PreviewMode },
-    SetMaxPreviewLines { lines: usize },
-    SetAutoConfirm { enabled: bool },
+    AddImmediate {
+        id: [u8; 16],
+        content: String,
+    },
+    AddUser {
+        id: [u8; 16],
+        content: String,
+    },
+    Update {
+        id: [u8; 16],
+        content: String,
+        status: Option<MessageStatus>,
+    },
+    Delete {
+        id: [u8; 16],
+    },
+    Navigate {
+        dir: ListNavigation,
+    },
+    SetPreview {
+        mode: PreviewMode,
+    },
+    SetMaxPreviewLines {
+        lines: usize,
+    },
+    SetAutoConfirm {
+        enabled: bool,
+    },
 }
 
 impl TestCommand {
@@ -96,7 +116,11 @@ impl TestCommand {
                     completion_tx: tx,
                 }
             }
-            TestCommand::Update { id, content, status } => StateCommand::UpdateMessage {
+            TestCommand::Update {
+                id,
+                content,
+                status,
+            } => StateCommand::UpdateMessage {
                 id: Uuid::from_bytes(id),
                 update: MessageUpdate {
                     content: Some(content),
@@ -113,7 +137,9 @@ impl TestCommand {
             TestCommand::SetMaxPreviewLines { lines } => {
                 StateCommand::SetEditingMaxPreviewLines { lines }
             }
-            TestCommand::SetAutoConfirm { enabled } => StateCommand::SetEditingAutoConfirm { enabled },
+            TestCommand::SetAutoConfirm { enabled } => {
+                StateCommand::SetEditingAutoConfirm { enabled }
+            }
         }
     }
 }
@@ -134,10 +160,17 @@ fn status_strategy() -> impl Strategy<Value = Option<MessageStatus>> {
 
 fn command_strategy() -> impl Strategy<Value = TestCommand> {
     prop_oneof![
-        (any::<[u8; 16]>(), any_string(60)).prop_map(|(id, content)| TestCommand::AddImmediate { id, content }),
-        (any::<[u8; 16]>(), any_string(60)).prop_map(|(id, content)| TestCommand::AddUser { id, content }),
-        (any::<[u8; 16]>(), any_string(60), status_strategy())
-            .prop_map(|(id, content, status)| TestCommand::Update { id, content, status }),
+        (any::<[u8; 16]>(), any_string(60))
+            .prop_map(|(id, content)| TestCommand::AddImmediate { id, content }),
+        (any::<[u8; 16]>(), any_string(60))
+            .prop_map(|(id, content)| TestCommand::AddUser { id, content }),
+        (any::<[u8; 16]>(), any_string(60), status_strategy()).prop_map(|(id, content, status)| {
+            TestCommand::Update {
+                id,
+                content,
+                status,
+            }
+        }),
         any::<[u8; 16]>().prop_map(|id| TestCommand::Delete { id }),
         prop_oneof![
             Just(ListNavigation::Up),
@@ -146,21 +179,15 @@ fn command_strategy() -> impl Strategy<Value = TestCommand> {
             Just(ListNavigation::Bottom),
         ]
         .prop_map(|dir| TestCommand::Navigate { dir }),
-        prop_oneof![
-            Just(PreviewMode::CodeBlock),
-            Just(PreviewMode::Diff),
-        ]
-        .prop_map(|mode| TestCommand::SetPreview { mode }),
+        prop_oneof![Just(PreviewMode::CodeBlock), Just(PreviewMode::Diff),]
+            .prop_map(|mode| TestCommand::SetPreview { mode }),
         (1usize..600usize).prop_map(|lines| TestCommand::SetMaxPreviewLines { lines }),
         any::<bool>().prop_map(|enabled| TestCommand::SetAutoConfirm { enabled }),
     ]
 }
 
 fn schedule_strategy_with(max_commands: usize) -> impl Strategy<Value = Vec<(usize, TestCommand)>> {
-    proptest::collection::vec(
-        (0usize..WORKERS, command_strategy()),
-        1..(max_commands + 1),
-    )
+    proptest::collection::vec((0usize..WORKERS, command_strategy()), 1..(max_commands + 1))
 }
 
 fn command_input_strategy() -> impl Strategy<Value = Vec<String>> {
@@ -179,10 +206,7 @@ fn command_input_strategy() -> impl Strategy<Value = Vec<String>> {
     proptest::collection::vec(prop_oneof![preview, lines, auto], 0..12)
 }
 
-fn run_case(
-    schedule: Vec<(usize, TestCommand)>,
-    inputs: Vec<String>,
-) -> Result<(), TestCaseError> {
+fn run_case(schedule: Vec<(usize, TestCommand)>, inputs: Vec<String>) -> Result<(), TestCaseError> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -287,6 +311,7 @@ fn run_case(
             include_count: 0,
         };
         let messages = vec![msg];
+        let message_profile: Vec<MessageVerbosity> = Vec::new();
         convo.prepare(
             messages.iter(),
             messages.len(),
@@ -294,6 +319,7 @@ fn run_case(
             20,
             Some(0),
             ploke_tui::tools::ToolVerbosity::Normal,
+            &message_profile,
         );
         terminal
             .draw(|frame| {
@@ -305,6 +331,7 @@ fn run_case(
                     area,
                     Some(0),
                     ploke_tui::tools::ToolVerbosity::Normal,
+                    &message_profile,
                     &HashMap::new(),
                 );
                 input_view.render(
