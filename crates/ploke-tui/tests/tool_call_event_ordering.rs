@@ -6,7 +6,7 @@ use ploke_tui::test_utils::new_test_harness::AppHarness;
 use ploke_tui::{AppEvent, EventPriority};
 use std::sync::Once;
 use tokio::sync::oneshot;
-use tokio::time::{Duration, Instant};
+use tokio::time::{Duration, Instant, timeout};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -45,11 +45,14 @@ async fn tool_call_events_preserve_order_in_headless_app() {
     };
 
     let (result_tx, result_rx) = oneshot::channel::<(bool, bool, bool)>();
+    let (ready_tx, ready_rx) = oneshot::channel::<()>();
     let event_bus = harness.event_bus.clone();
     let call_id_observer = call_id.clone();
+    // Avoid race: subscribe in observer task, then signal readiness before sender emits events.
     tokio::spawn(async move {
         let mut rt_rx = event_bus.subscribe(EventPriority::Realtime);
         let mut bg_rx = event_bus.subscribe(EventPriority::Background);
+        let _ = ready_tx.send(());
         let mut seen_requested = false;
         let mut seen_completed = false;
         let mut violation = false;
@@ -96,6 +99,11 @@ async fn tool_call_events_preserve_order_in_headless_app() {
 
         let _ = result_tx.send((seen_requested, seen_completed, violation));
     });
+
+    timeout(Duration::from_secs(1), ready_rx)
+        .await
+        .expect("timeout waiting for observer readiness")
+        .expect("observer readiness channel dropped");
 
     harness
         .event_bus
