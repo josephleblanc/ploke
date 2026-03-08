@@ -229,8 +229,21 @@ Add a command `/verbosity profile <minimal|normal|verbose|custom>`
 
 Custom verbosity level defined in user config or through UI config overlay
 
-TODO (tests):
-- Add a second approvals overlay test that explicitly switches diff view to non-minimal (`Expanded` or `Full`) and asserts unchanged-line rendering for normal behavior.
-- Update `post_apply_rescan::approve_emits_rescan_sysinfo` and similar message-dependent tests for new default message-verbosity behavior:
-  - keep one test variant that asserts expected behavior under the default profile (where some diagnostic messages are filtered), and
-  - add a second variant that selects a verbosity profile where the message is expected to be visible/emitted.
+Implementation details (completed in this step):
+- Added parser commands in `crates/ploke-tui/src/app/commands/parser.rs`:
+  - `verbosity profile <minimal|normal|verbose|custom>` -> `Command::VerbosityProfileSet(...)`
+  - `verbosity profile` -> `Command::VerbosityProfileShow`
+- Added executor handling in `crates/ploke-tui/src/app/commands/exec.rs` to:
+  - persist selected profile into `RuntimeConfig.default_verbosity`, and
+  - emit SysInfo confirmation/status messages for set/show.
+- Added `App::apply_message_verbosity_profile(...)` in `crates/ploke-tui/src/app/mod.rs` for command-driven profile updates.
+- Added `MessageVerbosityProfile::as_str()` in `crates/ploke-tui/src/user_config.rs` for consistent command/status text.
+- Updated command help/completion tables in `crates/ploke-tui/src/app/commands/mod.rs` with the new `verbosity profile` command.
+- Added parser tests in `crates/ploke-tui/tests/command_verbosity_profile.rs` for slash-style set and NeoVim-style show parsing.
+
+Implementation details (tests completed in this step):
+- Added non-minimal approvals render coverage in `crates/ploke-tui/tests/approvals_overlay_render.rs`:
+  - new `approvals_overlay_renders_codeblocks_preview_expanded_includes_unchanged_lines` test sets `DiffViewMode::Expanded` and asserts unchanged context lines are present.
+- Updated `crates/ploke-tui/tests/post_apply_rescan.rs` for profile-aware rescan message behavior:
+  - split into `approve_emits_rescan_sysinfo_under_default_profile` and `approve_emits_rescan_sysinfo_under_verbose_profile`.
+  - both variants explicitly set config profile (`Minimal` / `Verbose`) and assert rescan SysInfo emission in chat storage.

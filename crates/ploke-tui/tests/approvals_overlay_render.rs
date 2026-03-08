@@ -30,7 +30,9 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ratatui::layout::Rect;
 use ratatui::{Terminal, backend::TestBackend};
 
-use ploke_tui::app::view::components::approvals::{ApprovalsState, render_approvals_overlay};
+use ploke_tui::app::view::components::approvals::{
+    ApprovalsState, DiffViewMode, render_approvals_overlay,
+};
 use ploke_tui::app_state::core::{
     AppState, ChatState, ConfigState, DiffPreview, EditProposal, EditProposalStatus, RuntimeConfig,
     SystemState,
@@ -327,6 +329,44 @@ fn approvals_overlay_renders_codeblocks_preview_and_selection() {
         assert!(!text.contains("+ fn a() {}"));
         let red = redact(&text);
         insta::assert_snapshot!("approvals_codeblocks_90x28", red);
+    });
+}
+
+#[test]
+fn approvals_overlay_renders_codeblocks_preview_expanded_includes_unchanged_lines() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let backend = TestBackend::new(90, 28);
+        let mut term = Terminal::new(backend).expect("terminal");
+        let id = uuid::Uuid::from_u128(0x87654321_4321_8765_4321_876543218765);
+        let (state, _ids) = make_state_with_ids(vec![(
+            id,
+            DiffPreview::CodeBlocks {
+                per_file: vec![ploke_tui::app_state::core::BeforeAfter {
+                    file_path: std::env::current_dir().unwrap().join("Cargo.toml"),
+                    before: "fn a() {}\nfn b() {}".into(),
+                    after: "fn a() {}\nfn c() {}".into(),
+                }],
+            },
+        )])
+        .await;
+        let mut ui = ApprovalsState::default();
+        ui.diff_view = DiffViewMode::Expanded;
+
+        term.draw(|f| {
+            let area = Rect::new(0, 0, 90, 28);
+            let _ = render_approvals_overlay(f, area, &state, &mut ui);
+        })
+        .expect("draw");
+        let text = buffer_to_lines(&term).join("\n");
+        assert!(text.contains("Before/After:"));
+        // Expanded mode should include unchanged context lines.
+        assert!(text.contains("fn a() {}"));
+        assert!(text.contains("- fn b() {}"));
+        assert!(text.contains("+ fn c() {}"));
     });
 }
 
