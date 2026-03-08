@@ -7,7 +7,9 @@ use ratatui::widgets::{Block, Paragraph};
 
 use crate::app_state::RuntimeConfig;
 use crate::tools::ToolVerbosity;
-use crate::user_config::{CommandStyle, CtxMode};
+use crate::user_config::{
+    CommandStyle, CtxMode, MessageVerbosity, MessageVerbosityProfile, VerbosityLevel,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigOverlayPane {
@@ -64,6 +66,103 @@ impl ConfigOverlayState {
                     ToolVerbosity::Verbose => 2,
                 },
             ),
+            enum_item(
+                "Default Message Verbosity",
+                "Default conversation verbosity profile for UI message rendering.",
+                &["Minimal", "Normal", "Verbose", "Custom"],
+                match cfg.default_verbosity {
+                    MessageVerbosityProfile::Minimal => 0,
+                    MessageVerbosityProfile::Normal => 1,
+                    MessageVerbosityProfile::Verbose => 2,
+                    MessageVerbosityProfile::Custom => 3,
+                },
+            ),
+        ];
+        let message_verbosity_items = vec![
+            enum_item(
+                "Minimal SysInfo Level",
+                "Severity threshold shown for SysInfo in Minimal profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(sysinfo_level_for_profile(
+                    &cfg.message_verbosity_profiles.minimal,
+                )),
+            ),
+            enum_item(
+                "Minimal System Level",
+                "Severity threshold shown for System messages in Minimal profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(system_level_for_profile(
+                    &cfg.message_verbosity_profiles.minimal,
+                )),
+            ),
+            bool_item(
+                "Minimal Show Init System",
+                "Whether Minimal profile renders the initial base system message.",
+                display_init_for_profile(&cfg.message_verbosity_profiles.minimal),
+            ),
+            enum_item(
+                "Normal SysInfo Level",
+                "Severity threshold shown for SysInfo in Normal profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(sysinfo_level_for_profile(
+                    &cfg.message_verbosity_profiles.normal,
+                )),
+            ),
+            enum_item(
+                "Normal System Level",
+                "Severity threshold shown for System messages in Normal profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(system_level_for_profile(
+                    &cfg.message_verbosity_profiles.normal,
+                )),
+            ),
+            bool_item(
+                "Normal Show Init System",
+                "Whether Normal profile renders the initial base system message.",
+                display_init_for_profile(&cfg.message_verbosity_profiles.normal),
+            ),
+            enum_item(
+                "Verbose SysInfo Level",
+                "Severity threshold shown for SysInfo in Verbose profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(sysinfo_level_for_profile(
+                    &cfg.message_verbosity_profiles.verbose,
+                )),
+            ),
+            enum_item(
+                "Verbose System Level",
+                "Severity threshold shown for System messages in Verbose profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(system_level_for_profile(
+                    &cfg.message_verbosity_profiles.verbose,
+                )),
+            ),
+            bool_item(
+                "Verbose Show Init System",
+                "Whether Verbose profile renders the initial base system message.",
+                display_init_for_profile(&cfg.message_verbosity_profiles.verbose),
+            ),
+            enum_item(
+                "Custom SysInfo Level",
+                "Severity threshold shown for SysInfo in Custom profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(sysinfo_level_for_profile(
+                    &cfg.message_verbosity_profiles.custom,
+                )),
+            ),
+            enum_item(
+                "Custom System Level",
+                "Severity threshold shown for System messages in Custom profile.",
+                &["Info", "Debug", "Warn", "Error"],
+                verbosity_level_to_idx(system_level_for_profile(
+                    &cfg.message_verbosity_profiles.custom,
+                )),
+            ),
+            bool_item(
+                "Custom Show Init System",
+                "Whether Custom profile renders the initial base system message.",
+                display_init_for_profile(&cfg.message_verbosity_profiles.custom),
+            ),
         ];
 
         let chat_items = vec![bool_item(
@@ -78,9 +177,7 @@ impl ConfigOverlayState {
             cfg.rag.strict_bm25_by_default,
         )];
 
-        let context_top_k_values = [
-            3_usize, 5, 8, 10, 12, 16, 20, 30, 40, 60, 80, 100, 150, 200,
-        ];
+        let context_top_k_values = [3_usize, 5, 8, 10, 12, 16, 20, 30, 40, 60, 80, 100, 150, 200];
         let context_per_part_values = [
             32_usize, 64, 96, 128, 160, 256, 320, 512, 768, 1024, 1536, 2048, 3072, 4096,
         ];
@@ -161,6 +258,10 @@ impl ConfigOverlayState {
             ConfigOverlayCategory {
                 name: "RAG".to_string(),
                 items: rag_items,
+            },
+            ConfigOverlayCategory {
+                name: "Message Verbosity".to_string(),
+                items: message_verbosity_items,
             },
             ConfigOverlayCategory {
                 name: "Context".to_string(),
@@ -396,10 +497,7 @@ impl ConfigOverlayState {
         numeric_values.sort_unstable();
         numeric_values.dedup();
         item.values = numeric_values.iter().map(|v| v.to_string()).collect();
-        item.selected = numeric_values
-            .iter()
-            .position(|v| *v == next)
-            .unwrap_or(0);
+        item.selected = numeric_values.iter().position(|v| *v == next).unwrap_or(0);
         self.value_idx = item.selected.min(item.values.len().saturating_sub(1));
         self.dirty = true;
         true
@@ -431,6 +529,20 @@ impl ConfigOverlayState {
                 changed = true;
             }
         }
+        if let Some(value) = self.selected_value("UI", "Default Message Verbosity") {
+            let next = match value {
+                "Minimal" => MessageVerbosityProfile::Minimal,
+                "Normal" => MessageVerbosityProfile::Normal,
+                "Verbose" => MessageVerbosityProfile::Verbose,
+                "Custom" => MessageVerbosityProfile::Custom,
+                _ => cfg.default_verbosity,
+            };
+            if cfg.default_verbosity != next {
+                cfg.default_verbosity = next;
+                changed = true;
+            }
+        }
+        changed |= apply_message_verbosity_profile_settings(self, cfg);
         if let Some(value) = self.selected_value("Chat", "Retry Without Tools") {
             if let Some(next) = parse_bool(value) {
                 if cfg.chat_policy.retry_without_tools_on_404 != next {
@@ -552,10 +664,11 @@ impl ConfigOverlayState {
 
     fn selected_value(&self, category: &str, item_label: &str) -> Option<&str> {
         let category = self.categories.iter().find(|cat| cat.name == category)?;
-        let item = category.items.iter().find(|item| item.label == item_label)?;
-        item.values
-            .get(item.selected)
-            .map(|value| value.as_str())
+        let item = category
+            .items
+            .iter()
+            .find(|item| item.label == item_label)?;
+        item.values.get(item.selected).map(|value| value.as_str())
     }
 }
 
@@ -685,10 +798,7 @@ fn numeric_item(
     }
     options.sort_unstable();
     options.dedup();
-    let selected = options
-        .iter()
-        .position(|v| *v == current)
-        .unwrap_or(0);
+    let selected = options.iter().position(|v| *v == current).unwrap_or(0);
     ConfigOverlayItem {
         label: label.to_string(),
         description: description.to_string(),
@@ -703,6 +813,230 @@ fn parse_bool(value: &str) -> Option<bool> {
         "false" => Some(false),
         _ => None,
     }
+}
+
+fn verbosity_level_to_idx(level: VerbosityLevel) -> usize {
+    match level {
+        VerbosityLevel::Info => 0,
+        VerbosityLevel::Debug => 1,
+        VerbosityLevel::Warn => 2,
+        VerbosityLevel::Error => 3,
+    }
+}
+
+fn parse_verbosity_level(value: &str) -> Option<VerbosityLevel> {
+    match value {
+        "Info" => Some(VerbosityLevel::Info),
+        "Debug" => Some(VerbosityLevel::Debug),
+        "Warn" => Some(VerbosityLevel::Warn),
+        "Error" => Some(VerbosityLevel::Error),
+        _ => None,
+    }
+}
+
+fn sysinfo_level_for_profile(profile: &[MessageVerbosity]) -> VerbosityLevel {
+    for setting in profile {
+        if let MessageVerbosity::SysInfo { verbosity, .. } = setting {
+            return *verbosity;
+        }
+    }
+    VerbosityLevel::Info
+}
+
+fn system_level_for_profile(profile: &[MessageVerbosity]) -> VerbosityLevel {
+    for setting in profile {
+        if let MessageVerbosity::System { verbosity, .. } = setting {
+            return *verbosity;
+        }
+    }
+    VerbosityLevel::Info
+}
+
+fn display_init_for_profile(profile: &[MessageVerbosity]) -> bool {
+    for setting in profile {
+        if let MessageVerbosity::System { display_init, .. } = setting {
+            return *display_init;
+        }
+    }
+    false
+}
+
+fn apply_message_verbosity_profile_settings(
+    overlay: &ConfigOverlayState,
+    cfg: &mut RuntimeConfig,
+) -> bool {
+    let mut changed = false;
+    changed |= apply_profile_level(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Minimal,
+        "Minimal SysInfo Level",
+        "Minimal System Level",
+    );
+    changed |= apply_profile_display_init(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Minimal,
+        "Minimal Show Init System",
+    );
+    changed |= apply_profile_level(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Normal,
+        "Normal SysInfo Level",
+        "Normal System Level",
+    );
+    changed |= apply_profile_display_init(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Normal,
+        "Normal Show Init System",
+    );
+    changed |= apply_profile_level(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Verbose,
+        "Verbose SysInfo Level",
+        "Verbose System Level",
+    );
+    changed |= apply_profile_display_init(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Verbose,
+        "Verbose Show Init System",
+    );
+    changed |= apply_profile_level(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Custom,
+        "Custom SysInfo Level",
+        "Custom System Level",
+    );
+    changed |= apply_profile_display_init(
+        overlay,
+        cfg,
+        MessageVerbosityProfile::Custom,
+        "Custom Show Init System",
+    );
+    changed
+}
+
+fn apply_profile_level(
+    overlay: &ConfigOverlayState,
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    sysinfo_label: &str,
+    system_label: &str,
+) -> bool {
+    let mut changed = false;
+    if let Some(value) = overlay.selected_value("Message Verbosity", sysinfo_label)
+        && let Some(next) = parse_verbosity_level(value)
+    {
+        changed |= set_profile_sysinfo_level(cfg, profile, next);
+    }
+    if let Some(value) = overlay.selected_value("Message Verbosity", system_label)
+        && let Some(next) = parse_verbosity_level(value)
+    {
+        changed |= set_profile_system_level(cfg, profile, next);
+    }
+    changed
+}
+
+fn apply_profile_display_init(
+    overlay: &ConfigOverlayState,
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    item_label: &str,
+) -> bool {
+    if let Some(value) = overlay.selected_value("Message Verbosity", item_label)
+        && let Some(next) = parse_bool(value)
+    {
+        return set_profile_system_display_init(cfg, profile, next);
+    }
+    false
+}
+
+fn profile_settings_mut(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+) -> &mut Vec<MessageVerbosity> {
+    match profile {
+        MessageVerbosityProfile::Minimal => &mut cfg.message_verbosity_profiles.minimal,
+        MessageVerbosityProfile::Normal => &mut cfg.message_verbosity_profiles.normal,
+        MessageVerbosityProfile::Verbose => &mut cfg.message_verbosity_profiles.verbose,
+        MessageVerbosityProfile::Custom => &mut cfg.message_verbosity_profiles.custom,
+    }
+}
+
+fn set_profile_sysinfo_level(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    level: VerbosityLevel,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::SysInfo { verbosity, .. } = entry {
+            if *verbosity != level {
+                *verbosity = level;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::SysInfo {
+        max_len: None,
+        verbosity: level,
+    });
+    true
+}
+
+fn set_profile_system_level(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    level: VerbosityLevel,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::System { verbosity, .. } = entry {
+            if *verbosity != level {
+                *verbosity = level;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::System {
+        max_len: None,
+        verbosity: level,
+        display_init: false,
+    });
+    true
+}
+
+fn set_profile_system_display_init(
+    cfg: &mut RuntimeConfig,
+    profile: MessageVerbosityProfile,
+    display_init: bool,
+) -> bool {
+    let settings = profile_settings_mut(cfg, profile);
+    for entry in settings.iter_mut() {
+        if let MessageVerbosity::System {
+            display_init: value, ..
+        } = entry
+        {
+            if *value != display_init {
+                *value = display_init;
+                return true;
+            }
+            return false;
+        }
+    }
+    settings.push(MessageVerbosity::System {
+        max_len: None,
+        verbosity: VerbosityLevel::Info,
+        display_init,
+    });
+    true
 }
 
 fn build_category_lines(

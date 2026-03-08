@@ -207,6 +207,17 @@ Add config options for the different message verbosity levels, and a default ver
 
 Additionally, must include profile defaults for Minimal, Normal, Verbose, and Custom.
 
+Implementation details (completed in this step):
+- Added a new `UI` overlay option: `Default Message Verbosity` with `Minimal|Normal|Verbose|Custom`.
+- Added a new `Message Verbosity` category in the config overlay with per-profile controls for:
+  - `SysInfo` verbosity level (`Info|Debug|Warn|Error`)
+  - `System` verbosity level (`Info|Debug|Warn|Error`)
+  - `System` initial-message visibility (`Show Init System`)
+- Wired overlay apply logic to persist these settings into `RuntimeConfig.message_verbosity_profiles` and `RuntimeConfig.default_verbosity`.
+- Added focused integration tests for:
+  - Presence of the new overlay controls
+  - Applying `Custom` profile selections back into runtime config.
+
 4. Expand commands for verbosity
 
 Add a command `/verbosity profile <minimal|normal|verbose|custom>`
