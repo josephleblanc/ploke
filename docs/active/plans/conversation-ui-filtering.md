@@ -231,3 +231,6 @@ Custom verbosity level defined in user config or through UI config overlay
 
 TODO (tests):
 - Add a second approvals overlay test that explicitly switches diff view to non-minimal (`Expanded` or `Full`) and asserts unchanged-line rendering for normal behavior.
+- Update `post_apply_rescan::approve_emits_rescan_sysinfo` and similar message-dependent tests for new default message-verbosity behavior:
+  - keep one test variant that asserts expected behavior under the default profile (where some diagnostic messages are filtered), and
+  - add a second variant that selects a verbosity profile where the message is expected to be visible/emitted.
