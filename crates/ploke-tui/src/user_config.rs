@@ -177,6 +177,7 @@ pub struct UserConfig {
 /// let cfg = ToolingConfig {
 ///     cargo_check_timeout_secs: 120,
 ///     cargo_test_timeout_secs: 900,
+///     create_file_extensions: vec!["rs".to_string(), "md".to_string()],
 /// };
 /// assert_eq!(cfg.cargo_check_timeout_secs, 120);
 /// ```
