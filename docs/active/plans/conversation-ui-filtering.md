@@ -247,3 +247,173 @@ Implementation details (tests completed in this step):
 - Updated `crates/ploke-tui/tests/post_apply_rescan.rs` for profile-aware rescan message behavior:
   - split into `approve_emits_rescan_sysinfo_under_default_profile` and `approve_emits_rescan_sysinfo_under_verbose_profile`.
   - both variants explicitly set config profile (`Minimal` / `Verbose`) and assert rescan SysInfo emission in chat storage.
+
+## Adjust and Expand Message for Feedback Policy
+
+Some of the changes have over-tuned for less user-facing feedback and should be
+fixed. As a result, we will formalize a policy that all user commands have some
+kind of response.
+
+These responses do not all need to occur within the conversation messages, but
+if they are not in conversation messages, then they must appear elsewhere in
+the TUI. For example, while we do not need a follow-up feedback message
+informing the user that the selected model has changed upon changing models
+because there is already a UI component that displays the currently selected
+model (appears in top-right of the UI), we do need a conversation message when
+the embedding model is selected (since this information does not appear in the
+UI).
+
+The overall intent of this policy is to always present the user with some
+response when they take an action.
+
+### 1) Survey commands (completed)
+
+Survey result summary:
+
+- Feedback exists for almost all commands, but many acknowledgements were `Info`
+  `SysInfo` and were hidden under default `Minimal` profile (`SysInfo=Warn`).
+- Some commands intentionally provide non-conversation feedback through UI state
+  changes (overlays, app quit, preview toggle, active model indicator).
+- Two direct gaps were found:
+  - `index pause|resume|cancel` had no explicit acknowledgement message.
+  - legacy malformed `query load ...` without both args was silent.
+
+### 2) Adjust default verbosity (completed)
+
+Changed default minimal profile in `crates/ploke-tui/src/user_config.rs`:
+
+- `MessageVerbosity::SysInfo.verbosity` changed from `Warn` -> `Info`.
+
+This preserves the compact minimal view while ensuring normal command
+acknowledgements are visible by default.
+
+### 3) Create feedback content (completed)
+
+Added/expanded immediate feedback in `crates/ploke-tui/src/app/commands/exec.rs`:
+
+- Added immediate ack for `model load` (`Loading configuration...`).
+- Added immediate ack for `model save` (`Saving configuration...`).
+- Added immediate ack for `update` (`Scanning workspace for updates...`).
+- Added immediate ack for successful `index start` dispatch
+  (`Indexing requested for '<workspace>'`).
+- Added explicit acks for `index pause|resume|cancel`.
+- Added usage feedback for malformed `query load`:
+  `Usage: query load <query_name> <file_name>`.
+
+### 4) Non-I/O test (completed)
+
+Added `crates/ploke-tui/tests/command_feedback_policy.rs`:
+
+- `non_io_commands_emit_user_feedback_within_500ms`
+- Uses `AppHarness` and synthetic key input (same UI path as user command entry).
+- Asserts `SysInfo` feedback appears within 500ms for:
+  - `verbosity profile verbose`
+  - `provider tools-only on`
+  - `index pause`
+  - `index resume`
+  - `index cancel`
+
+### 5) I/O tests for file + network paths (completed)
+
+Added in the same test file:
+
+- `io_commands_emit_user_feedback_within_500ms`
+- File I/O command coverage:
+  - `model load /definitely/missing/path/...`
+  - expects immediate load/start or failure feedback within 500ms.
+- Network-capable command coverage:
+  - `model providers invalid_model_id`
+  - expects immediate validation/auth/fetch feedback within 500ms.
+
+### 6) Implement missing feedback (completed)
+
+Missing feedback identified by tests/survey is implemented (see step 3
+changes). New tests pass.
+
+### 7) Run tests (completed)
+
+Executed:
+
+- `cargo test -q -p ploke-tui --test command_feedback_policy`
+- `cargo test -q -p ploke-tui`
+
+Result: passing (warnings only, no test failures).
+
+### 8) Re-evaluate tests + implementation (completed)
+
+Test helper was adjusted to use slash command entry from insert mode (`/cmd`),
+matching real command input semantics and avoiding normal-mode `/` prefill
+(`"/hybrid "`).
+
+No placeholder/flicker behavior was required for the covered commands because
+immediate acknowledgement messages now appear.
+
+### 9) Documentation matrix (completed)
+
+| Command | Feedback | Data structures/state touched | Feedback definition location | Placeholder | Validation |
+|---|---|---|---|---|---|
+| `index start [directory]` | `SysInfo` ack + indexing status messages | `StateCommand::IndexWorkspace`, indexing state | `app/commands/exec.rs`, `app_state/handlers/indexing.rs`, `app/events.rs` | No | Covered indirectly by existing indexing tests; explicit feedback policy matrix only |
+| `index pause` | `SysInfo: Indexing pause requested.` | `StateCommand::PauseIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
+| `index resume` | `SysInfo: Indexing resume requested.` | `StateCommand::ResumeIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
+| `index cancel` | `SysInfo: Indexing cancel requested.` | `StateCommand::CancelIndexing`, indexing control channel | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
+| `check api` | API key guidance `SysInfo` | none (display only) | `app/commands/exec.rs` | No | Covered by survey/manual path |
+| `copy` | `SysInfo` copy success/failure | selected message state, clipboard | `app/mod.rs` | No | Existing copy tests |
+| `model list` | `SysInfo` active model + provider pins | runtime config model registry | `app/commands/exec.rs` | No | Existing model command tests |
+| `model info` | `SysInfo` model + params + provider pins | runtime config model/params | `app/commands/exec.rs` | No | Existing model command tests |
+| `model use <name>` | model switch feedback (`SysInfo`) + active model indicator UI | `StateCommand::SwitchModel`, `SystemEvent::ModelSwitched`, app indicator | `app_state/models.rs`, `app/events.rs` | No | Existing model/event tests |
+| `model refresh [--local]` | immediate refresh/reload `SysInfo` | config/registry reload path | `app/commands/exec.rs` | No | Survey/manual path |
+| `model load [path]` | immediate `Loading configuration...` + success/failure `SysInfo` | `UserConfig::load_from_path`, runtime config replace | `app/commands/exec.rs` | No | `command_feedback_policy::io_commands_emit_user_feedback_within_500ms` |
+| `model save [path] [--with-keys]` | immediate `Saving configuration...` + success/failure `SysInfo` | `RuntimeConfig::to_user_config`, file write | `app/commands/exec.rs` | No | Survey/manual path |
+| `model search <keyword>` | immediate model browser overlay, async results | model browser overlay state + llm event bus | `app/commands/exec.rs`, `app/events.rs` | No | Existing UI/browser tests |
+| `embedding search <keyword>` | immediate embedding browser overlay, async results | embedding browser overlay + llm event bus | `app/commands/exec.rs`, `app/events.rs` | No | Existing UI/browser tests |
+| `model providers <model_id>` | validation/auth/fetch `SysInfo` | network request + provider parsing | `app/commands/exec.rs` | No | `command_feedback_policy::io_commands_emit_user_feedback_within_500ms` |
+| `provider strictness <...>` | `SysInfo` confirmation | runtime config model registry strictness | `app/commands/exec.rs` | No | Survey/manual path |
+| `provider tools-only <on|off>` | `SysInfo` confirmation | runtime config gating flag | `app/commands/exec.rs` | No | `command_feedback_policy::non_io_commands_emit_user_feedback_within_500ms` |
+| `provider select ...` / `provider pin ...` | `SysInfo` model/provider selection feedback | registry selected endpoints + active model | `app_state/dispatcher.rs` | No | Existing provider tests + survey |
+| `bm25 rebuild` | request/result/failure `SysInfo` | RAG BM25 service | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
+| `bm25 status` | status/failure `SysInfo` | RAG BM25 service | `rag/search.rs` | No | Existing BM25 tests |
+| `bm25 save <path>` | immediate ack + result/failure `SysInfo` | RAG BM25 save path | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
+| `bm25 load <path>` | immediate ack + result/failure `SysInfo` | RAG BM25 load path | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
+| `bm25 search <query> [top_k]` | immediate ack + results/failure `SysInfo` | RAG search | `app/commands/exec.rs`, `rag/search.rs` | No | Existing BM25 tests |
+| `hybrid <query> [top_k]` | immediate ack + results/failure `SysInfo` | RAG hybrid search | `app/commands/exec.rs`, `rag/search.rs` | No | Existing hybrid tests |
+| `preview [on|off|toggle]` | immediate UI state change (preview pane) | `App.show_context_preview` | `app/commands/exec.rs` | No | Existing UI tests |
+| `edit preview mode <code|diff>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
+| `edit preview lines <N>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
+| `edit auto <on|off>` | `SysInfo` confirmation | runtime editing config | `app_state/dispatcher.rs` | No | Existing parser/dispatcher tests |
+| `edit approve <request_id>` | approval/rescan/failure `SysInfo` | proposals map + apply/edit pipeline | `rag/editing.rs` | No | `post_apply_rescan.rs` + editing tests |
+| `edit deny <request_id>` | deny confirmation/failure `SysInfo` | proposals map | `rag/editing.rs` | No | editing tests |
+| `create approve <request_id>` | approval/rescan/failure `SysInfo` | create proposals map + apply pipeline | `rag/editing.rs` | No | editing tests |
+| `create deny <request_id>` | deny confirmation/failure `SysInfo` | create proposals map | `rag/editing.rs` | No | editing tests |
+| `tool verbosity <...|toggle>` | `SysInfo` confirmation/show | app/runtime tool verbosity fields | `app/mod.rs`, `app/commands/exec.rs` | No | existing command tests |
+| `verbosity profile <...|show>` | `SysInfo` confirmation/show | runtime default profile + render policy | `app/mod.rs`, `app/commands/exec.rs` | No | `command_feedback_policy` + `command_verbosity_profile.rs` |
+| `help [topic]` | help text `SysInfo` | none | `app/commands/exec.rs` | No | existing help render tests |
+| `search <query>` | immediate context-browser overlay + async results | context browser overlay + search dispatch | `app/commands/exec.rs`, `app/events.rs` | No | existing context browser tests |
+| `update` | immediate scan ack + summary `SysInfo` | `ScanForChange` + db update dispatch | `app/commands/exec.rs` | No | survey/manual path |
+| `quit` | app exit | app lifecycle | `app/commands/exec.rs` | No | `command_quit.rs` |
+
+### Commands not fully mocked/tested under step 5
+
+| Command(s) | Why not fully covered by step-5 harness test | Needed setup |
+|---|---|---|
+| `model search`, `embedding search` (successful remote fetch path) | Existing policy test covers immediate UI feedback pattern but not deterministic remote success payloads | Router/network mock for OpenRouter model list endpoints to validate successful async result rendering deterministically |
+| `model providers` (successful remote fetch path) | Policy test validates immediate error/validation feedback; not deterministic success path under network variance | Endpoint mock returning `endpoints` payload to assert formatted provider listing |
+| `index start` full run with parse/index work | Existing indexing tests validate responsiveness and completion, but not strict 500ms command-ack for all workspaces | Stable fixture workspace + explicit ack timing assertion in app-harness command-input test |
+| `update` full scan result timing under heavy workspace | Policy coverage is immediate ack only; summary timing depends on filesystem and scan workload | File-system fixture or IO mock with controllable scan delay and deterministic completion signal |
+
+### 10) Add more setup (next)
+
+Next setup items:
+
+- Introduce OpenRouter HTTP mock fixtures for command-level network success tests.
+- Add deterministic scan/index fixtures with controllable delay hooks for strict
+  ack + completion timing assertions.
+
+### 11) Final review
+
+Final outcome:
+
+- Default minimal conversation profile now preserves command feedback (`SysInfo`
+  at `Info` threshold).
+- Commands with previously missing explicit feedback now provide it.
+- Added harness-level 500ms policy tests for non-I/O and I/O command paths.
+- `cargo test -q -p ploke-tui` passes at the end of implementation.
