@@ -9,8 +9,7 @@ use crate::{tools::ToolResult, tools::tool_io_error, tools::tool_ui_error, utils
 
 const DIR_DESC: &str = "Absolute or crate-root-relative directory path.";
 const INCLUDE_HIDDEN_DESC: &str = "Include hidden entries starting with '.' (default: false).";
-const SORT_DESC: &str =
-    "Sort order: name (asc), mtime (newest first), size (largest first), none (filesystem order). \
+const SORT_DESC: &str = "Sort order: name (asc), mtime (newest first), size (largest first), none (filesystem order). \
 Default: name.";
 const MAX_ENTRIES_DESC: &str = "Maximum number of entries to return (default: no limit).";
 
@@ -327,9 +326,9 @@ impl super::Tool for ListDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::{SystemState, SystemStatus};
     use crate::tools::{Ctx, Tool};
     use crate::{EventBus, EventBusCaps};
-    use crate::app_state::{SystemState, SystemStatus};
     use serde_json::json;
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -391,8 +390,7 @@ mod tests {
             max_entries: None,
         };
         let result = ListDir::execute(params, ctx).await.expect("execute");
-        let parsed: ListDirResult =
-            serde_json::from_str(&result.content).expect("parse result");
+        let parsed: ListDirResult = serde_json::from_str(&result.content).expect("parse result");
 
         assert!(parsed.exists);
         assert!(parsed.entries.iter().any(|e| e.name == "alpha.txt"));

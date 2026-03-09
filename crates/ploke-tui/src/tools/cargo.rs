@@ -1107,10 +1107,8 @@ mod tests {
 
     #[test]
     fn deserialize_params_autoscopes_package_to_workspace() {
-        let params = CargoTool::deserialize_params(
-            r#"{"command":"check","package":"ploke-tui"}"#,
-        )
-        .unwrap();
+        let params =
+            CargoTool::deserialize_params(r#"{"command":"check","package":"ploke-tui"}"#).unwrap();
         assert!(matches!(params.scope, CargoScope::Workspace));
     }
 

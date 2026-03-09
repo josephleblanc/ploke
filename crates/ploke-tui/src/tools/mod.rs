@@ -48,9 +48,9 @@ pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
 pub mod get_code_edges;
+pub mod list_dir;
 pub mod ns_patch;
 pub mod ns_read;
-pub mod list_dir;
 pub mod ui;
 pub mod validators;
 

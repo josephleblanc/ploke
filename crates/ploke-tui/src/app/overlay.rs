@@ -15,7 +15,9 @@ use crate::llm::ProviderKey;
 #[derive(Debug, Clone)]
 pub enum OverlayAction {
     CloseOverlay(OverlayKind),
-    RequestModelEndpoints { model_id: ModelId },
+    RequestModelEndpoints {
+        model_id: ModelId,
+    },
     SelectModel {
         model_id: ModelId,
         provider: Option<ProviderKey>,

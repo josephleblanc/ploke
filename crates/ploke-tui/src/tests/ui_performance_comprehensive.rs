@@ -183,8 +183,12 @@ mod performance_tests {
 
                     let start = Instant::now();
                     let result = terminal.draw(|frame| {
-                        let _ =
-                            render_approvals_overlay(frame, frame.area(), &state_clone, &mut ui_state);
+                        let _ = render_approvals_overlay(
+                            frame,
+                            frame.area(),
+                            &state_clone,
+                            &mut ui_state,
+                        );
                     });
                     let duration = start.elapsed();
 

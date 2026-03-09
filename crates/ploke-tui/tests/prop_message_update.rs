@@ -11,7 +11,8 @@
 //!   - `performance`: tokens/sec 0.0..50_000.0, times 0..120_000 ms.
 //! - `status` transitions: all pairs are checked against explicit rules.
 //! - Invariants:
-//!   - Completed messages reject any update where any field is set.
+//!   - Completed messages reject `content`, `append_content`, and `status` updates.
+//!   - Completed messages allow metadata-only updates.
 //!   - Only `Generating -> Completed` is accepted.
 //!   - `Pending -> Error` and `Generating -> Error` are accepted.
 //!   - `Error -> Pending` is rejected with `Placeholder`.
@@ -19,7 +20,7 @@
 //! - `Message::try_update`:
 //!   - Merges metadata prompt/completion tokens and cost.
 //!   - Empty completion content returns `EmptyContentCompletion` and sets status to `Error`.
-//!   - Once a message reaches `Completed`, subsequent updates are rejected.
+//!   - Once a message reaches `Completed`, content/status changes are rejected.
 //!
 //! Not covered:
 //! - True concurrency or race conditions (tests are single-threaded sequences only).
@@ -28,11 +29,11 @@ use proptest::prelude::*;
 use std::time::Duration;
 use uuid::Uuid;
 
+use ploke_llm::response::{FinishReason, TokenUsage};
+use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 use ploke_tui::chat_history::{
     ContextStatus, Message, MessageKind, MessageStatus, MessageUpdate, UpdateError,
 };
-use ploke_llm::response::{FinishReason, TokenUsage};
-use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
 fn any_string(max: usize) -> impl Strategy<Value = String> {
     proptest::collection::vec(any::<char>(), 0..max).prop_map(|chars| chars.into_iter().collect())
@@ -91,10 +92,7 @@ fn status_strategy() -> impl Strategy<Value = MessageStatus> {
     ]
 }
 
-fn expected_transition(
-    current: &MessageStatus,
-    next: &MessageStatus,
-) -> Result<(), UpdateError> {
+fn expected_transition(current: &MessageStatus, next: &MessageStatus) -> Result<(), UpdateError> {
     if matches!(current, MessageStatus::Completed) {
         return Err(UpdateError::ImmutableMessage);
     }
@@ -103,9 +101,9 @@ fn expected_transition(
         (MessageStatus::Generating, MessageStatus::Completed) => Ok(()),
         (MessageStatus::Generating, MessageStatus::Error { .. }) => Ok(()),
         (MessageStatus::Pending, MessageStatus::Error { .. }) => Ok(()),
-        (_, MessageStatus::Completed) if !matches!(current, MessageStatus::Generating) => {
-            Err(UpdateError::InvalidStatusTransition(current.clone(), next.clone()))
-        }
+        (_, MessageStatus::Completed) if !matches!(current, MessageStatus::Generating) => Err(
+            UpdateError::InvalidStatusTransition(current.clone(), next.clone()),
+        ),
         (MessageStatus::Error { .. }, MessageStatus::Pending) => Err(UpdateError::Placeholder),
         (from, to) if from != to => Err(UpdateError::InvalidStatusTransition(
             from.clone(),
@@ -136,7 +134,7 @@ fn base_message(status: MessageStatus, content: String) -> Message {
 
 proptest! {
     #[test]
-    fn completed_rejects_any_update_fields(
+    fn completed_rejects_content_append_and_status_updates(
         content in any_string(200),
         append in any_string(200),
         status in status_strategy(),
@@ -154,7 +152,42 @@ proptest! {
         };
 
         let result = update.validate(&MessageStatus::Completed);
-        if set_content || set_append || set_status || set_metadata {
+        if set_content || set_append || set_status {
+            prop_assert_eq!(result, Err(UpdateError::ImmutableMessage));
+        } else {
+            prop_assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn completed_allows_metadata_only_update(metadata in metadata_strategy()) {
+        let update = MessageUpdate {
+            metadata: Some(metadata),
+            ..Default::default()
+        };
+
+        prop_assert!(update.validate(&MessageStatus::Completed).is_ok());
+    }
+
+    #[test]
+    fn completed_rejects_metadata_plus_mutating_fields(
+        content in any_string(200),
+        append in any_string(200),
+        status in status_strategy(),
+        metadata in metadata_strategy(),
+        set_content in any::<bool>(),
+        set_append in any::<bool>(),
+        set_status in any::<bool>(),
+    ) {
+        let update = MessageUpdate {
+            content: set_content.then_some(content),
+            append_content: set_append.then_some(append),
+            status: set_status.then_some(status),
+            metadata: Some(metadata),
+        };
+
+        let result = update.validate(&MessageStatus::Completed);
+        if set_content || set_append || set_status {
             prop_assert_eq!(result, Err(UpdateError::ImmutableMessage));
         } else {
             prop_assert!(result.is_ok());
@@ -279,4 +312,55 @@ fn generating_can_complete() {
     };
 
     assert!(update.validate(&MessageStatus::Generating).is_ok());
+}
+
+#[test]
+fn completed_try_update_allows_metadata_only_and_preserves_content_status() {
+    let mut msg = base_message(MessageStatus::Completed, "final content".to_string());
+    msg.metadata = Some(LLMMetadata {
+        model: "gpt-4o".to_string(),
+        usage: TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+        },
+        finish_reason: FinishReason::Stop,
+        processing_time: Duration::from_millis(100),
+        cost: 1.5,
+        performance: PerformanceMetrics {
+            tokens_per_second: 100.0,
+            time_to_first_token: Duration::from_millis(10),
+            queue_time: Duration::from_millis(5),
+        },
+    });
+
+    let update = MessageUpdate {
+        metadata: Some(LLMMetadata {
+            model: "gpt-4o".to_string(),
+            usage: TokenUsage {
+                prompt_tokens: 3,
+                completion_tokens: 4,
+                total_tokens: 7,
+            },
+            finish_reason: FinishReason::Stop,
+            processing_time: Duration::from_millis(20),
+            cost: 0.25,
+            performance: PerformanceMetrics {
+                tokens_per_second: 80.0,
+                time_to_first_token: Duration::from_millis(8),
+                queue_time: Duration::from_millis(3),
+            },
+        }),
+        ..Default::default()
+    };
+
+    let result = msg.try_update(update);
+    assert!(result.is_ok());
+    assert!(matches!(msg.status, MessageStatus::Completed));
+    assert_eq!(msg.content, "final content");
+
+    let merged = msg.metadata.expect("metadata should exist");
+    assert_eq!(merged.usage.prompt_tokens, 13);
+    assert_eq!(merged.usage.completion_tokens, 24);
+    assert!((merged.cost - 1.75).abs() < f64::EPSILON);
 }

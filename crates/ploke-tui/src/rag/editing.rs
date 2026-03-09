@@ -552,9 +552,8 @@ pub async fn approve_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventB
         let mut reg = state.proposals.write().await;
         for request_id in &to_stale {
             if let Some(p) = reg.get_mut(request_id) {
-                p.status = EditProposalStatus::Stale(
-                    "Overlaps with newer edit proposal".to_string(),
-                );
+                p.status =
+                    EditProposalStatus::Stale("Overlaps with newer edit proposal".to_string());
             }
         }
         drop(reg);
@@ -641,7 +640,11 @@ fn proposal_ranges(
 ///
 /// This prevents zero-width ranges from incorrectly skipping overlap checks.
 fn normalize_range(start: usize, end: usize) -> (usize, usize) {
-    let (min, max) = if start <= end { (start, end) } else { (end, start) };
+    let (min, max) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     if min == max {
         (min, min.saturating_add(1))
     } else {

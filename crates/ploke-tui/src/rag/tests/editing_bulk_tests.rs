@@ -46,15 +46,24 @@ async fn approve_pending_edits_applies_newest_and_marks_overlap_stale() {
 
     let reg = harness.state.proposals.read().await;
     assert!(
-        matches!(reg.get(&new_id).unwrap().status, EditProposalStatus::Applied),
+        matches!(
+            reg.get(&new_id).unwrap().status,
+            EditProposalStatus::Applied
+        ),
         "newest overlapping proposal should be applied"
     );
     assert!(
-        matches!(reg.get(&other_id).unwrap().status, EditProposalStatus::Applied),
+        matches!(
+            reg.get(&other_id).unwrap().status,
+            EditProposalStatus::Applied
+        ),
         "non-overlapping proposal should be applied"
     );
     assert!(
-        matches!(reg.get(&old_id).unwrap().status, EditProposalStatus::Stale(_)),
+        matches!(
+            reg.get(&old_id).unwrap().status,
+            EditProposalStatus::Stale(_)
+        ),
         "older overlapping proposal should be marked stale"
     );
 }
@@ -80,11 +89,17 @@ async fn deny_pending_edits_marks_all_pending_denied() {
 
     let reg = harness.state.proposals.read().await;
     assert!(
-        matches!(reg.get(&first_id).unwrap().status, EditProposalStatus::Denied),
+        matches!(
+            reg.get(&first_id).unwrap().status,
+            EditProposalStatus::Denied
+        ),
         "pending proposals should be denied"
     );
     assert!(
-        matches!(reg.get(&second_id).unwrap().status, EditProposalStatus::Denied),
+        matches!(
+            reg.get(&second_id).unwrap().status,
+            EditProposalStatus::Denied
+        ),
         "pending proposals should be denied"
     );
 }

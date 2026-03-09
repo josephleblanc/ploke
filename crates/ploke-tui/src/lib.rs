@@ -23,11 +23,11 @@ pub mod parser;
 pub mod tracing_setup;
 pub mod utils;
 pub use event_bus::*;
-pub mod ui_theme;
 pub mod rag;
 #[cfg(test)]
 mod tests;
 pub mod tools;
+pub mod ui_theme;
 
 pub mod llm;
 pub use llm::manager::CancelChatToken;
@@ -52,7 +52,8 @@ use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState,
     core::{RuntimeConfig, rag_budget_from_config},
-    events::SystemEvent, state_manager,
+    events::SystemEvent,
+    state_manager,
 };
 use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
@@ -266,14 +267,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     // Spawn subsystems with backpressure-aware command sender
     let command_style = config.command_style;
-    let ( cancel_tx, cancel_rx ) = watch::channel(CancelChatToken::KeepOpen);
+    let (cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
     tokio::spawn(llm::manager::llm_manager(
         event_bus.subscribe(EventPriority::Realtime),
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
         event_bus.clone(),
-        cancel_rx
+        cancel_rx,
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
     tokio::spawn(observability::run_observability(
@@ -289,7 +290,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         &event_bus,
         default_model(),
         tool_verbosity,
-        cancel_tx
+        cancel_tx,
     );
     let result = app.run(terminal).await;
     ratatui::restore();

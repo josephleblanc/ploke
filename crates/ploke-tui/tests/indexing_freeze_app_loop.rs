@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
@@ -18,9 +18,7 @@ use ploke_tui as tui;
 use tui::CancelChatToken;
 use tui::app::App;
 use tui::app::RunOptions;
-use tui::app_state::{
-    AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState,
-};
+use tui::app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState};
 use tui::chat_history::ChatHistory;
 use tui::event_bus::{EventBus, EventBusCaps, run_event_bus};
 use tui::tools::ToolVerbosity;
@@ -49,7 +47,11 @@ fn init_test_logging() -> TestLogGuard {
         .with_target("indexing_freeze_app_loop", LevelFilter::INFO);
 
     let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false),
+        )
         .with(filter);
 
     let subscriber_guard = tracing::subscriber::set_default(subscriber);
@@ -208,10 +210,7 @@ async fn index_start_keeps_ui_responsive_in_app_loop() {
         let observed = wait_for_command(&mut cmd_obs_rx, "hello", 1000).await;
 
         info!(target: "indexing_freeze_app_loop", "user message observed = {}", observed);
-        assert!(
-            observed,
-            "app loop did not process input while indexing"
-        );
+        assert!(observed, "app loop did not process input while indexing");
 
         let _ = event_bus.realtime_tx.send(AppEvent::Quit);
         let _ = app_task.await;
@@ -261,8 +260,8 @@ async fn indexing_completed_event_does_not_block_input_when_system_read_held() {
             budget: TokenBudget::default(),
         });
 
-        let focus_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixture_crates/fixture_nodes");
+        let focus_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixture_crates/fixture_nodes");
         {
             let mut sys = state.system.write().await;
             sys.set_focus_from_root(focus_path);

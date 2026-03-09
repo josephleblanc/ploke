@@ -1,7 +1,7 @@
 # ADR 004: Tool-call and Reasoning Display in Chat
 
 ## Status
-Proposed (2025-12-20)
+Accepted (2025-12-20)
 
 ## Context
 - Tool-call responses often carry a `reasoning` field and empty `content` (especially OSS models). We currently mark the assistant placeholder `Completed` with empty content → validation errors and blank UI rows.
@@ -32,3 +32,4 @@ Proposed (2025-12-20)
 
 ## Notes
 - Implementation guided by `docs/active/todo/2025-12-20-tool-call-reasoning-ux.md`.
+- 2026-03-08: Clarified and re-aligned message mutability contract in tests: `Completed` messages are terminal for `content`, `append_content`, and `status`, while metadata-only updates remain allowed for post-completion accounting/observability. This resolves the mismatch surfaced by `crates/ploke-tui/tests/prop_message_update.rs` (notably `completed_rejects_any_update_fields`, which previously expected metadata on `Completed` to be immutable).

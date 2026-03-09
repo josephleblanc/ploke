@@ -4,6 +4,7 @@ use uuid::Uuid;
 use ploke_tui::app::view::components::conversation::ConversationView;
 use ploke_tui::chat_history::{ContextStatus, Message, MessageKind, MessageStatus};
 use ploke_tui::tools::ToolVerbosity;
+use ploke_tui::user_config::MessageVerbosity;
 
 fn message(content: String) -> Message {
     Message {
@@ -35,6 +36,7 @@ proptest! {
         let messages: Vec<Message> = contents.into_iter().map(message).collect();
         let path_len = messages.len();
         let selected_index = selection.filter(|idx| *idx < path_len);
+        let message_profile: Vec<MessageVerbosity> = Vec::new();
 
         let mut view = ConversationView::default();
         view.prepare(
@@ -44,6 +46,7 @@ proptest! {
             height,
             selected_index,
             ToolVerbosity::Normal,
+            &message_profile,
         );
 
         let total_height: u32 = view.item_heights().iter().map(|h| *h as u32).sum();

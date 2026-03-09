@@ -195,11 +195,11 @@ mod tests {
     use ploke_core::ArcStr;
     use ploke_core::tool_types::{FunctionMarker, ToolName};
     use ploke_llm::response::{FunctionCall, ToolCall};
-    use std::sync::Once;
     use std::sync::Arc;
+    use std::sync::Once;
     use tokio::time::{Duration, timeout};
-    use uuid::Uuid;
     use tracing_subscriber::EnvFilter;
+    use uuid::Uuid;
 
     fn init_test_tracing() {
         static INIT: Once = Once::new();

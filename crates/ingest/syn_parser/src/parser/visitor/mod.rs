@@ -466,7 +466,7 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
     }
 }
 
-/// Process multiple files in parallel using rayon 
+/// Process multiple files in parallel using rayon
 ///
 /// Takes DiscoveryOutput and distributes work to analyze_file_phase2.
 pub fn analyze_files_parallel(

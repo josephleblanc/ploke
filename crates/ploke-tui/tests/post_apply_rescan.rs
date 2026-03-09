@@ -17,14 +17,15 @@ use ploke_tui::{
         SystemState,
     },
     event_bus::EventBusCaps,
+    user_config::MessageVerbosityProfile,
 };
 use tokio::sync::RwLock;
 
-#[tokio::test]
-async fn approve_emits_rescan_sysinfo() {
+async fn build_state(profile: MessageVerbosityProfile) -> (Arc<AppState>, Arc<EventBus>) {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
     let io_handle = ploke_io::IoManagerHandle::new();
-    let cfg = ploke_tui::user_config::UserConfig::default();
+    let mut cfg = ploke_tui::user_config::UserConfig::default();
+    cfg.default_verbosity = profile;
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
         cfg.load_embedding_processor().expect("embedder"),
@@ -45,8 +46,13 @@ async fn approve_emits_rescan_sysinfo() {
         create_proposals: RwLock::new(std::collections::HashMap::new()),
     });
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+    (state, event_bus)
+}
 
-    // Insert a no-op proposal (empty edits) to take the approve path
+async fn seed_and_approve_noop_ns_proposal(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
+    // Insert a no-op non-semantic proposal (empty ns edits) to take the approve path.
+    // `write_batch_ns([])` is expected to complete successfully and still emit the
+    // "Scheduled rescan..." SysInfo status text.
     let req_id = uuid::Uuid::new_v4();
     {
         let mut guard = state.proposals.write().await;
@@ -64,28 +70,48 @@ async fn approve_emits_rescan_sysinfo() {
                     text: String::new(),
                 },
                 status: EditProposalStatus::Pending,
-                is_semantic: true,
+                is_semantic: false,
             },
         );
     }
 
-    // Approve and wait briefly
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
         ploke_tui::rag::editing::approve_edits(&state, &event_bus, req_id),
     )
     .await
     .expect("approve_edits timed out");
+}
 
-    // Inspect chat for a rescan SysInfo
-    let chat_guard = state.chat.0.read().await;
-    let path = chat_guard.get_full_path();
-    let found = path.iter().any(|m| {
+fn has_scheduled_rescan_message(chat: &ploke_tui::chat_history::ChatHistory) -> bool {
+    chat.messages.values().any(|m| {
         m.kind == ploke_tui::chat_history::MessageKind::SysInfo
             && m.content.contains("Scheduled rescan of workspace")
-    });
+    })
+}
+
+#[tokio::test]
+async fn approve_emits_rescan_sysinfo_under_default_profile() {
+    let (state, event_bus) = build_state(MessageVerbosityProfile::Minimal).await;
+    seed_and_approve_noop_ns_proposal(&state, &event_bus).await;
+
+    let chat_guard = state.chat.0.read().await;
+    let found = has_scheduled_rescan_message(&chat_guard);
     assert!(
         found,
-        "expected scheduled rescan SysInfo message in chat history"
+        "expected scheduled rescan SysInfo message to be emitted in chat storage"
+    );
+}
+
+#[tokio::test]
+async fn approve_emits_rescan_sysinfo_under_verbose_profile() {
+    let (state, event_bus) = build_state(MessageVerbosityProfile::Verbose).await;
+    seed_and_approve_noop_ns_proposal(&state, &event_bus).await;
+
+    let chat_guard = state.chat.0.read().await;
+    let found = has_scheduled_rescan_message(&chat_guard);
+    assert!(
+        found,
+        "expected scheduled rescan SysInfo message to be emitted in chat storage"
     );
 }

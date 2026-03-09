@@ -37,7 +37,7 @@ use crate::emit_app_event;
 use crate::llm::manager::CancelChatToken;
 use crate::tools::ToolVerbosity;
 use crate::ui_theme::UiTheme;
-use crate::user_config::{CtxMode, OPENROUTER_URL};
+use crate::user_config::{CtxMode, MessageVerbosity, MessageVerbosityProfile, OPENROUTER_URL};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
@@ -176,7 +176,7 @@ impl App {
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
         active_model_id: String,
         tool_verbosity: ToolVerbosity,
-        cancel_tx: watch::Sender<CancelChatToken>
+        cancel_tx: watch::Sender<CancelChatToken>,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -241,6 +241,33 @@ impl App {
             ToolVerbosity::Verbose => ToolVerbosity::Minimal,
         };
         self.apply_tool_verbosity(next, true);
+    }
+
+    fn apply_message_verbosity_profile(
+        &mut self,
+        profile: MessageVerbosityProfile,
+        announce: bool,
+    ) {
+        let state = self.state.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            {
+                let mut cfg = state.config.write().await;
+                cfg.default_verbosity = profile;
+            }
+            if announce {
+                let _ = cmd_tx
+                    .send(StateCommand::AddMessageImmediate {
+                        msg: format!(
+                            "Conversation verbosity profile set to {}",
+                            profile.as_str()
+                        ),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    })
+                    .await;
+            }
+        });
     }
 
     fn cycle_context_mode(&mut self) {
@@ -743,19 +770,29 @@ impl App {
 
     /// Count pending edit proposals for UI banner display.
     fn pending_edit_count(&self) -> usize {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let reg = self.state.proposals.read().await;
-                reg.values()
-                    .filter(|p| {
-                        matches!(
-                            p.status,
-                            crate::app_state::core::EditProposalStatus::Pending
-                        )
-                    })
-                    .count()
+        let Ok(reg) = self.state.proposals.try_read() else {
+            return 0;
+        };
+        reg.values()
+            .filter(|p| {
+                matches!(
+                    p.status,
+                    crate::app_state::core::EditProposalStatus::Pending
+                )
             })
-        })
+            .count()
+    }
+
+    fn active_message_verbosity_profile(&self) -> Vec<MessageVerbosity> {
+        let Ok(cfg) = self.state.config.try_read() else {
+            return Vec::new();
+        };
+        match cfg.default_verbosity {
+            MessageVerbosityProfile::Minimal => cfg.message_verbosity_profiles.minimal.clone(),
+            MessageVerbosityProfile::Normal => cfg.message_verbosity_profiles.normal.clone(),
+            MessageVerbosityProfile::Verbose => cfg.message_verbosity_profiles.verbose.clone(),
+            MessageVerbosityProfile::Custom => cfg.message_verbosity_profiles.custom.clone(),
+        }
     }
 
     /// Renders the user interface.
@@ -867,6 +904,7 @@ impl App {
             .list
             .selected()
             .map(|i: usize| -> usize { i.min(path_len.saturating_sub(1)) });
+        let message_verbosity_profile = self.active_message_verbosity_profile();
 
         // Prepare and render conversation via ConversationView
         self.conversation.prepare(
@@ -876,6 +914,7 @@ impl App {
             viewport_height,
             selected_index_opt,
             self.tool_verbosity,
+            &message_verbosity_profile,
         );
         self.conversation.set_last_chat_area(chat_area);
         self.conversation.render(
@@ -885,6 +924,7 @@ impl App {
             chat_area,
             selected_index_opt,
             self.tool_verbosity,
+            &message_verbosity_profile,
             &self.confirmation_states,
         );
 
@@ -1466,7 +1506,8 @@ impl App {
                             // {
                             //     return Some(req_id);
                             // }
-                            let req_id = path.get(selected)
+                            let req_id = path
+                                .get(selected)
                                 .and_then(|msg| msg.tool_payload())
                                 .filter(|p| should_render_tool_buttons(p))
                                 .and_then(|payload| payload.request_id);

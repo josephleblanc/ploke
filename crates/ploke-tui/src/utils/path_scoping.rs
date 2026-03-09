@@ -26,6 +26,5 @@ pub fn resolve_in_crate_root<P: AsRef<Path>, R: AsRef<Path>>(
         root.join(p)
     };
     let policy = PathPolicy::new(vec![root.to_path_buf()]);
-    normalize_target_path_allow_missing(&target, &policy, "read")
-        .map_err(|err| err.to_string())
+    normalize_target_path_allow_missing(&target, &policy, "read").map_err(|err| err.to_string())
 }

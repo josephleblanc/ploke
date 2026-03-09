@@ -586,7 +586,9 @@ pub(super) async fn scan_for_change(
                     return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
                 }
             };
-        let mut merged = match parser_output.extract_merged_graph().ok_or(SynParserError::MergeError)
+        let mut merged = match parser_output
+            .extract_merged_graph()
+            .ok_or(SynParserError::MergeError)
         {
             Ok(merged) => merged,
             Err(err) => {

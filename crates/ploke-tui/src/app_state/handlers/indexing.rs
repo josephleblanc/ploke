@@ -7,11 +7,11 @@ use uuid::Uuid;
 
 use crate::app_state::{AppState, handlers};
 use crate::chat_history::MessageKind;
+use crate::error::ErrorSeverity;
+use crate::event_bus::ErrorEvent;
 use crate::parser::run_parse;
 use crate::utils::parse_errors::format_parse_failure;
 use crate::{AppEvent, EventBus};
-use crate::error::ErrorSeverity;
-use crate::event_bus::ErrorEvent;
 
 use super::chat::add_msg_immediate;
 

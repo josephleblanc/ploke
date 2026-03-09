@@ -12,8 +12,8 @@ use crate::llm::LLMParameters;
 use crate::llm::registry::user_prefs::RegistryPrefs;
 use crate::llm::{ModelId, ModelKey};
 use crate::user_config::{
-    ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning, RagUserConfig,
-    UserConfig,
+    ChatPolicy, CommandStyle, CtxPrefs, EmbeddingConfig, LocalEmbeddingTuning,
+    MessageVerbosityProfile, MessageVerbosityProfiles, RagUserConfig, UserConfig,
 };
 use crate::{RagEvent, chat_history::ChatHistory};
 use ploke_db::Database;
@@ -177,6 +177,11 @@ pub struct RuntimeConfig {
     pub editing: EditingConfig,
     pub command_style: CommandStyle,
     pub tool_verbosity: ToolVerbosity,
+    /// Conversation presentation profiles used by the UI only.
+    /// This must not affect prompt assembly, message loop behavior, or pinning state.
+    pub message_verbosity_profiles: MessageVerbosityProfiles,
+    /// Active message verbosity profile for UI rendering.
+    pub default_verbosity: MessageVerbosityProfile,
     pub embedding: EmbeddingConfig,
     pub embedding_local: LocalEmbeddingTuning,
     pub ploke_editor: Option<String>,
@@ -231,6 +236,8 @@ impl From<UserConfig> for RuntimeConfig {
             editing,
             command_style: uc.command_style,
             tool_verbosity: uc.tool_verbosity,
+            message_verbosity_profiles: uc.message_verbosity_profiles,
+            default_verbosity: uc.default_verbosity,
             embedding: uc.embedding,
             embedding_local,
             ploke_editor: uc.ploke_editor,
@@ -264,6 +271,8 @@ impl RuntimeConfig {
             registry: self.model_registry.clone(),
             command_style: self.command_style,
             tool_verbosity: self.tool_verbosity,
+            message_verbosity_profiles: self.message_verbosity_profiles.clone(),
+            default_verbosity: self.default_verbosity,
             embedding: self.embedding.clone(),
             embedding_local: self.embedding_local,
             editing,

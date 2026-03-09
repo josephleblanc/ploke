@@ -2,17 +2,17 @@ use std::ops::Index;
 use std::sync::Arc;
 
 use cozo::DataValue;
+use ploke_core::ArcStr;
 use ploke_db::QueryResult;
 use ploke_embed::local::EmbeddingConfig;
 use ploke_rag::{RagService, TokenBudget};
-use ploke_core::ArcStr;
 use syn_parser::parser::nodes::ToCozoUuid;
 
-use crate::tracing_setup::init_tracing;
 use crate::app::message_item::should_render_tool_buttons;
 use crate::app_state::handlers::chat;
 use crate::chat_history::MessageKind;
 use crate::tools::{ToolName, ToolUiPayload};
+use crate::tracing_setup::init_tracing;
 
 use super::*;
 use ploke_embed::{
@@ -319,10 +319,7 @@ async fn test_tool_message_refresh_and_background_sysinfo() {
 
     {
         let chat_guard = state.chat.0.read().await;
-        let tool_msg = chat_guard
-            .messages
-            .get(&tool_msg_id)
-            .expect("tool message");
+        let tool_msg = chat_guard.messages.get(&tool_msg_id).expect("tool message");
         assert_eq!(chat_guard.tail, child_msg_id);
         assert_eq!(tool_msg.selected_child, Some(child_msg_id));
     }
@@ -341,10 +338,7 @@ async fn test_tool_message_refresh_and_background_sysinfo() {
     .await;
 
     let chat_guard = state.chat.0.read().await;
-    let tool_msg = chat_guard
-        .messages
-        .get(&tool_msg_id)
-        .expect("tool message");
+    let tool_msg = chat_guard.messages.get(&tool_msg_id).expect("tool message");
     let payload = tool_msg.tool_payload.as_ref().expect("tool payload");
     assert_eq!(tool_msg.content, "applied content");
     assert!(

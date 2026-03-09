@@ -116,10 +116,7 @@ where
 
     /// Returns total number of visible lines for the list.
     pub fn total_lines(items: &[T]) -> usize {
-        items
-            .iter()
-            .map(|it| 1 + Self::detail_lines(it))
-            .sum()
+        items.iter().map(|it| 1 + Self::detail_lines(it)).sum()
     }
 
     /// Returns the top line index for the selected item.

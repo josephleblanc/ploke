@@ -1,7 +1,7 @@
 use crate::app::AppEvent;
-use crate::ui_theme::UiTheme;
 use crate::app::types::Mode;
 use crate::app::view::EventSubscriber;
+use crate::ui_theme::UiTheme;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
@@ -143,7 +143,9 @@ impl InputView {
             Mode::Command => background_style.fg(theme.input_command_fg),
             _ => background_style.fg(theme.input_fg),
         };
-        let background = Block::default().borders(Borders::NONE).style(background_style);
+        let background = Block::default()
+            .borders(Borders::NONE)
+            .style(background_style);
         let input = Paragraph::new(input_text)
             .scroll((self.vscroll, 0))
             .block(Block::default().borders(Borders::NONE))
@@ -181,7 +183,10 @@ impl InputView {
                 lines.push(Line::from(vec![
                     Span::styled(suggestion.command.as_str(), command_style),
                     Span::raw("  "),
-                    Span::styled(suggestion.description.as_str(), desc_style.add_modifier(Modifier::DIM)),
+                    Span::styled(
+                        suggestion.description.as_str(),
+                        desc_style.add_modifier(Modifier::DIM),
+                    ),
                 ]));
             }
             let suggestion_text = Text::from(lines);

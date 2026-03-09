@@ -39,6 +39,84 @@ pub enum CommandStyle {
     Slash,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VerbosityLevel {
+    #[default]
+    Info,
+    Debug,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MessageVerbosity {
+    User {
+        max_len: Option<u32>,
+        syntax_highlighting: bool,
+    },
+    Assistant {
+        max_len: Option<u32>,
+        syntax_highlighting: bool,
+        truncate_prev_messages: bool,
+        truncated_len: Option<u32>,
+    },
+    SysInfo {
+        max_len: Option<u32>,
+        verbosity: VerbosityLevel,
+    },
+    System {
+        max_len: Option<u32>,
+        verbosity: VerbosityLevel,
+        display_init: bool,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageVerbosityProfile {
+    #[default]
+    Minimal,
+    Normal,
+    Verbose,
+    Custom,
+}
+
+impl MessageVerbosityProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Normal => "normal",
+            Self::Verbose => "verbose",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MessageVerbosityProfiles {
+    #[serde(default = "default_message_verbosity_minimal")]
+    pub minimal: Vec<MessageVerbosity>,
+    #[serde(default = "default_message_verbosity_normal")]
+    pub normal: Vec<MessageVerbosity>,
+    #[serde(default = "default_message_verbosity_verbose")]
+    pub verbose: Vec<MessageVerbosity>,
+    #[serde(default = "default_message_verbosity_custom")]
+    pub custom: Vec<MessageVerbosity>,
+}
+
+impl Default for MessageVerbosityProfiles {
+    fn default() -> Self {
+        Self {
+            minimal: default_message_verbosity_minimal(),
+            normal: default_message_verbosity_normal(),
+            verbose: default_message_verbosity_verbose(),
+            custom: default_message_verbosity_custom(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct UserConfig {
     // llm registry preferences (profiles, strictness, router prefs)
@@ -48,6 +126,17 @@ pub struct UserConfig {
     pub command_style: CommandStyle,
     #[serde(default)]
     pub tool_verbosity: ToolVerbosity,
+    /// Conversation presentation profiles used by the TUI renderer only.
+    /// This is never used to alter model-facing prompt construction.
+    #[serde(default)]
+    pub message_verbosity_profiles: MessageVerbosityProfiles,
+    /// Selected conversation verbosity profile for UI rendering only.
+    /// Backwards-compatible alias keeps older configs loading.
+    #[serde(
+        default = "default_message_verbosity_profile",
+        alias = "message_verbosity_default_profile"
+    )]
+    pub default_verbosity: MessageVerbosityProfile,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
     /// Local embedding execution parameters (device/batch tuning).
@@ -88,6 +177,7 @@ pub struct UserConfig {
 /// let cfg = ToolingConfig {
 ///     cargo_check_timeout_secs: 120,
 ///     cargo_test_timeout_secs: 900,
+///     create_file_extensions: vec!["rs".to_string(), "md".to_string()],
 /// };
 /// assert_eq!(cfg.cargo_check_timeout_secs, 120);
 /// ```
@@ -583,6 +673,86 @@ impl RetrievalStrategyUser {
 
 fn default_tool_call_timeout_secs() -> u64 {
     30
+}
+
+fn default_message_verbosity_minimal() -> Vec<MessageVerbosity> {
+    vec![
+        MessageVerbosity::User {
+            max_len: Some(1_024),
+            syntax_highlighting: false,
+        },
+        MessageVerbosity::Assistant {
+            max_len: Some(2_048),
+            syntax_highlighting: false,
+            truncate_prev_messages: true,
+            truncated_len: Some(512),
+        },
+        MessageVerbosity::SysInfo {
+            max_len: Some(220),
+            verbosity: VerbosityLevel::Info,
+        },
+        MessageVerbosity::System {
+            max_len: Some(220),
+            verbosity: VerbosityLevel::Warn,
+            display_init: false,
+        },
+    ]
+}
+
+fn default_message_verbosity_normal() -> Vec<MessageVerbosity> {
+    vec![
+        MessageVerbosity::User {
+            max_len: None,
+            syntax_highlighting: true,
+        },
+        MessageVerbosity::Assistant {
+            max_len: None,
+            syntax_highlighting: true,
+            truncate_prev_messages: false,
+            truncated_len: None,
+        },
+        MessageVerbosity::SysInfo {
+            max_len: None,
+            verbosity: VerbosityLevel::Info,
+        },
+        MessageVerbosity::System {
+            max_len: Some(1_024),
+            verbosity: VerbosityLevel::Warn,
+            display_init: false,
+        },
+    ]
+}
+
+fn default_message_verbosity_verbose() -> Vec<MessageVerbosity> {
+    vec![
+        MessageVerbosity::User {
+            max_len: None,
+            syntax_highlighting: true,
+        },
+        MessageVerbosity::Assistant {
+            max_len: None,
+            syntax_highlighting: true,
+            truncate_prev_messages: false,
+            truncated_len: None,
+        },
+        MessageVerbosity::SysInfo {
+            max_len: None,
+            verbosity: VerbosityLevel::Debug,
+        },
+        MessageVerbosity::System {
+            max_len: None,
+            verbosity: VerbosityLevel::Debug,
+            display_init: true,
+        },
+    ]
+}
+
+fn default_message_verbosity_custom() -> Vec<MessageVerbosity> {
+    default_message_verbosity_normal()
+}
+
+fn default_message_verbosity_profile() -> MessageVerbosityProfile {
+    MessageVerbosityProfile::Minimal
 }
 
 fn default_ctx_mode() -> CtxMode {

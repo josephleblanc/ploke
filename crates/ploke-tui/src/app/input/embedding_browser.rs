@@ -3,8 +3,8 @@ use ploke_core::ArcStr;
 
 use crate::app::overlay::{OverlayAction, OverlayKind};
 use crate::app::view::components::context_browser::StepEnum;
-use crate::app::view::components::embedding_browser::EmbeddingDetail;
 use crate::app::view::components::embedding_browser::EmbeddingBrowserState;
+use crate::app::view::components::embedding_browser::EmbeddingDetail;
 
 pub fn handle_embedding_browser_input(
     eb: &mut EmbeddingBrowserState,

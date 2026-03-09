@@ -12,9 +12,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use uuid::Uuid;
 
 use ploke_tui as tui;
-use tui::app_state::{
-    AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState,
-};
+use tui::app_state::{AppState, ChatState, ConfigState, RuntimeConfig, StateCommand, SystemState};
 use tui::chat_history::{ChatHistory, MessageKind};
 use tui::event_bus::{EventBus, EventBusCaps};
 
@@ -40,7 +38,11 @@ fn init_test_logging() -> TestLogGuard {
         .with_target("indexing_freeze_test", LevelFilter::INFO);
 
     let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false),
+        )
         .with(filter);
 
     let subscriber_guard = tracing::subscriber::set_default(subscriber);
@@ -96,7 +98,9 @@ async fn index_start_fixture_nodes_does_not_freeze_ui() {
         {
             let state = Arc::clone(&state);
             let event_bus = Arc::clone(&event_bus);
-            tokio::spawn(tui::app_state::state_manager(state, cmd_rx, event_bus, ctx_tx));
+            tokio::spawn(tui::app_state::state_manager(
+                state, cmd_rx, event_bus, ctx_tx,
+            ));
         }
 
         let fixture_workspace = "tests/fixture_crates/fixture_nodes";
