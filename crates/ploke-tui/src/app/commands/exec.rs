@@ -90,6 +90,11 @@ pub fn execute(app: &mut App, command: Command) {
             });
         }
         Command::ModelLoad(path_opt) => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: "Loading configuration...".to_string(),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
@@ -146,6 +151,11 @@ pub fn execute(app: &mut App, command: Command) {
             });
         }
         Command::ModelSave { path, with_keys } => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: "Saving configuration...".to_string(),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
             let state = app.state.clone();
             let cmd_tx = app.cmd_tx.clone();
             tokio::spawn(async move {
@@ -303,6 +313,11 @@ pub fn execute(app: &mut App, command: Command) {
 }
 
 fn spawn_update(app: &App) {
+    app.send_cmd(StateCommand::AddMessageImmediate {
+        msg: "Scanning workspace for updates...".to_string(),
+        kind: MessageKind::SysInfo,
+        new_msg_id: Uuid::new_v4(),
+    });
     let cmd_tx = app.cmd_tx.clone();
     tokio::task::spawn(async move {
         let (scan_tx, scan_rx) = oneshot::channel();
@@ -846,6 +861,11 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
 
             match std::fs::metadata(&workspace) {
                 Ok(metadata) if metadata.is_dir() => {
+                    app.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Indexing requested for '{}'", workspace),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
                     app.send_cmd(StateCommand::IndexWorkspace {
                         workspace,
                         needs_parse: true,
@@ -867,9 +887,30 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
                 }
             }
         }
-        "index pause" => app.send_cmd(StateCommand::PauseIndexing),
-        "index resume" => app.send_cmd(StateCommand::ResumeIndexing),
-        "index cancel" => app.send_cmd(StateCommand::CancelIndexing),
+        "index pause" => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: "Indexing pause requested.".to_string(),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::PauseIndexing);
+        }
+        "index resume" => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: "Indexing resume requested.".to_string(),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::ResumeIndexing);
+        }
+        "index cancel" => {
+            app.send_cmd(StateCommand::AddMessageImmediate {
+                msg: "Indexing cancel requested.".to_string(),
+                kind: MessageKind::SysInfo,
+                new_msg_id: Uuid::new_v4(),
+            });
+            app.send_cmd(StateCommand::CancelIndexing);
+        }
         "check api" => {
             check_api_keys(app);
         }
@@ -931,6 +972,12 @@ fn execute_legacy(app: &mut App, cmd_str: &str) {
                 app.send_cmd(StateCommand::ReadQuery {
                     query_name: query_name.to_string(),
                     file_name: file_name.to_string(),
+                });
+            } else {
+                app.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: "Usage: query load <query_name> <file_name>".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
                 });
             }
         }

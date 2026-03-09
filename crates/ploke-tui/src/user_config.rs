@@ -689,7 +689,7 @@ fn default_message_verbosity_minimal() -> Vec<MessageVerbosity> {
         },
         MessageVerbosity::SysInfo {
             max_len: Some(220),
-            verbosity: VerbosityLevel::Warn,
+            verbosity: VerbosityLevel::Info,
         },
         MessageVerbosity::System {
             max_len: Some(220),
