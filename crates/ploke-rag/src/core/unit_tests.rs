@@ -99,8 +99,11 @@ mod tests {
         // Load the multi-embedding backup directly to mirror the TUI /load path.
         let db = Database::init_with_schema().expect("init schema");
         let mut target_file = workspace_root();
+        // target_file.push(
+        //     "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
+        // );
         target_file.push(
-            "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
+            "tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9",
         );
         let prior_rels_vec = db.relations_vec().expect("relations_vec");
         db.import_from_backup(&target_file, &prior_rels_vec)

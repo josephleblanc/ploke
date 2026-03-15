@@ -146,7 +146,7 @@ async fn code_item_edges_handles_trailing_module_separators() {
 async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
     // Load ploke-db backup (copied from ~/.config/ploke/data) to mirror the user repro.
     let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45");
+    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
     assert!(
         backup.exists(),
         "ploke-db backup missing at {}; copy ~/.config/ploke/data/ploke-db_* to tests/backup_dbs",
@@ -292,7 +292,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
 async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
     // Load ploke-db backup to mirror live runs.
     let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45");
+    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
     assert!(
         backup.exists(),
         "ploke-db backup missing at {}; copy ~/.config/ploke/data/ploke-db_* to tests/backup_dbs",
@@ -394,7 +394,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
 async fn code_item_edges_graph_resolve_edges_smoke() {
     // Regression placeholder for the user-reported graph_resolve_edges case.
     let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45");
+    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
     let db = {
         let db = Database::init_with_schema().expect("init db schema");
         let rels = db.relations_vec().expect("relations");

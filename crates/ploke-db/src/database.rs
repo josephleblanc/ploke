@@ -2178,6 +2178,7 @@ mod tests {
         );
         Ok(())
     }
+
     #[tokio::test]
     async fn test_retract_embedding_single() -> Result<(), PlokeError> {
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
@@ -2229,7 +2230,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_retract_embeddings_full() -> Result<(), PlokeError> {
-        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
+        // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
         crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;

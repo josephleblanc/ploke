@@ -551,6 +551,7 @@ pub(crate) use tests::init_tracing_once;
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         collections::HashSet,
         sync::{Arc, Once},
     };
@@ -571,10 +572,19 @@ mod tests {
         run_script_params,
     };
 
+    thread_local! {
+        static TEST_TRACING_GUARD: RefCell<Option<ploke_test_utils::TestTracingGuard>> =
+            RefCell::new(None);
+    }
+
     static TEST_TRACING: Once = Once::new();
     pub(crate) fn init_tracing_once(target: &'static str, level: tracing::Level) {
         TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing_with_target(target, level);
+            TEST_TRACING_GUARD.with(|guard| {
+                *guard.borrow_mut() = Some(ploke_test_utils::init_test_tracing_with_target(
+                    target, level,
+                ));
+            });
         });
     }
 
