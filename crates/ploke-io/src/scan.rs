@@ -128,9 +128,7 @@ mod tests {
     use ploke_common::{fixtures_crates_dir, workspace_root};
     use ploke_test_utils::{setup_db_full, setup_db_full_embeddings};
     use std::fs;
-    use syn_parser::discovery::run_discovery_phase;
     use tempfile::tempdir;
-    use tracing_error::ErrorLayer;
     use uuid::Uuid;
 
     #[tokio::test]

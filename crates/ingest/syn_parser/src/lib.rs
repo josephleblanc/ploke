@@ -49,7 +49,7 @@ use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use parser::visitor::analyze_file_phase2;
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
 
 // test ids
@@ -83,12 +83,10 @@ pub fn try_run_phases_and_resolve(
         .to_string();
     let path = path_buf.display().to_string();
     let discovery_output =
-        run_discovery_phase(None, std::slice::from_ref(&path_buf)).map_err(|e| {
-            SynParserError::ComplexDiscovery {
-                name,
-                path,
-                source_string: e.to_string(),
-            }
+        run_discovery_phase(None, &[path_buf]).map_err(|e| SynParserError::ComplexDiscovery {
+            name,
+            path,
+            source_string: e.to_string(),
         })?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.

@@ -61,12 +61,6 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
         target.display()
     );
 
-    // let discovery_output = run_discovery_phase(Some(&target), &[target.clone()])
-    //     .map_err(ploke_error::Error::from)
-    //     .inspect_err(|e| {
-    //         tracing::error!("discovery error: {e:?}");
-    //     })?;
-
     let mut parser_output = try_run_phases_and_merge(&target)?;
     let merged = parser_output
         .extract_merged_graph()
@@ -77,13 +71,6 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
     transform_parsed_graph(&db, merged, &tree).map_err(|err| {
         SynParserError::InternalState(format!("Failed to transform parsed graph: {err}"))
     })?;
-    // let graphs: Vec<_> = results
-    //     .into_iter()
-    //     .collect::<Result<_, _>>()
-    //     .inspect_err(|e| {
-    //         tracing::error!("error during parse: {e:?}");
-    //     })
-    //     .map_err(ploke_error::Error::from)?;
 
     tracing::info!(
         "{}: Parsing and Database Transform Complete",

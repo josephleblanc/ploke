@@ -108,6 +108,15 @@ pub enum DiscoveryError {
         build_status: String,
     },
 
+    #[error(
+        "Workspace parsed at {workspace_path} for crate {crate_path} does not contain [{expected}] section when it was expected."
+    )]
+    WorkspaceMissingSection {
+        workspace_path: PathBuf,
+        crate_path: PathBuf,
+        expected: String,
+    },
+
     #[error("Parent directory for Cargo.toml not found")]
     ParentNotFound { workspace_path: PathBuf },
 }
@@ -117,6 +126,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 
     fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
         use DiscoveryError::*;
+        let source_err_string = value.to_string();
         Ok(match value {
             MissingPackageName { path } => SynParserError::SimpleDiscovery {
                 path: path.display().to_string(),
@@ -216,6 +226,11 @@ impl TryFrom<DiscoveryError> for SynParserError {
             ParentNotFound { workspace_path } => SynParserError::SimpleDiscovery {
                 path: workspace_path.display().to_string(),
             },
+            WorkspaceMissingSection { workspace_path, .. } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: workspace_path.display().to_string(),
+                source_string: source_err_string.to_string(),
+            },
         })
     }
 }
@@ -236,6 +251,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 /// while providing clear error categorization for upstream error handling.
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
+        let source_err_string = err.to_string();
         match err {
             DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
                 operation: "read",
@@ -399,6 +415,13 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
+            ref err @ DiscoveryError::WorkspaceMissingSection {
+                ref workspace_path, ..
+            } => ploke_error::FatalError::PathResolution {
+                path: workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
         }
     }
 }

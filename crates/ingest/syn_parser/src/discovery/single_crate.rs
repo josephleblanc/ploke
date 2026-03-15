@@ -53,9 +53,9 @@ use crate::discovery::DiscoveryError;
 
 /// Represents the `[package]` section of Cargo.toml.
 #[derive(Deserialize, Debug, Clone)]
-struct PackageInfo {
-    name: String,
-    version: PackageVersion,
+pub struct PackageInfo {
+    pub name: String,
+    pub version: PackageVersion,
     // edition: Option<String>, // Could be useful later
 }
 
@@ -68,7 +68,7 @@ impl fmt::Display for PackageInfo {
 /// Describes where a crate's version string originates.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
-enum PackageVersion {
+pub enum PackageVersion {
     /// Version is specified directly in the crate's `Cargo.toml`.
     Explicit(String),
     /// Version is inherited from the workspace via `version.workspace = true`.
@@ -94,7 +94,7 @@ impl PackageVersion {
     /// # Errors
     /// * [`DiscoveryError::WorkspaceVersionFlagDisabled`] if `workspace = false`.
     /// * Any error emitted by [`resolve_workspace_version`] when escalation to a workspace lookup fails.
-    fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
+    pub fn resolve(&self, crate_root: &Path) -> Result<String, DiscoveryError> {
         match self {
             PackageVersion::Explicit(version) => Ok(version.clone()),
             PackageVersion::Workspace(link) => {
@@ -609,15 +609,15 @@ pub struct DevDependencies(HashMap<String, DependencySpec>);
 
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
-struct CargoManifest {
-    package: PackageInfo,
+pub struct CargoManifest {
+    pub package: PackageInfo,
     #[serde(default)] // Use default empty map if section is missing
-    features: Features,
+    pub features: Features,
     #[serde(default)]
-    dependencies: Dependencies,
+    pub dependencies: Dependencies,
     #[serde(default)]
     #[serde(rename = "dev-dependencies")]
-    dev_dependencies: DevDependencies,
+    pub dev_dependencies: DevDependencies,
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
 
@@ -640,16 +640,20 @@ pub struct CrateContext {
     pub files: Vec<PathBuf>,
     /// Parsed features from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving features")]
-    features: Features,
+    pub features: Features,
     /// Parsed dependencies from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    dependencies: Dependencies,
+    pub dependencies: Dependencies,
     /// Parsed dev-dependencies from Cargo.toml.
     #[allow(
         unused_variables,
         reason = "Useful later for resolving dev dependencies"
     )]
-    dev_dependencies: DevDependencies,
+    pub dev_dependencies: DevDependencies,
+    /// Location of workspace, if present. Defaults to `None` and skips for serde, not
+    /// reflective of Cargo.toml structure
+    #[serde(skip)]
+    pub workspace_path: Option<PathBuf>,
 }
 
 impl CrateContext {
@@ -966,6 +970,7 @@ pub fn run_discovery_phase(
             version: crate_version,
             namespace,
             root_path: crate_root_path.clone(),
+            workspace_path: None,
             files,            // Clone needed for module mapping below
             features,         // Add the parsed features
             dependencies,     // Add the parsed dependencies

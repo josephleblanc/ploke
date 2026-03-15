@@ -19,18 +19,18 @@ pub(super) struct WorkspaceVersionLink {
 /// signals that the inspected manifest isn't a workspace boundary.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceManifestMetadata {
-    workspace: Option<WorkspaceMetadataSection>,
+    pub(super) workspace: Option<WorkspaceMetadataSection>,
 }
 
 /// Captures the `[workspace]` table when parsing ancestor manifests.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceMetadataSection {
     #[serde(skip)]
-    path: PathBuf,
-    exclude: Option<Vec<PathBuf>>,
-    resolver: Option<String>,
-    members: Vec<PathBuf>,
-    package: Option<WorkspacePackageMetadata>,
+    pub(super) path: PathBuf,
+    pub(super) exclude: Option<Vec<PathBuf>>,
+    pub(super) resolver: Option<String>,
+    pub(super) members: Vec<PathBuf>,
+    pub(super) package: Option<WorkspacePackageMetadata>,
 }
 
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
