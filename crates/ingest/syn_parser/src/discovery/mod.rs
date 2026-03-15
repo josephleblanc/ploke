@@ -10,12 +10,13 @@ use std::{
 };
 
 pub use error::*;
-use itertools::Itertools as _;
 pub use single_crate::*;
-use walkdir::WalkDir;
 pub use workspace::{locate_workspace_manifest, resolve_workspace_version};
 
-use crate::discovery::workspace::{WorkspaceManifestMetadata, WorkspaceMetadataSection};
+use itertools::Itertools as _;
+use walkdir::WalkDir;
+
+use crate::discovery::workspace::WorkspaceManifestMetadata;
 
 /// Runs the single-threaded discovery phase to gather context about target crates.
 ///
@@ -38,9 +39,9 @@ use crate::discovery::workspace::{WorkspaceManifestMetadata, WorkspaceMetadataSe
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
-pub fn run_new_discovery_phase(
-    target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
+pub fn run_discovery_phase(
     workspace_root: Option<&Path>,
+    target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
     let mut non_fatal_errors: Vec<DiscoveryError> = Vec::new(); // Collect non-fatal errors
@@ -158,7 +159,7 @@ pub fn run_new_discovery_phase(
                 ws_metadata.workspace.as_ref().map(|w| w.path.clone())
             } else {
                 let (manifest_path, located_metadata) =
-                    match locate_workspace_manifest(&crate_root_path) {
+                    match locate_workspace_manifest(crate_root_path) {
                         Ok((workspace_path, metadata)) => (workspace_path, metadata),
                         Err(e)
                             if matches!(e, DiscoveryError::WorkspaceManifestRead { .. })
@@ -174,6 +175,8 @@ pub fn run_new_discovery_phase(
                             panic!("locate_workspace_manifest must not return this error type")
                         }
                     };
+                let located_metadata =
+                    normalize_workspace_metadata(&manifest_path, located_metadata)?;
                 match located_metadata.workspace {
                     Some(ref workspace_section) => {
                         // cache found workspace
@@ -182,9 +185,11 @@ pub fn run_new_discovery_phase(
                             cached_workspaces.push(located_metadata);
                             Some(path)
                         } else {
-                            // return new error variant with workspace mismatch between located vs.
-                            // expected workspace and context
-                            todo!("see above comment")
+                            return Err(DiscoveryError::WorkspacePathMismatch {
+                                crate_path: crate_root_path.to_path_buf(),
+                                expected_workspace_path: workspace_path.to_path_buf(),
+                                discovered_workspace_path: path,
+                            });
                         }
                     }
                     None => {
@@ -219,11 +224,27 @@ pub fn run_new_discovery_phase(
         crate_contexts.insert(crate_root_path.clone(), context);
     } // End of loop for target_crates
 
+    if let Some(workspace_root) = workspace_root {
+        let discovered_workspace_paths = cached_workspaces
+            .iter()
+            .filter_map(|metadata| metadata.workspace.as_ref().map(|section| section.path.clone()))
+            .unique()
+            .collect_vec();
+
+        if discovered_workspace_paths.len() > 1 {
+            return Err(DiscoveryError::MultipleWorkspacesDetected {
+                expected_workspace_path: workspace_root.to_path_buf(),
+                discovered_workspace_paths,
+                crate_paths: target_crates.to_vec(),
+            });
+        }
+    }
+
     let workspace = cached_workspaces.pop();
-    if workspace_root.is_some() && cached_workspaces.is_empty() {
+    if workspace_root.is_some() && !cached_workspaces.is_empty() {
         // return new discovery error about multiple workspaces, with directories and crates as
         // context.
-        todo!("see above comment")
+        unreachable!("workspace cache must contain at most one unique workspace");
     }
 
     // --- Final Check and Return ---
@@ -235,6 +256,36 @@ pub fn run_new_discovery_phase(
         // Removed: initial_module_map,
         warnings: non_fatal_errors, // Include collected warnings
     })
+}
+
+fn normalize_workspace_metadata(
+    manifest_path: &Path,
+    mut metadata: WorkspaceManifestMetadata,
+) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
+    let workspace_root =
+        manifest_path
+            .parent()
+            .ok_or_else(|| DiscoveryError::ParentNotFound {
+                workspace_path: manifest_path.to_path_buf(),
+            })?;
+
+    if let Some(workspace) = metadata.workspace.as_mut() {
+        workspace.path = workspace_root.to_path_buf();
+        workspace.members = absolutize_paths(workspace_root, workspace.members.iter());
+        workspace.exclude = workspace
+            .exclude
+            .take()
+            .map(|paths| absolutize_paths(workspace_root, paths.iter()));
+    }
+
+    Ok(metadata)
+}
+
+fn absolutize_paths<'a, I>(root: &Path, paths: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = &'a PathBuf>,
+{
+    paths.into_iter().map(|path| root.join(path)).collect()
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -276,6 +327,10 @@ impl DiscoveryOutput {
     /// let crate_root = root.path().join("demo");
     /// fs::create_dir_all(crate_root.join("src")).unwrap();
     /// fs::write(
+    ///     root.path().join("Cargo.toml"),
+    ///     "[workspace]\nmembers = [\"demo\"]\n",
+    /// ).unwrap();
+    /// fs::write(
     ///     crate_root.join("Cargo.toml"),
     ///     r#"[package]
     /// name = "demo"
@@ -302,6 +357,10 @@ impl DiscoveryOutput {
     /// use std::fs;
     ///
     /// let root = tempdir().unwrap();
+    /// fs::write(
+    ///     root.path().join("Cargo.toml"),
+    ///     "[workspace]\nmembers = [\"crate_a\", \"crate_b\"]\n",
+    /// ).unwrap();
     /// for (name, version) in [("crate_a", "0.1.0"), ("crate_b", "0.2.0")] {
     ///     let crate_root = root.path().join(name);
     ///     fs::create_dir_all(crate_root.join("src")).unwrap();
@@ -346,6 +405,7 @@ impl DiscoveryOutput {
     /// };
     /// let discovery = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![warning.clone()],
     /// };
     ///
@@ -368,6 +428,7 @@ impl DiscoveryOutput {
     ///
     /// let discovery = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![DiscoveryError::MissingPackageName {
     ///         path: PathBuf::from("/tmp/bad/Cargo.toml"),
     ///     }],
@@ -377,11 +438,120 @@ impl DiscoveryOutput {
     ///
     /// let clean = DiscoveryOutput {
     ///     crate_contexts: HashMap::new(),
+    ///     workspace: None,
     ///     warnings: vec![],
     /// };
     /// assert!(!clean.has_warnings());
     /// ```
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ploke_common::workspace_root;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn write_basic_crate(crate_root: &Path, name: &str, version: &str) {
+        fs::create_dir_all(crate_root.join("src")).unwrap();
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            format!(
+                r#"[package]
+name = "{name}"
+version = "{version}"
+edition = "2021"
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
+    }
+
+    #[test]
+    // test basic toml parsing of target crate
+    fn test_toml_basic() -> Result<(), DiscoveryError> {
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_00"); // Use workspace root for context
+        eprintln!("fixture_workspace = {}", fixture_workspace_root.display().to_string());
+        assert!(
+            fixture_workspace_root.is_dir(),
+            "target fixture workspace expected to be a directory"
+        );
+
+        let crate_dir = fixture_workspace_root.join("fixture_toml");
+        eprintln!("fixture_crate = {}", crate_dir.display().to_string());
+        assert!(
+            crate_dir.is_dir(),
+            "target fixture crate expected to be a directory"
+        );
+
+        let discovery_result = run_discovery_phase(Some(&fixture_workspace_root), &[crate_dir.clone()]);
+        println!("{discovery_result:#?}");
+        let output = discovery_result?;
+        let context = output
+            .crate_contexts
+            .get(&crate_dir)
+            .expect("fixture_toml context missing");
+        assert_eq!(
+            context.version, "0.0.0",
+            "version should be inherited from workspace"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_workspace_metadata_is_normalized_for_membership_lookup() -> Result<(), DiscoveryError> {
+        let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_00");
+        let crate_dir = fixture_workspace_root.join("fixture_toml");
+        let output = run_discovery_phase(Some(&fixture_workspace_root), std::slice::from_ref(&crate_dir))?;
+
+        let workspace = output.workspace.expect("workspace metadata should be cached");
+        let workspace_section = workspace
+            .workspace
+            .expect("workspace metadata should include a workspace section");
+
+        assert_eq!(workspace_section.path, fixture_workspace_root);
+        assert!(workspace_section.members.contains(&crate_dir));
+        Ok(())
+    }
+
+    #[test]
+    fn test_workspace_path_mismatch_returns_explicit_error() {
+        let tmp = tempdir().unwrap();
+
+        let expected_workspace = tmp.path().join("expected");
+        let discovered_workspace = tmp.path().join("discovered");
+        let crate_root = discovered_workspace.join("member");
+
+        fs::create_dir_all(&expected_workspace).unwrap();
+        fs::write(
+            expected_workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n",
+        )
+        .unwrap();
+
+        write_basic_crate(&crate_root, "member", "0.1.0");
+        fs::write(
+            discovered_workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"member\"]\n",
+        )
+        .unwrap();
+
+        let err = run_discovery_phase(Some(&expected_workspace), &[crate_root.clone()])
+            .expect_err("crate should fail when it resolves into a different workspace");
+
+        assert!(matches!(
+            err,
+            DiscoveryError::WorkspacePathMismatch {
+                crate_path,
+                expected_workspace_path,
+                discovered_workspace_path,
+            } if crate_path == crate_root
+                && expected_workspace_path == expected_workspace
+                && discovered_workspace_path == discovered_workspace
+        ));
     }
 }

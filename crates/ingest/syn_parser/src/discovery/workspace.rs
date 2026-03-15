@@ -393,7 +393,7 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&crate_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
@@ -401,7 +401,7 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&common_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
@@ -409,14 +409,14 @@ members = [
 
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&inner_root)?;
-        println!(
+        eprintln!(
             "found workspace path: {}\nmetadata: {:#?}",
             path.display(),
             meta
         );
 
-        let mut workspace_builder = WorkspaceMetaBuilder::from_dir_path(&workspace_root)?;
-        println!("workspace_builder: {:#?}", workspace_builder);
+        let workspace_builder = WorkspaceMetaBuilder::from_dir_path(&workspace_root)?;
+        eprintln!("workspace_builder: {:#?}", workspace_builder);
         assert!(workspace_builder.members.is_some(), "expect Some members");
 
         let expected_members = ["solo", "nested/common", "nested/deeper_nested/inner-crate"];

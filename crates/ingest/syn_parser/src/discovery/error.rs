@@ -117,6 +117,24 @@ pub enum DiscoveryError {
         expected: String,
     },
 
+    #[error(
+        "Crate at {crate_path} resolved to workspace {discovered_workspace_path}, but discovery expected workspace {expected_workspace_path}"
+    )]
+    WorkspacePathMismatch {
+        crate_path: PathBuf,
+        expected_workspace_path: PathBuf,
+        discovered_workspace_path: PathBuf,
+    },
+
+    #[error(
+        "Discovery found multiple workspaces for one run. Expected workspace: {expected_workspace_path}. Discovered workspaces: {discovered_workspace_paths:?}. Target crates: {crate_paths:?}"
+    )]
+    MultipleWorkspacesDetected {
+        expected_workspace_path: PathBuf,
+        discovered_workspace_paths: Vec<PathBuf>,
+        crate_paths: Vec<PathBuf>,
+    },
+
     #[error("Parent directory for Cargo.toml not found")]
     ParentNotFound { workspace_path: PathBuf },
 }
@@ -231,6 +249,22 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 path: workspace_path.display().to_string(),
                 source_string: source_err_string.to_string(),
             },
+            WorkspacePathMismatch {
+                expected_workspace_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: expected_workspace_path.display().to_string(),
+                source_string: source_err_string,
+            },
+            MultipleWorkspacesDetected {
+                expected_workspace_path,
+                ..
+            } => SynParserError::ComplexDiscovery {
+                name: "workspace".to_string(),
+                path: expected_workspace_path.display().to_string(),
+                source_string: source_err_string,
+            },
         })
     }
 }
@@ -251,7 +285,6 @@ impl TryFrom<DiscoveryError> for SynParserError {
 /// while providing clear error categorization for upstream error handling.
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
-        let source_err_string = err.to_string();
         match err {
             DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
                 operation: "read",
@@ -419,6 +452,22 @@ impl From<DiscoveryError> for ploke_error::Error {
                 ref workspace_path, ..
             } => ploke_error::FatalError::PathResolution {
                 path: workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
+            ref err @ DiscoveryError::WorkspacePathMismatch {
+                ref expected_workspace_path,
+                ..
+            } => ploke_error::FatalError::PathResolution {
+                path: expected_workspace_path.display().to_string(),
+                source: Some(Arc::new(err.clone())),
+            }
+            .into(),
+            ref err @ DiscoveryError::MultipleWorkspacesDetected {
+                ref expected_workspace_path,
+                ..
+            } => ploke_error::FatalError::PathResolution {
+                path: expected_workspace_path.display().to_string(),
                 source: Some(Arc::new(err.clone())),
             }
             .into(),
