@@ -84,7 +84,9 @@ impl ConfigOverlayState {
                 "Minimal User Max Len",
                 "Maximum rendered length for user messages in Minimal profile.",
                 &len_values,
-                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.minimal)),
+                max_len_to_idx(user_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.minimal,
+                )),
             ),
             bool_item(
                 "Minimal User Syntax Highlight",
@@ -95,7 +97,9 @@ impl ConfigOverlayState {
                 "Minimal Assistant Max Len",
                 "Maximum rendered length for assistant messages in Minimal profile.",
                 &len_values,
-                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.minimal)),
+                max_len_to_idx(assistant_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.minimal,
+                )),
             ),
             bool_item(
                 "Minimal Assistant Syntax Highlight",
@@ -140,7 +144,9 @@ impl ConfigOverlayState {
                 "Normal User Max Len",
                 "Maximum rendered length for user messages in Normal profile.",
                 &len_values,
-                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.normal)),
+                max_len_to_idx(user_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.normal,
+                )),
             ),
             bool_item(
                 "Normal User Syntax Highlight",
@@ -151,7 +157,9 @@ impl ConfigOverlayState {
                 "Normal Assistant Max Len",
                 "Maximum rendered length for assistant messages in Normal profile.",
                 &len_values,
-                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.normal)),
+                max_len_to_idx(assistant_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.normal,
+                )),
             ),
             bool_item(
                 "Normal Assistant Syntax Highlight",
@@ -196,7 +204,9 @@ impl ConfigOverlayState {
                 "Verbose User Max Len",
                 "Maximum rendered length for user messages in Verbose profile.",
                 &len_values,
-                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.verbose)),
+                max_len_to_idx(user_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.verbose,
+                )),
             ),
             bool_item(
                 "Verbose User Syntax Highlight",
@@ -207,7 +217,9 @@ impl ConfigOverlayState {
                 "Verbose Assistant Max Len",
                 "Maximum rendered length for assistant messages in Verbose profile.",
                 &len_values,
-                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.verbose)),
+                max_len_to_idx(assistant_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.verbose,
+                )),
             ),
             bool_item(
                 "Verbose Assistant Syntax Highlight",
@@ -252,7 +264,9 @@ impl ConfigOverlayState {
                 "Custom User Max Len",
                 "Maximum rendered length for user messages in Custom profile.",
                 &len_values,
-                max_len_to_idx(user_max_len_for_profile(&cfg.message_verbosity_profiles.custom)),
+                max_len_to_idx(user_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.custom,
+                )),
             ),
             bool_item(
                 "Custom User Syntax Highlight",
@@ -263,7 +277,9 @@ impl ConfigOverlayState {
                 "Custom Assistant Max Len",
                 "Maximum rendered length for assistant messages in Custom profile.",
                 &len_values,
-                max_len_to_idx(assistant_max_len_for_profile(&cfg.message_verbosity_profiles.custom)),
+                max_len_to_idx(assistant_max_len_for_profile(
+                    &cfg.message_verbosity_profiles.custom,
+                )),
             ),
             bool_item(
                 "Custom Assistant Syntax Highlight",
@@ -1008,7 +1024,8 @@ fn user_max_len_for_profile(profile: &[MessageVerbosity]) -> Option<u32> {
 fn user_syntax_for_profile(profile: &[MessageVerbosity]) -> bool {
     for setting in profile {
         if let MessageVerbosity::User {
-            syntax_highlighting, ..
+            syntax_highlighting,
+            ..
         } = setting
         {
             return *syntax_highlighting;
@@ -1029,7 +1046,8 @@ fn assistant_max_len_for_profile(profile: &[MessageVerbosity]) -> Option<u32> {
 fn assistant_syntax_for_profile(profile: &[MessageVerbosity]) -> bool {
     for setting in profile {
         if let MessageVerbosity::Assistant {
-            syntax_highlighting, ..
+            syntax_highlighting,
+            ..
         } = setting
         {
             return *syntax_highlighting;
@@ -1498,7 +1516,8 @@ fn set_profile_system_display_init(
     let settings = profile_settings_mut(cfg, profile);
     for entry in settings.iter_mut() {
         if let MessageVerbosity::System {
-            display_init: value, ..
+            display_init: value,
+            ..
         } = entry
         {
             if *value != display_init {

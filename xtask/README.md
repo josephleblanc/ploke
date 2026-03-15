@@ -14,6 +14,12 @@ developer/agent runs the same commands via `cargo xtask <command>`.
     - `crates/ploke-tui/data/models/all_pricing_parsed.json`
       (pricing tests that parse OpenRouter data). Generate this via
       `./scripts/openrouter_pricing_sync.py`.
+- `cargo xtask setup-rag-fixtures`
+  - Copies the canonical local `fixture_nodes` backup into the config-dir load path used by
+    `ploke_db::multi_embedding::db_ext::load_db` (`$XDG_CONFIG_HOME/ploke/data` or
+    `~/.config/ploke/data`).
+  - Moves any other `fixture_nodes_*` backups in that directory into a quarantine folder so prefix
+    matching cannot silently select a different embedding model during `ploke-rag` or TUI tests.
 - `cargo xtask regen-embedding-models`
   - Fetches `https://openrouter.ai/api/v1/embeddings/models` and rewrites
     `fixtures/openrouter/embeddings_models.json`, updating the integrity metadata

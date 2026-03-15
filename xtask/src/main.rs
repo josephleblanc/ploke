@@ -15,11 +15,15 @@ use walkdir::WalkDir;
 const EMBEDDING_MODELS_URL: &str = "https://openrouter.ai/api/v1/embeddings/models";
 const EMBEDDING_MODELS_FIXTURE: &str = "fixtures/openrouter/embeddings_models.json";
 const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.json";
+const RAG_LOCAL_FIXTURE_BACKUP: &str =
+    "tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92";
+const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("verify-fixtures") => verify_fixtures(),
+        Some("setup-rag-fixtures") => setup_rag_fixtures(),
         Some("regen-embedding-models") => regen_embedding_models(),
         Some("extract-tokens-log") => extract_tokens_log(args.collect()),
         Some("help") | Some("-h") | Some("--help") => {
@@ -42,7 +46,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  verify-fixtures         Ensure required local test assets are staged\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  help                    Show this message"
+         Commands:\n  verify-fixtures         Ensure required local test assets are staged\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  help                    Show this message"
     );
 }
 
@@ -275,6 +279,146 @@ fn verify_fixtures() -> ExitCode {
         }
         ExitCode::FAILURE
     }
+}
+
+fn setup_rag_fixtures() -> ExitCode {
+    let root = workspace_root();
+    let source = root.join(RAG_LOCAL_FIXTURE_BACKUP);
+    if !source.exists() {
+        eprintln!(
+            "Canonical RAG fixture backup is missing: {}",
+            display_relative(&source, &root)
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let config_root = match user_config_local_dir() {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let data_dir = config_root.join("ploke").join("data");
+    if let Err(err) = fs::create_dir_all(&data_dir) {
+        eprintln!("Unable to create {}: {err}", data_dir.display());
+        return ExitCode::FAILURE;
+    }
+
+    let canonical_name = match source.file_name().and_then(|name| name.to_str()) {
+        Some(name) => name.to_string(),
+        None => {
+            eprintln!(
+                "Could not determine fixture filename from {}",
+                source.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut moved_conflicts = Vec::new();
+    let quarantine_root = data_dir.join("quarantined_by_xtask").join(format!(
+        "setup_rag_fixtures_{}",
+        Utc::now().format("%Y%m%dT%H%M%SZ")
+    ));
+
+    let read_dir = match fs::read_dir(&data_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            eprintln!("Unable to inspect {}: {err}", data_dir.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("Failed to read entry in {}: {err}", data_dir.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(RAG_FIXTURE_PREFIX) || name == canonical_name {
+            continue;
+        }
+
+        if let Err(err) = fs::create_dir_all(&quarantine_root) {
+            eprintln!(
+                "Unable to create quarantine dir {}: {err}",
+                quarantine_root.display()
+            );
+            return ExitCode::FAILURE;
+        }
+
+        let dest = quarantine_root.join(name);
+        if let Err(err) = fs::rename(&path, &dest) {
+            eprintln!(
+                "Failed to move conflicting fixture {} to {}: {err}",
+                path.display(),
+                dest.display()
+            );
+            return ExitCode::FAILURE;
+        }
+        moved_conflicts.push((path, dest));
+    }
+
+    let dest = data_dir.join(&canonical_name);
+    let source_hash = match compute_file_hash(&source) {
+        Ok(hash) => hash,
+        Err(err) => {
+            eprintln!("Failed to hash {}: {err}", source.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let needs_copy = if dest.exists() {
+        match compute_file_hash(&dest) {
+            Ok(dest_hash) => dest_hash != source_hash,
+            Err(err) => {
+                eprintln!("Failed to hash {}: {err}", dest.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        true
+    };
+
+    if needs_copy {
+        if let Err(err) = fs::copy(&source, &dest) {
+            eprintln!(
+                "Failed to copy fixture from {} to {}: {err}",
+                source.display(),
+                dest.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
+    println!(
+        "Prepared RAG fixture backup for config-dir loads.\n  source: {}\n  staged: {}",
+        display_relative(&source, &root),
+        dest.display()
+    );
+    if moved_conflicts.is_empty() {
+        println!(
+            "No conflicting {} backups were present.",
+            RAG_FIXTURE_PREFIX
+        );
+    } else {
+        println!("Moved conflicting backups out of the load path:");
+        for (from, to) in moved_conflicts {
+            println!("  {} -> {}", from.display(), to.display());
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 #[derive(Deserialize)]
@@ -577,6 +721,16 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("xtask has a parent directory")
         .to_path_buf()
+}
+
+fn user_config_local_dir() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(path));
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return Ok(PathBuf::from(home).join(".config"));
+    }
+    Err("Could not determine config dir; set XDG_CONFIG_HOME or HOME.".to_string())
 }
 
 fn display_relative(path: &Path, root: &Path) -> String {

@@ -1059,7 +1059,10 @@ mod tests {
             "pub fn tokenize(input: &str) -> Vec<String> {\n    input\n        .split_whitespace()\n        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())\n        .filter(|s| !s.is_empty())\n        .collect()\n}"
             .to_string(),
         ];
-        println!("long_context_model: {}", long_context_model.to_request_string());
+        println!(
+            "long_context_model: {}",
+            long_context_model.to_request_string()
+        );
 
         let request = EmbeddingRequest::<OpenRouter> {
             model: long_context_model.clone(),
@@ -1112,7 +1115,11 @@ mod tests {
                 "all embeddings in batch must share a consistent length"
             );
         }
-        println!("resp.model: {}, request.model: {}", resp.model, request.model.to_request_string());
+        println!(
+            "resp.model: {}, request.model: {}",
+            resp.model,
+            request.model.to_request_string()
+        );
         // WARN: Poor test implementation patch
         // Either due to some changes to the openrouter API, its model listings, or improper
         // implementation of local features, there is some misalignment between the types used in
@@ -1121,7 +1128,9 @@ mod tests {
         // For now we are going to allow it, but this is worth revisiting to either bring the
         // response type into alignment with the request type by more precisely deserializing the
         // response, or otherwise fixing the types around the response to encode this behavior.
-        if request.model.to_request_string().ends_with(":free") && !resp.model.as_str().ends_with(":free") {
+        if request.model.to_request_string().ends_with(":free")
+            && !resp.model.as_str().ends_with(":free")
+        {
             let req_string = request.model.to_request_string();
             let truc_request_model = req_string.trim_end_matches(":free");
             assert!(

@@ -258,10 +258,7 @@ impl App {
             if announce {
                 let _ = cmd_tx
                     .send(StateCommand::AddMessageImmediate {
-                        msg: format!(
-                            "Conversation verbosity profile set to {}",
-                            profile.as_str()
-                        ),
+                        msg: format!("Conversation verbosity profile set to {}", profile.as_str()),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     })

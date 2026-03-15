@@ -289,6 +289,7 @@ impl std::fmt::Display for BuildStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_common::workspace_root;
     use ploke_error::Error as PlokeError;
     use tempfile::tempdir;
 
@@ -437,8 +438,7 @@ members = [
 
     #[test]
     fn simple_self() -> Result<(), PlokeError> {
-        let target_crate_root =
-            PathBuf::from("/home/brasides/code/openai-codex/ploke/ingest/syn_parser");
+        let target_crate_root: PathBuf = workspace_root().join("ingest/syn_parser");
         let (path, meta): (PathBuf, WorkspaceManifestMetadata) =
             locate_workspace_manifest(&target_crate_root)?;
         println!(

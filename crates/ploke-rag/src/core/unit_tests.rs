@@ -1,14 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use std::{default, sync::Arc};
+    use std::{default, path::PathBuf, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    use ploke_core::EmbeddingData;
+    use ploke_core::{embeddings::EmbeddingSet, EmbeddingData};
     use ploke_db::{
-        create_index_primary, create_index_primary_with_index, multi_embedding::debug::DebugAll,
-        Database,
+        create_index_for_set, create_index_primary, create_index_primary_with_index,
+        multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll},
+        Database, DbError,
     };
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
@@ -24,6 +25,10 @@ mod tests {
 
     use crate::{RagError, RagService};
     use std::sync::Once;
+
+    const LOCAL_FIXTURE_BACKUP: &str =
+        "tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9";
+
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
         TEST_TRACING.call_once(|| {
@@ -31,23 +36,42 @@ mod tests {
         });
     }
 
+    fn local_fixture_backup_path() -> PathBuf {
+        workspace_root().join(LOCAL_FIXTURE_BACKUP)
+    }
+
+    fn load_local_fixture_db() -> Result<Arc<Database>, Error> {
+        init_tracing_once();
+
+        let db = Database::init_with_schema()?;
+        let target_file = local_fixture_backup_path();
+        db.import_backup_with_embeddings(&target_file)
+            .map_err(Error::from)?;
+
+        let expected_set = EmbeddingSet::default();
+        let embedding_count = db
+            .count_embeddings_for_set(&expected_set)
+            .map_err(Error::from)?;
+        if embedding_count == 0 {
+            return Err(Error::from(DbError::Cozo(format!(
+                "Fixture backup {} does not contain embeddings for the default local set {}",
+                target_file.display(),
+                expected_set.rel_name
+            ))));
+        }
+
+        db.set_active_set(expected_set.clone())
+            .map_err(Error::from)?;
+        create_index_for_set(&db, &expected_set).map_err(Error::from)?;
+        Ok(Arc::new(db))
+    }
+
     async fn db_test_setup() -> Result<Arc<Database>, Error> {
-        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
-        let new_db = Database::new(base_db);
-        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
-        Ok(Arc::new(new_db))
+        load_local_fixture_db()
     }
 
     fn default_test_db_setup() -> Result<Arc<Database>, Error> {
-        use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
-        use tracing::info;
-
-        init_tracing_once();
-        let db = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
-            "fixture_nodes",
-        )?);
-
-        Ok(Arc::new(db))
+        load_local_fixture_db()
     }
 
     fn runtime_for(db: &Arc<Database>, processor: EmbeddingProcessor) -> Arc<EmbeddingRuntime> {
@@ -65,7 +89,6 @@ mod tests {
         let db = TEST_DB_NODES
             .as_ref()
             .expect("Must set up TEST_DB_NODES correctly.");
-        ploke_db::multi_embedding::db_ext::load_db(db, "fixture_nodes".to_string()).await?;
 
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
@@ -102,9 +125,7 @@ mod tests {
         // target_file.push(
         //     "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
         // );
-        target_file.push(
-            "tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9",
-        );
+        target_file.push("tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9");
         let prior_rels_vec = db.relations_vec().expect("relations_vec");
         db.import_from_backup(&target_file, &prior_rels_vec)
             .expect("import_from_backup");
@@ -235,16 +256,7 @@ mod tests {
     async fn test_search() -> Result<(), Error> {
         // Initialize tracing for the test
         init_tracing_once();
-        // let db = TEST_DB_NODES
-        //     .as_ref()
-        //     .expect("Must set up TEST_DB_NODES correctly.");
-
-        let db_base = Database::new(ploke_test_utils::setup_db_full_multi_embedding(
-            "fixture_nodes",
-        )?);
-        ploke_db::multi_embedding::db_ext::load_db(&db_base, "fixture_nodes".to_string()).await?;
-        ploke_db::create_index_primary(&db_base)?;
-        let db = Arc::new(db_base);
+        let db = default_test_db_setup()?;
 
         let search_term = "use_all_const_static";
 
@@ -333,10 +345,7 @@ mod tests {
     async fn test_hybrid_search() -> Result<(), Error> {
         init_tracing_once();
 
-        let base_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
-        let new_db = Database::new(base_db);
-        ploke_db::multi_embedding::db_ext::load_db(&new_db, "fixture_nodes".to_string()).await?;
-        let db = Arc::new(new_db);
+        let db = default_test_db_setup()?;
 
         let search_term = "use_all_const_static";
 
@@ -459,11 +468,7 @@ mod tests {
             let has_index = db_ref.is_hnsw_index_registered(&active_embedding_set)?;
             debug!(target: "hnsw-already-present", ?has_index);
             if !has_index {
-                ploke_db::multi_embedding::db_ext::load_db(
-                    db.as_ref(),
-                    "fixture_nodes".to_string(),
-                )
-                .await?;
+                create_index_primary_with_index(db.as_ref())?;
             }
         }
         let debug_output = db.is_embedding_info_all(&active_embedding_set)?;

@@ -18,9 +18,7 @@ use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels};
 use crate::llm::{self, LlmEvent, ProviderKey};
-use crate::user_config::{
-    ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url,
-};
+use crate::user_config::{ModelRegistryStrictness, OPENROUTER_URL, UserConfig, openrouter_url};
 use crate::{AppEvent, app_state::StateCommand, chat_history::MessageKind, emit_app_event};
 use itertools::Itertools;
 use ploke_core::ArcStr;
