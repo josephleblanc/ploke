@@ -28,7 +28,7 @@ mod phase2_id_tests {
 
         // Use a dummy project root; discovery only needs crate paths for this setup
         let project_root = fixtures_crates_dir();
-        let discovery_output = run_discovery_phase(&project_root, &crate_paths)
+        let discovery_output = run_discovery_phase(Some(&project_root), &crate_paths)
             .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for fixtures: {:?}", e));
 
         // Run Phase 2 on the combined output. The results are ordered according to

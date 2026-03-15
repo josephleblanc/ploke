@@ -61,7 +61,7 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), S
         target.display()
     );
 
-    // let discovery_output = run_discovery_phase(&target, &[target.clone()])
+    // let discovery_output = run_discovery_phase(Some(&target), &[target.clone()])
     //     .map_err(ploke_error::Error::from)
     //     .inspect_err(|e| {
     //         tracing::error!("discovery error: {e:?}");
@@ -106,7 +106,7 @@ pub fn run_parse_no_transform(
         target.display()
     );
 
-    let discovery_output = run_discovery_phase(&target, &[target.clone()])
+    let discovery_output = run_discovery_phase(None, &[target.clone()])
         .map_err(|err| SynParserError::try_from(err).unwrap_or_else(|err| err))?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =

@@ -12,7 +12,7 @@ use syn_parser::parser::{analyze_files_parallel, nodes::*, ParsedCodeGraph}; // 
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(Some(&project_root), &[crate_path.clone()])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
@@ -311,7 +311,7 @@ pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn:
     let crate_path = fixtures_crates_dir().join(fixture_name);
     // Use workspace root as project root for discovery context
     let project_root = workspace_root();
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path]).unwrap_or_else(|e| {
+    let discovery_output = run_discovery_phase(Some(&project_root), &[crate_path]).unwrap_or_else(|e| {
         panic!(
             "Phase 1 Discovery failed for fixture '{}': {:?}",
             fixture_name, e

@@ -30,8 +30,7 @@ pub struct TestTracingGuard {
 // Should return result
 pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+    let discovery_output = run_discovery_phase(None, &[crate_path])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
@@ -56,7 +55,7 @@ pub fn try_run_phases_and_collect_path(
     project_root: &Path,
     crate_path: PathBuf,
 ) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
-    let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
+    let discovery_output = run_discovery_phase(None, &[crate_path])?;
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge

@@ -51,7 +51,7 @@ edition = "2021"
     let project_root = temp_dir.path().to_path_buf(); // Dummy project root
     let target_crates = vec![crate_root.clone()];
 
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(
         result.is_ok(),
@@ -79,7 +79,7 @@ edition = "2021"
 
     // Create lib.rs with mod declaration BEFORE running discovery
     fs::write(src_dir.join("lib.rs"), "mod module;")?;
-    let result = run_discovery_phase(&project_root, &target_crates); // Re-run after modifying lib.rs
+    let result = run_discovery_phase(Some(&project_root), &target_crates); // Re-run after modifying lib.rs
     assert!(
         result.is_ok(),
         "Discovery should still succeed, got: {:?}",
@@ -102,7 +102,7 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(
         result.is_err(),
@@ -127,7 +127,7 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(
         result.is_err(),
@@ -157,7 +157,7 @@ version = "0.1.0"
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(result.is_err(), "Discovery should fail if src is missing");
     let err = result.unwrap_err();
@@ -175,7 +175,7 @@ fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::er
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(
         result.is_err(),
@@ -226,7 +226,7 @@ fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::
         crate2_root.clone(),
         crate3_root.clone(), // Missing src
     ];
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     // Check for error (should fail because of crate3)
     assert!(result.is_err(), "Should fail due to crate3 missing src");
@@ -262,7 +262,7 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let target_crates = vec![fixture_crate_root.clone()];
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(Some(&project_root), &target_crates);
 
     assert!(
         result.is_ok(),

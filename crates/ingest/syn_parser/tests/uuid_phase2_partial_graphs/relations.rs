@@ -28,7 +28,7 @@ mod phase2_relation_tests {
         // Use workspace root as project root for discovery context
         let project_root = workspace_root();
         let discovery_output: DiscoveryOutput =
-            run_discovery_phase(&project_root, &[crate_path.clone()]).unwrap_or_else(|e| {
+            run_discovery_phase(Some(&project_root), &[crate_path.clone()]).unwrap_or_else(|e| {
                 panic!(
                     "Phase 1 Discovery failed for fixture '{}': {:?}",
                     crate_name, e

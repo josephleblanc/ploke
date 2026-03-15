@@ -38,7 +38,3 @@
 ## Security & Configuration Tips
 - Never commit secrets. Provide `OPENROUTER_API_KEY` via env for live tests.
 - Follow safety-first editing patterns (staged edits with verified file hashes via IoManager). Avoid writing outputs to docs by default; link artifacts instead.
-
-
-## Serena MCP Memories
-- Before starting work, load the `table_of_contents` memory via Serena MCP (Memories → read `table_of_contents`). It links to key docs, plans, and paths to explore next.

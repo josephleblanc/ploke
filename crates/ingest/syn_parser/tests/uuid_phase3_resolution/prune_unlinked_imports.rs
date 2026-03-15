@@ -27,7 +27,7 @@ fn build_tree_for_workspace_crate(crate_subpath: &str) -> Result<(), ploke_error
     let root = workspace_root();
     let crate_path = root.join("crates").join(crate_subpath);
 
-    let discovery = run_discovery_phase(&root, &[crate_path])?;
+    let discovery = run_discovery_phase(None, &[crate_path])?;
     let parsed_graphs = analyze_files_parallel(&discovery, 0);
     let mut successful_graphs = Vec::new();
 

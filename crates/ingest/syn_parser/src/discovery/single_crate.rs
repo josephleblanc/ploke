@@ -733,7 +733,7 @@ impl DiscoveryOutput {
     /// ).unwrap();
     /// fs::write(crate_root.join("src/lib.rs"), "pub fn demo() {}").unwrap();
     ///
-    /// let discovery = run_discovery_phase(root.path(), &[crate_root.clone()]).unwrap();
+    /// let discovery = run_discovery_phase(Some(root.path()), &[crate_root.clone()]).unwrap();
     /// let context = discovery.get_crate_context(&crate_root).unwrap();
     /// assert_eq!(context.name, "demo");
     /// ```
@@ -768,7 +768,7 @@ impl DiscoveryOutput {
     ///     .into_iter()
     ///     .map(|name| root.path().join(name))
     ///     .collect::<Vec<_>>();
-    /// let discovery = run_discovery_phase(root.path(), &crate_paths).unwrap();
+    /// let discovery = run_discovery_phase(Some(root.path()), &crate_paths).unwrap();
     ///
     /// let mut names: Vec<_> = discovery
     ///     .iter_crate_contexts()
@@ -842,7 +842,7 @@ impl DiscoveryOutput {
 /// declarations.
 ///
 /// # Arguments
-/// * `_project_root` - The root path of the project being analyzed (may be used later).
+/// * `workspace_root` - Optional workspace root path for workspace-aware discovery.
 /// * `target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
 ///
 /// # Returns
@@ -856,11 +856,10 @@ impl DiscoveryOutput {
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    workspace_root: &Path,     // Keep for potential future use
+    _workspace_root: Option<&Path>,
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
-    // Removed: let mut initial_module_map = HashMap::new();
     let mut non_fatal_errors: Vec<DiscoveryError> = Vec::new(); // Collect non-fatal errors
 
     for crate_root_path in target_crates {
@@ -881,7 +880,7 @@ pub fn run_discovery_phase(
                 // Critical error: Cannot proceed without Cargo.toml content.
                 return Err(DiscoveryError::Io {
                     path: cargo_toml_path.clone(),
-                    source: Arc::new(e), // Wrap error in Arc
+                    source: Arc::new(e),
                 });
             }
         };
@@ -891,7 +890,7 @@ pub fn run_discovery_phase(
                 // Critical error: Invalid TOML structure prevents further processing.
                 return Err(DiscoveryError::TomlParse {
                     path: cargo_toml_path.clone(),
-                    source: Arc::new(e), // Wrap error in Arc
+                    source: Arc::new(e),
                 });
             }
         };
@@ -904,9 +903,6 @@ pub fn run_discovery_phase(
         } = manifest;
 
         // --- Extract Package Info (Non-Fatal Errors) ---
-        // Although PackageInfo deserialization requires name/version, we handle potential
-        // future scenarios or direct struct manipulation by checking here.
-        // For now, serde handles this, but let's keep the structure for robustness.
         let crate_name = package.name.clone();
         let crate_version = package.version.resolve(crate_root_path)?;
 
@@ -937,15 +933,9 @@ pub fn run_discovery_phase(
                     Err(e) => {
                         // Non-fatal: Log, collect error, and continue walking.
                         let path = e.path().unwrap_or(&src_path).to_path_buf();
-                        // eprintln!("Warning: Error walking directory {:?}: {}", path, e);
-                        // Note: walkdir::Error might not directly implement Error needed for #[source]
-                        // depending on its structure. Wrapping it ensures compatibility.
-                        // If walkdir::Error *does* implement std::error::Error, Arc::new(e) is fine.
-                        // If not, we might need Arc::new(e.into_io_error().unwrap_or_else(...)) or similar.
-                        // Assuming walkdir::Error implements std::error::Error for now.
                         non_fatal_errors.push(DiscoveryError::Walkdir {
                             path,
-                            source: Arc::new(e), // Wrap error in Arc
+                            source: Arc::new(e),
                         });
                     }
                 }
@@ -1073,7 +1063,7 @@ mod tests {
             "target fixture crate expected to be a directory"
         );
 
-        let discovery_result = run_discovery_phase(&workspace_root, &[crate_dir.clone()]);
+        let discovery_result = run_discovery_phase(Some(&workspace_root), &[crate_dir.clone()]);
         println!("{discovery_result:#?}");
         let output = discovery_result?;
         let context = output

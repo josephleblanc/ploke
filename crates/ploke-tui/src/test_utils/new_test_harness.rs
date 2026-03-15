@@ -37,7 +37,7 @@ lazy_static! {
     pub static ref TEST_DB_NODES: Result<Arc<Database>, ploke_error::Error> = {
         let db = Database::init_with_schema()?;
         let mut backup = workspace_root();
-        backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        backup.push("tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9");
         if backup.exists() {
             let prior_rels_vec = db.relations_vec()?;
             db.import_from_backup(&backup, &prior_rels_vec)

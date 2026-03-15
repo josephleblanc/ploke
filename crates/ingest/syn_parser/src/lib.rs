@@ -82,11 +82,13 @@ pub fn try_run_phases_and_resolve(
         .unwrap_or("No filename")
         .to_string();
     let path = path_buf.display().to_string();
-    let discovery_output = run_discovery_phase(&Path::new(""), std::slice::from_ref(&path_buf))
-        .map_err(|e| SynParserError::ComplexDiscovery {
-            name,
-            path,
-            source_string: e.to_string(),
+    let discovery_output =
+        run_discovery_phase(None, std::slice::from_ref(&path_buf)).map_err(|e| {
+            SynParserError::ComplexDiscovery {
+                name,
+                path,
+                source_string: e.to_string(),
+            }
         })?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
@@ -151,12 +153,13 @@ pub fn try_run_phases_and_resolve(
 /// for test environments where fixtures are expected to be present.
 pub fn run_phases_and_collect(fixture_name: &str) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, std::slice::from_ref(&crate_path))
-        .map_err(|e| SynParserError::ComplexDiscovery {
-            name: fixture_name.to_string(),
-            path: crate_path.display().to_string(),
-            source_string: e.to_string(),
+    let discovery_output =
+        run_discovery_phase(None, std::slice::from_ref(&crate_path)).map_err(|e| {
+            SynParserError::ComplexDiscovery {
+                name: fixture_name.to_string(),
+                path: crate_path.display().to_string(),
+                source_string: e.to_string(),
+            }
         })?;
     // NOTE:2025-12-26
     // commenting out the below so we don't panic on error in the target crate.
