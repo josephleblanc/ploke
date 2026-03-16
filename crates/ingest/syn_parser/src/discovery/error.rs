@@ -46,20 +46,20 @@ pub enum DiscoveryError {
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
     /// Failed to read a workspace manifest needed to resolve package version inheritance.
     #[error(
-        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+        "Failed to read workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
     )]
     WorkspaceManifestRead {
-        crate_path: PathBuf,
+        crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
         #[source]
         source: Arc<std::io::Error>,
     },
     /// Failed to parse a workspace manifest needed to resolve package version inheritance.
     #[error(
-        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path}: {source}"
+        "Failed to parse workspace Cargo.toml at {manifest_path} while resolving crate at {crate_path:?}: {source}"
     )]
     WorkspaceManifestParse {
-        crate_path: PathBuf,
+        crate_path: Option<PathBuf>,
         manifest_path: PathBuf,
         #[source]
         source: Arc<toml::de::Error>,
@@ -144,7 +144,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 
     fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
         use DiscoveryError::*;
-        let source_err_string = value.to_string();
+        let source_string = value.to_string();
         Ok(match value {
             MissingPackageName { path } => SynParserError::SimpleDiscovery {
                 path: path.display().to_string(),
@@ -178,18 +178,19 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 manifest_path,
                 ..
             } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
+                name: crate_path
+                    .map(|path_buf| path_buf.display().to_string())
+                    .unwrap_or_else(|| String::from("None")),
                 path: manifest_path.display().to_string(),
                 source_string: "WorkspaceManifestRead".to_string(),
             },
             WorkspaceManifestParse {
-                crate_path,
                 manifest_path,
                 ..
             } => SynParserError::ComplexDiscovery {
-                name: crate_path.display().to_string(),
+                name: "WorkspaceManifestParse".to_string(),
                 path: manifest_path.display().to_string(),
-                source_string: "WorkspaceManifestParse".to_string(),
+                source_string,
             },
             WorkspaceManifestNotFound { crate_path } => SynParserError::SimpleDiscovery {
                 path: crate_path.display().to_string(),
@@ -247,7 +248,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
             WorkspaceMissingSection { workspace_path, .. } => SynParserError::ComplexDiscovery {
                 name: "workspace".to_string(),
                 path: workspace_path.display().to_string(),
-                source_string: source_err_string.to_string(),
+                source_string,
             },
             WorkspacePathMismatch {
                 expected_workspace_path,
@@ -255,7 +256,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
             } => SynParserError::ComplexDiscovery {
                 name: "workspace".to_string(),
                 path: expected_workspace_path.display().to_string(),
-                source_string: source_err_string,
+                source_string,
             },
             MultipleWorkspacesDetected {
                 expected_workspace_path,
@@ -263,7 +264,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
             } => SynParserError::ComplexDiscovery {
                 name: "workspace".to_string(),
                 path: expected_workspace_path.display().to_string(),
-                source_string: source_err_string,
+                source_string,
             },
         })
     }
@@ -285,6 +286,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
 /// while providing clear error categorization for upstream error handling.
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
+        let err_string = err.to_string();
         match err {
             DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
                 operation: "read",
@@ -345,28 +347,22 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }
                 .into()
             }
-            DiscoveryError::WorkspaceManifestRead {
-                crate_path,
-                manifest_path,
-                source,
-            } => ploke_error::FatalError::PathResolution {
-                path: format!(
-                    "Failed to read workspace manifest {} for crate {}",
-                    manifest_path.display(),
-                    crate_path.display()
-                ),
-                source: Some(source),
+            DiscoveryError::WorkspaceManifestRead { source, .. } => {
+                ploke_error::FatalError::PathResolution {
+                    path: err_string,
+                    source: Some(source),
+                }
+                .into()
             }
-            .into(),
             DiscoveryError::WorkspaceManifestParse {
                 crate_path,
                 manifest_path,
                 source,
             } => ploke_error::FatalError::PathResolution {
                 path: format!(
-                    "Failed to parse workspace manifest {} for crate {}",
+                    "Failed to parse workspace manifest {} for crate {:?}",
                     manifest_path.display(),
-                    crate_path.display()
+                    crate_path
                 ),
                 source: Some(source),
             }

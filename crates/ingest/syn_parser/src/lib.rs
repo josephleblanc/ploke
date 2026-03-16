@@ -45,6 +45,7 @@ use discovery::run_discovery_phase;
 use error::SynParserError;
 // Re-export PartialSuccess for internal use or if needed
 pub use error::PartialSuccess;
+use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
 pub use parser::visitor::analyze_file_phase2;
@@ -58,7 +59,63 @@ pub use parser::nodes::test_ids::TestIds;
 // Main types for access in other crates
 pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
-use tracing::instrument;
+
+use crate::discovery::workspace::{try_parse_manifest, WorkspaceMetadataSection};
+
+pub fn parse_workspace(
+    target_workspace_dir: &Path,
+    selected_crates: Option<&[&Path]>,
+) -> Result<ParsedWorkspace, SynParserError> {
+    let path_buf = PathBuf::from(target_workspace_dir);
+    let name = path_buf
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("No filename")
+        .to_string();
+    let path = path_buf.display().to_string();
+    let workspace_metadata =
+        try_parse_manifest(&path_buf).map_err(|e| SynParserError::ComplexDiscovery {
+            name,
+            path,
+            source_string: e.to_string(),
+        })?;
+
+    let workspace_data = workspace_metadata
+        .workspace
+        .ok_or(SynParserError::ComplexDiscovery {
+            name: "workspace".to_string(),
+            path: path_buf.display().to_string(),
+            source_string: "error in parse_workspace".to_string(),
+        })?;
+
+    let (successes, errors): (Vec<ParserOutput>, Vec<SynParserError>) = workspace_data
+        .members
+        .iter()
+        .map(PathBuf::as_path)
+        .filter(|m| selected_crates.is_some_and(|sc| sc.contains(m)))
+        .map(try_run_phases_and_merge)
+        .partition_result();
+
+    if !errors.is_empty() {
+        return Err(SynParserError::MultipleErrors(errors));
+    } else if selected_crates.is_some_and(|sel| sel.len() != successes.len()) {
+        if let Some(sc) = selected_crates {
+            return Err(SynParserError::CrateMismatch {
+                workspace_members: workspace_data
+                    .members
+                    .iter()
+                    .map(|m| m.display().to_string())
+                    .collect_vec(),
+                selected_crates: sc.iter().map(|c| c.display().to_string()).collect_vec(),
+            });
+        };
+    }
+
+    Ok(ParsedWorkspace {
+        parsed_crates: successes,
+        workspace_data,
+    })
+}
 
 /// Try to run the full parsing process, returning the first error encountered. An error is
 /// returned when the parse fails for any reason. The caller may determine whether to panic or
@@ -67,7 +124,6 @@ use tracing::instrument;
 /// The target is assumed to be a single crate which may or may not be in a workspace. However, the
 /// target dir itself must be the crate root, and is assumed to contain a crate-level (as opposed
 /// to workspace-level) `Cargo.toml` file.
-#[instrument(err, fields(target_crate_dir))]
 pub fn try_run_phases_and_resolve(
     target_crate_dir: &Path,
 ) -> Result<Vec<ParsedCodeGraph>, SynParserError> {
@@ -244,8 +300,13 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
     })
 }
 
+/// Output of parsing a workspace
+pub struct ParsedWorkspace {
+    parsed_crates: Vec<ParserOutput>,
+    workspace_data: WorkspaceMetadataSection,
+}
+
 /// The output of the parser, containing the merged `ParsedCodeGraph` and `ModuleTree`.
-#[allow(dead_code, reason = "Primary output of this crate, not used locally")]
 pub struct ParserOutput {
     pub merged_graph: Option<ParsedCodeGraph>,
     pub module_tree: Option<ModuleTree>,

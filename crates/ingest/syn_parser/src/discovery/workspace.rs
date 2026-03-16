@@ -19,18 +19,18 @@ pub(super) struct WorkspaceVersionLink {
 /// signals that the inspected manifest isn't a workspace boundary.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceManifestMetadata {
-    pub(super) workspace: Option<WorkspaceMetadataSection>,
+    pub workspace: Option<WorkspaceMetadataSection>,
 }
 
 /// Captures the `[workspace]` table when parsing ancestor manifests.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspaceMetadataSection {
     #[serde(skip)]
-    pub(super) path: PathBuf,
-    pub(super) exclude: Option<Vec<PathBuf>>,
-    pub(super) resolver: Option<String>,
-    pub(super) members: Vec<PathBuf>,
-    pub(super) package: Option<WorkspacePackageMetadata>,
+    pub path: PathBuf,
+    pub exclude: Option<Vec<PathBuf>>,
+    pub resolver: Option<String>,
+    pub members: Vec<PathBuf>,
+    pub package: Option<WorkspacePackageMetadata>,
 }
 
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
@@ -131,34 +131,42 @@ pub fn locate_workspace_manifest(
     crate_root: &Path,
 ) -> Result<(PathBuf, WorkspaceManifestMetadata), DiscoveryError> {
     let mut current_dir = Some(crate_root);
-    let crate_path = crate_root.to_path_buf();
+    let target_crate_path = crate_root.to_path_buf();
 
     while let Some(dir) = current_dir {
-        let candidate_manifest = dir.join("Cargo.toml");
-        if candidate_manifest.is_file() {
-            let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
-                DiscoveryError::WorkspaceManifestRead {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                }
-            })?;
-
-            let metadata: WorkspaceManifestMetadata =
-                toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
-                    crate_path: crate_path.clone(),
-                    manifest_path: candidate_manifest.clone(),
-                    source: Arc::new(err),
-                })?;
-
-            if metadata.workspace.is_some() {
-                return Ok((candidate_manifest, metadata));
+        try_parse_manifest(dir).map_err(|mut e| {
+            if let DiscoveryError::WorkspaceManifestRead { ref mut crate_path, .. } = e {
+                *crate_path = Some(target_crate_path.clone());
+            } else if let DiscoveryError::WorkspaceManifestParse { ref mut crate_path, .. } = e {
+                *crate_path = Some(target_crate_path.clone());
             }
-        }
+            e
+        })?;
         current_dir = dir.parent();
     }
 
-    Err(DiscoveryError::WorkspaceManifestNotFound { crate_path })
+    Err(DiscoveryError::WorkspaceManifestNotFound { crate_path: target_crate_path })
+}
+
+// TODO: Add documentation + doc test
+// + unit test (at end of file)
+pub fn try_parse_manifest(target_dir: &Path) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
+    let candidate_manifest = target_dir.join("Cargo.toml");
+    let content = fs::read_to_string(&candidate_manifest).map_err(|err| {
+        DiscoveryError::WorkspaceManifestRead {
+            crate_path: None,
+            manifest_path: candidate_manifest.clone(),
+            source: Arc::new(err),
+        }
+    })?;
+
+    let metadata: WorkspaceManifestMetadata =
+        toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
+            crate_path: None,
+            manifest_path: candidate_manifest.clone(),
+            source: Arc::new(err),
+        })?;
+    Ok(metadata)
 }
 
 #[derive(Clone, Debug, Deserialize)]

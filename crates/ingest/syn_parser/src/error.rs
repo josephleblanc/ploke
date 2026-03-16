@@ -4,6 +4,7 @@ use crate::{
     parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
     resolve::ModuleTreeError,
 };
+use itertools::Itertools;
 use ploke_core::{IdConversionError, TypeId};
 use thiserror::Error;
 
@@ -181,6 +182,21 @@ pub enum SynParserError {
     /// An error occurred during `TypeId` conversion.
     #[error("Relation conversion error: {0}")]
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
+
+    #[error("Mismatch in workspace members vs. crates selected for parsing.
+-- workspace_members -- \n{:?},
+-- selected_crates -- \n{:?},
+-- intersection -- \n{:?},
+-- missing selected -- \n{:?}
+    ", workspace_members,
+        selected_crates,
+        workspace_members.iter().filter(|m| selected_crates.contains(m) ).collect_vec(),
+        selected_crates.iter().filter(|m| !workspace_members.contains(m) ).collect_vec()
+    )]
+    CrateMismatch {
+        workspace_members: Vec<String>,
+        selected_crates: Vec<String>,
+    },
 
     /// Shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
