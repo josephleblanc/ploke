@@ -593,7 +593,11 @@ edition = "2021"
     fn parse_workspace_reports_invalid_manifest_as_complex_discovery() {
         let tmp = tempdir().unwrap();
 
-        fs::write(tmp.path().join("Cargo.toml"), "[workspace\nmembers = [\"crate_a\"]\n").unwrap();
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[workspace\nmembers = [\"crate_a\"]\n",
+        )
+        .unwrap();
 
         let err = match parse_workspace(tmp.path(), None) {
             Ok(_) => panic!("expected invalid manifest error"),

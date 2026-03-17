@@ -24,6 +24,26 @@ impl CrateId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WorkspaceId(Uuid);
+
+impl WorkspaceId {
+    pub fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    pub fn uuid(self) -> Uuid {
+        self.0
+    }
+
+    pub fn from_root_path(path: &Path) -> Self {
+        let canon = canonicalize_best_effort(path);
+        let id_bytes = canon.to_string_lossy();
+        let uuid = Uuid::new_v5(&PROJECT_NAMESPACE_UUID, id_bytes.as_bytes());
+        Self(uuid)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateInfo {
     pub id: CrateId,
@@ -40,6 +60,31 @@ impl CrateInfo {
             .map(|os| os.to_string_lossy().into_owned())
             .unwrap_or_else(|| "unknown".to_string());
         let id = CrateId::from_root_path(&canon);
+        Self {
+            id,
+            namespace: id.uuid(),
+            root_path: canon,
+            name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceInfo {
+    pub id: WorkspaceId,
+    pub namespace: Uuid,
+    pub root_path: PathBuf,
+    pub name: String,
+}
+
+impl WorkspaceInfo {
+    pub fn from_root_path(root_path: PathBuf) -> Self {
+        let canon = canonicalize_best_effort(&root_path);
+        let name = canon
+            .file_name()
+            .map(|os| os.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "unknown".to_string());
+        let id = WorkspaceId::from_root_path(&canon);
         Self {
             id,
             namespace: id.uuid(),

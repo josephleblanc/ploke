@@ -4,6 +4,7 @@
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 
 use crate_context::transform_crate_context;
+pub use workspace::transform_parsed_workspace;
 // -- from workspace
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
@@ -40,6 +41,7 @@ mod fields;
 mod secondary_nodes;
 // -- special case nodes --
 mod crate_context;
+mod workspace;
 // -- primary nodes --
 mod consts;
 mod edges;
@@ -78,52 +80,37 @@ pub fn transform_code_graph(
     namespace: uuid::Uuid,
 ) -> Result<(), TransformError> {
     // Transform types
-    // [✔] Refactored
     transform_types(db, code_graph.type_graph)?;
 
     // Transform functions
-    // [✔] Refactored
     transform_functions(db, code_graph.functions, tree)?;
 
     // Transform defined types (structs, enums, etc.)
-    // [✔] Refactored
-    //  - [✔] Struct Refactored
-    //  - [✔] Enum Refactored
-    //  - [✔] Union Refactored
-    //  - [✔] TypeAlias Refactored
     //  TODO: Refactor CodeGraph to split these nodes into their own collections.
     transform_defined_types(db, code_graph.defined_types)?;
 
     // Transform traits
-    // [✔] Refactored
     transform_traits(db, code_graph.traits)?;
 
     // Transform impls
-    // [✔] Refactored
     transform_impls(db, code_graph.impls)?;
 
     // Transform modules
-    // [✔] Refactored
     transform_modules(db, code_graph.modules, namespace)?;
 
     // Transform consts
-    // [✔] Refactored
     transform_consts(db, code_graph.consts)?;
 
     // Transoform statics
-    // [✔] Refactored
     transform_statics(db, code_graph.statics)?;
 
     // Transform macros
-    // [✔] Refactored
     transform_macros(db, code_graph.macros)?;
 
     // Transform imports/reexports
-    // [✔] Refactored
     transform_imports(db, code_graph.use_statements)?;
 
     // Transform relations
-    // [✔] Refactored
     transform_relations(db, code_graph.relations)?;
 
     Ok(())

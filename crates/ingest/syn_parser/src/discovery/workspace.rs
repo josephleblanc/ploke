@@ -33,10 +33,24 @@ pub struct WorkspaceMetadataSection {
     pub package: Option<WorkspacePackageMetadata>,
 }
 
+impl WorkspaceMetadataSection {
+    pub fn package_version(&self) -> Option<&str> {
+        self.package
+            .as_ref()
+            .and_then(WorkspacePackageMetadata::version)
+    }
+}
+
 /// Captures the `[workspace.package]` metadata that may hold the shared version.
 #[derive(Deserialize, Debug, Clone)]
 pub struct WorkspacePackageMetadata {
     version: Option<String>,
+}
+
+impl WorkspacePackageMetadata {
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
 }
 
 /// Resolve a workspace-inherited version by loading the nearest ancestor workspace manifest.
