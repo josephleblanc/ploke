@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 
 use crate::{
     discovery::run_discovery_phase,

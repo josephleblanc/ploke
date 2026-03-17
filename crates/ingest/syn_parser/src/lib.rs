@@ -391,25 +391,79 @@ impl TryFrom<ParserOutput> for ParsedCrate {
 
 #[cfg(test)]
 mod tests {
+    // Test inventory for `parse_workspace` coverage in this module.
+    //
+    // Fixtures:
+    // - `create_workspace_fixture()` builds a two-member workspace with valid Rust sources in
+    //   `crate_a` and `crate_b`.
+    // - `create_workspace_fixture_with_members(...)` builds a temporary workspace from explicit
+    //   `(crate_name, lib_rs_source)` pairs, and is used when a test needs a malformed member.
+    //
+    // Tests:
+    // - `parse_workspace_defaults_to_all_members`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies that `selected_crates == None` parses every workspace member and returns
+    //   normalized workspace member paths.
+    // - `parse_workspace_normalizes_relative_selected_crates`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies that a relative selected crate path is normalized against the workspace root and
+    //   only that crate is parsed.
+    // - `parse_workspace_reports_missing_selected_crates`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies that a relative selection containing a non-member returns
+    //   `WorkspaceSelectionMismatch`.
+    // - `parse_workspace_reports_workspace_section_missing`
+    //   Fixture: ad hoc temp directory with a `[package]` manifest only.
+    //   Verifies that a manifest without `[workspace]` returns `WorkspaceSectionMissing`.
+    // - `parse_workspace_reports_missing_manifest_as_complex_discovery`
+    //   Fixture: empty temp directory.
+    //   Verifies that a missing workspace `Cargo.toml` is mapped to `ComplexDiscovery`.
+    // - `parse_workspace_reports_invalid_manifest_as_complex_discovery`
+    //   Fixture: temp directory with invalid workspace TOML.
+    //   Verifies that an unreadable workspace manifest is mapped to `ComplexDiscovery`.
+    // - `parse_workspace_accepts_absolute_selected_crates`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies that absolute selected crate paths are accepted and only the requested member is
+    //   parsed.
+    // - `parse_workspace_reports_mixed_selection_mismatch_details`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies mixed absolute/relative selection reporting, including `selected_crates`,
+    //   `missing_selected_crates`, and `workspace_members`.
+    // - `parse_workspace_aggregates_member_parse_failures`
+    //   Fixture: `create_workspace_fixture_with_members(...)` with one malformed member source.
+    //   Verifies that member parse failures are surfaced as `MultipleErrors` instead of being
+    //   dropped.
+    // - `parse_workspace_empty_selection_returns_no_crates`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies the current empty-selection contract: success with zero parsed crates and
+    //   normalized workspace metadata.
+    // - `parse_workspace_populates_public_dto_fields`
+    //   Fixture: `create_workspace_fixture()`.
+    //   Verifies that the returned `ParsedWorkspace` / `ParsedCrate` DTOs expose usable workspace
+    //   identity, crate roots, merged graphs, module trees, and graph crate context.
     use std::fs;
+    use std::path::Path;
 
     use tempfile::tempdir;
 
     use super::*;
 
-    fn create_workspace_fixture() -> tempfile::TempDir {
+    fn create_workspace_fixture_with_members(members: &[(&str, &str)]) -> tempfile::TempDir {
         let tmp = tempdir().unwrap();
         let workspace_root = tmp.path();
+        let member_names = members
+            .iter()
+            .map(|(name, _)| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         fs::write(
             workspace_root.join("Cargo.toml"),
-            r#"[workspace]
-members = ["crate_a", "crate_b"]
-"#,
+            format!("[workspace]\nmembers = [{member_names}]\n"),
         )
         .unwrap();
 
-        for crate_name in ["crate_a", "crate_b"] {
+        for (crate_name, source) in members {
             let crate_root = workspace_root.join(crate_name);
             fs::create_dir_all(crate_root.join("src")).unwrap();
             fs::write(
@@ -423,14 +477,17 @@ edition = "2021"
                 ),
             )
             .unwrap();
-            fs::write(
-                crate_root.join("src/lib.rs"),
-                format!("pub fn {}_fn() {{}}\n", crate_name),
-            )
-            .unwrap();
+            fs::write(crate_root.join("src/lib.rs"), source).unwrap();
         }
 
         tmp
+    }
+
+    fn create_workspace_fixture() -> tempfile::TempDir {
+        create_workspace_fixture_with_members(&[
+            ("crate_a", "pub fn crate_a_fn() {}\n"),
+            ("crate_b", "pub fn crate_b_fn() {}\n"),
+        ])
     }
 
     #[test]
@@ -485,5 +542,193 @@ edition = "2021"
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_workspace_reports_workspace_section_missing() {
+        let tmp = tempdir().unwrap();
+
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "not-a-workspace"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+
+        let err = match parse_workspace(tmp.path(), None) {
+            Ok(_) => panic!("expected workspace section error"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::WorkspaceSectionMissing { workspace_path } => {
+                assert_eq!(workspace_path, tmp.path().display().to_string());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_workspace_reports_missing_manifest_as_complex_discovery() {
+        let tmp = tempdir().unwrap();
+
+        let err = match parse_workspace(tmp.path(), None) {
+            Ok(_) => panic!("expected missing manifest error"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::ComplexDiscovery { name, path, .. } => {
+                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
+                assert_eq!(path, tmp.path().display().to_string());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_workspace_reports_invalid_manifest_as_complex_discovery() {
+        let tmp = tempdir().unwrap();
+
+        fs::write(tmp.path().join("Cargo.toml"), "[workspace\nmembers = [\"crate_a\"]\n").unwrap();
+
+        let err = match parse_workspace(tmp.path(), None) {
+            Ok(_) => panic!("expected invalid manifest error"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::ComplexDiscovery { name, path, .. } => {
+                assert_eq!(name, tmp.path().file_name().unwrap().to_string_lossy());
+                assert_eq!(path, tmp.path().display().to_string());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_workspace_accepts_absolute_selected_crates() {
+        let tmp = create_workspace_fixture();
+        let crate_a = tmp.path().join("crate_a");
+        let selected = [crate_a.as_path()];
+
+        let parsed_workspace = parse_workspace(tmp.path(), Some(&selected)).unwrap();
+
+        assert_eq!(parsed_workspace.crates.len(), 1);
+        assert_eq!(parsed_workspace.crates[0].crate_context.root_path, crate_a);
+    }
+
+    #[test]
+    fn parse_workspace_reports_mixed_selection_mismatch_details() {
+        let tmp = create_workspace_fixture();
+        let crate_b = tmp.path().join("crate_b");
+        let selected = [crate_b.as_path(), Path::new("crate_missing")];
+
+        let err = match parse_workspace(tmp.path(), Some(&selected)) {
+            Ok(_) => panic!("expected workspace selection mismatch"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::WorkspaceSelectionMismatch {
+                workspace_path,
+                workspace_members,
+                selected_crates,
+                missing_selected_crates,
+            } => {
+                assert_eq!(workspace_path, tmp.path().display().to_string());
+                assert_eq!(
+                    workspace_members,
+                    vec![
+                        tmp.path().join("crate_a").display().to_string(),
+                        tmp.path().join("crate_b").display().to_string(),
+                    ]
+                );
+                assert_eq!(
+                    selected_crates,
+                    vec![
+                        crate_b.display().to_string(),
+                        tmp.path().join("crate_missing").display().to_string(),
+                    ]
+                );
+                assert_eq!(
+                    missing_selected_crates,
+                    vec![tmp.path().join("crate_missing").display().to_string()]
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_workspace_aggregates_member_parse_failures() {
+        let tmp = create_workspace_fixture_with_members(&[
+            ("crate_a", "pub fn crate_a_fn() {}\n"),
+            ("crate_b", "pub fn crate_b_fn( {}\n"),
+        ]);
+
+        let err = match parse_workspace(tmp.path(), None) {
+            Ok(_) => panic!("expected member parse failure to bubble"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::MultipleErrors(errors) => {
+                assert!(!errors.is_empty());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_workspace_empty_selection_returns_no_crates() {
+        let tmp = create_workspace_fixture();
+        let selected: [&Path; 0] = [];
+
+        let parsed_workspace = parse_workspace(tmp.path(), Some(&selected)).unwrap();
+
+        assert_eq!(parsed_workspace.workspace.path, tmp.path());
+        assert_eq!(
+            parsed_workspace.workspace.members,
+            vec![tmp.path().join("crate_a"), tmp.path().join("crate_b")]
+        );
+        assert!(parsed_workspace.crates.is_empty());
+    }
+
+    #[test]
+    fn parse_workspace_populates_public_dto_fields() {
+        let tmp = create_workspace_fixture();
+
+        let parsed_workspace = parse_workspace(tmp.path(), None).unwrap();
+
+        assert_eq!(parsed_workspace.workspace.path, tmp.path());
+
+        let mut crate_roots = parsed_workspace
+            .crates
+            .iter()
+            .map(|parsed_crate| {
+                assert!(parsed_crate.parser_output.merged_graph.is_some());
+                assert!(parsed_crate.parser_output.module_tree.is_some());
+                assert_eq!(
+                    parsed_crate
+                        .parser_output
+                        .merged_graph
+                        .as_ref()
+                        .and_then(|graph| graph.crate_context.as_ref())
+                        .map(|ctx| ctx.root_path.clone()),
+                    Some(parsed_crate.crate_context.root_path.clone())
+                );
+                parsed_crate.crate_context.root_path.clone()
+            })
+            .collect::<Vec<_>>();
+        crate_roots.sort();
+
+        assert_eq!(
+            crate_roots,
+            vec![tmp.path().join("crate_a"), tmp.path().join("crate_b")]
+        );
     }
 }

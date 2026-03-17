@@ -11,7 +11,7 @@ use crate::discovery::DiscoveryError;
 /// treats `workspace = true` as the only supported value, so we surface explicit errors for other
 /// values to keep the type system honest.
 #[derive(Deserialize, Debug, Clone)]
-pub(super) struct WorkspaceVersionLink {
+pub struct WorkspaceVersionLink {
     pub(super) workspace: bool,
 }
 
