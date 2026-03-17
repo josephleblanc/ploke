@@ -184,10 +184,7 @@ impl TryFrom<DiscoveryError> for SynParserError {
                 path: manifest_path.display().to_string(),
                 source_string: "WorkspaceManifestRead".to_string(),
             },
-            WorkspaceManifestParse {
-                manifest_path,
-                ..
-            } => SynParserError::ComplexDiscovery {
+            WorkspaceManifestParse { manifest_path, .. } => SynParserError::ComplexDiscovery {
                 name: "WorkspaceManifestParse".to_string(),
                 path: manifest_path.display().to_string(),
                 source_string,

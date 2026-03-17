@@ -175,8 +175,6 @@ pub fn run_discovery_phase(
                             panic!("locate_workspace_manifest must not return this error type")
                         }
                     };
-                let located_metadata =
-                    normalize_workspace_metadata(&manifest_path, located_metadata)?;
                 match located_metadata.workspace {
                     Some(ref workspace_section) => {
                         // cache found workspace
@@ -227,7 +225,12 @@ pub fn run_discovery_phase(
     if let Some(workspace_root) = workspace_root {
         let discovered_workspace_paths = cached_workspaces
             .iter()
-            .filter_map(|metadata| metadata.workspace.as_ref().map(|section| section.path.clone()))
+            .filter_map(|metadata| {
+                metadata
+                    .workspace
+                    .as_ref()
+                    .map(|section| section.path.clone())
+            })
             .unique()
             .collect_vec();
 
@@ -256,36 +259,6 @@ pub fn run_discovery_phase(
         // Removed: initial_module_map,
         warnings: non_fatal_errors, // Include collected warnings
     })
-}
-
-fn normalize_workspace_metadata(
-    manifest_path: &Path,
-    mut metadata: WorkspaceManifestMetadata,
-) -> Result<WorkspaceManifestMetadata, DiscoveryError> {
-    let workspace_root =
-        manifest_path
-            .parent()
-            .ok_or_else(|| DiscoveryError::ParentNotFound {
-                workspace_path: manifest_path.to_path_buf(),
-            })?;
-
-    if let Some(workspace) = metadata.workspace.as_mut() {
-        workspace.path = workspace_root.to_path_buf();
-        workspace.members = absolutize_paths(workspace_root, workspace.members.iter());
-        workspace.exclude = workspace
-            .exclude
-            .take()
-            .map(|paths| absolutize_paths(workspace_root, paths.iter()));
-    }
-
-    Ok(metadata)
-}
-
-fn absolutize_paths<'a, I>(root: &Path, paths: I) -> Vec<PathBuf>
-where
-    I: IntoIterator<Item = &'a PathBuf>,
-{
-    paths.into_iter().map(|path| root.join(path)).collect()
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -475,20 +448,24 @@ edition = "2021"
     // test basic toml parsing of target crate
     fn test_toml_basic() -> Result<(), DiscoveryError> {
         let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_00"); // Use workspace root for context
-        eprintln!("fixture_workspace = {}", fixture_workspace_root.display().to_string());
+        eprintln!(
+            "fixture_workspace = {}",
+            fixture_workspace_root.display()
+        );
         assert!(
             fixture_workspace_root.is_dir(),
             "target fixture workspace expected to be a directory"
         );
 
         let crate_dir = fixture_workspace_root.join("fixture_toml");
-        eprintln!("fixture_crate = {}", crate_dir.display().to_string());
+        eprintln!("fixture_crate = {}", crate_dir.display());
         assert!(
             crate_dir.is_dir(),
             "target fixture crate expected to be a directory"
         );
 
-        let discovery_result = run_discovery_phase(Some(&fixture_workspace_root), &[crate_dir.clone()]);
+        let discovery_result =
+            run_discovery_phase(Some(&fixture_workspace_root), std::slice::from_ref(&crate_dir));
         println!("{discovery_result:#?}");
         let output = discovery_result?;
         let context = output
@@ -506,9 +483,14 @@ edition = "2021"
     fn test_workspace_metadata_is_normalized_for_membership_lookup() -> Result<(), DiscoveryError> {
         let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_00");
         let crate_dir = fixture_workspace_root.join("fixture_toml");
-        let output = run_discovery_phase(Some(&fixture_workspace_root), std::slice::from_ref(&crate_dir))?;
+        let output = run_discovery_phase(
+            Some(&fixture_workspace_root),
+            std::slice::from_ref(&crate_dir),
+        )?;
 
-        let workspace = output.workspace.expect("workspace metadata should be cached");
+        let workspace = output
+            .workspace
+            .expect("workspace metadata should be cached");
         let workspace_section = workspace
             .workspace
             .expect("workspace metadata should include a workspace section");
@@ -540,7 +522,7 @@ edition = "2021"
         )
         .unwrap();
 
-        let err = run_discovery_phase(Some(&expected_workspace), &[crate_root.clone()])
+        let err = run_discovery_phase(Some(&expected_workspace), std::slice::from_ref(&crate_root))
             .expect_err("crate should fail when it resolves into a different workspace");
 
         assert!(matches!(

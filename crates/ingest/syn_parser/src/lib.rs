@@ -85,36 +85,67 @@ pub fn parse_workspace(
         .ok_or(SynParserError::ComplexDiscovery {
             name: "workspace".to_string(),
             path: path_buf.display().to_string(),
-            source_string: "error in parse_workspace".to_string(),
+            source_string: "workspace Cargo.toml does not contain a [workspace] section"
+                .to_string(),
         })?;
 
-    let (successes, errors): (Vec<ParserOutput>, Vec<SynParserError>) = workspace_data
-        .members
-        .iter()
-        .map(PathBuf::as_path)
-        .filter(|m| selected_crates.is_some_and(|sc| sc.contains(m)))
-        .map(try_run_phases_and_merge)
-        .partition_result();
+    let normalized_selected_crates =
+        selected_crates.map(|crates| normalize_selected_crates(&workspace_data.path, crates));
 
-    if !errors.is_empty() {
-        return Err(SynParserError::MultipleErrors(errors));
-    } else if selected_crates.is_some_and(|sel| sel.len() != successes.len()) {
-        if let Some(sc) = selected_crates {
+    if let Some(selected_crates) = &normalized_selected_crates {
+        let missing_selected = selected_crates
+            .iter()
+            .filter(|selected| !workspace_data.members.contains(selected))
+            .collect_vec();
+
+        if !missing_selected.is_empty() {
             return Err(SynParserError::CrateMismatch {
                 workspace_members: workspace_data
                     .members
                     .iter()
                     .map(|m| m.display().to_string())
                     .collect_vec(),
-                selected_crates: sc.iter().map(|c| c.display().to_string()).collect_vec(),
+                selected_crates: selected_crates
+                    .iter()
+                    .map(|c| c.display().to_string())
+                    .collect_vec(),
             });
-        };
+        }
+    }
+
+    let (successes, errors): (Vec<ParserOutput>, Vec<SynParserError>) = workspace_data
+        .members
+        .iter()
+        .map(PathBuf::as_path)
+        .filter(|member| {
+            normalized_selected_crates
+                .as_ref()
+                .is_none_or(|selected| selected.contains(&member.to_path_buf()))
+        })
+        .map(try_run_phases_and_merge)
+        .partition_result();
+
+    if !errors.is_empty() {
+        return Err(SynParserError::MultipleErrors(errors));
     }
 
     Ok(ParsedWorkspace {
         parsed_crates: successes,
         workspace_data,
     })
+}
+
+fn normalize_selected_crates(workspace_root: &Path, selected_crates: &[&Path]) -> Vec<PathBuf> {
+    selected_crates
+        .iter()
+        .map(|crate_path| {
+            if crate_path.is_absolute() {
+                crate_path.to_path_buf()
+            } else {
+                workspace_root.join(crate_path)
+            }
+        })
+        .collect()
 }
 
 /// Try to run the full parsing process, returning the first error encountered. An error is
@@ -321,5 +352,81 @@ impl ParserOutput {
     /// Extracts the `ModuleTree` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_module_tree(&mut self) -> Option<ModuleTree> {
         self.module_tree.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn create_workspace_fixture() -> tempfile::TempDir {
+        let tmp = tempdir().unwrap();
+        let workspace_root = tmp.path();
+
+        fs::write(
+            workspace_root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["crate_a", "crate_b"]
+"#,
+        )
+        .unwrap();
+
+        for crate_name in ["crate_a", "crate_b"] {
+            let crate_root = workspace_root.join(crate_name);
+            fs::create_dir_all(crate_root.join("src")).unwrap();
+            fs::write(
+                crate_root.join("Cargo.toml"),
+                format!(
+                    r#"[package]
+name = "{crate_name}"
+version = "0.1.0"
+edition = "2021"
+"#
+                ),
+            )
+            .unwrap();
+            fs::write(
+                crate_root.join("src/lib.rs"),
+                format!("pub fn {}_fn() {{}}\n", crate_name),
+            )
+            .unwrap();
+        }
+
+        tmp
+    }
+
+    #[test]
+    fn parse_workspace_defaults_to_all_members() {
+        let tmp = create_workspace_fixture();
+
+        let parsed_workspace = parse_workspace(tmp.path(), None).unwrap();
+
+        assert_eq!(parsed_workspace.workspace_data.path, tmp.path());
+        assert_eq!(parsed_workspace.parsed_crates.len(), 2);
+        assert_eq!(
+            parsed_workspace.workspace_data.members,
+            vec![tmp.path().join("crate_a"), tmp.path().join("crate_b")]
+        );
+    }
+
+    #[test]
+    fn parse_workspace_normalizes_relative_selected_crates() {
+        let tmp = create_workspace_fixture();
+        let selected = [Path::new("crate_b")];
+
+        let parsed_workspace = parse_workspace(tmp.path(), Some(&selected)).unwrap();
+
+        assert_eq!(parsed_workspace.parsed_crates.len(), 1);
+        let parsed_crate_root = parsed_workspace.parsed_crates[0]
+            .merged_graph
+            .as_ref()
+            .and_then(|graph| graph.crate_context.as_ref())
+            .map(|crate_context| crate_context.root_path.clone());
+
+        assert_eq!(parsed_crate_root, Some(tmp.path().join("crate_b")));
     }
 }

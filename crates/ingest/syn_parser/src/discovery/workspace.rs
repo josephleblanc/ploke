@@ -134,18 +134,37 @@ pub fn locate_workspace_manifest(
     let target_crate_path = crate_root.to_path_buf();
 
     while let Some(dir) = current_dir {
-        try_parse_manifest(dir).map_err(|mut e| {
-            if let DiscoveryError::WorkspaceManifestRead { ref mut crate_path, .. } = e {
+        let candidate_manifest = dir.join("Cargo.toml");
+        if !candidate_manifest.is_file() {
+            current_dir = dir.parent();
+            continue;
+        }
+
+        let metadata = try_parse_manifest(dir).map_err(|mut e| {
+            if let DiscoveryError::WorkspaceManifestRead {
+                ref mut crate_path, ..
+            } = e
+            {
                 *crate_path = Some(target_crate_path.clone());
-            } else if let DiscoveryError::WorkspaceManifestParse { ref mut crate_path, .. } = e {
+            } else if let DiscoveryError::WorkspaceManifestParse {
+                ref mut crate_path, ..
+            } = e
+            {
                 *crate_path = Some(target_crate_path.clone());
             }
             e
         })?;
+
+        if metadata.workspace.is_some() {
+            return Ok((candidate_manifest, metadata));
+        }
+
         current_dir = dir.parent();
     }
 
-    Err(DiscoveryError::WorkspaceManifestNotFound { crate_path: target_crate_path })
+    Err(DiscoveryError::WorkspaceManifestNotFound {
+        crate_path: target_crate_path,
+    })
 }
 
 // TODO: Add documentation + doc test
@@ -160,12 +179,33 @@ pub fn try_parse_manifest(target_dir: &Path) -> Result<WorkspaceManifestMetadata
         }
     })?;
 
-    let metadata: WorkspaceManifestMetadata =
+    let mut metadata: WorkspaceManifestMetadata =
         toml::from_str(&content).map_err(|err| DiscoveryError::WorkspaceManifestParse {
             crate_path: None,
             manifest_path: candidate_manifest.clone(),
             source: Arc::new(err),
         })?;
+
+    let workspace_root =
+        candidate_manifest
+            .parent()
+            .ok_or_else(|| DiscoveryError::ParentNotFound {
+                workspace_path: candidate_manifest.clone(),
+            })?;
+
+    if let Some(workspace) = metadata.workspace.as_mut() {
+        workspace.path = workspace_root.to_path_buf();
+        workspace.members = workspace
+            .members
+            .iter()
+            .map(|path| workspace_root.join(path))
+            .collect();
+        workspace.exclude = workspace
+            .exclude
+            .take()
+            .map(|paths| paths.iter().map(|path| workspace_root.join(path)).collect());
+    }
+
     Ok(metadata)
 }
 
