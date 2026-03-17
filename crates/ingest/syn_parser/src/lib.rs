@@ -48,6 +48,7 @@ pub use error::PartialSuccess;
 use itertools::Itertools;
 use parser::analyze_files_parallel;
 // Re-export key items for easier access
+pub use discovery::CrateContext;
 pub use parser::visitor::analyze_file_phase2;
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 use ploke_common::fixtures_crates_dir;
@@ -80,14 +81,12 @@ pub fn parse_workspace(
             source_string: e.to_string(),
         })?;
 
-    let workspace_data = workspace_metadata
-        .workspace
-        .ok_or(SynParserError::ComplexDiscovery {
-            name: "workspace".to_string(),
-            path: path_buf.display().to_string(),
-            source_string: "workspace Cargo.toml does not contain a [workspace] section"
-                .to_string(),
-        })?;
+    let workspace_data =
+        workspace_metadata
+            .workspace
+            .ok_or(SynParserError::WorkspaceSectionMissing {
+                workspace_path: path_buf.display().to_string(),
+            })?;
 
     let normalized_selected_crates =
         selected_crates.map(|crates| normalize_selected_crates(&workspace_data.path, crates));
@@ -96,16 +95,22 @@ pub fn parse_workspace(
         let missing_selected = selected_crates
             .iter()
             .filter(|selected| !workspace_data.members.contains(selected))
+            .cloned()
             .collect_vec();
 
         if !missing_selected.is_empty() {
-            return Err(SynParserError::CrateMismatch {
+            return Err(SynParserError::WorkspaceSelectionMismatch {
+                workspace_path: workspace_data.path.display().to_string(),
                 workspace_members: workspace_data
                     .members
                     .iter()
                     .map(|m| m.display().to_string())
                     .collect_vec(),
                 selected_crates: selected_crates
+                    .iter()
+                    .map(|c| c.display().to_string())
+                    .collect_vec(),
+                missing_selected_crates: missing_selected
                     .iter()
                     .map(|c| c.display().to_string())
                     .collect_vec(),
@@ -130,8 +135,11 @@ pub fn parse_workspace(
     }
 
     Ok(ParsedWorkspace {
-        parsed_crates: successes,
-        workspace_data,
+        crates: successes
+            .into_iter()
+            .map(ParsedCrate::try_from)
+            .collect::<Result<Vec<_>, _>>()?,
+        workspace: workspace_data,
     })
 }
 
@@ -331,10 +339,16 @@ pub fn try_run_phases_and_merge(target_crate: &Path) -> Result<ParserOutput, Syn
     })
 }
 
-/// Output of parsing a workspace
+/// Output of parsing a workspace.
 pub struct ParsedWorkspace {
-    parsed_crates: Vec<ParserOutput>,
-    workspace_data: WorkspaceMetadataSection,
+    pub workspace: WorkspaceMetadataSection,
+    pub crates: Vec<ParsedCrate>,
+}
+
+/// Output of parsing a single crate within a workspace.
+pub struct ParsedCrate {
+    pub crate_context: CrateContext,
+    pub parser_output: ParserOutput,
 }
 
 /// The output of the parser, containing the merged `ParsedCodeGraph` and `ModuleTree`.
@@ -352,6 +366,26 @@ impl ParserOutput {
     /// Extracts the `ModuleTree` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_module_tree(&mut self) -> Option<ModuleTree> {
         self.module_tree.take()
+    }
+}
+
+impl TryFrom<ParserOutput> for ParsedCrate {
+    type Error = SynParserError;
+
+    fn try_from(parser_output: ParserOutput) -> Result<Self, Self::Error> {
+        let crate_context = parser_output
+            .merged_graph
+            .as_ref()
+            .and_then(|graph| graph.crate_context.as_ref())
+            .cloned()
+            .ok_or(SynParserError::ParsedGraphError(
+                crate::parser::graph::ParsedGraphError::MissingCrateContext,
+            ))?;
+
+        Ok(Self {
+            crate_context,
+            parser_output,
+        })
     }
 }
 
@@ -405,10 +439,10 @@ edition = "2021"
 
         let parsed_workspace = parse_workspace(tmp.path(), None).unwrap();
 
-        assert_eq!(parsed_workspace.workspace_data.path, tmp.path());
-        assert_eq!(parsed_workspace.parsed_crates.len(), 2);
+        assert_eq!(parsed_workspace.workspace.path, tmp.path());
+        assert_eq!(parsed_workspace.crates.len(), 2);
         assert_eq!(
-            parsed_workspace.workspace_data.members,
+            parsed_workspace.workspace.members,
             vec![tmp.path().join("crate_a"), tmp.path().join("crate_b")]
         );
     }
@@ -420,13 +454,36 @@ edition = "2021"
 
         let parsed_workspace = parse_workspace(tmp.path(), Some(&selected)).unwrap();
 
-        assert_eq!(parsed_workspace.parsed_crates.len(), 1);
-        let parsed_crate_root = parsed_workspace.parsed_crates[0]
-            .merged_graph
-            .as_ref()
-            .and_then(|graph| graph.crate_context.as_ref())
-            .map(|crate_context| crate_context.root_path.clone());
+        assert_eq!(parsed_workspace.crates.len(), 1);
+        assert_eq!(
+            parsed_workspace.crates[0].crate_context.root_path,
+            tmp.path().join("crate_b")
+        );
+    }
 
-        assert_eq!(parsed_crate_root, Some(tmp.path().join("crate_b")));
+    #[test]
+    fn parse_workspace_reports_missing_selected_crates() {
+        let tmp = create_workspace_fixture();
+        let selected = [Path::new("crate_b"), Path::new("crate_missing")];
+
+        let err = match parse_workspace(tmp.path(), Some(&selected)) {
+            Ok(_) => panic!("expected workspace selection mismatch"),
+            Err(err) => err,
+        };
+
+        match err {
+            SynParserError::WorkspaceSelectionMismatch {
+                workspace_path,
+                missing_selected_crates,
+                ..
+            } => {
+                assert_eq!(workspace_path, tmp.path().display().to_string());
+                assert_eq!(
+                    missing_selected_crates,
+                    vec![tmp.path().join("crate_missing").display().to_string()]
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

@@ -448,10 +448,7 @@ edition = "2021"
     // test basic toml parsing of target crate
     fn test_toml_basic() -> Result<(), DiscoveryError> {
         let fixture_workspace_root = workspace_root().join("tests/fixture_workspace/ws_fixture_00"); // Use workspace root for context
-        eprintln!(
-            "fixture_workspace = {}",
-            fixture_workspace_root.display()
-        );
+        eprintln!("fixture_workspace = {}", fixture_workspace_root.display());
         assert!(
             fixture_workspace_root.is_dir(),
             "target fixture workspace expected to be a directory"
@@ -464,8 +461,10 @@ edition = "2021"
             "target fixture crate expected to be a directory"
         );
 
-        let discovery_result =
-            run_discovery_phase(Some(&fixture_workspace_root), std::slice::from_ref(&crate_dir));
+        let discovery_result = run_discovery_phase(
+            Some(&fixture_workspace_root),
+            std::slice::from_ref(&crate_dir),
+        );
         println!("{discovery_result:#?}");
         let output = discovery_result?;
         let context = output
