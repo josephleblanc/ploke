@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env,
+    error::Error,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -41,6 +42,16 @@ const EMBEDDING_MODELS_META: &str = "fixtures/openrouter/embeddings_models.meta.
 const RAG_FIXTURE_PREFIX: &str = "fixture_nodes_";
 
 fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), XtaskError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("verify-fixtures") => verify_fixtures(),
@@ -52,17 +63,45 @@ fn main() -> ExitCode {
         Some("extract-tokens-log") => extract_tokens_log(args.collect()),
         Some("help") | Some("-h") | Some("--help") => {
             print_usage();
-            ExitCode::SUCCESS
+            Ok(())
         }
         None => {
             print_usage();
-            ExitCode::SUCCESS
+            Ok(())
         }
         Some(other) => {
-            eprintln!("Unknown command '{other}'.");
             print_usage();
-            ExitCode::FAILURE
+            Err(XtaskError::new(format!("Unknown command '{other}'.")))
         }
+    }
+}
+
+#[derive(Debug)]
+struct XtaskError(String);
+
+impl XtaskError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl std::fmt::Display for XtaskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for XtaskError {}
+
+impl From<String> for XtaskError {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for XtaskError {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
     }
 }
 
@@ -113,7 +152,7 @@ const FIXTURE_CHECKS: &[FixtureCheck] = &[
     },
 ];
 
-fn extract_tokens_log(args: Vec<String>) -> ExitCode {
+fn extract_tokens_log(args: Vec<String>) -> Result<(), XtaskError> {
     let mut input_override: Option<PathBuf> = None;
     let mut output_override: Option<PathBuf> = None;
     let mut include_api = false;
@@ -129,10 +168,9 @@ fn extract_tokens_log(args: Vec<String>) -> ExitCode {
             }
             "--include-api" => include_api = true,
             other => {
-                eprintln!(
+                return Err(XtaskError::new(format!(
                     "Unknown flag '{other}'. Usage: cargo xtask extract-tokens-log [--input PATH] [--output PATH] [--include-api]"
-                );
-                return ExitCode::FAILURE;
+                )));
             }
         }
     }
@@ -140,35 +178,32 @@ fn extract_tokens_log(args: Vec<String>) -> ExitCode {
     let root = workspace_root();
     let input_path = match input_override {
         Some(path) => path,
-        None => match latest_tokens_log(&root) {
-            Ok(path) => path,
-            Err(err) => {
-                eprintln!("{err}");
-                return ExitCode::FAILURE;
-            }
-        },
+        None => latest_tokens_log(&root)?,
     };
 
     if !input_path.exists() {
-        eprintln!("Input log {} does not exist", input_path.display());
-        return ExitCode::FAILURE;
+        return Err(XtaskError::new(format!(
+            "Input log {} does not exist",
+            input_path.display()
+        )));
     }
 
     let output_path =
         output_override.unwrap_or_else(|| root.join("tests/fixture_chat/tokens_sample.log"));
-    if let Some(parent) = output_path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
-            eprintln!(
-                "Failed to create output directory {}: {err}",
-                parent.display()
-            );
-            return ExitCode::FAILURE;
-        }
+    if let Some(parent) = output_path.parent()
+        && let Err(err) = fs::create_dir_all(parent)
+    {
+        return Err(XtaskError::new(format!(
+            "Failed to create output directory {}: {err}",
+            parent.display()
+        )));
     }
 
     let Ok(input_contents) = fs::read_to_string(&input_path) else {
-        eprintln!("Unable to read {}", input_path.display());
-        return ExitCode::FAILURE;
+        return Err(XtaskError::new(format!(
+            "Unable to read {}",
+            input_path.display()
+        )));
     };
 
     let mut patterns = vec!["kind=\"estimate_input\"", "kind=\"actual_usage\""];
@@ -182,19 +217,17 @@ fn extract_tokens_log(args: Vec<String>) -> ExitCode {
         .collect();
 
     if filtered.is_empty() {
-        eprintln!(
+        return Err(XtaskError::new(format!(
             "No matching token diagnostics found in {}. Did you run with PLOKE_LOG_TOKENS=1?",
             input_path.display()
-        );
-        return ExitCode::FAILURE;
+        )));
     }
 
     if let Err(err) = fs::write(&output_path, filtered.join("\n")) {
-        eprintln!(
+        return Err(XtaskError::new(format!(
             "Failed to write filtered log to {}: {err}",
             output_path.display()
-        );
-        return ExitCode::FAILURE;
+        )));
     }
 
     println!(
@@ -202,7 +235,7 @@ fn extract_tokens_log(args: Vec<String>) -> ExitCode {
         filtered.len(),
         display_relative(&output_path, &root)
     );
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 fn latest_tokens_log(root: &Path) -> Result<PathBuf, String> {
@@ -236,7 +269,7 @@ fn latest_tokens_log(root: &Path) -> Result<PathBuf, String> {
 }
 
 // TODO: add a dedicated command that regenerates or guides regeneration of pricing/state fixtures (e.g., `cargo xtask regen-pricing`) so this check can auto-heal.
-fn verify_fixtures() -> ExitCode {
+fn verify_fixtures() -> Result<(), XtaskError> {
     let root = workspace_root();
     println!("Verifying fixtures under {}", root.display());
     let mut missing: Vec<(&FixtureCheck, PathBuf)> = Vec::new();
@@ -273,60 +306,50 @@ fn verify_fixtures() -> ExitCode {
 
     if missing.is_empty() && drift.is_empty() {
         println!("All required fixtures are present.");
-        ExitCode::SUCCESS
+        Ok(())
     } else {
+        let mut message = String::new();
         if !missing.is_empty() {
-            eprintln!("\nMissing fixtures detected:");
+            message.push_str("\nMissing fixtures detected:\n");
             for (check, path) in &missing {
-                eprintln!(
+                message.push_str(&format!(
                     "- {id}: {desc}\n  Path: {path}\n  Fix:  {remedy}",
                     id = check.id,
                     desc = check.description,
                     path = path.display(),
                     remedy = check.remediation
-                );
+                ));
+                message.push('\n');
             }
         }
         if !drift.is_empty() {
-            eprintln!("\nFixture drift detected (backup no longer matches source files):");
+            message.push_str("\nFixture drift detected (backup no longer matches source files):\n");
             for (check, err) in &drift {
-                eprintln!(
+                message.push_str(&format!(
                     "- {id}: {desc}\n  Issue: {err}\n  Fix:   {remedy}",
                     id = check.id,
                     desc = check.description,
                     err = err,
                     remedy = check.remediation
-                );
+                ));
+                message.push('\n');
             }
         }
-        ExitCode::FAILURE
+        Err(XtaskError::new(message.trim_end().to_string()))
     }
 }
 
-fn verify_backup_dbs(args: Vec<String>) -> ExitCode {
-    let fixture_filter = match parse_fixture_arg(&args, "verify-backup-dbs") {
-        Ok(filter) => filter,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let fixtures = match selected_fixtures(fixture_filter.as_deref()) {
-        Ok(fixtures) => fixtures,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn verify_backup_dbs(args: Vec<String>) -> Result<(), XtaskError> {
+    let fixture_filter = parse_fixture_arg(&args, "verify-backup-dbs")?;
+    let fixtures = selected_fixtures(fixture_filter.as_deref())?;
 
     println!("Verifying registered backup DB fixtures:");
     let mut failures = Vec::new();
+    let root = workspace_root();
 
     for fixture in fixtures {
         match verify_registered_backup_fixture(fixture) {
             Ok(summary) => {
-                let root = workspace_root();
                 println!(
                     "✔ {:<32} {} | relations={} | roundtrip={}",
                     fixture.id,
@@ -336,7 +359,6 @@ fn verify_backup_dbs(args: Vec<String>) -> ExitCode {
                 );
             }
             Err(err) => {
-                let root = workspace_root();
                 println!(
                     "✘ {:<32} {}",
                     fixture.id,
@@ -348,93 +370,56 @@ fn verify_backup_dbs(args: Vec<String>) -> ExitCode {
     }
 
     if failures.is_empty() {
-        ExitCode::SUCCESS
+        Ok(())
     } else {
-        eprintln!("\nBackup DB fixture validation failed:");
+        let mut message = String::from("\nBackup DB fixture validation failed:\n");
         for (fixture, err) in failures {
-            eprintln!("- {}: {err}", fixture.id);
-            eprintln!("  {}", recreation_hint(fixture));
+            message.push_str(&format!("- {}: {err}\n", fixture.id));
+            message.push_str(&format!("  {}\n", recreation_hint(fixture)));
         }
-        ExitCode::FAILURE
+        Err(XtaskError::new(message.trim_end().to_string()))
     }
 }
 
-fn recreate_backup_db(args: Vec<String>) -> ExitCode {
-    let fixture_id = match parse_required_fixture_arg(&args, "recreate-backup-db") {
-        Ok(id) => id,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let fixture = match backup_db_fixture(&fixture_id) {
-        Some(fixture) => fixture,
-        None => {
-            eprintln!(
-                "Unknown fixture id '{}'. Available ids: {}",
-                fixture_id,
-                available_fixture_ids()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
+fn recreate_backup_db(args: Vec<String>) -> Result<(), XtaskError> {
+    let fixture_id = parse_required_fixture_arg(&args, "recreate-backup-db")?;
+    let fixture = resolve_fixture(&fixture_id)?;
 
     let root = workspace_root();
     let output_path = root
         .join("tests/backup_dbs")
         .join(dated_output_filename(fixture));
 
+    let fixture_db_path = "crates/test-utils/src/fixture_dbs.rs";
+    let fixture_db_doc_path = "docs/testing/BACKUP_DB_FIXTURES.md";
     match fixture.creation {
         FixtureCreationStrategy::Automated(strategy) => {
-            if let Err(err) = recreate_automated_fixture(fixture, strategy, &output_path) {
-                eprintln!("Failed to recreate {}: {err}", fixture.id);
-                return ExitCode::FAILURE;
-            }
+            recreate_automated_fixture(fixture, strategy, &output_path).map_err(|err| {
+                XtaskError::new(format!("Failed to recreate {}: {err}", fixture.id))
+            })?;
             println!(
                 "Recreated {} at {}",
                 fixture.id,
                 display_relative(&output_path, &root)
             );
             println!(
-                "Next: update {} and {} if you intend tests to use this new dated fixture.",
-                "/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs",
-                "/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md"
+                "Next: update {fixture_db_path} and {fixture_db_doc_path} \
+                if you intend tests to use this new dated fixture."
             );
-            ExitCode::SUCCESS
+            Ok(())
         }
         FixtureCreationStrategy::Manual(help) => {
-            print_manual_recreation_help(fixture, help, &output_path);
-            ExitCode::FAILURE
+            Err(print_manual_recreation_help(fixture, help, &output_path))
         }
     }
 }
 
-fn repair_backup_db_schema(args: Vec<String>) -> ExitCode {
-    let fixture_id = match parse_required_fixture_arg(&args, "repair-backup-db-schema") {
-        Ok(id) => id,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn repair_backup_db_schema(args: Vec<String>) -> Result<(), XtaskError> {
+    let fixture_id = parse_required_fixture_arg(&args, "repair-backup-db-schema")?;
+    let fixture = resolve_fixture(&fixture_id)?;
 
-    let fixture = match backup_db_fixture(&fixture_id) {
-        Some(fixture) => fixture,
-        None => {
-            eprintln!(
-                "Unknown fixture id '{}'. Available ids: {}",
-                fixture_id,
-                available_fixture_ids()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if let Err(err) = repair_workspace_metadata_relation(fixture) {
-        eprintln!("Failed to repair {}: {err}", fixture.id);
-        return ExitCode::FAILURE;
-    }
+    repair_workspace_metadata_relation(fixture)
+        .map_err(|err| XtaskError::new(format!("Failed to repair {}: {err}", fixture.id)))?;
 
     let root = workspace_root();
     println!(
@@ -442,7 +427,7 @@ fn repair_backup_db_schema(args: Vec<String>) -> ExitCode {
         fixture.id,
         display_relative(&fixture.path(), &root)
     );
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 struct BackupFixtureVerification {
@@ -617,18 +602,18 @@ fn print_manual_recreation_help(
     fixture: &'static FixtureDb,
     help: FixtureManualRecreation,
     output_path: &Path,
-) {
+) -> XtaskError {
     let root = workspace_root();
-    eprintln!("{} cannot be recreated hermetically yet.", fixture.id);
-    eprintln!("{}", help.summary);
-    eprintln!(
-        "Suggested dated output path: {}",
+    let mut message = format!(
+        "{} cannot be recreated hermetically yet.\n{}\nSuggested dated output path: {}\nManual steps:",
+        fixture.id,
+        help.summary,
         display_relative(output_path, &root)
     );
-    eprintln!("Manual steps:");
     for (idx, step) in help.steps.iter().enumerate() {
-        eprintln!("  {}. {}", idx + 1, step);
+        message.push_str(&format!("\n  {}. {}", idx + 1, step));
     }
+    XtaskError::new(message)
 }
 
 fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<(), String> {
@@ -703,6 +688,16 @@ fn selected_fixtures(fixture_id: Option<&str>) -> Result<Vec<&'static FixtureDb>
     }
 }
 
+fn resolve_fixture(fixture_id: &str) -> Result<&'static FixtureDb, XtaskError> {
+    backup_db_fixture(fixture_id).ok_or_else(|| {
+        XtaskError::new(format!(
+            "Unknown fixture id '{}'. Available ids: {}",
+            fixture_id,
+            available_fixture_ids()
+        ))
+    })
+}
+
 fn available_fixture_ids() -> String {
     all_backup_db_fixtures()
         .iter()
@@ -726,38 +721,32 @@ fn recreation_hint(fixture: &'static FixtureDb) -> String {
     )
 }
 
-fn setup_rag_fixtures() -> ExitCode {
+fn setup_rag_fixtures() -> Result<(), XtaskError> {
     let root = workspace_root();
     let source = FIXTURE_NODES_LOCAL_EMBEDDINGS.path();
     if !source.exists() {
-        eprintln!(
+        return Err(XtaskError::new(format!(
             "Canonical RAG fixture backup is missing: {}",
             display_relative(&source, &root)
-        );
-        return ExitCode::FAILURE;
+        )));
     }
 
-    let config_root = match user_config_local_dir() {
-        Ok(path) => path,
-        Err(err) => {
-            eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let config_root = user_config_local_dir()?;
     let data_dir = config_root.join("ploke").join("data");
     if let Err(err) = fs::create_dir_all(&data_dir) {
-        eprintln!("Unable to create {}: {err}", data_dir.display());
-        return ExitCode::FAILURE;
+        return Err(XtaskError::new(format!(
+            "Unable to create {}: {err}",
+            data_dir.display()
+        )));
     }
 
     let canonical_name = match source.file_name().and_then(|name| name.to_str()) {
         Some(name) => name.to_string(),
         None => {
-            eprintln!(
+            return Err(XtaskError::new(format!(
                 "Could not determine fixture filename from {}",
                 source.display()
-            );
-            return ExitCode::FAILURE;
+            )));
         }
     };
 
@@ -770,8 +759,10 @@ fn setup_rag_fixtures() -> ExitCode {
     let read_dir = match fs::read_dir(&data_dir) {
         Ok(entries) => entries,
         Err(err) => {
-            eprintln!("Unable to inspect {}: {err}", data_dir.display());
-            return ExitCode::FAILURE;
+            return Err(XtaskError::new(format!(
+                "Unable to inspect {}: {err}",
+                data_dir.display()
+            )));
         }
     };
 
@@ -779,8 +770,10 @@ fn setup_rag_fixtures() -> ExitCode {
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
-                eprintln!("Failed to read entry in {}: {err}", data_dir.display());
-                return ExitCode::FAILURE;
+                return Err(XtaskError::new(format!(
+                    "Failed to read entry in {}: {err}",
+                    data_dir.display()
+                )));
             }
         };
         let path = entry.path();
@@ -795,55 +788,47 @@ fn setup_rag_fixtures() -> ExitCode {
         }
 
         if let Err(err) = fs::create_dir_all(&quarantine_root) {
-            eprintln!(
+            return Err(XtaskError::new(format!(
                 "Unable to create quarantine dir {}: {err}",
                 quarantine_root.display()
-            );
-            return ExitCode::FAILURE;
+            )));
         }
 
         let dest = quarantine_root.join(name);
         if let Err(err) = fs::rename(&path, &dest) {
-            eprintln!(
+            return Err(XtaskError::new(format!(
                 "Failed to move conflicting fixture {} to {}: {err}",
                 path.display(),
                 dest.display()
-            );
-            return ExitCode::FAILURE;
+            )));
         }
         moved_conflicts.push((path, dest));
     }
 
     let dest = data_dir.join(&canonical_name);
-    let source_hash = match compute_file_hash(&source) {
-        Ok(hash) => hash,
-        Err(err) => {
-            eprintln!("Failed to hash {}: {err}", source.display());
-            return ExitCode::FAILURE;
-        }
-    };
+    let source_hash = compute_file_hash(&source)
+        .map_err(|err| XtaskError::new(format!("Failed to hash {}: {err}", source.display())))?;
 
     let needs_copy = if dest.exists() {
         match compute_file_hash(&dest) {
             Ok(dest_hash) => dest_hash != source_hash,
             Err(err) => {
-                eprintln!("Failed to hash {}: {err}", dest.display());
-                return ExitCode::FAILURE;
+                return Err(XtaskError::new(format!(
+                    "Failed to hash {}: {err}",
+                    dest.display()
+                )));
             }
         }
     } else {
         true
     };
 
-    if needs_copy {
-        if let Err(err) = fs::copy(&source, &dest) {
-            eprintln!(
-                "Failed to copy fixture from {} to {}: {err}",
-                source.display(),
-                dest.display()
-            );
-            return ExitCode::FAILURE;
-        }
+    if needs_copy && let Err(err) = fs::copy(&source, &dest) {
+        return Err(XtaskError::new(format!(
+            "Failed to copy fixture from {} to {}: {err}",
+            source.display(),
+            dest.display()
+        )));
     }
 
     println!(
@@ -863,7 +848,7 @@ fn setup_rag_fixtures() -> ExitCode {
         }
     }
 
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1039,14 +1024,11 @@ struct EmbeddingFixtureMetadata<'a> {
     notes: &'a str,
 }
 
-fn regen_embedding_models() -> ExitCode {
-    let client = match Client::builder().timeout(Duration::from_secs(20)).build() {
-        Ok(c) => c,
-        Err(err) => {
-            eprintln!("Failed to build HTTP client: {err}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn regen_embedding_models() -> Result<(), XtaskError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| XtaskError::new(format!("Failed to build HTTP client: {err}")))?;
 
     let resp = match client
         .get(EMBEDDING_MODELS_URL)
@@ -1055,75 +1037,71 @@ fn regen_embedding_models() -> ExitCode {
     {
         Ok(r) => r,
         Err(err) => {
-            eprintln!("Failed to fetch {}: {err}", EMBEDDING_MODELS_URL);
-            return ExitCode::FAILURE;
+            return Err(XtaskError::new(format!(
+                "Failed to fetch {}: {err}",
+                EMBEDDING_MODELS_URL
+            )));
         }
     };
 
     if !resp.status().is_success() {
-        eprintln!(
+        return Err(XtaskError::new(format!(
             "Unexpected status {} from {}",
             resp.status(),
             EMBEDDING_MODELS_URL
-        );
-        return ExitCode::FAILURE;
+        )));
     }
 
     let parsed: ploke_llm::request::models::Response = match resp.json() {
         Ok(body) => body,
         Err(err) => {
-            eprintln!("Failed to parse embeddings response: {err}");
-            return ExitCode::FAILURE;
+            return Err(XtaskError::new(format!(
+                "Failed to parse embeddings response: {err}"
+            )));
         }
     };
 
     let pretty = match serde_json::to_string_pretty(&parsed) {
         Ok(s) => s,
         Err(err) => {
-            eprintln!("Failed to pretty-print embeddings response: {err}");
-            return ExitCode::FAILURE;
+            return Err(XtaskError::new(format!(
+                "Failed to pretty-print embeddings response: {err}"
+            )));
         }
     };
 
     let root = workspace_root();
     let out_path = root.join(EMBEDDING_MODELS_FIXTURE);
-    if let Some(parent) = out_path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
-            eprintln!(
-                "Unable to create fixture directory {}: {err}",
-                parent.display()
-            );
-            return ExitCode::FAILURE;
-        }
+    if let Some(parent) = out_path.parent()
+        && let Err(err) = fs::create_dir_all(parent)
+    {
+        return Err(XtaskError::new(format!(
+            "Unable to create fixture directory {}: {err}",
+            parent.display()
+        )));
     }
 
     if let Err(err) = fs::write(&out_path, pretty) {
-        eprintln!("Failed to write {}: {err}", out_path.display());
-        return ExitCode::FAILURE;
+        return Err(XtaskError::new(format!(
+            "Failed to write {}: {err}",
+            out_path.display()
+        )));
     }
 
-    let sha = match compute_file_hash(&out_path) {
-        Ok(hash) => hash,
-        Err(err) => {
-            eprintln!("Failed to hash {}: {err}", out_path.display());
-            return ExitCode::FAILURE;
-        }
-    };
+    let sha = compute_file_hash(&out_path)
+        .map_err(|err| XtaskError::new(format!("Failed to hash {}: {err}", out_path.display())))?;
 
-    if let Err(err) = write_embedding_metadata(&root, &sha) {
-        eprintln!("{err}");
-        return ExitCode::FAILURE;
-    }
+    write_embedding_metadata(&root, &sha)?;
 
     println!(
         "✔ refreshed {} (sha256={})",
         display_relative(&out_path, &root),
         sha
     );
-    ExitCode::SUCCESS
+    Ok(())
 }
 
-fn write_embedding_metadata(root: &Path, sha: &str) -> Result<(), String> {
+fn write_embedding_metadata(root: &Path, sha: &str) -> Result<(), XtaskError> {
     let meta = EmbeddingFixtureMetadata {
         fixture_file: EMBEDDING_MODELS_FIXTURE,
         tree_sha256: sha.to_string(),
@@ -1135,20 +1113,20 @@ fn write_embedding_metadata(root: &Path, sha: &str) -> Result<(), String> {
     let meta_path = root.join(EMBEDDING_MODELS_META);
     if let Some(parent) = meta_path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
-            format!(
+            XtaskError::new(format!(
                 "Unable to create metadata directory {}: {err}",
                 parent.display()
-            )
+            ))
         })?;
     }
 
-    let body =
-        serde_json::to_string_pretty(&meta).map_err(|err| format!("Serialize metadata: {err}"))?;
+    let body = serde_json::to_string_pretty(&meta)
+        .map_err(|err| XtaskError::new(format!("Serialize metadata: {err}")))?;
     fs::write(&meta_path, body).map_err(|err| {
-        format!(
+        XtaskError::new(format!(
             "Failed to write metadata {}: {err}",
             display_relative(&meta_path, root)
-        )
+        ))
     })?;
     Ok(())
 }
