@@ -1276,11 +1276,14 @@ name_str.len() == prefix.len() + 1 + 36 | {}
 
 #[cfg(test)]
 pub(crate) use tests::TEST_DB_IMMUTABLE;
+#[cfg(test)]
+pub(crate) use tests::load_registered_fixture_nodes_local_embeddings;
 
 #[cfg(test)]
 mod tests {
     use lazy_static::lazy_static;
     use std::collections::BTreeMap;
+    use std::path::Path;
     use syn_parser::utils::LogStyle;
 
     use super::*;
@@ -1288,6 +1291,7 @@ mod tests {
     use ploke_core::embeddings::{
         EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
     };
+    use ploke_test_utils::FIXTURE_NODES_LOCAL_EMBEDDINGS;
     use tracing::Level;
 
     use crate::{
@@ -1312,6 +1316,44 @@ mod tests {
             ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
                 .expect("database must be set up correctly");
     }
+
+    /// Load the registered local-embedding backup fixture directly from the repo so these
+    /// tests do not depend on whichever `fixture_nodes_*` backup happens to exist in the config
+    /// dir.
+    pub(crate) fn load_registered_fixture_nodes_local_embeddings(
+        db: &Database,
+    ) -> Result<(), PlokeError> {
+        let fixture_path = FIXTURE_NODES_LOCAL_EMBEDDINGS.path();
+        import_fixture_with_embeddings(db, &fixture_path, "fixture_nodes")
+    }
+
+    fn import_fixture_with_embeddings(
+        db: &Database,
+        fixture_path: &Path,
+        embedding_set_key: &str,
+    ) -> Result<(), PlokeError> {
+        db.import_backup_with_embeddings(fixture_path)
+            .map_err(crate::DbError::from)
+            .map_err(PlokeError::from)?;
+        let selection = db
+            .restore_embedding_set(embedding_set_key)
+            .map_err(crate::DbError::from)?;
+        if let Some((set, reason)) = selection {
+            tracing::info!(
+                "Restored embedding set {:?} via {:?}",
+                set.rel_name(),
+                reason
+            );
+            crate::create_index_for_set(db, &set)?;
+            Ok(())
+        } else {
+            Err(ploke_error::WarningError::PlokeDb(
+                "No populated embedding set found after restore".to_string(),
+            )
+            .into())
+        }
+    }
+
     /// Helper macro to reduce boilderplate for printing logging statements when printing
     /// cozoscript in tests, see `run_script!` macro.
     #[macro_export]
@@ -1449,7 +1491,7 @@ mod tests {
             hnsw_rel
         );
         // info!("{}", db.is_hnsw_relation_registered(hnsw_rel)?);
-        load_db(&db, "fixture_nodes".to_string()).await?;
+        load_registered_fixture_nodes_local_embeddings(&db)?;
 
         info!("count rels = {:?}", db.count_relations().await);
         info!(

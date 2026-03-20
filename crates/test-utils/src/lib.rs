@@ -6,6 +6,15 @@
 )]
 
 pub mod nodes;
+pub mod fixture_dbs;
+
+pub use fixture_dbs::{
+    backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,
+    validate_backup_fixture_contract, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
+    FixtureEmbeddingExpectation, FixtureImportMode, FixtureManualRecreation, FixtureStatus,
+    BACKUP_DB_FIXTURES, FIXTURE_NODES_CANONICAL, FIXTURE_NODES_LOCAL_EMBEDDINGS,
+    FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1, PLOKE_DB_ORPHANED, PLOKE_DB_PRIMARY,
+};
 
 use std::path::{Path, PathBuf};
 

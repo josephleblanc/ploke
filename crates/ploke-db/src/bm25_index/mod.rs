@@ -757,7 +757,7 @@ mod tests {
     use crate::{create_index_primary, DbError};
     use lazy_static::lazy_static;
     use ploke_error::Error as PlokeError;
-    use ploke_test_utils::workspace_root;
+    use ploke_test_utils::FIXTURE_NODES_CANONICAL;
     use std::collections::HashMap;
 
     struct MockCozo {
@@ -790,15 +790,13 @@ mod tests {
         // TODO: Add a mutex guard to avoid cross-contamination of tests.
         pub static ref TEST_DB_NODES: Result<Arc< Database >, PlokeError> = {
             let db = Database::init_with_schema()?;
-
-            let mut target_file = workspace_root();
-            target_file.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let target_file = FIXTURE_NODES_CANONICAL.path();
             let prior_rels_vec = db.relations_vec()?;
             db.import_from_backup(&target_file, &prior_rels_vec)
                 .map_err(DbError::from)
                 .map_err(ploke_error::Error::from)?;
             create_index_primary(&db)?;
-            Ok(Arc::new( db ))
+            Ok(Arc::new(db))
         };
     }
 

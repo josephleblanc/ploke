@@ -42,7 +42,7 @@ lazy_static! {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
                 let mut p = workspace_root();
-                p.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+                p.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
                 p
             });
 

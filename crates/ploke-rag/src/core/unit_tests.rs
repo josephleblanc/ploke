@@ -1,15 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use std::{default, path::PathBuf, sync::Arc};
+    use std::{default, sync::Arc};
 
     use crate::{RetrievalStrategy, TokenBudget};
     use itertools::Itertools;
     use lazy_static::lazy_static;
-    use ploke_core::{embeddings::EmbeddingSet, EmbeddingData};
+    use ploke_core::EmbeddingData;
     use ploke_db::{
-        create_index_for_set, create_index_primary, create_index_primary_with_index,
+        create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll},
-        Database, DbError,
+        Database,
     };
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
@@ -18,16 +18,15 @@ mod tests {
     };
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
-    use ploke_test_utils::workspace_root;
+    use ploke_test_utils::{
+        fresh_backup_fixture_db, shared_backup_fixture_db, FIXTURE_NODES_LOCAL_EMBEDDINGS,
+    };
     use tokio::time::{sleep, Duration};
     use tracing::{debug, Level};
     use uuid::Uuid;
 
     use crate::{RagError, RagService};
     use std::sync::Once;
-
-    const LOCAL_FIXTURE_BACKUP: &str =
-        "tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9";
 
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
@@ -36,34 +35,9 @@ mod tests {
         });
     }
 
-    fn local_fixture_backup_path() -> PathBuf {
-        workspace_root().join(LOCAL_FIXTURE_BACKUP)
-    }
-
     fn load_local_fixture_db() -> Result<Arc<Database>, Error> {
         init_tracing_once();
-
-        let db = Database::init_with_schema()?;
-        let target_file = local_fixture_backup_path();
-        db.import_backup_with_embeddings(&target_file)
-            .map_err(Error::from)?;
-
-        let expected_set = EmbeddingSet::default();
-        let embedding_count = db
-            .count_embeddings_for_set(&expected_set)
-            .map_err(Error::from)?;
-        if embedding_count == 0 {
-            return Err(Error::from(DbError::Cozo(format!(
-                "Fixture backup {} does not contain embeddings for the default local set {}",
-                target_file.display(),
-                expected_set.rel_name
-            ))));
-        }
-
-        db.set_active_set(expected_set.clone())
-            .map_err(Error::from)?;
-        create_index_for_set(&db, &expected_set).map_err(Error::from)?;
-        Ok(Arc::new(db))
+        shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
     }
 
     async fn db_test_setup() -> Result<Arc<Database>, Error> {
@@ -120,16 +94,8 @@ mod tests {
         use ploke_db::multi_embedding::{db_ext::EmbeddingExt, hnsw_ext::HnswExt};
 
         // Load the multi-embedding backup directly to mirror the TUI /load path.
-        let db = Database::init_with_schema().expect("init schema");
-        let mut target_file = workspace_root();
-        // target_file.push(
-        //     "tests/backup_dbs/fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92",
-        // );
-        target_file.push("tests/backup_dbs/fixture_nodes_3b3551b2-a061-5bee-96e4-b24e5a4361c9");
-        let prior_rels_vec = db.relations_vec().expect("relations_vec");
-        db.import_from_backup(&target_file, &prior_rels_vec)
-            .expect("import_from_backup");
-        ploke_db::create_index_primary_with_index(&db).expect("create_index_primary");
+        let db = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
+            .expect("load local embedding fixture");
 
         // Note: if the backup lacks vectors, we still expect the legacy-path error; this test
         // asserts on that specific failure mode.

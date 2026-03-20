@@ -19,6 +19,13 @@ to make changes to the database schema, which causes our tests to fail because
 they are not able to find an expected relation on loading or importing the
 backup db.
 
+Current progress reference:
+- [backup-dbs_progress-2026-03-20.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_progress-2026-03-20.md)
+- [backup-dbs_progress-2026-03-20-post-local-fixture-validation.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_progress-2026-03-20-post-local-fixture-validation.md)
+
+Next-attempt guidance:
+- [backup-dbs_next-attempt.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_next-attempt.md)
+
 What we need is four things:
 
 1. A way to validate the presence of expected databases
@@ -81,6 +88,14 @@ etc, and use these in the tests to ensure the correct backup is being used.
 Then, for each test that references the immutable backup db, use the test
 helper instead, so we don't need to have ad hoc setup across our workspace
 crates.
+
+- Clarification for immutable-access tests
+
+If a test currently rebuilds or reloads a database from source or from a backup
+fixture, but only performs immutable reads/assertions, update that test to use
+the once-created and cached shared backup DB helper instead of creating a fresh
+database instance per test. Fresh DB setup should be reserved for tests that
+mutate the database or require isolation from shared state.
 
 ### Note on implementation
 

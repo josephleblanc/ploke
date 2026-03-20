@@ -14,7 +14,7 @@ use std::time::Duration;
 use uuid::Uuid;
 // ============================================================================
 // Prerequisites:
-// - Database backup must exist at: tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92
+// - Database backup must exist at: tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite
 // - Backup contains parsed data from tests/fixture_crates/fixture_nodes
 // - Related crate tests (ploke-db, ploke-transform, syn_parser, etc.) are passing
 // - Tests MUST fail if database backup is missing or empty

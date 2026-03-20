@@ -2184,7 +2184,7 @@ mod tests {
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::ERROR);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
-        crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
+        crate::multi_embedding::db_ext::load_registered_fixture_nodes_local_embeddings(&db)?;
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
@@ -2233,7 +2233,7 @@ mod tests {
         // ploke_test_utils::init_test_tracing_with_target("cozo-script", Level::DEBUG);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
-        crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
+        crate::multi_embedding::db_ext::load_registered_fixture_nodes_local_embeddings(&db)?;
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
@@ -2287,7 +2287,7 @@ mod tests {
         // crate::multi_embedding::hnsw_ext::init_tracing_once("cozo-script", Level::DEBUG);
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")?;
         let db = Database::new(cozo_db);
-        crate::multi_embedding::db_ext::load_db(&db, "fixture_nodes".to_string()).await?;
+        crate::multi_embedding::db_ext::load_registered_fixture_nodes_local_embeddings(&db)?;
 
         // TODO:active-embedding-set 2025-12-15
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these

@@ -14,6 +14,28 @@ developer/agent runs the same commands via `cargo xtask <command>`.
     - `crates/ploke-tui/data/models/all_pricing_parsed.json`
       (pricing tests that parse OpenRouter data). Generate this via
       `./scripts/openrouter_pricing_sync.py`.
+- `cargo xtask verify-backup-dbs`
+  - Validates the registered backup DB fixtures tracked in
+    [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md).
+  - By default checks the active fixtures used by tests.
+  - Supports `--fixture <id>` to validate a single fixture.
+  - Validation goes beyond file presence:
+    - imports the backup using the registry-configured import mode
+    - enforces embedding/index expectations via the shared fixture helper
+    - saves a temporary roundtrip backup and re-imports it
+- `cargo xtask recreate-backup-db --fixture <id>`
+  - Recreates a registered backup fixture when that fixture has an automated
+    regeneration path.
+  - Writes a dated backup filename under `tests/backup_dbs/`.
+  - If a fixture is not hermetically automatable yet, prints exact
+    fixture-specific manual recreation steps instead of failing silently.
+- `cargo xtask repair-backup-db-schema --fixture <id>`
+  - Repairs a stale backup fixture in place when it predates the new
+    `workspace_metadata` relation.
+  - Restores the backup as-is, runs the real `workspace_metadata` schema create
+    script, and writes the backup back to the registered fixture path.
+  - This is intentionally narrow; it does not try to recreate the full schema on
+    an existing backup.
 - `cargo xtask setup-rag-fixtures`
   - Copies the canonical local `fixture_nodes` backup into the config-dir load path used by
     `ploke_db::multi_embedding::db_ext::load_db` (`$XDG_CONFIG_HOME/ploke/data` or
@@ -28,6 +50,26 @@ developer/agent runs the same commands via `cargo xtask <command>`.
 
 If a file is missing the command prints a remediation hint and exits non-zero,
 making it safe to gate test runs or CI hooks on this helper.
+
+## Backup fixture registry
+
+Backup DB lifecycle commands use the shared registry in
+[crates/test-utils/src/fixture_dbs.rs](/home/brasides/code/ploke/crates/test-utils/src/fixture_dbs.rs).
+That registry is the source of truth for:
+
+- fixture ids
+- backup paths
+- import mode and embedding expectations
+- regeneration strategy
+- manual recreation instructions when automation is not hermetic yet
+- the strict repair path for stale backups missing `workspace_metadata`
+
+When a backup fixture changes, update the registry and
+[docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
+together.
+
+For the operator-facing workflow, see
+[docs/how-to/recreate-backup-db-fixtures.md](/home/brasides/code/ploke/docs/how-to/recreate-backup-db-fixtures.md).
 
 ## Extending `verify-fixtures`
 

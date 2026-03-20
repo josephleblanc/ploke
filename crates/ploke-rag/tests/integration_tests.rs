@@ -1,8 +1,8 @@
 #![allow(dead_code, unused_imports)]
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use ploke_core::{embeddings::EmbeddingSet, EmbeddingData};
-use ploke_db::{create_index_for_set, multi_embedding::db_ext::EmbeddingExt, Database, DbError};
+use ploke_core::EmbeddingData;
+use ploke_db::{multi_embedding::db_ext::EmbeddingExt, Database};
 use ploke_embed::{
     indexer::{EmbeddingProcessor, EmbeddingSource},
     local::{EmbeddingConfig, LocalEmbedder},
@@ -11,39 +11,12 @@ use ploke_embed::{
 use ploke_error::Error;
 use ploke_io::IoManagerHandle;
 use ploke_rag::RagService;
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{shared_backup_fixture_db, FIXTURE_NODES_LOCAL_EMBEDDINGS};
 use tokio::time::{sleep, Duration};
-
-const LOCAL_FIXTURE_BACKUP: &str =
-    "tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92";
-
-fn local_fixture_backup_path() -> PathBuf {
-    workspace_root().join(LOCAL_FIXTURE_BACKUP)
-}
 
 lazy_static::lazy_static! {
     pub static ref TEST_DB_NODES: Result<Arc<Database>, Error> = {
-        let db = Database::init_with_schema()?;
-        let target_file = local_fixture_backup_path();
-        db.import_backup_with_embeddings(&target_file)
-            .map_err(ploke_error::Error::from)?;
-
-        let expected_set = EmbeddingSet::default();
-        let embedding_count = db
-            .count_embeddings_for_set(&expected_set)
-            .map_err(ploke_error::Error::from)?;
-        if embedding_count == 0 {
-            return Err(Error::from(DbError::Cozo(format!(
-                "Fixture backup {} does not contain embeddings for the default local set {}",
-                target_file.display(),
-                expected_set.rel_name
-            ))));
-        }
-
-        db.set_active_set(expected_set.clone())
-            .map_err(ploke_error::Error::from)?;
-        create_index_for_set(&db, &expected_set).map_err(ploke_error::Error::from)?;
-        Ok(Arc::new(db))
+        shared_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)
     };
 }
 

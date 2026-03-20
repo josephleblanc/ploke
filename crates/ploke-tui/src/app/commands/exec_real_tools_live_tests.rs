@@ -344,7 +344,7 @@ lazy_static! {
     pub static ref TEST_DB_NODES: Result<Arc<tokio::sync::Mutex<Database>>, Error> = {
         let db = Database::init_with_schema()?;
         let mut backup = workspace_root();
-        backup.push("tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+        backup.push("tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite");
         // Import if the backup exists; otherwise return the empty DB.
         if backup.exists() {
             let prior_rels_vec = db.relations_vec()?;
