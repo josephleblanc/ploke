@@ -1275,9 +1275,9 @@ name_str.len() == prefix.len() + 1 + 36 | {}
 }
 
 #[cfg(test)]
-pub(crate) use tests::TEST_DB_IMMUTABLE;
-#[cfg(test)]
 pub(crate) use tests::load_registered_fixture_nodes_local_embeddings;
+#[cfg(test)]
+pub(crate) use tests::TEST_DB_IMMUTABLE;
 
 #[cfg(test)]
 mod tests {

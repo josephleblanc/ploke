@@ -5,8 +5,8 @@
     reason = "Stubs for later helper functions."
 )]
 
-pub mod nodes;
 pub mod fixture_dbs;
+pub mod nodes;
 
 pub use fixture_dbs::{
     backup_db_fixture, fresh_backup_fixture_db, shared_backup_fixture_db,

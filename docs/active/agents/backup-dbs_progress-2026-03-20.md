@@ -39,13 +39,15 @@ Those checks passed in the last delegated validation pass.
   - strict validation also passed via
     `cargo xtask verify-backup-dbs --fixture fixture_nodes_local_embeddings`
 - `cargo xtask recreate-backup-db --fixture ploke_db_primary`
-  currently prints manual recreation steps.
+  now recreates from source and produced:
+  - `tests/backup_dbs/ploke_db_primary_2026-03-20.sqlite`
+  - strict validation passed via
+    `cargo xtask verify-backup-dbs --fixture ploke_db_primary`
 
 ## Known Remaining Gaps
 
-- `ploke-db` and `ploke-rag` now pass against the refreshed canonical/local
-  fixture paths, but `ploke-tui` still has two fixture failures tied to the
-  stale `ploke_db_primary` repro backup.
+- `ploke-db`, `ploke-rag`, and `ploke-tui` now pass against the refreshed
+  canonical/local/ploke-db fixture paths.
 - The local-embedding recreation path is stricter now, but not fully hermetic
   yet because the local model revision is still unpinned.
 - Some fixture consumers still rely on dated backup path updates in docs/registry
@@ -53,5 +55,6 @@ Those checks passed in the last delegated validation pass.
 
 ## Immediate Next Step
 
-- Recreate `ploke_db_primary`, update its registered path/docs, and rerun the
-  `ploke-tui` `get_code_edges_regression` tests.
+- Treat the backup-fixture refresh path as functionally complete, then decide
+  whether to pin the local model revision for fully hermetic local-embedding
+  recreation.

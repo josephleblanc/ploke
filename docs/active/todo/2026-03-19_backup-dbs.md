@@ -22,6 +22,7 @@ backup db.
 Current progress reference:
 - [backup-dbs_progress-2026-03-20.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_progress-2026-03-20.md)
 - [backup-dbs_progress-2026-03-20-post-local-fixture-validation.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_progress-2026-03-20-post-local-fixture-validation.md)
+- [backup-dbs_progress-2026-03-20-ploke-db-primary-refresh.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_progress-2026-03-20-ploke-db-primary-refresh.md)
 
 Next-attempt guidance:
 - [backup-dbs_next-attempt.md](/home/brasides/code/ploke/docs/active/agents/backup-dbs_next-attempt.md)

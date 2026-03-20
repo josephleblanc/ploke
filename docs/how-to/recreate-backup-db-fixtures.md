@@ -125,15 +125,34 @@ Residual limitation:
 cargo xtask recreate-backup-db --fixture ploke_db_primary
 ```
 
-This currently prints manual steps.
-
-Reason:
-
-- it is intentionally treated as a repro snapshot of the real `crates/ploke-db`
-  graph, not a stable canonical source-derived fixture
+This now recreates the active `ploke_db_primary` backup directly from the real
+`crates/ploke-db` source graph using the shared
+`setup_db_full_crate("ploke-db")` test helper, then validates it as a plain
+backup fixture.
 
 ## Review rule
 
 Before changing fixture consumers or adding a new backup, update the inventory
 in [docs/testing/BACKUP_DB_FIXTURES.md](/home/brasides/code/ploke/docs/testing/BACKUP_DB_FIXTURES.md)
 and keep the registry in sync.
+
+## After Deleting Backups
+
+If you intentionally remove the committed backup DB files and want to restore
+the active fixture set from scratch, use this sequence:
+
+```bash
+cargo xtask verify-backup-dbs
+cargo xtask recreate-backup-db --fixture fixture_nodes_canonical
+cargo xtask recreate-backup-db --fixture fixture_nodes_local_embeddings
+cargo xtask recreate-backup-db --fixture ploke_db_primary
+cargo xtask setup-rag-fixtures
+```
+
+Notes:
+
+- `verify-backup-dbs` shows which registered fixtures are missing or invalid.
+- `setup-rag-fixtures` is needed after recreating the local-embedding fixture so
+  the config-dir copy used by some RAG/TUI paths is refreshed.
+- Re-run `cargo xtask verify-backup-dbs` after recreation to confirm the active
+  fixture set is healthy.

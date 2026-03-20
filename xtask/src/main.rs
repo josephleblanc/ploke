@@ -1,5 +1,6 @@
 use chrono::Utc;
 use cozo::ScriptMutability;
+use ploke_db::Database;
 use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{EmbeddingProcessor, EmbeddingSource, IndexerTask},
@@ -7,14 +8,13 @@ use ploke_embed::{
     runtime::EmbeddingRuntime,
 };
 use ploke_io::IoManagerHandle;
-use ploke_transform::schema::crate_node::WorkspaceMetadataSchema;
-use ploke_db::Database;
-use ploke_test_utils::{
-    backup_db_fixture, fresh_backup_fixture_db, setup_db_full_multi_embedding,
-    validate_backup_fixture_contract, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
-    FixtureImportMode, FixtureManualRecreation, FIXTURE_NODES_LOCAL_EMBEDDINGS,
-};
 use ploke_test_utils::fixture_dbs::{active_backup_db_fixtures, all_backup_db_fixtures};
+use ploke_test_utils::{
+    FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy, FixtureDb,
+    FixtureImportMode, FixtureManualRecreation, backup_db_fixture, fresh_backup_fixture_db,
+    setup_db_full_crate, setup_db_full_multi_embedding, validate_backup_fixture_contract,
+};
+use ploke_transform::schema::crate_node::WorkspaceMetadataSchema;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -506,6 +506,11 @@ fn recreate_automated_fixture(
         FixtureAutomation::FixtureCrateLocalEmbeddings { fixture_name, .. } => {
             recreate_local_embedding_fixture_db(fixture, fixture_name)?
         }
+        FixtureAutomation::WorkspaceCrate { crate_name, .. } => {
+            let cozo_db = setup_db_full_crate(crate_name)
+                .map_err(|err| format!("build workspace crate fixture database: {err}"))?;
+            Arc::new(Database::new(cozo_db))
+        }
     };
 
     if output_path.exists() {
@@ -532,7 +537,9 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
         FixtureImportMode::BackupWithEmbeddings => {
             reloaded
                 .import_backup_with_embeddings(output_path)
-                .map_err(|err| format!("validate generated backup import with embeddings: {err}"))?;
+                .map_err(|err| {
+                    format!("validate generated backup import with embeddings: {err}")
+                })?;
         }
     }
     validate_backup_fixture_contract(fixture, &reloaded)
@@ -565,7 +572,7 @@ fn recreate_local_embedding_fixture_db(
             device_preference: DevicePreference::ForceCpu,
             ..EmbeddingConfig::default()
         })
-            .map_err(|err| format!("initialize local embedder: {err}"))?;
+        .map_err(|err| format!("initialize local embedder: {err}"))?;
         let processor = EmbeddingProcessor::new(EmbeddingSource::Local(local_embedder));
         let embedding_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
             Arc::clone(&db.active_embedding_set),
@@ -641,9 +648,7 @@ fn repair_workspace_metadata_relation(fixture: &'static FixtureDb) -> Result<(),
     let script = WorkspaceMetadataSchema::SCHEMA.script_create();
     db.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
         .map_err(|err| {
-            format!(
-                "create workspace_metadata relation with current schema script: {err}"
-            )
+            format!("create workspace_metadata relation with current schema script: {err}")
         })?;
 
     db.backup_db(&fixture_path)
@@ -658,7 +663,9 @@ fn parse_fixture_arg(args: &[String], command: &str) -> Result<Option<String>, S
         match arg.as_str() {
             "--fixture" => {
                 let Some(value) = iter.next() else {
-                    return Err(format!("Missing value for --fixture. Usage: cargo xtask {command} [--fixture <id>]"));
+                    return Err(format!(
+                        "Missing value for --fixture. Usage: cargo xtask {command} [--fixture <id>]"
+                    ));
                 };
                 fixture = Some(value.clone());
             }
@@ -685,7 +692,13 @@ fn selected_fixtures(fixture_id: Option<&str>) -> Result<Vec<&'static FixtureDb>
     match fixture_id {
         Some(id) => backup_db_fixture(id)
             .map(|fixture| vec![fixture])
-            .ok_or_else(|| format!("Unknown fixture id '{}'. Available ids: {}", id, available_fixture_ids())),
+            .ok_or_else(|| {
+                format!(
+                    "Unknown fixture id '{}'. Available ids: {}",
+                    id,
+                    available_fixture_ids()
+                )
+            }),
         None => Ok(active_backup_db_fixtures().collect()),
     }
 }
@@ -699,7 +712,11 @@ fn available_fixture_ids() -> String {
 }
 
 fn dated_output_filename(fixture: &'static FixtureDb) -> String {
-    format!("{}_{}.sqlite", fixture.output_stem(), Utc::now().format("%Y-%m-%d"))
+    format!(
+        "{}_{}.sqlite",
+        fixture.output_stem(),
+        Utc::now().format("%Y-%m-%d")
+    )
 }
 
 fn recreation_hint(fixture: &'static FixtureDb) -> String {

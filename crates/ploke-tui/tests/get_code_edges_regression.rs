@@ -2,11 +2,10 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use ploke_core::ArcStr;
 use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
-use ploke_db::{Database, create_index_primary};
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::TokenBudget;
-use ploke_test_utils::workspace_root;
+use ploke_test_utils::{PLOKE_DB_PRIMARY, shared_backup_fixture_db, workspace_root};
 use ploke_tui::{
     EventBus,
     app_state::{
@@ -144,23 +143,8 @@ async fn code_item_edges_handles_trailing_module_separators() {
 
 #[tokio::test]
 async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
-    // Load ploke-db backup (copied from ~/.config/ploke/data) to mirror the user repro.
-    let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
-    assert!(
-        backup.exists(),
-        "ploke-db backup missing at {}; copy ~/.config/ploke/data/ploke-db_* to tests/backup_dbs",
-        backup.display()
-    );
-
-    let db = {
-        let db = Database::init_with_schema().expect("init db schema");
-        let rels = db.relations_vec().expect("relations");
-        db.import_from_backup(&backup, &rels)
-            .expect("import ploke-db backup");
-        create_index_primary(&db).expect("index primary");
-        Arc::new(db)
-    };
+    // Shared immutable ploke-db fixture recreated from the real crate source graph.
+    let db = shared_backup_fixture_db(&PLOKE_DB_PRIMARY).expect("load ploke_db_primary fixture");
 
     // Minimal AppState for tool execution, focused on the real ploke-db crate.
     let cfg = UserConfig::default();
@@ -290,23 +274,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
 
 #[tokio::test]
 async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
-    // Load ploke-db backup to mirror live runs.
-    let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
-    assert!(
-        backup.exists(),
-        "ploke-db backup missing at {}; copy ~/.config/ploke/data/ploke-db_* to tests/backup_dbs",
-        backup.display()
-    );
-
-    let db = {
-        let db = Database::init_with_schema().expect("init db schema");
-        let rels = db.relations_vec().expect("relations");
-        db.import_from_backup(&backup, &rels)
-            .expect("import ploke-db backup");
-        create_index_primary(&db).expect("index primary");
-        Arc::new(db)
-    };
+    let db = shared_backup_fixture_db(&PLOKE_DB_PRIMARY).expect("load ploke_db_primary fixture");
 
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
@@ -393,16 +361,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
 #[ignore = "graph_resolve_edges currently returns zero edges in the ploke-db backup; enable once fixed"]
 async fn code_item_edges_graph_resolve_edges_smoke() {
     // Regression placeholder for the user-reported graph_resolve_edges case.
-    let mut backup = workspace_root();
-    backup.push("tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4");
-    let db = {
-        let db = Database::init_with_schema().expect("init db schema");
-        let rels = db.relations_vec().expect("relations");
-        db.import_from_backup(&backup, &rels)
-            .expect("import ploke-db backup");
-        create_index_primary(&db).expect("index primary");
-        Arc::new(db)
-    };
+    let db = shared_backup_fixture_db(&PLOKE_DB_PRIMARY).expect("load ploke_db_primary fixture");
     let crate_root = workspace_root().join("crates/ploke-db");
     let abs_path = crate_root.join("src/helpers.rs");
     let mod_path = vec!["crate".to_string(), "helpers".to_string()];

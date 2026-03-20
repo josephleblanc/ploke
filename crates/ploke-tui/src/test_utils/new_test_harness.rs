@@ -27,9 +27,7 @@ use ploke_db::{Database, bm25_index};
 use ploke_embed::cancel_token::CancellationToken;
 use ploke_embed::indexer::IndexerTask;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::{
-    shared_backup_fixture_db, workspace_root, FIXTURE_NODES_LOCAL_EMBEDDINGS,
-};
+use ploke_test_utils::{FIXTURE_NODES_LOCAL_EMBEDDINGS, shared_backup_fixture_db, workspace_root};
 use serde::Serialize;
 use uuid::Uuid;
 

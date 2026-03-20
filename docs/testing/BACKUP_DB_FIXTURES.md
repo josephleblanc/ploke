@@ -64,15 +64,15 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
 
 | Fixture | Parsed target(s) | Primary usage | Last update |
 | --- | --- | --- | --- |
-| `fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-03-20 |
+| `fixture_nodes_canonical_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | canonical parsed `fixture_nodes` backup | 2026-03-20 |
 | `fixture_nodes_local_embeddings_2026-03-20.sqlite` | `tests/fixture_crates/fixture_nodes` | local-embedding `fixture_nodes` backup | 2026-03-20 |
 | `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92` | `tests/fixture_crates/fixture_nodes` | legacy multi-embedding schema snapshot | 2026-03-20 |
-| `ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4` | `crates/ploke-db` | live-style `ploke-db` repro snapshot | 2026-03-20 |
+| `ploke_db_primary_2026-03-20.sqlite` | `crates/ploke-db` | current-schema `ploke-db` graph backup | 2026-03-20 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
-## `fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
+## `fixture_nodes_canonical_2026-03-20.sqlite`
 
-- File: `tests/backup_dbs/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
+- File: `tests/backup_dbs/fixture_nodes_canonical_2026-03-20.sqlite`
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
@@ -130,17 +130,20 @@ example `FIXTURE_NODES_CANONICAL.path()`) with a crate-local loader.
   - only a commented-out reference remains in [crates/ploke-rag/src/core/unit_tests.rs](/home/brasides/code/ploke/crates/ploke-rag/src/core/unit_tests.rs)
   - keep under review until explicitly removed or reintroduced
 
-## `ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4`
+## `ploke_db_primary_2026-03-20.sqlite`
 
-- File: `tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4`
+- File: `tests/backup_dbs/ploke_db_primary_2026-03-20.sqlite`
 - Parsed target(s): `crates/ploke-db`
 - Expected DB config:
   - plain backup import
   - primary index created after import
-  - used to mirror user repros against the real `ploke-db` crate graph
+  - recreated from the real `crates/ploke-db` source graph via `setup_db_full_crate("ploke-db")`
+- Important tradeoff:
+  - this is now a current-schema source-backed fixture, not a frozen user-repro snapshot
+  - its contents will move with `crates/ploke-db` as that crate changes over time
 - Tests using this fixture:
   - `ploke-tui`
-    - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): fresh mutable DB per test setup, then read-only assertions
+    - [crates/ploke-tui/tests/get_code_edges_regression.rs](/home/brasides/code/ploke/crates/ploke-tui/tests/get_code_edges_regression.rs): shared immutable DB via `shared_backup_fixture_db`
 
 ## `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45`
 

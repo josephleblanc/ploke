@@ -8,11 +8,7 @@ use ploke_common::workspace_root;
 use ploke_core::embeddings::{
     EmbeddingDType, EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::{
-    create_index_primary,
-    multi_embedding::db_ext::EmbeddingExt,
-    Database, DbError,
-};
+use ploke_db::{create_index_primary, multi_embedding::db_ext::EmbeddingExt, Database, DbError};
 use ploke_error::Error;
 
 use once_cell::sync::Lazy;
@@ -53,6 +49,10 @@ pub enum FixtureAutomation {
     },
     FixtureCrateLocalEmbeddings {
         fixture_name: &'static str,
+        output_stem: &'static str,
+    },
+    WorkspaceCrate {
+        crate_name: &'static str,
         output_stem: &'static str,
     },
 }
@@ -103,7 +103,8 @@ impl FixtureDb {
     }
 
     pub fn expected_embedding_set(&self) -> Option<EmbeddingSet> {
-        self.embedding.map(FixtureEmbeddingExpectation::embedding_set)
+        self.embedding
+            .map(FixtureEmbeddingExpectation::embedding_set)
     }
 
     pub fn output_stem(&self) -> &'static str {
@@ -114,7 +115,11 @@ impl FixtureDb {
             })
             | FixtureCreationStrategy::Automated(
                 FixtureAutomation::FixtureCrateLocalEmbeddings { output_stem, .. },
-            ) => output_stem,
+            )
+            | FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
+                output_stem,
+                ..
+            }) => output_stem,
             FixtureCreationStrategy::Manual(FixtureManualRecreation { output_stem, .. }) => {
                 output_stem
             }
@@ -205,26 +210,20 @@ pub const FIXTURE_NODES_MULTI_EMBEDDING_SCHEMA_V1: FixtureDb = FixtureDb {
 
 pub const PLOKE_DB_PRIMARY: FixtureDb = FixtureDb {
     id: "ploke_db_primary",
-    rel_path: "tests/backup_dbs/ploke-db_642a4b75-2527-51f3-9c79-b00672588eb4",
+    rel_path: "tests/backup_dbs/ploke_db_primary_2026-03-20.sqlite",
     parsed_targets: &["crates/ploke-db"],
     status: FixtureStatus::Active,
-    creation: FixtureCreationStrategy::Manual(FixtureManualRecreation {
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::WorkspaceCrate {
+        crate_name: "ploke-db",
         output_stem: "ploke_db_primary",
-        summary: "This fixture intentionally mirrors a live `ploke-db` repro snapshot rather than a hermetic source-derived fixture.",
-        steps: &[
-            "Run `cargo run -p ploke-tui`.",
-            "Inside the TUI, run `/index start crates/ploke-db`.",
-            "After indexing finishes, run `/save db`.",
-            "Copy the saved `ploke-db_*` backup from the config-dir data folder into the dated output path printed by `cargo xtask recreate-backup-db --fixture ploke_db_primary`.",
-        ],
     }),
-    default_access: FixtureAccess::FreshMutable,
+    default_access: FixtureAccess::ImmutableShared,
     import_mode: FixtureImportMode::PlainBackup,
     requires_primary_index: true,
     bm25_index_expected: false,
     embedding: None,
     last_updated: "2026-03-20",
-    notes: "Real ploke-db backup used by get_code_edges regression tests to mirror user repro data.",
+    notes: "Current-schema `crates/ploke-db` graph backup recreated from source via setup_db_full_crate(\"ploke-db\") and used by get_code_edges regression tests.",
 };
 
 pub const PLOKE_DB_ORPHANED: FixtureDb = FixtureDb {
@@ -369,7 +368,10 @@ mod tests {
         let fixture = backup_db_fixture("fixture_nodes_canonical")
             .expect("canonical fixture should be registered");
 
-        assert_eq!(fixture.filename(), "fixture_nodes_canonical_2026-03-20.sqlite");
+        assert_eq!(
+            fixture.filename(),
+            "fixture_nodes_canonical_2026-03-20.sqlite"
+        );
         assert_eq!(fixture.status, FixtureStatus::Active);
     }
 }
